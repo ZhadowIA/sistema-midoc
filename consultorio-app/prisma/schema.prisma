@@ -1,0 +1,442 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  phone        String?
+  passwordHash String
+  role         UserRole @default(DOCTOR)
+  active       Boolean  @default(true)
+
+  // Public Profile Fields
+  specialty    String?
+  slug         String? @unique
+  bio          String?
+  profileImage String?
+  professionalLicense String?
+  clinicAddress       String?
+  logoImage           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  doctorConfig  DoctorConfig?
+  subscription  DoctorSubscription?
+  onboarding    DoctorOnboarding?
+  legalAcceptance LegalAcceptance?
+  blocks        AvailabilityBlock[]
+  schedules     ScheduleBlock[]
+  appointments  Appointment[]
+  clinicalNotes ClinicalNote[]
+  whatsappMessages WhatsAppMessageLog[]
+  patientAccounts  Patient[] @relation("PatientAccount")
+  directoryPatients Patient[] @relation("DoctorPatientDirectory")
+  appointmentAuditLogs AppointmentAuditLog[]
+}
+
+model DoctorSubscription {
+  id                 String   @id @default(cuid())
+  doctorId           String   @unique
+  status             String   @default("PENDING")
+  provider           String   @default("MOCK")
+  planName           String   @default("Plan Mensual")
+  amount             Decimal? @db.Decimal(10, 2)
+  currency           String   @default("MXN")
+  customerId         String?
+  externalSubscriptionId String?
+  externalPriceId    String?
+  paymentMethodLast4 String?
+  cancelAtPeriodEnd  Boolean  @default(false)
+  canceledAt         DateTime?
+  lastPaymentAt      DateTime?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([status, currentPeriodEnd])
+  @@unique([provider, externalSubscriptionId])
+}
+
+model DoctorOnboarding {
+  id          String   @id @default(cuid())
+  doctorId    String   @unique
+  completed   Boolean  @default(false)
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+}
+
+model LegalAcceptance {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  termsVersion    String
+  privacyVersion  String
+  termsAcceptedAt DateTime
+  privacyAcceptedAt DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PaymentWebhookEvent {
+  id              String   @id @default(cuid())
+  provider        String
+  eventId         String
+  eventType       String
+  status          String   @default("RECEIVED")
+  payload         Json
+  processingError String?
+  processedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([provider, eventId])
+  @@index([status, createdAt])
+}
+
+model DoctorConfig {
+  id                          String    @id @default(cuid())
+  doctorId                    String    @unique
+  consultationDurationMin     Int
+  extendedConsultationEnabled Boolean   @default(true)
+  whatsappConnected           Boolean   @default(false)
+  reminderLeadHours           String?
+  reminderWindowMinutes       Int?      @default(15)
+  whatsappAutoReplyEnabled    Boolean   @default(true)
+  whatsappAutoConfirmEnabled  Boolean   @default(true)
+  whatsappAutoCancelEnabled   Boolean   @default(true)
+  whatsappBookingMessageTemplate   String?
+  whatsappQuestionnaireTemplate    String?
+  whatsappReminderPendingTemplate  String?
+  whatsappReminderConfirmedTemplate String?
+  normalConsultationPrice     Decimal?  @db.Decimal(10, 2)
+  extendedConsultationPrice   Decimal?  @db.Decimal(10, 2)
+  effectiveFrom               DateTime?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+
+  doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+}
+
+model Patient {
+  id          String   @id @default(cuid())
+  userId      String?
+  ownerDoctorId String?
+  fullName    String
+  dateOfBirth DateTime @default(now())
+  phone       String
+  email       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user          User?          @relation("PatientAccount", fields: [userId], references: [id], onDelete: SetNull)
+  ownerDoctor   User?          @relation("DoctorPatientDirectory", fields: [ownerDoctorId], references: [id], onDelete: Cascade)
+  appointments  Appointment[]
+  medicalRecord MedicalRecord?
+  clinicalNotes ClinicalNote[]
+  whatsappMessages WhatsAppMessageLog[]
+  appointmentAuditLogs AppointmentAuditLog[]
+
+  @@index([ownerDoctorId])
+  @@index([ownerDoctorId, fullName])
+}
+
+model AvailabilityBlock {
+  id        String   @id @default(cuid())
+  doctorId  String
+  date      DateTime
+  startTime DateTime
+  endTime   DateTime
+  isPublic  Boolean  @default(true)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+}
+
+model ScheduleBlock {
+  id        String            @id @default(cuid())
+  doctorId  String
+  date      DateTime
+  startTime DateTime
+  endTime   DateTime
+  reason    String?
+  type      ScheduleBlockType
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+}
+
+model Appointment {
+  id                    String            @id @default(cuid())
+  doctorId              String
+  patientId             String
+  date                  DateTime
+  startTime             DateTime
+  endTime               DateTime
+  appointmentType       AppointmentType
+  durationMin           Int
+  source                AppointmentSource
+  status                AppointmentStatus @default(PENDING)
+  notes                 String?
+  questionnaireAnswered Boolean           @default(false)
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  doctor        User           @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  patient       Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  questionnaire Questionnaire?
+  notifications Notification[]
+  clinicalNote  ClinicalNote?
+  aiInsight     AIInsight?
+  whatsappMessages WhatsAppMessageLog[]
+  auditLogs     AppointmentAuditLog[]
+}
+
+model AppointmentAuditLog {
+  id            String            @id @default(cuid())
+  doctorId      String
+  appointmentId String?
+  patientId     String?
+  actorType     AuditActorType
+  actorUserId   String?
+  source        AuditSource
+  action        AuditAction
+  fromStatus    AppointmentStatus?
+  toStatus      AppointmentStatus?
+  metadata      Json?
+  createdAt     DateTime          @default(now())
+
+  doctor      User         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  patient     Patient?     @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  @@index([doctorId, createdAt])
+  @@index([appointmentId, createdAt])
+  @@index([action, createdAt])
+}
+
+model Questionnaire {
+  id             String   @id @default(cuid())
+  appointmentId  String   @unique
+  primarySymptom String?
+  responses      Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id            String              @id @default(cuid())
+  appointmentId String
+  channel       NotificationChannel
+  type          NotificationType
+  status        NotificationStatus  @default(PENDING)
+  message       String
+  externalId    String?
+  sentAt        DateTime?
+  createdAt     DateTime            @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+}
+
+model WhatsAppMessageLog {
+  id            String                  @id @default(cuid())
+  doctorId      String
+  appointmentId String?
+  patientId     String?
+  phone         String
+  direction     WhatsAppMessageDirection
+  intent        WhatsAppIntent?
+  action        WhatsAppMessageAction?
+  message       String
+  createdAt     DateTime                @default(now())
+
+  doctor      User         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  patient     Patient?     @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  @@index([doctorId, createdAt])
+  @@index([appointmentId])
+  @@index([phone, createdAt])
+}
+
+model MedicalRecord {
+  id                String   @id @default(cuid())
+  patientId         String   @unique
+  bloodType         String?
+  allergies         String?
+  chronicConditions String?
+  familyHistory     String?
+  updatedAt         DateTime @updatedAt
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+}
+
+model ClinicalNote {
+  id            String @id @default(cuid())
+  appointmentId String @unique
+  doctorId      String
+  patientId     String
+
+  subjective String? @db.Text
+  objective  String? @db.Text
+  assessment String? @db.Text
+  plan       String? @db.Text
+
+  privateNotes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  appointment   Appointment    @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  doctor        User           @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  patient       Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  prescriptions Prescription[]
+}
+
+model Prescription {
+  id             String  @id @default(cuid())
+  clinicalNoteId String
+  medication     String
+  dosage         String
+  frequency      String
+  duration       String
+  instructions   String?
+
+  clinicalNote ClinicalNote @relation(fields: [clinicalNoteId], references: [id], onDelete: Cascade)
+}
+
+enum UserRole {
+  DOCTOR
+  ADMIN
+  PATIENT
+}
+
+enum AppointmentType {
+  NORMAL
+  EXTENDED
+}
+
+enum AppointmentSource {
+  PATIENT
+  DOCTOR
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  RESCHEDULED
+  COMPLETED
+}
+
+enum NotificationChannel {
+  WHATSAPP
+  SMS
+  EMAIL
+}
+
+enum NotificationType {
+  CONFIRMATION
+  REMINDER
+  QUESTIONNAIRE_INVITATION
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum ScheduleBlockType {
+  BLOCKED
+  PRIVATE_RESERVED
+}
+
+enum AuditActorType {
+  DOCTOR
+  PATIENT
+  SYSTEM
+  BOT
+}
+
+enum AuditSource {
+  ADMIN_PANEL
+  PUBLIC_BOOKING
+  PATIENT_PORTAL
+  WHATSAPP_BOT
+  AUTOMATION
+  SYSTEM
+}
+
+enum AuditAction {
+  APPOINTMENT_CREATED
+  APPOINTMENT_STATUS_CHANGED
+  APPOINTMENT_RESCHEDULED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_MARKED_OVERDUE
+  APPOINTMENT_REMINDER_ESCALATED
+  APPOINTMENT_AUTO_CLOSED_NO_SHOW
+  PATIENT_ASSIGNED_TO_APPOINTMENT
+  PATIENT_CREATED_FROM_APPOINTMENT
+}
+
+enum WhatsAppMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum WhatsAppIntent {
+  CONFIRM
+  CANCEL
+  GREETING
+  QUESTION
+  UNKNOWN
+}
+
+enum WhatsAppMessageAction {
+  AUTO_REPLY
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_CANCELLED
+  ALREADY_CONFIRMED
+  ALREADY_CANCELLED
+  NO_APPOINTMENT
+  NO_CHANGE
+  NOTIFICATION_SENT
+}
+
+model AIInsight {
+  id            String   @id @default(cuid())
+  appointmentId String   @unique
+  doctorId      String
+  
+  diagnoses     Json?    // Array of { diagnosis, reasoning }
+  treatments    Json?    // Array of { treatment, instructions }
+  allowedFoods  Json?    // Array of strings
+  forbiddenFoods Json?   // Array of strings
+  
+  medicationContext String? @db.Text
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+}

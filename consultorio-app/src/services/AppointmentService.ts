@@ -1,0 +1,299 @@
+import prisma from '../lib/prisma'
+import { Prisma } from '@prisma/client'
+type AppointmentType = 'NORMAL' | 'EXTENDED'
+import { addMinutes } from 'date-fns'
+import { QuestionnaireService } from './QuestionnaireService'
+import { NotificationService } from './NotificationService'
+import { AppointmentAuditService } from './AppointmentAuditService'
+import { getServerEnv } from '@/lib/env'
+import { buildSlotHoldReason, getSlotHoldActiveCutoff, SLOT_HOLD_REASON_PREFIX } from '@/lib/slotHold'
+
+type CreatePublicAppointmentInput = {
+  fullName: string
+  dateOfBirth: string
+  userId?: string
+  phone: string
+  email?: string
+  appointmentType: AppointmentType
+  startTime: string
+  doctorId: string
+  holdToken?: string
+}
+
+type CreatedAppointmentResult = {
+  appointmentId: string
+  status: string
+  questionnaire: {
+    recommended: true
+    optional: true
+    url: string
+  }
+}
+
+const MAX_SERIALIZABLE_RETRIES = 3
+const env = getServerEnv()
+
+export class AppointmentService {
+  private static isSlotAlignedWithBlock(
+    blockStart: Date,
+    slotStart: Date,
+    baseDurationMin: number
+  ): boolean {
+    const slotStepMs = baseDurationMin * 60_000
+    const deltaMs = slotStart.getTime() - blockStart.getTime()
+    return deltaMs >= 0 && deltaMs % slotStepMs === 0
+  }
+
+  private static isSerializableConflict(error: unknown): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2034'
+    )
+  }
+
+  static async createPublicAppointment(data: CreatePublicAppointmentInput): Promise<CreatedAppointmentResult> {
+    const config = await prisma.doctorConfig.findUnique({ where: { doctorId: data.doctorId } })
+    if (!config) throw new Error("Sistema no configurado para este médico")
+
+    if (data.appointmentType === 'EXTENDED' && !config.extendedConsultationEnabled) {
+      throw new Error('La consulta extendida no está habilitada para este médico.')
+    }
+
+    const doctorId = data.doctorId
+    const startTimeDate = new Date(data.startTime)
+    if (Number.isNaN(startTimeDate.getTime())) {
+      throw new Error('Fecha y hora de cita inválidas.')
+    }
+    if (startTimeDate < new Date()) {
+      throw new Error('No es posible agendar en horarios pasados.')
+    }
+
+    const dateOfBirth = new Date(data.dateOfBirth)
+    if (Number.isNaN(dateOfBirth.getTime())) {
+      throw new Error('Fecha de nacimiento inválida.')
+    }
+
+    const baseDuration = config.consultationDurationMin
+    if (baseDuration < 15 || baseDuration > 120) {
+      throw new Error('Configuración de duración base inválida.')
+    }
+
+    const slotDuration = data.appointmentType === 'EXTENDED' ? baseDuration * 2 : baseDuration
+    const endTimeDate = addMinutes(startTimeDate, slotDuration)
+    const startOfAptDay = new Date(startTimeDate)
+    startOfAptDay.setHours(0, 0, 0, 0)
+
+    let createdAppointmentId = ''
+    let createdAppointmentStatus = ''
+
+    for (let attempt = 1; attempt <= MAX_SERIALIZABLE_RETRIES; attempt += 1) {
+      try {
+        const appointment = await prisma.$transaction(
+          async (tx: Prisma.TransactionClient) => {
+            const publicBlocks = await tx.availabilityBlock.findMany({
+              where: {
+                doctorId,
+                isPublic: true,
+                active: true,
+                startTime: { lte: startTimeDate },
+                endTime: { gte: endTimeDate },
+              },
+              orderBy: { startTime: 'asc' },
+            })
+
+            const hasValidPublicSlot = publicBlocks.some((block) =>
+              this.isSlotAlignedWithBlock(block.startTime, startTimeDate, baseDuration)
+            )
+
+            if (!hasValidPublicSlot) {
+              throw new Error('El horario seleccionado no pertenece a un bloque público válido.')
+            }
+
+            const activeHoldCutoff = getSlotHoldActiveCutoff()
+            const overlappingBlockers = await tx.scheduleBlock.count({
+              where: {
+                doctorId,
+                AND: [
+                  { startTime: { lt: endTimeDate } },
+                  { endTime: { gt: startTimeDate } },
+                ],
+                NOT: {
+                  AND: [
+                    { reason: { startsWith: SLOT_HOLD_REASON_PREFIX } },
+                    { createdAt: { lt: activeHoldCutoff } },
+                  ],
+                },
+              },
+            })
+
+            if (overlappingBlockers > 0) {
+              throw new Error('El horario seleccionado ha sido bloqueado recientemente.')
+            }
+
+            if (data.holdToken) {
+              const holdReason = buildSlotHoldReason(data.holdToken)
+              const hold = await tx.scheduleBlock.findFirst({
+                where: {
+                  doctorId,
+                  reason: holdReason,
+                  type: 'PRIVATE_RESERVED',
+                  createdAt: { gte: activeHoldCutoff },
+                  startTime: { lte: startTimeDate },
+                  endTime: { gte: endTimeDate },
+                },
+                select: { id: true },
+              })
+
+              if (!hold) {
+                throw new Error('El tiempo de reserva del horario expiró. Selecciona nuevamente el horario.')
+              }
+            }
+
+            const overlappingAppointments = await tx.appointment.count({
+              where: {
+                doctorId,
+                status: { notIn: ['CANCELLED'] },
+                AND: [
+                  { startTime: { lt: endTimeDate } },
+                  { endTime: { gt: startTimeDate } },
+                ],
+              },
+            })
+
+            if (overlappingAppointments > 0) {
+              throw new Error('El horario seleccionado ya no está disponible.')
+            }
+
+            let patient = null
+
+            if (data.userId) {
+              patient = await tx.patient.findFirst({
+                where: {
+                  userId: data.userId,
+                  ownerDoctorId: null,
+                  appointments: {
+                    some: { doctorId },
+                  },
+                },
+              })
+            }
+
+            if (!patient) {
+              patient = await tx.patient.findFirst({
+                where: {
+                  fullName: data.fullName,
+                  phone: data.phone,
+                  ownerDoctorId: null,
+                  appointments: {
+                    some: { doctorId },
+                  },
+                },
+              })
+            }
+
+            if (!patient) {
+              patient = await tx.patient.create({
+                data: {
+                  userId: data.userId,
+                  fullName: data.fullName.trim(),
+                  dateOfBirth,
+                  phone: data.phone.trim(),
+                  email: data.email?.trim().toLowerCase() || undefined,
+                },
+              })
+            } else if (data.userId && !patient.userId) {
+              patient = await tx.patient.update({
+                where: { id: patient.id },
+                data: { userId: data.userId },
+              })
+            }
+
+            const appointment = await tx.appointment.create({
+              data: {
+                doctorId,
+                patientId: patient.id,
+                date: startOfAptDay,
+                startTime: startTimeDate,
+                endTime: endTimeDate,
+                appointmentType: data.appointmentType,
+                durationMin: slotDuration,
+                source: 'PATIENT',
+                status: 'PENDING',
+              },
+            })
+
+            await AppointmentAuditService.safeLog(
+              {
+                doctorId,
+                appointmentId: appointment.id,
+                patientId: patient.id,
+                actorType: data.userId ? 'PATIENT' : 'SYSTEM',
+                actorUserId: data.userId ?? null,
+                source: 'PUBLIC_BOOKING',
+                action: 'APPOINTMENT_CREATED',
+                fromStatus: null,
+                toStatus: 'PENDING',
+                metadata: {
+                  appointmentType: data.appointmentType,
+                  source: 'PATIENT',
+                  holdTokenUsed: Boolean(data.holdToken),
+                },
+              },
+              tx
+            )
+
+            if (data.holdToken) {
+              await tx.scheduleBlock.deleteMany({
+                where: {
+                  doctorId,
+                  reason: buildSlotHoldReason(data.holdToken),
+                  type: 'PRIVATE_RESERVED',
+                },
+              })
+            }
+
+            return appointment
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+        )
+
+        createdAppointmentId = appointment.id
+        createdAppointmentStatus = appointment.status
+        break
+      } catch (error: unknown) {
+        const shouldRetry = this.isSerializableConflict(error) && attempt < MAX_SERIALIZABLE_RETRIES
+        if (shouldRetry) {
+          continue
+        }
+        throw error
+      }
+    }
+
+    if (!createdAppointmentId) {
+      throw new Error('No fue posible crear la cita en este momento.')
+    }
+
+    const token = await QuestionnaireService.generateToken(createdAppointmentId)
+    const tokenUrl = `${env.APP_BASE_URL}/cuestionario/${token}`
+
+    await NotificationService.enqueueConfirmation(createdAppointmentId)
+    await NotificationService.enqueueQuestionnaireInvitation(createdAppointmentId, tokenUrl)
+
+    NotificationService.processPendingQueue({
+      appointmentId: createdAppointmentId,
+      limit: 10,
+    }).catch((error) => {
+      console.error('[AppointmentService] Error procesando cola de notificaciones', error)
+    })
+
+    return {
+      appointmentId: createdAppointmentId,
+      status: createdAppointmentStatus,
+      questionnaire: {
+        recommended: true,
+        optional: true,
+        url: tokenUrl,
+      },
+    }
+  }
+}
