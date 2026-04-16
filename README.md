@@ -17,6 +17,22 @@ Sistema MiDoc/
 ```
 
 ## Desarrollo local
+### Opcion rapida (recomendada en equipo nuevo)
+```powershell
+.\setup.ps1
+```
+
+Con eso:
+- Crea `.env` desde `.env.example` en ambos servicios (si no existen).
+- Instala dependencias.
+- Ejecuta `prisma generate` y `prisma db push` en `consultorio-app`.
+
+Para abrir ambos servicios automaticamente al terminar:
+```powershell
+.\setup.ps1 -Run
+```
+
+### Opcion manual
 1. Configurar variables:
 - `consultorio-app/.env` (a partir de `consultorio-app/.env.example`)
 - `whatsapp-bot/.env` (a partir de `whatsapp-bot/.env.example`)
