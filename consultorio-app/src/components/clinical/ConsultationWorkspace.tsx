@@ -1,12 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Wand2, Save } from "lucide-react";
+import { Wand2 } from "lucide-react";
 import { Button } from "@/components/Button";
 import { Card, CardContent } from "@/components/Card";
 import { PatientClinicalAlerts } from "./PatientClinicalAlerts";
-import { EncounterHistoryForm } from "./EncounterHistoryForm";
 import { CompletionMeter } from "./CompletionMeter";
 import { SectionAccordion } from "./SectionAccordion";
 import {
@@ -14,6 +13,25 @@ import {
   type ConsultationMode,
 } from "./ConsultationModeSelector";
 import { AiConsentModal } from "./AiConsentModal";
+import {
+  ChiefComplaintSection,
+  PresentIllnessSection,
+  PertinentNegativesSection,
+  ReviewOfSystemsSection,
+  VitalsSection,
+  PhysicalExamSection,
+  AssessmentSection,
+  DiagnosticPlanSection,
+  TreatmentPlanSection,
+  FollowUpSection,
+  ENCOUNTER_SECTION_TITLES,
+  type SectionProps,
+} from "./EncounterSections";
+import {
+  calculateEncounterCompletionPct,
+  calculateSectionCompletions,
+  type EncounterSectionKey,
+} from "@/lib/clinicalFormat";
 import type { EncounterHistoryPayload } from "@/lib/encounterHistorySchema";
 
 type ConsentState = "PENDING" | "GRANTED" | "DENIED";
@@ -40,14 +58,36 @@ type Props = { appointmentId: string };
 const MODE_KEY = (id: string) => `consulta:mode:${id}`;
 const CONSENT_KEY = (id: string) => `consulta:consent:${id}`;
 
+const SECTIONS: Array<{
+  key: EncounterSectionKey;
+  Component: (p: SectionProps) => React.ReactElement;
+}> = [
+  { key: "chiefComplaint", Component: ChiefComplaintSection },
+  { key: "presentIllness", Component: PresentIllnessSection },
+  { key: "pertinentNegatives", Component: PertinentNegativesSection },
+  { key: "reviewOfSystems", Component: ReviewOfSystemsSection },
+  { key: "vitals", Component: VitalsSection },
+  { key: "physicalExam", Component: PhysicalExamSection },
+  { key: "assessment", Component: AssessmentSection },
+  { key: "diagnosticPlan", Component: DiagnosticPlanSection },
+  { key: "treatmentPlan", Component: TreatmentPlanSection },
+  { key: "followUp", Component: FollowUpSection },
+];
+
+const AUTOSAVE_DELAY_MS = 2_500;
+
 export function ConsultationWorkspace({ appointmentId }: Props) {
   const [ctx, setCtx] = useState<ContextResponse | null>(null);
+  const [payload, setPayload] = useState<EncounterHistoryPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ConsultationMode>("MANUAL");
   const [consent, setConsent] = useState<ConsentState>("PENDING");
   const [consentOpen, setConsentOpen] = useState(false);
   const [prefilling, setPrefilling] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const savedOnceRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const storedMode = localStorage.getItem(MODE_KEY(appointmentId));
@@ -68,7 +108,10 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
         { credentials: "include" },
       );
       if (!res.ok) throw new Error((await res.json()).error ?? "Error al cargar");
-      setCtx(await res.json());
+      const body = (await res.json()) as ContextResponse;
+      setCtx(body);
+      setPayload(body.encounter.payload);
+      savedOnceRef.current = false;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
@@ -79,6 +122,55 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
   useEffect(() => {
     load();
   }, [load]);
+
+  const savePayload = useCallback(
+    async (next: EncounterHistoryPayload) => {
+      setSaveState("saving");
+      const res = await fetch(
+        `/api/admin/appointments/${appointmentId}/encounter-history`,
+        {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(next),
+        },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setSaveState("error");
+        toast.error(body.error ?? "No se pudo guardar");
+        return;
+      }
+      setSaveState("saved");
+    },
+    [appointmentId],
+  );
+
+  useEffect(() => {
+    if (!payload) return;
+    if (!savedOnceRef.current) {
+      savedOnceRef.current = true;
+      return;
+    }
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setSaveState("idle");
+    timerRef.current = setTimeout(() => {
+      savePayload(payload);
+    }, AUTOSAVE_DELAY_MS);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [payload, savePayload]);
+
+  const update = useCallback(
+    <K extends keyof EncounterHistoryPayload>(
+      key: K,
+      value: EncounterHistoryPayload[K],
+    ) => {
+      setPayload((p) => (p ? { ...p, [key]: value } : p));
+    },
+    [],
+  );
 
   const handleModeChange = (next: ConsultationMode) => {
     if (next !== "MANUAL" && consent !== "GRANTED") {
@@ -100,25 +192,6 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     }
   };
 
-  const handleSaveEncounter = async (payload: EncounterHistoryPayload) => {
-    const res = await fetch(
-      `/api/admin/appointments/${appointmentId}/encounter-history`,
-      {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      },
-    );
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      toast.error(body.error ?? "No se pudo guardar");
-      return;
-    }
-    toast.success("Encuentro guardado");
-    await load();
-  };
-
   const handlePrefill = async () => {
     setPrefilling(true);
     try {
@@ -138,23 +211,24 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     }
   };
 
-  const completionPct = ctx?.encounter.completionPct ?? 0;
+  const completionPct = payload ? calculateEncounterCompletionPct(payload) : 0;
+  const sectionPcts = useMemo(
+    () => (payload ? calculateSectionCompletions(payload) : null),
+    [payload],
+  );
 
-  const modeBanner = useMemo(() => {
-    if (mode === "MANUAL") return null;
-    if (consent !== "GRANTED") return null;
-    return (
-      <Card>
-        <CardContent className="p-3 text-sm flex items-center gap-2">
-          <span>
-            {mode === "AI_DICTATION"
-              ? "Modo Dictado + IA activo — próximamente: grabar audio y generar nota."
-              : "Modo Híbrido activo — próximamente: completar lo faltante con IA por sección."}
-          </span>
-        </CardContent>
-      </Card>
-    );
-  }, [mode, consent]);
+  const saveLabel = useMemo(() => {
+    switch (saveState) {
+      case "saving":
+        return "Guardando...";
+      case "saved":
+        return "Guardado";
+      case "error":
+        return "Error al guardar";
+      default:
+        return "Cambios sin guardar";
+    }
+  }, [saveState]);
 
   return (
     <div className="space-y-4">
@@ -168,7 +242,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
       {loading && <p className="text-muted-foreground">Cargando consulta...</p>}
       {error && <p className="text-red-600">{error}</p>}
 
-      {ctx && (
+      {ctx && payload && (
         <>
           <Card>
             <CardContent className="p-4 space-y-3">
@@ -189,16 +263,30 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
             <CardContent className="p-4 space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-medium">Modo de captura</p>
-                {ctx.appointment.questionnaireAnswered && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={handlePrefill}
-                    loading={prefilling}
+                <div className="flex items-center gap-3">
+                  <span
+                    className={[
+                      "text-xs",
+                      saveState === "error"
+                        ? "text-red-600"
+                        : saveState === "saved"
+                          ? "text-emerald-600"
+                          : "text-muted-foreground",
+                    ].join(" ")}
                   >
-                    <Wand2 className="w-4 h-4" /> Prefill desde cuestionario
-                  </Button>
-                )}
+                    {saveLabel}
+                  </span>
+                  {ctx.appointment.questionnaireAnswered && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handlePrefill}
+                      loading={prefilling}
+                    >
+                      <Wand2 className="w-4 h-4" /> Prefill
+                    </Button>
+                  )}
+                </div>
               </div>
               <ConsultationModeSelector
                 value={mode}
@@ -208,8 +296,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
               {!ctx.capabilities.aiAvailable && (
                 <p className="text-xs text-muted-foreground">
                   Los modos con IA no están disponibles en este plan o entorno.
-                  Puedes trabajar con el modo Manual sin ninguna pérdida de
-                  funcionalidad clínica.
+                  El modo Manual cubre toda la funcionalidad clínica.
                 </p>
               )}
               {consent === "DENIED" && (
@@ -220,29 +307,37 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
             </CardContent>
           </Card>
 
-          {modeBanner}
-
-          <SectionAccordion
-            title="Encuentro clínico"
-            defaultOpen
-            badge={
-              <span className="text-xs text-muted-foreground">
-                {completionPct}% completo
-              </span>
-            }
-          >
-            <EncounterHistoryForm
-              initial={ctx.encounter.payload}
-              completionPct={completionPct}
-              onSave={handleSaveEncounter}
-            />
-          </SectionAccordion>
+          {SECTIONS.map(({ key, Component }, idx) => {
+            const pct = sectionPcts?.[key] ?? 0;
+            return (
+              <SectionAccordion
+                key={key}
+                title={ENCOUNTER_SECTION_TITLES[key]}
+                defaultOpen={idx < 2}
+                badge={
+                  <span
+                    className={[
+                      "text-xs rounded-full px-2 py-0.5",
+                      pct >= 100
+                        ? "bg-emerald-100 text-emerald-700"
+                        : pct > 0
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-secondary/50 text-muted-foreground",
+                    ].join(" ")}
+                  >
+                    {pct}%
+                  </span>
+                }
+              >
+                <Component payload={payload} update={update} />
+              </SectionAccordion>
+            );
+          })}
 
           <SectionAccordion title="Nota SOAP y receta">
             <p className="text-sm text-muted-foreground">
-              La nota SOAP y la receta siguen gestionándose en la pantalla de
-              consulta clásica. En la siguiente iteración se integrarán aquí como
-              secciones colapsables con autoguardado y firma.
+              La nota SOAP y la receta siguen gestionándose en la pantalla
+              clásica. Próxima iteración: integración nativa aquí.
             </p>
             <div className="mt-3">
               <a
@@ -255,8 +350,12 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
           </SectionAccordion>
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="tertiary">
-              <Save className="w-4 h-4" /> Guardar borrador
+            <Button
+              onClick={() => payload && savePayload(payload)}
+              loading={saveState === "saving"}
+              variant="secondary"
+            >
+              Guardar ahora
             </Button>
             <Button disabled title="Firma se añadirá con la nota SOAP integrada">
               Firmar y cerrar
