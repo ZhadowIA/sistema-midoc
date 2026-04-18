@@ -13,6 +13,7 @@ import { SoapSection } from "./SoapSection";
 import { PrescriptionsSection } from "./PrescriptionsSection";
 import { useClinicalNote } from "./useClinicalNote";
 import { DictationPanel } from "./DictationPanel";
+import { AiInsightsPanel } from "./AiInsightsPanel";
 import {
   ConsultationModeSelector,
   type ConsultationMode,
@@ -431,6 +432,23 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
               />
             )}
           </SectionAccordion>
+
+          {ctx.capabilities.aiAvailable && consent === "GRANTED" && (
+            <SectionAccordion title="Sugerencias IA">
+              <AiInsightsPanel
+                appointmentId={appointmentId}
+                soap={{
+                  subjective: clinicalNote.note.subjective,
+                  objective: clinicalNote.note.objective,
+                  assessment: clinicalNote.note.assessment,
+                  plan: clinicalNote.note.plan,
+                }}
+                disabled={clinicalNote.isSigned}
+                onApplyDiagnosis={clinicalNote.appendToAssessment}
+                onApplyTreatment={clinicalNote.appendToPlan}
+              />
+            </SectionAccordion>
+          )}
 
           <SectionAccordion
             title="Receta"
