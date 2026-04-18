@@ -22,6 +22,10 @@ const serverEnvSchema = z.object({
   PAYMENTS_WEBHOOK_SECRET: z.string().min(8).optional(),
   TERMS_VERSION: z.string().min(1).default("v1"),
   PRIVACY_VERSION: z.string().min(1).default("v1"),
+  CLINICAL_HISTORY_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 type ServerEnv = z.infer<typeof serverEnvSchema>;
