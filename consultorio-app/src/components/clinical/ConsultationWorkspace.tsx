@@ -8,6 +8,9 @@ import { Card, CardContent } from "@/components/Card";
 import { PatientClinicalAlerts } from "./PatientClinicalAlerts";
 import { CompletionMeter } from "./CompletionMeter";
 import { SectionAccordion } from "./SectionAccordion";
+import { SoapSection } from "./SoapSection";
+import { PrescriptionsSection } from "./PrescriptionsSection";
+import { useClinicalNote } from "./useClinicalNote";
 import {
   ConsultationModeSelector,
   type ConsultationMode,
@@ -93,6 +96,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const savedOnceRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clinicalNote = useClinicalNote(appointmentId);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -349,19 +353,51 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
             );
           })}
 
-          <SectionAccordion title="Nota SOAP y receta">
-            <p className="text-sm text-muted-foreground">
-              La nota SOAP y la receta siguen gestionándose en la pantalla
-              clásica. Próxima iteración: integración nativa aquí.
-            </p>
-            <div className="mt-3">
-              <a
-                href={`/medico/citas/${appointmentId}`}
-                className="text-sm text-primary underline"
+          <SectionAccordion
+            title="Nota SOAP"
+            badge={
+              <span
+                className={[
+                  "text-xs rounded-full px-2 py-0.5",
+                  clinicalNote.soapCompletion >= 100
+                    ? "bg-emerald-100 text-emerald-700"
+                    : clinicalNote.soapCompletion > 0
+                      ? "bg-amber-100 text-amber-700"
+                      : "bg-secondary/50 text-muted-foreground",
+                ].join(" ")}
               >
-                Ir a la cita (nota SOAP y receta) →
-              </a>
-            </div>
+                {clinicalNote.soapCompletion}%
+              </span>
+            }
+          >
+            {!clinicalNote.loaded ? (
+              <p className="text-sm text-muted-foreground">Cargando nota...</p>
+            ) : (
+              <SoapSection
+                note={clinicalNote.note}
+                update={clinicalNote.update}
+              />
+            )}
+          </SectionAccordion>
+
+          <SectionAccordion
+            title="Receta"
+            badge={
+              <span className="text-xs rounded-full px-2 py-0.5 bg-secondary/50 text-muted-foreground">
+                {clinicalNote.note.prescriptions.length}
+              </span>
+            }
+          >
+            {!clinicalNote.loaded ? (
+              <p className="text-sm text-muted-foreground">Cargando receta...</p>
+            ) : (
+              <PrescriptionsSection
+                prescriptions={clinicalNote.note.prescriptions}
+                onAdd={clinicalNote.addPrescription}
+                onUpdate={clinicalNote.updatePrescription}
+                onRemove={clinicalNote.removePrescription}
+              />
+            )}
           </SectionAccordion>
 
           <div className="flex justify-end gap-2 pt-2">
