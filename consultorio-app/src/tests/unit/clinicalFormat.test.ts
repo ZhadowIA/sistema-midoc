@@ -82,6 +82,65 @@ export async function runClinicalFormatUnitTests() {
       },
     },
     {
+      name: 'hasMinimumForSignoff acepta diagnosticPlan sin treatmentPlan',
+      run: () => {
+        const p = buildEmptyEncounterHistory()
+        p.chiefComplaint = 'dolor abdominal'
+        p.presentIllness = { summary: '2 semanas' }
+        p.vitals = { ta: '110/70' }
+        p.physicalExam = { abdomen: 'blando' }
+        p.assessment = [{ diagnosis: 'dispepsia funcional' }]
+        p.diagnosticPlan = { laboratorios: 'BH, QS' }
+        const r = hasMinimumForSignoff(p)
+        assert.equal(r.ok, true, 'diagnosticPlan solo debe bastar como plan')
+      },
+    },
+    {
+      name: 'hasMinimumForSignoff solo reporta plan cuando faltan ambos planes',
+      run: () => {
+        const p = buildEmptyEncounterHistory()
+        p.chiefComplaint = 'tos'
+        p.presentIllness = { summary: '3 días' }
+        p.vitals = { fc: '80' }
+        p.physicalExam = { torax: 'sin estertores' }
+        p.assessment = [{ diagnosis: 'IVR viral' }]
+        const r = hasMinimumForSignoff(p)
+        assert.equal(r.ok, false)
+        assert.deepEqual(r.missing, ['plan'])
+      },
+    },
+    {
+      name: 'hasMinimumForSignoff trata chiefComplaint con solo espacios como vacío',
+      run: () => {
+        const p = buildEmptyEncounterHistory()
+        p.chiefComplaint = '   '
+        p.presentIllness = { summary: 'x' }
+        p.vitals = { ta: '120/80' }
+        p.physicalExam = { general: 'ok' }
+        p.assessment = [{ diagnosis: 'x' }]
+        p.treatmentPlan = { farmacologico: 'x' }
+        const r = hasMinimumForSignoff(p)
+        assert.ok(
+          r.missing.includes('motivo de consulta'),
+          'chiefComplaint en blanco debe contar como faltante',
+        )
+      },
+    },
+    {
+      name: 'hasMinimumForSignoff reporta assessment vacío aunque haya plan',
+      run: () => {
+        const p = buildEmptyEncounterHistory()
+        p.chiefComplaint = 'fiebre'
+        p.presentIllness = { summary: '1 día' }
+        p.vitals = { ta: '120/80' }
+        p.physicalExam = { general: 'decaído' }
+        p.treatmentPlan = { farmacologico: 'paracetamol' }
+        const r = hasMinimumForSignoff(p)
+        assert.equal(r.ok, false)
+        assert.ok(r.missing.includes('impresión diagnóstica'))
+      },
+    },
+    {
       name: 'migrateFromMedicalRecord maps legacy fields and recomputes completion',
       run: () => {
         const p = migrateFromMedicalRecord({
