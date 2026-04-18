@@ -1,9 +1,11 @@
 import { runDateTimeUnitTests } from './unit/dateTime.test.ts'
 import { runRateLimitUnitTests } from './unit/rateLimit.test.ts'
+import { runClinicalFormatUnitTests } from './unit/clinicalFormat.test.ts'
 
 async function main() {
   await runDateTimeUnitTests()
   await runRateLimitUnitTests()
+  await runClinicalFormatUnitTests()
   console.log('\nUnit tests completed successfully.')
 }
 
