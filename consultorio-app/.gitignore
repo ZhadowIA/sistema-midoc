@@ -40,3 +40,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local scratch / agent config / migration backups
+/scratch/
+/.claude/
+/prisma/migrations_backup/
