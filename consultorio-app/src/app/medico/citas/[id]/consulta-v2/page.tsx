@@ -24,7 +24,7 @@ export default async function ConsultaV2Page(
             href={`/medico/citas/${id}`}
             className="text-sm inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
           >
-            <ArrowLeft className="w-4 h-4" /> Volver a la cita clásica
+            <ArrowLeft className="w-4 h-4" /> Volver al detalle de la cita
           </Link>
           <span className="text-xs uppercase tracking-wide text-muted-foreground">
             Modo consulta (beta)
