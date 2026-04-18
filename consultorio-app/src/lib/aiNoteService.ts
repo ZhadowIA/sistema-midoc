@@ -370,7 +370,12 @@ export async function transcribeAudio(params: {
 
 export async function generateSOAPFromTranscript(
   transcript: string,
-  identifiers?: IdentifierContext
+  identifiers?: IdentifierContext,
+  clinicalContext?: {
+    clinicalHistory?: unknown
+    encounterHistory?: unknown
+    questionnaire?: unknown
+  }
 ): Promise<AIStructuredSOAP> {
   const openai = getOpenAIClient()
   const normalizedTranscript = truncateText(
@@ -380,6 +385,16 @@ export async function generateSOAPFromTranscript(
   if (!normalizedTranscript) {
     throw new Error('La transcripción está vacía.')
   }
+
+  const safeContext = clinicalContext
+    ? pseudonymizeStructuredData(clinicalContext, identifiers)
+    : null
+  const contextBlock = safeContext
+    ? `\n\nContexto clínico estructurado (no inventes datos fuera de esto ni del audio):\n${serializeContextForPrompt(
+        safeContext,
+        INSIGHTS_CONTEXT_MAX_CHARS
+      )}`
+    : ''
 
   const response = await runOpenAIRequest('generación de nota SOAP', () =>
     openai.chat.completions.create({
@@ -392,11 +407,12 @@ export async function generateSOAPFromTranscript(
             'Eres un asistente clínico. Resume exclusivamente en formato SOAP. ' +
             'Respuesta estricta JSON con llaves: subjective, objective, assessment, plan. ' +
             'Si falta información en un campo usa: "No se menciona en la consulta". ' +
+            'Usa el contexto clínico estructurado sólo como apoyo; la fuente primaria es el audio. ' +
             'No agregues texto fuera del JSON.',
         },
         {
           role: 'user',
-          content: `Transcripción clínica:\n${normalizedTranscript}`,
+          content: `Transcripción clínica:\n${normalizedTranscript}${contextBlock}`,
         },
       ],
       response_format: { type: 'json_object' },
