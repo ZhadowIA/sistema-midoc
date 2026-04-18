@@ -1405,7 +1405,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                             <div className="flex items-start gap-2">
                               <Input
                                 placeholder="Medicamento"
-                                value={p.medication}
+                                value={p.medication ?? ""}
                                 onChange={(e) => updateMedication(i, "medication", e.target.value)}
                                 className="bg-secondary/30 border-border/70"
                               />
@@ -1421,13 +1421,13 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                             <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
                               <Input
                                 placeholder="Dosis"
-                                value={p.dosage}
+                                value={p.dosage ?? ""}
                                 onChange={(e) => updateMedication(i, "dosage", e.target.value)}
                                 className="bg-secondary/30 border-border/70"
                               />
                               <Input
                                 placeholder="Frecuencia"
-                                value={p.frequency}
+                                value={p.frequency ?? ""}
                                 onChange={(e) => updateMedication(i, "frequency", e.target.value)}
                                 className="bg-secondary/30 border-border/70"
                               />
@@ -1435,13 +1435,13 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                             <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
                               <Input
                                 placeholder="Duración"
-                                value={p.duration}
+                                value={p.duration ?? ""}
                                 onChange={(e) => updateMedication(i, "duration", e.target.value)}
                                 className="bg-secondary/30 border-border/70"
                               />
                               <Input
                                 placeholder="Indicaciones"
-                                value={p.instructions}
+                                value={p.instructions ?? ""}
                                 onChange={(e) => updateMedication(i, "instructions", e.target.value)}
                                 className="bg-secondary/30 border-border/70"
                               />
