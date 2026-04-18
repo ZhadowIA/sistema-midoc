@@ -82,6 +82,7 @@ function BookingFlowContent() {
     phone: "",
     dateOfBirth: ""
   });
+  const [privacyConsentAccepted, setPrivacyConsentAccepted] = useState(false);
 
   const [timeSlots, setTimeSlots] = useState<Array<{ start: string; end: string; type: "normal" | "extended" }>>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -105,7 +106,14 @@ function BookingFlowContent() {
   const [authMode, setAuthMode] = useState<"guest"|"login"|"register">("guest");
   
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
-  const [registerForm, setRegisterForm] = useState({ name: "", email: "", password: "", confirmPassword: "" });
+  const [registerForm, setRegisterForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+    confirmPassword: "",
+    phone: "",
+    dateOfBirth: ""
+  });
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [patientUserId, setPatientUserId] = useState<string | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
@@ -137,7 +145,7 @@ function BookingFlowContent() {
     if (!hold) return;
 
     try {
-      await fetch("/api/public/availability/hold", {
+      await fetch("/api/agenda/public/availability/hold", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -178,7 +186,7 @@ function BookingFlowContent() {
     try {
       await releaseSlotHold(slotHoldRef.current);
 
-      const response = await fetch("/api/public/availability/hold", {
+      const response = await fetch("/api/agenda/public/availability/hold", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -230,16 +238,17 @@ function BookingFlowContent() {
 
   useEffect(() => {
     if (slugParam) {
-      fetch(`/api/public/doctors?slug=${slugParam}`)
+      fetch(`/api/agenda/public/doctors?slug=${slugParam}`)
         .then(res => res.json())
         .then(data => {
           if (data && !data.error) {
             setSelectedDoctorId(data.id);
+            setDoctors([data]);
           }
         })
         .finally(() => setLoadingDoctors(false));
     } else {
-      fetch("/api/public/doctors")
+      fetch("/api/agenda/public/doctors")
         .then(res => res.json())
         .then(data => {
           if (Array.isArray(data)) setDoctors(data);
@@ -353,7 +362,7 @@ function BookingFlowContent() {
       const hold = slotHoldRef.current;
       if (!hold) return;
 
-      fetch("/api/public/availability/hold", {
+      fetch("/api/agenda/public/availability/hold", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -396,7 +405,7 @@ function BookingFlowContent() {
       const end = format(addMonths(monthStart, 1), "yyyy-MM-dd");
       let active = true;
 
-      fetch(`/api/public/availability/month?startDate=${start}&endDate=${end}&type=${consultType}&doctorId=${selectedDoctorId}`)
+      fetch(`/api/agenda/public/availability/month?startDate=${start}&endDate=${end}&type=${consultType}&doctorId=${selectedDoctorId}`)
         .then(res => res.json())
         .then(data => {
           if (!active) return;
@@ -428,7 +437,7 @@ function BookingFlowContent() {
     if (selectedDate && selectedDoctorId && (currentStep === "time" || currentStep === "date")) {
       const dateStr = format(selectedDate, 'yyyy-MM-dd');
       setLoadingSlots(true);
-      fetch(`/api/public/availability?date=${dateStr}&type=${consultType}&doctorId=${selectedDoctorId}`)
+      fetch(`/api/agenda/public/availability?date=${dateStr}&type=${consultType}&doctorId=${selectedDoctorId}`)
         .then(res => res.json())
         .then(data => {
           const slots: Array<{ start: string; end: string; type: "normal" | "extended" }> = Array.isArray(data.slots)
@@ -472,26 +481,46 @@ function BookingFlowContent() {
     }
   };
 
+  const hasCompletePatientData = () => {
+    return Boolean(
+      formData.name &&
+      formData.phone &&
+      formData.dateOfBirth &&
+      (!requiresLinkedEmail || normalizedEmail)
+    );
+  };
+
   const handleNext = () => {
-    const stepOrder: Step[] = slugParam 
-      ? ["auth", "type", "date", "time", "info", "confirm"] 
+    const stepOrder: Step[] = slugParam
+      ? ["auth", "type", "date", "time", "info", "confirm"]
       : ["auth", "doctor", "type", "date", "time", "info", "confirm"];
     const nextIndex = stepOrder.indexOf(currentStep) + 1;
-    if (nextIndex < stepOrder.length) {
-      setCurrentStep(stepOrder[nextIndex]);
+    if (nextIndex >= stepOrder.length) return;
+
+    const nextStep = stepOrder[nextIndex];
+    if (nextStep === "info" && hasCompletePatientData()) {
+      setCurrentStep("confirm");
+      return;
     }
+    setCurrentStep(nextStep);
   };
 
   const handleBack = () => {
-    const stepOrder: Step[] = slugParam 
-      ? ["auth", "type", "date", "time", "info", "confirm"] 
+    const stepOrder: Step[] = slugParam
+      ? ["auth", "type", "date", "time", "info", "confirm"]
       : ["auth", "doctor", "type", "date", "time", "info", "confirm"];
     const prevIndex = stepOrder.indexOf(currentStep) - 1;
-    if (prevIndex >= 0) {
-      setCurrentStep(stepOrder[prevIndex]);
-    } else {
+    if (prevIndex < 0) {
       router.push("/");
+      return;
     }
+
+    const prevStep = stepOrder[prevIndex];
+    if (prevStep === "info" && hasCompletePatientData()) {
+      setCurrentStep("time");
+      return;
+    }
+    setCurrentStep(prevStep);
   };
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -508,7 +537,9 @@ function BookingFlowContent() {
         body: JSON.stringify({
           name: registerForm.name,
           email: registerForm.email,
-          password: registerForm.password
+          password: registerForm.password,
+          phone: registerForm.phone,
+          dateOfBirth: registerForm.dateOfBirth
         })
       });
       const data = await res.json();
@@ -558,6 +589,10 @@ function BookingFlowContent() {
   const handleConfirm = async () => {
     if (selectedDate && selectedTime) {
       setApiError("");
+      if (!privacyConsentAccepted) {
+        setApiError("Debes aceptar el aviso de privacidad para continuar.");
+        return;
+      }
       if (requiresLinkedEmail && !normalizedEmail) {
         setApiError("El correo es obligatorio cuando agendas con cuenta vinculada.");
         setCurrentStep("info");
@@ -580,7 +615,7 @@ function BookingFlowContent() {
       }
 
       try {
-        const res = await fetch('/api/public/appointments', {
+        const res = await fetch('/api/agenda/public/appointments', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
@@ -594,6 +629,7 @@ function BookingFlowContent() {
             startTime: selectedTime,
             doctorId: selectedDoctorId,
             holdToken: activeHold.token,
+            privacyConsentAccepted,
           })
         });
 
@@ -603,6 +639,26 @@ function BookingFlowContent() {
         slotHoldRef.current = null;
         setSlotHold(null);
         setHoldSecondsLeft(null);
+
+        try {
+          if (data.appointment) {
+            sessionStorage.setItem(
+              "mi-doc:last-booking",
+              JSON.stringify({
+                appointmentId: data.appointment.id,
+                startTime: data.appointment.startTime,
+                endTime: data.appointment.endTime,
+                appointmentType: data.appointment.appointmentType,
+                durationMin: data.appointment.durationMin,
+                doctor: data.appointment.doctor,
+                patientName: formData.name,
+                questionnaireUrl: data.questionnaire?.url ?? null,
+              })
+            );
+          }
+        } catch {
+          // ignore storage errors
+        }
 
         if (data.questionnaire && data.questionnaire.url) {
           const encoded = encodeURIComponent(data.questionnaire.url);
@@ -637,7 +693,8 @@ function BookingFlowContent() {
           formData.name &&
           formData.phone &&
           formData.dateOfBirth &&
-          (!requiresLinkedEmail || normalizedEmail)
+          (!requiresLinkedEmail || normalizedEmail) &&
+          privacyConsentAccepted
         );
       case "confirm": return true;
       default: return false;
@@ -657,31 +714,159 @@ function BookingFlowContent() {
         </div>
       </div>
 
-      <div className="bg-card border-b border-border px-4 py-6 overflow-x-auto whitespace-nowrap hide-scrollbar">
-        <div className="max-w-4xl mx-auto flex items-center justify-between min-w-[600px]">
-          {steps.filter(s => !(slugParam && s.id === 'doctor')).map((step, index, arr) => (
-            <div key={step.id} className="flex items-center flex-1">
-              <div className="flex flex-col items-center gap-2 flex-1">
-                <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
-                    steps.findIndex(s => s.id === currentStep) >= steps.findIndex(s => s.id === step.id)
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground delay-100"
-                  }`}
-                >
-                  <step.icon className="w-5 h-5" />
+      {(() => {
+        const visibleSteps = steps.filter(s => !(slugParam && s.id === 'doctor'));
+        const currentIndex = visibleSteps.findIndex(s => s.id === currentStep);
+        const currentMeta = visibleSteps[currentIndex];
+        const progressPct = Math.round(((currentIndex + 1) / visibleSteps.length) * 100);
+        const CurrentIcon = currentMeta?.icon;
+        return (
+          <div className="bg-card border-b border-border">
+            {/* Mobile: compact progress */}
+            <div className="md:hidden px-4 py-3 max-w-4xl mx-auto">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  {CurrentIcon && (
+                    <span className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center">
+                      <CurrentIcon className="w-4 h-4" />
+                    </span>
+                  )}
+                  <span>{currentMeta?.label}</span>
                 </div>
-                <span className={`text-xs font-medium ${steps.findIndex(s => s.id === currentStep) >= steps.findIndex(s => s.id === step.id)  ? "" : "text-muted-foreground"}`}>
-                  {step.label}
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  Paso {currentIndex + 1} de {visibleSteps.length}
                 </span>
               </div>
-              {index < arr.length - 1 && (
-                <div className={`h-0.5 flex-1 transition-all ${steps.findIndex(s => s.id === currentStep) > steps.findIndex(s => s.id === step.id) ? "bg-primary" : "bg-border"}`} />
-              )}
+              <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all duration-500 ease-out"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
             </div>
-          ))}
-        </div>
-      </div>
+
+            {/* Desktop: full stepper */}
+            <div className="hidden md:block px-6 py-6">
+              <div className="max-w-4xl mx-auto flex items-center justify-between">
+                {visibleSteps.map((step, index, arr) => {
+                  const stepIdx = steps.findIndex(s => s.id === step.id);
+                  const currentIdx = steps.findIndex(s => s.id === currentStep);
+                  const reached = currentIdx >= stepIdx;
+                  const passed = currentIdx > stepIdx;
+                  return (
+                    <div key={step.id} className="flex items-center flex-1">
+                      <div className="flex flex-col items-center gap-2 flex-1">
+                        <div
+                          className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                            reached ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          <step.icon className="w-5 h-5" />
+                        </div>
+                        <span className={`text-xs font-medium ${reached ? "" : "text-muted-foreground"}`}>
+                          {step.label}
+                        </span>
+                      </div>
+                      {index < arr.length - 1 && (
+                        <div className={`h-0.5 flex-1 transition-all ${passed ? "bg-primary" : "bg-border"}`} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Sticky hold timer */}
+      {slotHold && holdSecondsLeft !== null && holdSecondsLeft > 0 && (currentStep === "time" || currentStep === "info" || currentStep === "confirm") && (() => {
+        const HOLD_TOTAL_SECONDS = 300;
+        const pct = Math.max(0, Math.min(100, (holdSecondsLeft / HOLD_TOTAL_SECONDS) * 100));
+        const minutes = Math.floor(holdSecondsLeft / 60);
+        const seconds = holdSecondsLeft % 60;
+        const urgent = holdSecondsLeft <= 60;
+        return (
+          <div className={`sticky top-[64px] md:top-[116px] z-20 border-b transition-colors ${urgent ? "bg-destructive/10 border-destructive/30" : "bg-primary/10 border-primary/20"}`}>
+            <div className="max-w-4xl mx-auto px-4 py-2 flex items-center gap-3">
+              <Clock className={`w-4 h-4 flex-shrink-0 ${urgent ? "text-destructive" : "text-primary"}`} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs md:text-sm text-foreground truncate">
+                    Horario reservado temporalmente
+                  </span>
+                  <span className={`text-sm font-bold tabular-nums flex-shrink-0 ${urgent ? "text-destructive" : "text-primary"}`}>
+                    {minutes}:{seconds.toString().padStart(2, "0")}
+                  </span>
+                </div>
+                <div className="h-1 w-full rounded-full bg-muted overflow-hidden mt-1">
+                  <div
+                    className={`h-full transition-all duration-1000 ease-linear ${urgent ? "bg-destructive" : "bg-primary"}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Sticky selection summary */}
+      {(() => {
+        const selectedDoctor = selectedDoctorId ? doctors.find(d => d.id === selectedDoctorId) : null;
+        const hasAnySelection = Boolean(selectedDoctor || selectedDate || selectedTime);
+        const showSummary = hasAnySelection && currentStep !== "auth" && currentStep !== "doctor";
+        if (!showSummary) return null;
+
+        const chips: Array<{ key: string; label: string; value: string; step: Step }> = [];
+        if (selectedDoctor) {
+          chips.push({ key: "doctor", label: "Médico", value: selectedDoctor.name, step: "doctor" });
+        }
+        chips.push({
+          key: "type",
+          label: "Tipo",
+          value: consultType === "extended" ? "Primera vez" : "Consulta",
+          step: "type",
+        });
+        if (selectedDate) {
+          chips.push({
+            key: "date",
+            label: "Fecha",
+            value: format(selectedDate, "dd MMM", { locale: es }),
+            step: "date",
+          });
+        }
+        if (selectedTime) {
+          chips.push({
+            key: "time",
+            label: "Hora",
+            value: format(new Date(selectedTime), "HH:mm"),
+            step: "time",
+          });
+        }
+
+        return (
+          <div className="border-b border-border bg-background/80 backdrop-blur">
+            <div className="max-w-4xl mx-auto px-4 py-2.5 flex gap-2 overflow-x-auto hide-scrollbar">
+              {chips.map((chip) => (
+                <button
+                  key={chip.key}
+                  type="button"
+                  onClick={() => {
+                    if (slugParam && chip.step === "doctor") return;
+                    setCurrentStep(chip.step);
+                  }}
+                  disabled={slugParam !== null && chip.step === "doctor"}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-card border border-border text-xs hover:border-primary/40 hover:bg-primary/5 transition-colors flex-shrink-0 disabled:opacity-60 disabled:cursor-default"
+                >
+                  <span className="text-muted-foreground">{chip.label}:</span>
+                  <span className="font-medium text-foreground truncate max-w-[140px]">{chip.value}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="px-4 md:px-6 py-8 md:py-12">
         <div className={`mx-auto ${currentStep === "date" ? "max-w-5xl" : "max-w-3xl"}`}>
@@ -743,6 +928,13 @@ function BookingFlowContent() {
                       >
                         Ver mi historial
                       </Button>
+                      <Button
+                        variant="tertiary"
+                        onClick={() => router.push("/paciente/cuenta")}
+                        className="w-full h-10 text-sm"
+                      >
+                        Mi cuenta
+                      </Button>
                     </div>
                   </div>
                 ) : authMode === "guest" ? (
@@ -790,6 +982,10 @@ function BookingFlowContent() {
                     <form onSubmit={handleRegister} className="space-y-4">
                       <Input label="Nombre completo" placeholder="Tu nombre" value={registerForm.name} onChange={e => setRegisterForm({...registerForm, name: e.target.value})} required/>
                       <Input label="Correo electrónico" type="email" placeholder="tu@email.com" value={registerForm.email} onChange={e => setRegisterForm({...registerForm, email: e.target.value})} required/>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Input label="Teléfono" type="tel" inputMode="numeric" placeholder="10 dígitos" value={registerForm.phone} onChange={e => setRegisterForm({...registerForm, phone: e.target.value})} required/>
+                        <Input label="Nacimiento" type="date" value={registerForm.dateOfBirth} onChange={e => setRegisterForm({...registerForm, dateOfBirth: e.target.value})} required/>
+                      </div>
                       <Input label="Contraseña" type="password" placeholder="Mínimo 6 caracteres" value={registerForm.password} onChange={e => setRegisterForm({...registerForm, password: e.target.value})} required/>
                       <Input label="Confirmar contraseña" type="password" placeholder="Repite tu contraseña" value={registerForm.confirmPassword} onChange={e => setRegisterForm({...registerForm, confirmPassword: e.target.value})} required/>
                       <Button fullWidth type="submit" className="h-12 mt-4">Crear cuenta y continuar</Button>
@@ -830,6 +1026,7 @@ function BookingFlowContent() {
                       >
                         <div className="w-16 h-16 rounded-full overflow-hidden bg-secondary flex-shrink-0">
                           {doc.profileImage ? (
+                            // eslint-disable-next-line @next/next/no-img-element
                             <img src={doc.profileImage} alt={doc.name} className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center bg-primary/10 text-primary font-bold">{doc.name.substring(0, 2).toUpperCase()}</div>
@@ -1013,15 +1210,7 @@ function BookingFlowContent() {
               <motion.div key="time" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
                 <h2 className="text-2xl font-semibold mb-2">Selecciona un horario</h2>
                 <p className="text-muted-foreground mb-8">Disponibilidad para: {selectedDate && format(selectedDate, "EEEE, dd 'de' MMMM yyyy", { locale: es })}</p>
-                {slotHold && selectedTime === slotHold.startTime && holdSecondsLeft !== null && (
-                  <div className="mb-6 p-3 rounded-xl border border-primary/30 bg-primary/10">
-                    <p className="text-sm text-foreground">
-                      Horario reservado temporalmente. Completa tu reserva en{" "}
-                      <span className="font-semibold text-primary">{Math.max(0, holdSecondsLeft)}s</span>.
-                    </p>
-                  </div>
-                )}
-                
+
                 {loadingSlots ? (
                   <div className="grid grid-cols-3 md:grid-cols-4 gap-3 animate-pulse">
                     {[1,2,3,4,5].map(i => <div key={i} className="h-12 bg-secondary rounded-xl"></div>)}
@@ -1095,6 +1284,18 @@ function BookingFlowContent() {
                       }
                     />
                   </div>
+                  <label className="sm:col-span-2 flex items-start gap-3 rounded-2xl border border-border bg-secondary/20 p-4">
+                    <input
+                      type="checkbox"
+                      checked={privacyConsentAccepted}
+                      onChange={(e) => setPrivacyConsentAccepted(e.target.checked)}
+                      className="mt-1 h-5 w-5 rounded border-border accent-primary"
+                    />
+                    <span className="text-sm text-foreground">
+                      Acepto el aviso de privacidad y autorizo el uso operativo de mis datos para agendar, confirmar la cita y
+                      poner el expediente a disposición del médico responsable.
+                    </span>
+                  </label>
                 </div>
               </motion.div>
             )}
@@ -1128,6 +1329,20 @@ function BookingFlowContent() {
                       </span>
                     </div>
                   </div>
+                  <div className="border-t border-border pt-4">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={privacyConsentAccepted}
+                        onChange={(e) => setPrivacyConsentAccepted(e.target.checked)}
+                        className="mt-0.5 h-5 w-5 rounded border-border accent-primary flex-shrink-0"
+                      />
+                      <span className="text-sm text-foreground leading-snug">
+                        Acepto el <a href="/privacidad" target="_blank" rel="noreferrer" className="text-primary underline">aviso de privacidad</a> y autorizo el uso operativo de mis datos para agendar,
+                        confirmar la cita y poner el expediente a disposición del médico responsable.
+                      </span>
+                    </label>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -1136,10 +1351,15 @@ function BookingFlowContent() {
           {/* GLOBAL NAVIGATION BUTTONS */}
           <div className="mt-12 flex gap-4">
             {currentStep !== "confirm" && currentStep !== "date" && currentStep !== "auth" && (
-              <Button size="lg" className="w-full" onClick={handleNext} disabled={!canProceed()}>Continuar</Button>
+              <Button size="lg" className="w-full min-h-[56px]" onClick={handleNext} disabled={!canProceed()}>Continuar</Button>
             )}
             {currentStep === "confirm" && (
-              <Button size="lg" className="w-full text-lg shadow-lg shadow-primary/20" onClick={handleConfirm}>
+              <Button
+                size="lg"
+                className="w-full min-h-[60px] text-lg shadow-lg shadow-primary/20"
+                onClick={handleConfirm}
+                disabled={!privacyConsentAccepted}
+              >
                 Confirmar Reserva
               </Button>
             )}
@@ -1169,3 +1389,4 @@ export default function BookingFlow() {
     </Suspense>
   )
 }
+

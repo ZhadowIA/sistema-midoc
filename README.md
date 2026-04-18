@@ -38,15 +38,15 @@ Para abrir ambos servicios automaticamente al terminar:
 - `whatsapp-bot/.env` (a partir de `whatsapp-bot/.env.example`)
 
 2. Instalar dependencias por servicio:
-```bash
-cd consultorio-app && npm install
-cd ../whatsapp-bot && npm install
+```powershell
+cd consultorio-app; npm install
+cd ../whatsapp-bot; npm install
 ```
 
 3. Ejecutar servicios:
-```bash
-cd consultorio-app && npm run dev
-cd ../whatsapp-bot && npm run dev
+```powershell
+cd consultorio-app; npm run dev
+cd ../whatsapp-bot; npm run dev
 ```
 
 ## Documentacion

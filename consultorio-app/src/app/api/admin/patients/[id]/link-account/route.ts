@@ -1,7 +1,7 @@
-import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { jsonNoStore } from '@/lib/http'
+import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 
 const linkAccountSchema = z.object({
   email: z.string().email('Correo inválido'),
@@ -11,13 +11,14 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   const params = await props.params
 
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     const body = await request.json()
     const parsed = linkAccountSchema.safeParse(body)
     if (!parsed.success) {
-      return NextResponse.json({ error: 'Payload inválido', details: parsed.error.issues }, { status: 400 })
+      return jsonNoStore({ error: 'Payload inválido', details: parsed.error.issues }, { status: 400 })
     }
 
     const email = parsed.data.email.trim().toLowerCase()
@@ -33,10 +34,10 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       },
     })
 
-    if (!patient) return NextResponse.json({ error: 'Paciente no encontrado' }, { status: 404 })
+    if (!patient) return jsonNoStore({ error: 'Paciente no encontrado' }, { status: 404 })
     const isOwnedByDoctor = patient.ownerDoctorId === doctorId || patient.appointments.length > 0
     if (!isOwnedByDoctor) {
-      return NextResponse.json({ error: 'No autorizado para modificar este paciente' }, { status: 403 })
+      return jsonNoStore({ error: 'No autorizado para modificar este paciente' }, { status: 403 })
     }
 
     const patientUser = await prisma.user.findUnique({
@@ -51,11 +52,11 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     })
 
     if (!patientUser || !patientUser.active || patientUser.role !== 'PATIENT') {
-      return NextResponse.json({ error: 'No existe una cuenta de paciente activa con ese correo' }, { status: 404 })
+      return jsonNoStore({ error: 'No existe una cuenta de paciente activa con ese correo' }, { status: 404 })
     }
 
     if (patient.userId && patient.userId !== patientUser.id) {
-      return NextResponse.json(
+      return jsonNoStore(
         { error: 'Este paciente ya está vinculado a otra cuenta. Desvincúlalo antes de cambiarlo.' },
         { status: 409 }
       )
@@ -78,7 +79,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     })
 
     if (alreadyLinkedForDoctor) {
-      return NextResponse.json(
+      return jsonNoStore(
         {
           error: 'Esta cuenta ya está vinculada a otro expediente de este médico.',
           existingPatientId: alreadyLinkedForDoctor.id,
@@ -97,7 +98,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       },
     })
 
-    return NextResponse.json({
+    return jsonNoStore({
       success: true,
       linkedAccount: {
         id: patientUser.id,
@@ -107,6 +108,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return jsonNoStore({ error: message }, { status: 500 })
   }
 }

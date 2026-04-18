@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { Client, LocalAuth } = require('whatsapp-web.js');
@@ -69,8 +70,12 @@ const initializeClient = (doctorId) => {
 
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: doctorId }),
+    webVersionCache: {
+      type: 'remote',
+      remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+    },
     puppeteer: {
-      headless: true,
+      headless: 'new',
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     }
   });
@@ -216,6 +221,14 @@ app.delete('/api/whatsapp/logout/:doctorId', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[OK] MiDoc WhatsApp Engine corriendo en http://localhost:${PORT}`);
+});
+
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`[X] El puerto ${PORT} ya está en uso. Cierra el proceso anterior y vuelve a intentar.`);
+    return;
+  }
+  console.error('[X] Error levantando servidor Express:', err);
 });

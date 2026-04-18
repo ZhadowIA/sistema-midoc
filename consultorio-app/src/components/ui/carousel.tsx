@@ -1,18 +1,23 @@
 "use client";
 
 import * as React from "react";
-import useEmblaCarousel, {
-  type UseEmblaCarouselType,
-} from "embla-carousel-react";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 
 import { cn } from "./utils";
 import { Button } from "./button";
 
-type CarouselApi = UseEmblaCarouselType[1];
-type UseCarouselParameters = Parameters<typeof useEmblaCarousel>;
-type CarouselOptions = UseCarouselParameters[0];
-type CarouselPlugin = UseCarouselParameters[1];
+type CarouselApi = {
+  scrollPrev: () => void;
+  scrollNext: () => void;
+  canScrollPrev: () => boolean;
+  canScrollNext: () => boolean;
+};
+
+type CarouselOptions = {
+  axis?: "x" | "y";
+};
+
+type CarouselPlugin = unknown[];
 
 type CarouselProps = {
   opts?: CarouselOptions;
@@ -22,8 +27,8 @@ type CarouselProps = {
 };
 
 type CarouselContextProps = {
-  carouselRef: ReturnType<typeof useEmblaCarousel>[0];
-  api: ReturnType<typeof useEmblaCarousel>[1];
+  carouselRef: React.RefObject<HTMLDivElement | null>;
+  api: CarouselApi | null;
   scrollPrev: () => void;
   scrollNext: () => void;
   canScrollPrev: boolean;
@@ -51,29 +56,60 @@ function Carousel({
   children,
   ...props
 }: React.ComponentProps<"div"> & CarouselProps) {
-  const [carouselRef, api] = useEmblaCarousel(
-    {
-      ...opts,
-      axis: orientation === "horizontal" ? "x" : "y",
-    },
-    plugins,
-  );
+  void plugins;
+  const carouselRef = React.useRef<HTMLDivElement>(null);
   const [canScrollPrev, setCanScrollPrev] = React.useState(false);
   const [canScrollNext, setCanScrollNext] = React.useState(false);
 
-  const onSelect = React.useCallback((api: CarouselApi) => {
-    if (!api) return;
-    setCanScrollPrev(api.canScrollPrev());
-    setCanScrollNext(api.canScrollNext());
-  }, []);
+  const updateScrollState = React.useCallback(() => {
+    const viewport = carouselRef.current;
+    if (!viewport) return;
+
+    const maxOffset =
+      orientation === "horizontal"
+        ? viewport.scrollWidth - viewport.clientWidth
+        : viewport.scrollHeight - viewport.clientHeight;
+    const currentOffset =
+      orientation === "horizontal" ? viewport.scrollLeft : viewport.scrollTop;
+
+    setCanScrollPrev(currentOffset > 0);
+    setCanScrollNext(currentOffset < maxOffset - 1);
+  }, [orientation]);
+
+  const scrollByViewport = React.useCallback(
+    (direction: 1 | -1) => {
+      const viewport = carouselRef.current;
+      if (!viewport) return;
+
+      const amount =
+        orientation === "horizontal" ? viewport.clientWidth : viewport.clientHeight;
+
+      viewport.scrollBy({
+        left: orientation === "horizontal" ? amount * direction : 0,
+        top: orientation === "vertical" ? amount * direction : 0,
+        behavior: "smooth",
+      });
+    },
+    [orientation],
+  );
 
   const scrollPrev = React.useCallback(() => {
-    api?.scrollPrev();
-  }, [api]);
+    scrollByViewport(-1);
+  }, [scrollByViewport]);
 
   const scrollNext = React.useCallback(() => {
-    api?.scrollNext();
-  }, [api]);
+    scrollByViewport(1);
+  }, [scrollByViewport]);
+
+  const api = React.useMemo<CarouselApi>(
+    () => ({
+      scrollPrev,
+      scrollNext,
+      canScrollPrev: () => canScrollPrev,
+      canScrollNext: () => canScrollNext,
+    }),
+    [canScrollNext, canScrollPrev, scrollNext, scrollPrev],
+  );
 
   const handleKeyDown = React.useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -89,26 +125,33 @@ function Carousel({
   );
 
   React.useEffect(() => {
-    if (!api || !setApi) return;
-    setApi(api);
-  }, [api, setApi]);
+    updateScrollState();
+  }, [updateScrollState]);
 
   React.useEffect(() => {
-    if (!api) return;
-    onSelect(api);
-    api.on("reInit", onSelect);
-    api.on("select", onSelect);
+    const viewport = carouselRef.current;
+    if (!viewport) return;
+
+    updateScrollState();
+    viewport.addEventListener("scroll", updateScrollState, { passive: true });
+    window.addEventListener("resize", updateScrollState);
 
     return () => {
-      api?.off("select", onSelect);
+      viewport.removeEventListener("scroll", updateScrollState);
+      window.removeEventListener("resize", updateScrollState);
     };
-  }, [api, onSelect]);
+  }, [updateScrollState]);
+
+  React.useEffect(() => {
+    if (!setApi) return;
+    setApi(api);
+  }, [api, setApi]);
 
   return (
     <CarouselContext.Provider
       value={{
         carouselRef,
-        api: api,
+        api,
         opts,
         orientation:
           orientation || (opts?.axis === "y" ? "vertical" : "horizontal"),
@@ -138,7 +181,10 @@ function CarouselContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       ref={carouselRef}
-      className="overflow-hidden"
+      className={cn(
+        "overflow-hidden scroll-smooth",
+        orientation === "horizontal" ? "overflow-x-auto" : "overflow-y-auto",
+      )}
       data-slot="carousel-content"
     >
       <div

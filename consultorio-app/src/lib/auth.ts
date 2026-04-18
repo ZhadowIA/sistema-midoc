@@ -4,13 +4,15 @@ import prisma from './prisma'
 import { getServerEnv } from './env'
 
 const secret = new TextEncoder().encode(getServerEnv().NEXTAUTH_SECRET)
-const doctorRoles = new Set(['DOCTOR', 'ADMIN'])
 
-export type AuthenticatedRole = 'DOCTOR' | 'ADMIN' | 'PATIENT'
+export type AuthenticatedRole = 'DOCTOR' | 'ADMIN' | 'PATIENT' | 'SECRETARY'
 
 export type AuthenticatedUser = {
   id: string
   role: AuthenticatedRole
+  bossId?: string | null
+  productPlan?: 'AGENDA' | 'CLINICAL_RECORDS' | 'COMBINED'
+  enabledModules?: Array<'AGENDA' | 'CLINICAL_RECORDS'>
 }
 
 export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> {
@@ -30,7 +32,7 @@ export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> 
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, role: true, active: true },
+      select: { id: true, role: true, active: true, bossId: true },
     })
 
     if (!user || !user.active) return null
@@ -40,6 +42,19 @@ export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> 
     return {
       id: user.id,
       role: user.role as AuthenticatedRole,
+      bossId: user.bossId,
+      productPlan:
+        payload.productPlan === 'AGENDA' ||
+        payload.productPlan === 'CLINICAL_RECORDS' ||
+        payload.productPlan === 'COMBINED'
+          ? payload.productPlan
+          : undefined,
+      enabledModules: Array.isArray(payload.enabledModules)
+        ? payload.enabledModules.filter(
+            (item): item is 'AGENDA' | 'CLINICAL_RECORDS' =>
+              item === 'AGENDA' || item === 'CLINICAL_RECORDS'
+          )
+        : undefined,
     }
   } catch {
     return null
@@ -47,11 +62,47 @@ export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> 
 }
 
 export async function getAuthenticatedDoctorId(): Promise<string | null> {
+  return getEffectiveDoctorId()
+}
+
+/**
+ * Returns the doctor ID for the current context.
+ * If the user is a DOCTOR, returns their ID.
+ * If the user is a SECRETARY, returns their bossId.
+ */
+export async function getEffectiveDoctorId(): Promise<string | null> {
   const user = await getAuthenticatedUser()
   if (!user) return null
-  if (!doctorRoles.has(user.role)) {
-    return null
+
+  if (user.role === 'DOCTOR' || user.role === 'ADMIN') {
+    return user.id
   }
 
-  return user.id
+  if (user.role === 'SECRETARY' && user.bossId) {
+    return user.bossId
+  }
+
+  return null
+}
+
+export async function getAuthenticatedMedicalContext(options?: { allowSecretary?: boolean }) {
+  const allowSecretary = options?.allowSecretary ?? false
+  const user = await getAuthenticatedUser()
+  if (!user) return null
+
+  if (user.role === 'DOCTOR' || user.role === 'ADMIN') {
+    return {
+      user,
+      doctorId: user.id,
+    }
+  }
+
+  if (allowSecretary && user.role === 'SECRETARY' && user.bossId) {
+    return {
+      user,
+      doctorId: user.bossId,
+    }
+  }
+
+  return null
 }

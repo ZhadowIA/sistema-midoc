@@ -1,12 +1,13 @@
-import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { jsonNoStore } from '@/lib/http'
+import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     const patient = await prisma.patient.findUnique({
       where: { id: params.id },
@@ -44,11 +45,11 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
       },
     })
 
-    if (!patient) return NextResponse.json({ error: 'Paciente no encontrado' }, { status: 404 })
+    if (!patient) return jsonNoStore({ error: 'Paciente no encontrado' }, { status: 404 })
 
     const isOwnedByDoctor = patient.ownerDoctorId === doctorId || patient.appointments.length > 0
     if (!isOwnedByDoctor) {
-      return NextResponse.json({ error: 'No autorizado para ver este paciente' }, { status: 403 })
+      return jsonNoStore({ error: 'No autorizado para ver este paciente' }, { status: 403 })
     }
 
     if (!patient.ownerDoctorId) {
@@ -111,7 +112,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
       questionnairesAnswered: timeline.filter((item) => item.questionnaireAnswered).length,
     }
 
-    return NextResponse.json({
+    return jsonNoStore({
       ...patient,
       linkedAccount: patient.user
         ? {
@@ -125,15 +126,16 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return jsonNoStore({ error: message }, { status: 500 })
   }
 }
 
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     const body = await request.json()
 
@@ -150,11 +152,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       },
     })
 
-    if (!patient) return NextResponse.json({ error: 'Paciente no encontrado' }, { status: 404 })
+    if (!patient) return jsonNoStore({ error: 'Paciente no encontrado' }, { status: 404 })
 
     const isOwnedByDoctor = patient.ownerDoctorId === doctorId || patient.appointments.length > 0
     if (!isOwnedByDoctor) {
-      return NextResponse.json({ error: 'No autorizado para modificar este paciente' }, { status: 403 })
+      return jsonNoStore({ error: 'No autorizado para modificar este paciente' }, { status: 403 })
     }
 
     if (!patient.ownerDoctorId) {
@@ -182,9 +184,9 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       },
     })
 
-    return NextResponse.json(record)
+    return jsonNoStore(record)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return jsonNoStore({ error: message }, { status: 500 })
   }
 }

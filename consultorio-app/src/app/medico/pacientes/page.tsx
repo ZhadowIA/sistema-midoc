@@ -57,7 +57,7 @@ export default function PatientsDirectoryPage() {
   });
 
   const loadPatients = async () => {
-    const res = await fetch("/api/admin/patients");
+    const res = await fetch("/api/clinical/admin/patients");
     const data = await res.json();
     if (Array.isArray(data)) setPatients(data);
   };
@@ -71,7 +71,7 @@ export default function PatientsDirectoryPage() {
   const handleCreatePatient = async () => {
     setCreating(true);
     try {
-      const res = await fetch("/api/admin/patients", {
+      const res = await fetch("/api/clinical/admin/patients", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(createForm),
@@ -230,3 +230,4 @@ export default function PatientsDirectoryPage() {
     </DoctorLayout>
   );
 }
+

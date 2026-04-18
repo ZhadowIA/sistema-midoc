@@ -38,7 +38,36 @@ export async function GET() {
       where: { doctorId }
     })
 
-    return NextResponse.json(config || {})
+    // --- SINCRONIZACIÓN EN TIEMPO REAL CON EL BOT ---
+    let liveConnected = config?.whatsappConnected || false
+    
+    try {
+      // Intentamos consultar al bot directamente
+      const botBaseUrl = process.env.WHATSAPP_API_URL?.replace('/send', '') || 'http://localhost:3001/api/whatsapp'
+      const botRes = await fetch(`${botBaseUrl}/status/${doctorId}`, { 
+        signal: AbortSignal.timeout(2000) // Timeout corto para no bloquear el dashboard
+      })
+      
+      if (botRes.ok) {
+        const botData = await botRes.json()
+        liveConnected = botData.status === 'connected'
+      } else {
+        liveConnected = false
+      }
+    } catch {
+      // Si el bot está apagado o inalcanzable, marcamos como desconectado
+      liveConnected = false
+    }
+
+    // Si el estado en la DB es diferente al real, actualizamos la DB en segundo plano
+    if (config && config.whatsappConnected !== liveConnected) {
+      await prisma.doctorConfig.update({
+        where: { id: config.id },
+        data: { whatsappConnected: liveConnected }
+      })
+    }
+
+    return NextResponse.json(config ? { ...config, whatsappConnected: liveConnected } : {})
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'
     return NextResponse.json({ error: message }, { status: 500 })

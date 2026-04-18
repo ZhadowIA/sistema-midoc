@@ -1,6 +1,7 @@
 import { SignJWT } from "jose";
 import type { NextResponse } from "next/server";
 import { getServerEnv } from "./env";
+import { SESSION_COOKIE_MAX_AGE_SECONDS } from "./sessionConfig";
 
 const env = getServerEnv();
 const secret = new TextEncoder().encode(env.NEXTAUTH_SECRET);
@@ -8,14 +9,18 @@ const secret = new TextEncoder().encode(env.NEXTAUTH_SECRET);
 export type SessionClaims = {
   sub: string;
   role: string;
+  bossId?: string | null;
   hasActiveSubscription?: boolean;
   onboardingCompleted?: boolean;
+  productPlan?: "AGENDA" | "CLINICAL_RECORDS" | "COMBINED";
+  enabledModules?: Array<"AGENDA" | "CLINICAL_RECORDS">;
 };
 
 export async function buildSessionToken(claims: SessionClaims): Promise<string> {
   return new SignJWT(claims)
     .setProtectedHeader({ alg: "HS256" })
-    .setExpirationTime("24h")
+    .setIssuedAt()
+    .setExpirationTime(`${SESSION_COOKIE_MAX_AGE_SECONDS}s`)
     .sign(secret);
 }
 
@@ -25,6 +30,6 @@ export function attachSessionCookie(response: NextResponse, token: string): void
     secure: env.NODE_ENV === "production",
     sameSite: "strict",
     path: "/",
-    maxAge: 60 * 60 * 24,
+    maxAge: SESSION_COOKIE_MAX_AGE_SECONDS,
   });
 }

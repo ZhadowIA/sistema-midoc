@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ArrowLeft, CalendarClock, CheckCircle2, LogOut, RefreshCcw, XCircle } from "lucide-react";
+import { ArrowLeft, CalendarClock, CheckCircle2, LogOut, RefreshCcw, Settings2, XCircle } from "lucide-react";
 import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
 import { Modal } from "@/components/Modal";
@@ -102,7 +102,7 @@ export default function PatientHistoryPage() {
     const type = selectedAppointment.appointmentType === "EXTENDED" ? "extended" : "normal";
     setLoadingRescheduleSlots(true);
     fetch(
-      `/api/public/availability?date=${rescheduleDate}&type=${type}&doctorId=${selectedAppointment.doctor.id}`
+      `/api/agenda/public/availability?date=${rescheduleDate}&type=${type}&doctorId=${selectedAppointment.doctor.id}`
     )
       .then((res) => res.json())
       .then((data) => {
@@ -159,10 +159,16 @@ export default function PatientHistoryPage() {
             Volver
           </button>
           <h1 className="font-semibold">Mi historial de citas</h1>
-          <Button size="sm" variant="secondary" onClick={handleLogout}>
-            <LogOut className="w-4 h-4 mr-2" />
-            Cerrar sesión
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="tertiary" onClick={() => router.push("/paciente/cuenta")}>
+              <Settings2 className="w-4 h-4 mr-2" />
+              Mi cuenta
+            </Button>
+            <Button size="sm" variant="secondary" onClick={handleLogout}>
+              <LogOut className="w-4 h-4 mr-2" />
+              Cerrar sesión
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -376,3 +382,4 @@ export default function PatientHistoryPage() {
     </div>
   );
 }
+

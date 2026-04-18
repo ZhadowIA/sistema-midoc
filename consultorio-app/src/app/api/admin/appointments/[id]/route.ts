@@ -1,63 +1,73 @@
-import { NextResponse } from 'next/server'
 import { addMinutes, format } from 'date-fns'
 import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
 import { getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
 import { AppointmentAuditService } from '@/services/AppointmentAuditService'
+import { jsonNoStore } from '@/lib/http'
+import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
+import { getRequestIp, getUserAgent } from '@/lib/requestContext'
 
 const ALLOWED_STATUS = new Set(['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED'])
 
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
-    const appointment = await prisma.appointment.findUnique({
+    const appointment = await prisma.appointment.findFirst({
       where: { id: params.id, doctorId },
       include: {
         patient: true,
         questionnaire: true,
         doctor: true,
+        consentCaptures: {
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        },
       },
     })
 
     if (!appointment) {
-      return NextResponse.json({ error: 'Cita no encontrada' }, { status: 404 })
+      return jsonNoStore({ error: 'Cita no encontrada' }, { status: 404 })
     }
 
-    return NextResponse.json(appointment)
+    return jsonNoStore(appointment)
   } catch (error: unknown) {
     if (error instanceof Prisma.PrismaClientValidationError) {
       const message = error.message.includes('ownerDoctorId')
         ? 'El servidor requiere reinicio para cargar cambios de base de datos. Detén y vuelve a iniciar la app.'
         : 'Datos inválidos para actualizar la cita.'
-      return NextResponse.json({ error: message }, { status: 400 })
+      return jsonNoStore({ error: message }, { status: 400 })
     }
 
     const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return jsonNoStore({ error: message }, { status: 500 })
   }
 }
 
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
+    const actorUserId = access.context.user.id
+    const ipAddress = getRequestIp(request)
+    const userAgent = getUserAgent(request)
 
     const body = await request.json()
 
-    const existing = await prisma.appointment.findUnique({
+    const existing = await prisma.appointment.findFirst({
       where: { id: params.id, doctorId },
       include: { patient: true },
     })
-    if (!existing) return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
+    if (!existing) return jsonNoStore({ error: 'No autorizado' }, { status: 403 })
 
     if (body.action === 'ASSIGN_PATIENT') {
       if (!body.patientId || typeof body.patientId !== 'string') {
-        return NextResponse.json({ error: 'Falta patientId' }, { status: 400 })
+        return jsonNoStore({ error: 'Falta patientId' }, { status: 400 })
       }
 
       const targetPatient = await prisma.patient.findFirst({
@@ -69,7 +79,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       })
 
       if (!targetPatient) {
-        return NextResponse.json(
+        return jsonNoStore(
           { error: 'No se encontró el paciente en tu directorio.' },
           { status: 404 }
         )
@@ -92,9 +102,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
             appointmentId: params.id,
             patientId: targetPatient.id,
             actorType: 'DOCTOR',
-            actorUserId: doctorId,
+            actorUserId,
             source: 'ADMIN_PANEL',
             action: 'PATIENT_ASSIGNED_TO_APPOINTMENT',
+            ipAddress,
+            userAgent,
             metadata: {
               previousPatientId: existing.patientId,
               nextPatientId: targetPatient.id,
@@ -114,10 +126,10 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       })
 
       if (!updated) {
-        return NextResponse.json({ error: 'No fue posible asignar la cita.' }, { status: 500 })
+        return jsonNoStore({ error: 'No fue posible asignar la cita.' }, { status: 500 })
       }
 
-      return NextResponse.json(updated)
+      return jsonNoStore(updated)
     }
 
     if (body.action === 'CREATE_AND_ASSIGN_PATIENT') {
@@ -170,9 +182,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
               appointmentId: params.id,
               patientId: targetPatient.id,
               actorType: 'DOCTOR',
-              actorUserId: doctorId,
+              actorUserId,
               source: 'ADMIN_PANEL',
               action: 'PATIENT_CREATED_FROM_APPOINTMENT',
+              ipAddress,
+              userAgent,
               metadata: {
                 fullName: normalizedFullName,
                 phone: normalizedPhone,
@@ -188,9 +202,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
             appointmentId: params.id,
             patientId: targetPatient.id,
             actorType: 'DOCTOR',
-            actorUserId: doctorId,
+            actorUserId,
             source: 'ADMIN_PANEL',
             action: 'PATIENT_ASSIGNED_TO_APPOINTMENT',
+            ipAddress,
+            userAgent,
             metadata: {
               previousPatientId: existing.patientId,
               nextPatientId: targetPatient.id,
@@ -211,27 +227,27 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       })
 
       if (!updated) {
-        return NextResponse.json({ error: 'No fue posible crear y vincular el paciente.' }, { status: 500 })
+        return jsonNoStore({ error: 'No fue posible crear y vincular el paciente.' }, { status: 500 })
       }
 
-      return NextResponse.json(updated)
+      return jsonNoStore(updated)
     }
 
     if (body.action === 'RESCHEDULE') {
       if (existing.status === 'CANCELLED' || existing.status === 'COMPLETED') {
-        return NextResponse.json(
+        return jsonNoStore(
           { error: 'INVALID_STATE', message: 'No se puede reagendar una cita cancelada o completada.' },
           { status: 409 }
         )
       }
 
       if (!body.newStartTime || typeof body.newStartTime !== 'string') {
-        return NextResponse.json({ error: 'Falta newStartTime' }, { status: 400 })
+        return jsonNoStore({ error: 'Falta newStartTime' }, { status: 400 })
       }
 
       const newStart = new Date(body.newStartTime)
       if (Number.isNaN(newStart.getTime())) {
-        return NextResponse.json({ error: 'Fecha/hora inválida' }, { status: 400 })
+        return jsonNoStore({ error: 'Fecha/hora inválida' }, { status: 400 })
       }
 
       const newEnd = addMinutes(newStart, existing.durationMin)
@@ -247,7 +263,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       })
 
       if (overlapAppointment) {
-        return NextResponse.json(
+        return jsonNoStore(
           { error: 'OVERLAP', message: 'Ya hay una cita agendada en este horario.' },
           { status: 409 }
         )
@@ -262,7 +278,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       })
 
       if (overlapBlock) {
-        return NextResponse.json(
+        return jsonNoStore(
           { error: 'BLOCKED', message: 'Ese horario está bloqueado en agenda.' },
           { status: 409 }
         )
@@ -292,9 +308,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         appointmentId: updated.id,
         patientId: updated.patientId,
         actorType: 'DOCTOR',
-        actorUserId: doctorId,
+        actorUserId,
         source: 'ADMIN_PANEL',
         action: 'APPOINTMENT_RESCHEDULED',
+        ipAddress,
+        userAgent,
         fromStatus: existing.status,
         toStatus: updated.status,
         metadata: {
@@ -323,12 +341,12 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         }
       }
 
-      return NextResponse.json(updated)
+      return jsonNoStore(updated)
     }
 
     const requestedStatus = typeof body.status === 'string' ? body.status : undefined
     if (requestedStatus && !ALLOWED_STATUS.has(requestedStatus)) {
-      return NextResponse.json(
+      return jsonNoStore(
         { error: 'Estado inválido. Usa acción RESCHEDULE para reagendar.' },
         { status: 400 }
       )
@@ -353,8 +371,10 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         appointmentId: updated.id,
         patientId: updated.patientId,
         actorType: 'DOCTOR',
-        actorUserId: doctorId,
+        actorUserId,
         source: 'ADMIN_PANEL',
+        ipAddress,
+        userAgent,
         action:
           updated.status === 'CANCELLED'
             ? 'APPOINTMENT_CANCELLED'
@@ -388,16 +408,16 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       }
     }
 
-    return NextResponse.json(updated)
+    return jsonNoStore(updated)
   } catch (error: unknown) {
     if (error instanceof Prisma.PrismaClientValidationError) {
       const message = error.message.includes('ownerDoctorId')
         ? 'El servidor requiere reinicio para cargar cambios de base de datos. Detén y vuelve a iniciar la app.'
         : 'Datos inválidos para actualizar la cita.'
-      return NextResponse.json({ error: message }, { status: 400 })
+      return jsonNoStore({ error: message }, { status: 400 })
     }
 
     const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return jsonNoStore({ error: message }, { status: 500 })
   }
 }

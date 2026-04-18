@@ -20,6 +20,8 @@ type LogAuditInput = {
   fromStatus?: AppointmentStatus | null
   toStatus?: AppointmentStatus | null
   metadata?: AuditMetadata
+  ipAddress?: string | null
+  userAgent?: string | null
 }
 
 function normalizeOptional(value: string | null | undefined) {
@@ -40,6 +42,8 @@ export class AppointmentAuditService {
         action: input.action,
         fromStatus: input.fromStatus ?? null,
         toStatus: input.toStatus ?? null,
+        ipAddress: normalizeOptional(input.ipAddress),
+        userAgent: normalizeOptional(input.userAgent),
         metadata:
           input.metadata === null
             ? Prisma.JsonNull

@@ -38,7 +38,7 @@ async function main() {
   })
 
   // 2. Create initial configuration
-  const doctorConfig = await prisma.doctorConfig.upsert({
+  await prisma.doctorConfig.upsert({
     where: { doctorId: doctor.id },
     update: {},
     create: {

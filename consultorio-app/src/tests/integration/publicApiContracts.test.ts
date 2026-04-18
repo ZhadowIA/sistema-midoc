@@ -66,6 +66,7 @@ export async function runPublicContractsIntegrationTests() {
           appointmentType: 'NORMAL',
           startTime: '2026-05-01T10:00:00.000-07:00',
           doctorId: validDoctorId,
+          privacyConsentAccepted: true,
         })
 
         assert.equal(payload.fullName, 'Ana López')
@@ -86,6 +87,7 @@ export async function runPublicContractsIntegrationTests() {
               appointmentType: 'EXTENDED',
               startTime: '2026-05-01T10:00:00.000-07:00',
               doctorId: validDoctorId,
+              privacyConsentAccepted: true,
             }),
           (error: unknown) =>
             error instanceof ContractValidationError &&

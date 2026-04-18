@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import { z } from 'zod'
+import { pseudonymizeClinicalText, pseudonymizeStructuredData } from './pseudonymization'
 
 const SOAP_TEXT_FALLBACK = 'No se menciona en la consulta'
 const TRANSCRIPT_MAX_CHARS = 20_000
@@ -59,6 +60,10 @@ const aiContextSchema = z.object({
 export type AIStructuredSOAP = z.infer<typeof soapSchema>
 export type AIInsights = z.infer<typeof insightsSchema>
 export type PrescriptionAlert = z.infer<typeof prescriptionAlertSchema>
+export type IdentifierContext = {
+  patientName?: string | null
+  doctorName?: string | null
+}
 
 const AUDIO_EXT_BY_MIME: Record<string, string> = {
   'audio/webm': 'webm',
@@ -363,9 +368,15 @@ export async function transcribeAudio(params: {
   return (transcription.text || '').trim()
 }
 
-export async function generateSOAPFromTranscript(transcript: string): Promise<AIStructuredSOAP> {
+export async function generateSOAPFromTranscript(
+  transcript: string,
+  identifiers?: IdentifierContext
+): Promise<AIStructuredSOAP> {
   const openai = getOpenAIClient()
-  const normalizedTranscript = truncateText(transcript.trim(), TRANSCRIPT_MAX_CHARS)
+  const normalizedTranscript = truncateText(
+    pseudonymizeClinicalText(transcript.trim(), identifiers),
+    TRANSCRIPT_MAX_CHARS
+  )
   if (!normalizedTranscript) {
     throw new Error('La transcripción está vacía.')
   }
@@ -400,9 +411,9 @@ export async function generateComprehensiveInsights(context: {
   soap?: Partial<AIStructuredSOAP>
   questionnaire?: unknown
   medicalRecord?: unknown
-}): Promise<AIInsights> {
+}, identifiers?: IdentifierContext): Promise<AIInsights> {
   const openai = getOpenAIClient()
-  const safeContext = aiContextSchema.parse(context)
+  const safeContext = aiContextSchema.parse(pseudonymizeStructuredData(context, identifiers))
 
   const response = await runOpenAIRequest('generación de insights clínicos', () =>
     openai.chat.completions.create({
@@ -433,9 +444,11 @@ export async function validatePrescription(params: {
   prescriptions: unknown[]
   medicalRecord: unknown
   questionnaire: unknown
-}): Promise<PrescriptionAlert[]> {
+}, identifiers?: IdentifierContext): Promise<PrescriptionAlert[]> {
   const openai = getOpenAIClient()
   const parsedPrescriptions = z.array(prescriptionInputSchema).max(50).parse(params.prescriptions)
+  const medicalRecord = pseudonymizeStructuredData(params.medicalRecord, identifiers)
+  const questionnaire = pseudonymizeStructuredData(params.questionnaire, identifiers)
 
   const llmResponse = await runOpenAIRequest('validación farmacológica', () =>
     openai.chat.completions.create({
@@ -452,8 +465,8 @@ export async function validatePrescription(params: {
           role: 'user',
           content:
             `Prescripciones: ${JSON.stringify(parsedPrescriptions)}\n` +
-            `Expediente: ${JSON.stringify(params.medicalRecord ?? {})}\n` +
-            `Cuestionario: ${JSON.stringify(params.questionnaire ?? {})}`,
+            `Expediente: ${JSON.stringify(medicalRecord ?? {})}\n` +
+            `Cuestionario: ${JSON.stringify(questionnaire ?? {})}`,
         },
       ],
       response_format: { type: 'json_object' },
@@ -464,9 +477,57 @@ export async function validatePrescription(params: {
   const llmAlerts = prescriptionAlertsResponseSchema.parse(raw).alerts
   const deterministicAlerts = deterministicPrescriptionAlerts({
     prescriptions: parsedPrescriptions,
-    medicalRecord: params.medicalRecord,
-    questionnaire: params.questionnaire,
+    medicalRecord,
+    questionnaire,
   })
 
   return dedupeAlerts([...deterministicAlerts, ...llmAlerts])
+}
+
+export async function generateQuestionnaireFollowUp(params: {
+  transcript: string
+  history: Array<{ role: 'user' | 'assistant'; content: string }>
+}): Promise<{ question?: string; isFinished: boolean; summary?: string }> {
+  const openai = getOpenAIClient()
+  const historyContext = params.history
+    .map((h) => `${h.role === 'user' ? 'Paciente' : 'IA'}: ${h.content}`)
+    .join('\n')
+
+  const response = await runOpenAIRequest('seguimiento de cuestionario', () =>
+    openai.chat.completions.create({
+      model: 'gpt-4o',
+      temperature: 0.3,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Eres un asistente médico recolectando síntomas de un paciente. ' +
+            'Tu objetivo es entender el motivo de consulta para ayudar al doctor. ' +
+            'REGLAS:\n' +
+            '1. Haz UNA sola pregunta clara y empática a la vez.\n' +
+            '2. Máximo 5 preguntas en total (considera el historial).\n' +
+            '3. Si ya tienes suficiente información clínica (motivo, duración, síntomas asociados), termina.\n' +
+            '4. Al terminar, devuelve un resumen estructurado útil para el médico.\n' +
+            '5. Formato de respuesta: JSON con llaves: question (string), isFinished (boolean), summary (string, solo si isFinished es true).',
+        },
+        {
+          role: 'user',
+          content: `Historial previo:\n${historyContext}\n\nNueva entrada del paciente: ${params.transcript}`,
+        },
+      ],
+      response_format: { type: 'json_object' },
+    })
+  )
+
+  const raw = extractResponseJsonText(response.choices?.[0]?.message?.content, 'questionnaireFollowUp') as {
+    question?: string
+    isFinished: boolean
+    summary?: string
+  }
+
+  return {
+    question: raw.question,
+    isFinished: Boolean(raw.isFinished),
+    summary: raw.summary,
+  }
 }

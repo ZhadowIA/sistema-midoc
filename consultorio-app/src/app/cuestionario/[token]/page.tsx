@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense, type FormEvent } from "react";
 import { use } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Send, CheckCircle2, Home, Activity, Thermometer,
-  Stethoscope, Droplets, Brain, HeartPulse, ChevronRight, ChevronLeft
+  Stethoscope, Droplets, Brain, HeartPulse, ChevronRight, ChevronLeft,
+  Mic, Square, Bot, Sparkles
 } from "lucide-react";
 import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
@@ -96,13 +97,25 @@ function QuestionnaireWizard({ token }: { token: string }) {
     setSecondarySymptom(value);
   };
   
-  // Paso 3
   const [conditions, setConditions] = useState<string[]>([]);
   const [meds, setMeds] = useState("");
   const [allergies, setAllergies] = useState("");
 
+  // --- ESTADOS DE ENTREVISTA IA ---
+  const [aiMode, setAiMode] = useState(false);
+  const [interviewHistory, setInterviewHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const [aiStep, setAiStep] = useState(0);
+  const [isAiProcessing, setIsAiProcessing] = useState(false);
+  const [aiSummary, setAiSummary] = useState("");
+  const [currentAiQuestion, setCurrentAiQuestion] = useState("¡Hola! Soy tu asistente virtual. Cuéntame con tus propias palabras, ¿qué molestias te traen hoy a la consulta?");
+
+  const startAiInterview = () => {
+    setAiMode(true);
+    setStep(2); // Pasamos al paso 2 pero en modo IA
+  };
+
   useEffect(() => {
-    fetch(`/api/public/questionnaire/${token}`)
+    fetch(`/api/clinical/public/questionnaire/${token}`)
       .then(res => res.json())
       .then(data => {
         if (data.error) setStatus("error");
@@ -138,23 +151,27 @@ function QuestionnaireWizard({ token }: { token: string }) {
     setConditions(newConds);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: FormEvent) => {
+    if (e) e.preventDefault();
     try {
       const payload = {
-        primarySymptom,
+        primarySymptom: aiMode ? "AI_INTERVIEW" : primarySymptom,
         responses: {
           basic,
-          duration,
+          duration: aiMode ? "Variante IA" : duration,
           dynamicAnswers: dynData,
           additionalSymptomCategories: secondarySymptom ? [secondarySymptom] : [],
           conditions,
           medications: meds,
-          allergies
+          allergies,
+          aiInterview: aiMode ? {
+            history: interviewHistory,
+            summary: aiSummary
+          } : undefined
         }
       };
 
-      const res = await fetch(`/api/public/questionnaire/${token}`, {
+      const res = await fetch(`/api/clinical/public/questionnaire/${token}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -314,6 +331,189 @@ function QuestionnaireWizard({ token }: { token: string }) {
     }
   };
 
+  // --- COMPONENTE DE ENTREVISTA POR VOZ ---
+  const VoiceInterviewer = () => {
+    const [isRecording, setIsRecording] = useState(false);
+    const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+    const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const stopRecording = () => {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+        setIsRecording(false);
+      }
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current);
+        silenceTimeoutRef.current = null;
+      }
+    };
+
+    const startRecording = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new MediaRecorder(stream);
+        const chunks: Blob[] = [];
+
+        // Detección de silencio básica
+        const audioContextCtor =
+          window.AudioContext ??
+          ((window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
+        if (!audioContextCtor) {
+          throw new Error("AudioContext no está disponible en este navegador.");
+        }
+        const audioContext = new audioContextCtor();
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        const checkSilence = () => {
+          if (recorder.state === "inactive") return;
+          analyser.getByteFrequencyData(dataArray);
+          const average = dataArray.reduce((a, b) => a + b) / bufferLength;
+
+          if (average < 10) { // Umbral de silencio
+            if (!silenceTimeoutRef.current) {
+              silenceTimeoutRef.current = setTimeout(() => {
+                console.log("Silencio detectado, deteniendo...");
+                stopRecording();
+              }, 2000);
+            }
+          } else {
+            if (silenceTimeoutRef.current) {
+              clearTimeout(silenceTimeoutRef.current);
+              silenceTimeoutRef.current = null;
+            }
+          }
+          requestAnimationFrame(checkSilence);
+        };
+
+        recorder.ondataavailable = (e) => chunks.push(e.data);
+        recorder.onstop = async () => {
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          stream.getTracks().forEach(t => t.stop());
+          audioContext.close();
+          handleProcessAudio(blob);
+        };
+
+        recorder.start();
+        setMediaRecorder(recorder);
+        setIsRecording(true);
+        checkSilence();
+      } catch (err) {
+        console.error("Error al acceder al micrófono:", err);
+        alert("No se pudo acceder al micrófono. Por favor verifica los permisos.");
+      }
+    };
+
+    const handleProcessAudio = async (blob: Blob) => {
+      setIsAiProcessing(true);
+      try {
+        const formData = new FormData();
+        formData.append('audio', blob);
+        formData.append('history', JSON.stringify(interviewHistory));
+
+        const res = await fetch(`/api/clinical/public/questionnaire/${token}/ai-interview`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        const newHistory = [
+          ...interviewHistory,
+          { role: 'user' as const, content: data.transcript },
+          { role: 'assistant' as const, content: data.isFinished ? "¡Perfecto! He recolectado toda la información necesaria." : data.question }
+        ];
+
+        setInterviewHistory(newHistory);
+        setAiStep(prev => prev + 1);
+
+        if (data.isFinished) {
+          setAiSummary(data.summary || "");
+          setTimeout(() => setStep(3), 2500);
+        } else {
+          setCurrentAiQuestion(data.question);
+        }
+      } catch (err) {
+        console.error("Error procesando audio:", err);
+      } finally {
+        setIsAiProcessing(false);
+      }
+    };
+
+    if (aiSummary) {
+      return (
+        <div className="text-center py-6 space-y-4">
+          <div className="flex justify-center">
+            <div className="bg-success/10 p-3 rounded-full">
+              <CheckCircle2 className="w-8 h-8 text-success animate-bounce" />
+            </div>
+          </div>
+          <p className="font-medium">Entrevista completada con éxito.</p>
+          <p className="text-sm text-muted-foreground">Estamos preparando tus antecedentes...</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-primary/5 border border-primary/10 rounded-2xl p-6 relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-3">
+            <Bot className="w-5 h-5 text-primary/40" />
+          </div>
+          
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={currentAiQuestion}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-lg font-medium text-foreground text-center"
+            >
+              {currentAiQuestion}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+
+        <div className="flex flex-col items-center gap-4">
+          <button
+            onClick={isRecording ? stopRecording : startRecording}
+            disabled={isAiProcessing}
+            className={`group relative w-20 h-20 rounded-full flex items-center justify-center transition-all ${
+              isRecording 
+                ? 'bg-red-500 shadow-lg shadow-red-200 animate-pulse' 
+                : 'bg-primary shadow-lg shadow-primary/20 hover:scale-110 active:scale-95'
+            } ${isAiProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            {isAiProcessing ? (
+              <div className="w-8 h-8 border-4 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : isRecording ? (
+              <Square className="w-8 h-8 text-white fill-white" />
+            ) : (
+              <Mic className="w-8 h-8 text-white" />
+            )}
+          </button>
+          
+          <div className="text-sm font-medium h-5 text-center">
+            {isAiProcessing ? "IA procesando tu respuesta..." : isRecording ? "Te escucho... (Habla ahora)" : "Toca el micrófono para responder"}
+          </div>
+
+          {aiStep > 0 && (
+            <div className="w-full flex justify-center gap-1">
+              {[1, 2, 3, 4, 5].map((s) => (
+                <div key={s} className={`h-1.5 w-8 rounded-full transition-colors ${s <= aiStep ? 'bg-primary' : 'bg-primary/10'}`} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const selectedSymptomCategories = Array.from(new Set([primarySymptom, secondarySymptom].filter(Boolean)));
 
   // --- RENDER MAIN ---
@@ -359,7 +559,16 @@ function QuestionnaireWizard({ token }: { token: string }) {
             </div>
 
             <div className="space-y-4">
-              <label className="text-sm font-semibold text-muted-foreground">¿Cuál es el motivo PRINCIPAL de la consulta?</label>
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-semibold text-muted-foreground">¿Cuál es el motivo PRINCIPAL de la consulta?</label>
+                <button
+                  onClick={startAiInterview}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-colors"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  NARRAR POR VOZ (IA)
+                </button>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {SYMPTOM_CATALOG.map(item => {
                   const Icon = item.icon;
@@ -391,48 +600,65 @@ function QuestionnaireWizard({ token }: { token: string }) {
 
         {step === 2 && (
           <motion.div key="2" initial={{opacity:0, x:20}} animate={{opacity:1, x:0}} exit={{opacity:0, x:-20}} className="space-y-6">
-            <h2 className="text-xl font-semibold text-center mb-6">Paso 2: Detalles del Síntoma</h2>
+            <h2 className="text-xl font-semibold text-center mb-6">
+              {aiMode ? "Entrevista Inteligente" : "Paso 2: Detalles del Síntoma"}
+            </h2>
             
-            <div className="space-y-2">
-              <label className="text-sm font-medium">¿Hace cuánto iniciaron los síntomas?</label>
-              <select className={SELECT_FIELD_CLASSNAME} value={duration} onChange={e => setDuration(e.target.value)}>
-                <option value="">-- Seleccionar --</option>
-                <option>Desde hoy</option>
-                <option>Hace 2 o 3 días</option>
-                <option>Hace 1 semana</option>
-                <option>Hace más de un mes</option>
-                <option>Es un problema crónico (Años)</option>
-              </select>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">¿Desea agregar otra categoría de síntomas? (Opcional)</label>
-              <select
-                className={SELECT_FIELD_CLASSNAME}
-                value={secondarySymptom}
-                onChange={e => handleSecondarySymptomChange(e.target.value)}
-              >
-                <option value="">No, solo la categoría principal</option>
-                {SYMPTOM_CATALOG.filter((item) => item.id !== primarySymptom).map((item) => (
-                  <option key={item.id} value={item.id}>{item.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-4">
-              {selectedSymptomCategories.map((symptomId, index) => (
-                <div key={symptomId} className="rounded-xl border border-border/70 bg-secondary/15 p-4 space-y-4">
-                  <div className="text-sm font-semibold text-foreground">
-                    {index === 0 ? "Categoría principal" : "Categoría adicional"}: {getSymptomLabelById(symptomId)}
-                  </div>
-                  {renderDynamicQuestions(symptomId)}
+            {aiMode ? (
+              <VoiceInterviewer />
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">¿Hace cuánto iniciaron los síntomas?</label>
+                  <select className={SELECT_FIELD_CLASSNAME} value={duration} onChange={e => setDuration(e.target.value)}>
+                    <option value="">-- Seleccionar --</option>
+                    <option>Desde hoy</option>
+                    <option>Hace 2 o 3 días</option>
+                    <option>Hace 1 semana</option>
+                    <option>Hace más de un mes</option>
+                    <option>Es un problema crónico (Años)</option>
+                  </select>
                 </div>
-              ))}
-            </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">¿Desea agregar otra categoría de síntomas? (Opcional)</label>
+                  <select
+                    className={SELECT_FIELD_CLASSNAME}
+                    value={secondarySymptom}
+                    onChange={e => handleSecondarySymptomChange(e.target.value)}
+                  >
+                    <option value="">No, solo la categoría principal</option>
+                    {SYMPTOM_CATALOG.filter((item) => item.id !== primarySymptom).map((item) => (
+                      <option key={item.id} value={item.id}>{item.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-4">
+                  {selectedSymptomCategories.map((symptomId, index) => (
+                    <div key={symptomId} className="rounded-xl border border-border/70 bg-secondary/15 p-4 space-y-4">
+                      <div className="text-sm font-semibold text-foreground">
+                        {index === 0 ? "Categoría principal" : "Categoría adicional"}: {getSymptomLabelById(symptomId)}
+                      </div>
+                      {renderDynamicQuestions(symptomId)}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
 
             <div className="flex gap-3 pt-4">
-              <Button variant="secondary" onClick={() => setStep(1)}><ChevronLeft className="w-4 h-4 mr-1"/> Atrás</Button>
-              <Button fullWidth onClick={handleNext} disabled={!duration}>Siguiente <ChevronRight className="w-4 h-4 ml-1"/></Button>
+              <Button variant="secondary" onClick={() => {
+                setStep(1);
+                if (aiMode) {
+                  setAiMode(false);
+                  setInterviewHistory([]);
+                  setAiStep(0);
+                }
+              }}><ChevronLeft className="w-4 h-4 mr-1"/> Atrás</Button>
+              {!aiMode && (
+                <Button fullWidth onClick={handleNext} disabled={!duration}>Siguiente <ChevronRight className="w-4 h-4 ml-1"/></Button>
+              )}
             </div>
           </motion.div>
         )}
@@ -501,3 +727,4 @@ export default function QuestionnairePage(props: { params: Promise<{ token: stri
     </div>
   );
 }
+

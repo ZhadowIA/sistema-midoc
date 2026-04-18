@@ -15,6 +15,7 @@ model User {
   passwordHash String
   role         UserRole @default(DOCTOR)
   active       Boolean  @default(true)
+  bossId       String?
 
   // Public Profile Fields
   specialty    String?
@@ -28,6 +29,8 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  manager          User?           @relation("SecretaryManager", fields: [bossId], references: [id], onDelete: SetNull)
+  managedUsers     User[]          @relation("SecretaryManager")
   doctorConfig  DoctorConfig?
   subscription  DoctorSubscription?
   onboarding    DoctorOnboarding?
@@ -40,6 +43,12 @@ model User {
   patientAccounts  Patient[] @relation("PatientAccount")
   directoryPatients Patient[] @relation("DoctorPatientDirectory")
   appointmentAuditLogs AppointmentAuditLog[]
+  auditLogs       AuditLog[]       @relation("UserToAuditLogs")
+  doctorConsentCaptures ConsentCapture[] @relation("DoctorConsentCaptures")
+  capturedConsentLogs ConsentCapture[] @relation("ConsentCapturedByUser")
+  aiProcessingJobs AIProcessingJob[]
+
+  @@index([bossId])
 }
 
 model DoctorSubscription {
@@ -150,6 +159,8 @@ model Patient {
   clinicalNotes ClinicalNote[]
   whatsappMessages WhatsAppMessageLog[]
   appointmentAuditLogs AppointmentAuditLog[]
+  auditLogs AuditLog[]
+  consentCaptures ConsentCapture[]
 
   @@index([ownerDoctorId])
   @@index([ownerDoctorId, fullName])
@@ -207,6 +218,9 @@ model Appointment {
   aiInsight     AIInsight?
   whatsappMessages WhatsAppMessageLog[]
   auditLogs     AppointmentAuditLog[]
+  systemAuditLogs AuditLog[]
+  consentCaptures ConsentCapture[]
+  aiProcessingJobs AIProcessingJob[]
 }
 
 model AppointmentAuditLog {
@@ -221,6 +235,8 @@ model AppointmentAuditLog {
   fromStatus    AppointmentStatus?
   toStatus      AppointmentStatus?
   metadata      Json?
+  ipAddress     String?
+  userAgent     String?
   createdAt     DateTime          @default(now())
 
   doctor      User         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
@@ -229,6 +245,28 @@ model AppointmentAuditLog {
 
   @@index([doctorId, createdAt])
   @@index([appointmentId, createdAt])
+  @@index([action, createdAt])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  doctorId      String?
+  appointmentId String?
+  patientId     String?
+  actorUserId   String?
+  action        String
+  ipAddress     String?
+  userAgent     String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  doctor      User?        @relation("UserToAuditLogs", fields: [doctorId], references: [id], onDelete: SetNull)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  patient     Patient?     @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  @@index([doctorId, createdAt])
+  @@index([appointmentId, createdAt])
+  @@index([actorUserId, createdAt])
   @@index([action, createdAt])
 }
 
@@ -302,6 +340,7 @@ model ClinicalNote {
   plan       String? @db.Text
 
   privateNotes String? @db.Text
+  soapPayload  Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -310,6 +349,28 @@ model ClinicalNote {
   doctor        User           @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   patient       Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
   prescriptions Prescription[]
+}
+
+model ConsentCapture {
+  id               String      @id @default(cuid())
+  appointmentId    String
+  doctorId         String
+  patientId        String
+  capturedByUserId String?
+  type             ConsentType
+  ipAddress        String?
+  userAgent        String?
+  metadata         Json?
+  createdAt        DateTime    @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  doctor      User        @relation("DoctorConsentCaptures", fields: [doctorId], references: [id], onDelete: Cascade)
+  patient     Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  capturedBy  User?       @relation("ConsentCapturedByUser", fields: [capturedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([appointmentId, type, createdAt])
+  @@index([doctorId, createdAt])
+  @@index([patientId, createdAt])
 }
 
 model Prescription {
@@ -328,6 +389,7 @@ enum UserRole {
   DOCTOR
   ADMIN
   PATIENT
+  SECRETARY
 }
 
 enum AppointmentType {
@@ -397,6 +459,11 @@ enum AuditAction {
   APPOINTMENT_AUTO_CLOSED_NO_SHOW
   PATIENT_ASSIGNED_TO_APPOINTMENT
   PATIENT_CREATED_FROM_APPOINTMENT
+  CLINICAL_NOTE_UPDATED
+  AI_NOTE_GENERATION_REQUESTED
+  AI_NOTE_GENERATION_COMPLETED
+  AI_NOTE_GENERATION_FAILED
+  CONSENT_CAPTURED
 }
 
 enum WhatsAppMessageDirection {
@@ -423,6 +490,22 @@ enum WhatsAppMessageAction {
   NOTIFICATION_SENT
 }
 
+enum ConsentType {
+  BOOKING_PRIVACY_NOTICE
+  VERBAL_RECORDING_CONFIRMATION
+}
+
+enum AIJobKind {
+  SOAP_NOTE_GENERATION
+}
+
+enum AIJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 model AIInsight {
   id            String   @id @default(cuid())
   appointmentId String   @unique
@@ -439,4 +522,26 @@ model AIInsight {
   updatedAt     DateTime @updatedAt
 
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+}
+
+model AIProcessingJob {
+  id            String      @id @default(cuid())
+  appointmentId String
+  doctorId      String
+  kind          AIJobKind
+  status        AIJobStatus @default(QUEUED)
+  progressPct   Int         @default(0)
+  statusMessage String?
+  resultPayload Json?
+  errorMessage  String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  finishedAt    DateTime?
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  doctor      User        @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId, kind, createdAt])
+  @@index([doctorId, createdAt])
+  @@index([status, createdAt])
 }

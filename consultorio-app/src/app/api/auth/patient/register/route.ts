@@ -7,6 +7,10 @@ const registerPatientSchema = z.object({
   name: z.string().min(2, 'El nombre es requerido'),
   email: z.string().email('Correo inválido'),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
+  phone: z.string().min(10, 'El teléfono debe tener al menos 10 dígitos'),
+  dateOfBirth: z.string().refine((val) => !isNaN(Date.parse(val)), {
+    message: "Fecha de nacimiento inválida",
+  }),
 })
 
 export async function POST(request: Request) {
@@ -15,6 +19,8 @@ export async function POST(request: Request) {
     const name = parsed.name.trim()
     const email = parsed.email.trim().toLowerCase()
     const password = parsed.password
+    const phone = parsed.phone.trim()
+    const dateOfBirth = new Date(parsed.dateOfBirth)
 
     const existingUser = await prisma.user.findUnique({
       where: { email },
@@ -26,22 +32,37 @@ export async function POST(request: Request) {
 
     const passwordHash = await bcrypt.hash(password, 10)
     
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        passwordHash,
-        role: 'PATIENT',
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-      },
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          name,
+          email,
+          passwordHash,
+          phone,
+          role: 'PATIENT',
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+        },
+      })
+
+      await tx.patient.create({
+        data: {
+          userId: user.id,
+          fullName: name,
+          email,
+          phone,
+          dateOfBirth,
+        },
+      })
+
+      return user
     })
 
-    return NextResponse.json({ success: true, user })
+    return NextResponse.json({ success: true, user: result })
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Datos inválidos', details: error.issues }, { status: 400 })

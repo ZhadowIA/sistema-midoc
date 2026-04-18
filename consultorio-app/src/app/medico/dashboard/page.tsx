@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Calendar, Clock, CheckCircle, CheckCircle2, AlertCircle, UserRound } from "lucide-react";
+import { Calendar, Clock, CheckCircle, CheckCircle2, AlertCircle, UserRound, ArrowRight } from "lucide-react";
 import { DoctorLayout } from "@/components/DoctorLayout";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -147,7 +147,7 @@ export default function DoctorDashboard() {
     else setLoadingData(true);
 
     try {
-      const response = await fetch("/api/admin/dashboard/summary", { cache: "no-store" });
+      const response = await fetch("/api/agenda/admin/dashboard/summary", { cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.error || "No se pudo cargar el dashboard");
@@ -169,11 +169,39 @@ export default function DoctorDashboard() {
 
   useEffect(() => {
     void loadDashboard(true);
-    const refreshId = window.setInterval(() => {
-      void loadDashboard(false);
-    }, 30_000);
 
-    return () => window.clearInterval(refreshId);
+    let refreshId: number | null = null;
+
+    const start = () => {
+      if (refreshId !== null) return;
+      refreshId = window.setInterval(() => {
+        void loadDashboard(false);
+      }, 30_000);
+    };
+
+    const stop = () => {
+      if (refreshId !== null) {
+        window.clearInterval(refreshId);
+        refreshId = null;
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void loadDashboard(false);
+        start();
+      } else {
+        stop();
+      }
+    };
+
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
   }, [loadDashboard]);
 
   const updateAppointmentStatus = async (
@@ -183,7 +211,7 @@ export default function DoctorDashboard() {
     const key = `${appointmentId}:${status}`;
     setUpdatingKey(key);
     try {
-      const response = await fetch(`/api/admin/appointments/${appointmentId}`, {
+      const response = await fetch(`/api/agenda/admin/appointments/${appointmentId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -217,13 +245,22 @@ export default function DoctorDashboard() {
     maximumFractionDigits: 2,
   });
 
-  const stats = [
+  const todayStr = format(now, "yyyy-MM-dd");
+  const stats: Array<{
+    label: string;
+    value: number;
+    icon: typeof Calendar;
+    color: string;
+    bg: string;
+    href: string;
+  }> = [
     {
       label: "Total Hoy",
       value: dashboardData?.stats.totalToday ?? 0,
       icon: Calendar,
       color: "text-primary",
       bg: "bg-primary/10",
+      href: `/medico/agenda?date=${todayStr}`,
     },
     {
       label: "Pendientes",
@@ -231,6 +268,7 @@ export default function DoctorDashboard() {
       icon: AlertCircle,
       color: "text-warning",
       bg: "bg-warning/10",
+      href: `/medico/agenda?date=${todayStr}&status=pending`,
     },
     {
       label: "Confirmadas",
@@ -238,6 +276,7 @@ export default function DoctorDashboard() {
       icon: CheckCircle,
       color: "text-success",
       bg: "bg-success/10",
+      href: `/medico/agenda?date=${todayStr}&status=confirmed`,
     },
     {
       label: "Completadas",
@@ -245,6 +284,7 @@ export default function DoctorDashboard() {
       icon: CheckCircle2,
       color: "text-primary",
       bg: "bg-primary/10",
+      href: `/medico/agenda?date=${todayStr}&status=completed`,
     },
     {
       label: "Vencidas",
@@ -252,6 +292,7 @@ export default function DoctorDashboard() {
       icon: AlertCircle,
       color: "text-destructive",
       bg: "bg-destructive/10",
+      href: `/medico/agenda?date=${todayStr}&status=overdue`,
     },
   ];
 
@@ -270,7 +311,13 @@ export default function DoctorDashboard() {
 
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-8">
           {stats.map((stat) => (
-            <div key={stat.label} className="bg-card border border-border rounded-2xl p-5 shadow-sm">
+            <button
+              key={stat.label}
+              type="button"
+              onClick={() => router.push(stat.href)}
+              className="bg-card border border-border rounded-2xl p-5 shadow-sm text-left transition-all hover:border-primary/40 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/40"
+              title={`Ver ${stat.label.toLowerCase()} en la agenda`}
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">{stat.label}</p>
@@ -280,146 +327,9 @@ export default function DoctorDashboard() {
                   <stat.icon className={`w-5 h-5 ${stat.color}`} />
                 </div>
               </div>
-            </div>
+            </button>
           ))}
         </div>
-
-        {analytics && (
-          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
-            <div className="px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Analítica mensual</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                Corte {analytics.currentMonth.label}
-              </p>
-            </div>
-            <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                <p className="text-xs text-muted-foreground">Citas del mes</p>
-                <p className="text-xl font-semibold text-foreground">{analytics.currentMonth.totalAppointments}</p>
-              </div>
-              <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                <p className="text-xs text-muted-foreground">Completadas</p>
-                <p className="text-xl font-semibold text-foreground">{analytics.currentMonth.completedAppointments}</p>
-              </div>
-              <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                <p className="text-xs text-muted-foreground">Ingreso realizado</p>
-                <p className="text-xl font-semibold text-foreground">
-                  {currencyFormatter.format(analytics.currentMonth.estimatedRevenueCompleted)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                <p className="text-xs text-muted-foreground">Ingreso programado</p>
-                <p className="text-xl font-semibold text-foreground">
-                  {currencyFormatter.format(analytics.currentMonth.estimatedRevenueScheduled)}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {priorityThree && (
-          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
-            <div className="px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Prioridad 3: escala y negocio</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                KPIs operativos + reglas automáticas + auditoría
-              </p>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">No-show rate</p>
-                  <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.noShowRatePct}%</p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">Tasa confirmación</p>
-                  <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.confirmationRatePct}%</p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">Tasa cancelación</p>
-                  <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.cancellationRatePct}%</p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">Min. a confirmación</p>
-                  <p className="text-xl font-semibold text-foreground">
-                    {priorityThree.metrics.averageMinutesToConfirmation ?? "—"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="rounded-xl border border-border bg-secondary/10 p-4">
-                  <p className="text-sm font-medium text-foreground mb-2">Reglas automáticas</p>
-                  <p className="text-xs text-muted-foreground">
-                    Pendiente → vencida: {priorityThree.automationRules.pendingOverdueMinutes} min.
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Escalado recordatorio: {priorityThree.automationRules.pendingEscalationMinutes} min antes.
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Cierre no-show: {priorityThree.automationRules.pendingAutoCloseHours} horas.
-                  </p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/10 p-4">
-                  <p className="text-sm font-medium text-foreground mb-2">Ejecución automática</p>
-                  <p className="text-xs text-muted-foreground">
-                    Vencidas actuales: {priorityThree.automationExecution.overduePendingNow}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Últimos 7 días · vencidas: {priorityThree.automationExecution.last7Days.markedOverdue}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Últimos 7 días · escalados: {priorityThree.automationExecution.last7Days.escalatedReminders}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Últimos 7 días · no-show cerradas: {priorityThree.automationExecution.last7Days.autoClosedNoShow}
-                  </p>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-border bg-secondary/10 p-4">
-                <p className="text-sm font-medium text-foreground mb-3">Auditoría reciente</p>
-                {priorityThree.recentAuditEvents.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">Sin eventos recientes.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {priorityThree.recentAuditEvents.slice(0, 8).map((event) => (
-                      <div key={event.id} className="rounded-lg border border-border bg-card p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-sm font-medium text-foreground">{event.actionLabel}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {new Date(event.createdAt).toLocaleString("es-MX")}
-                          </p>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {event.patientName || "Paciente"} · {event.source} · {event.actorType}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {setupChecklist && (
-          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
-            <div className="px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Checklist de puesta en marcha</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                {setupChecklist.completed}/{setupChecklist.total} completados · {setupChecklist.progressPct}%
-              </p>
-            </div>
-            <div className="p-6">
-              <div className="h-2 rounded-full bg-secondary overflow-hidden">
-                <div className="h-full bg-primary transition-all" style={{ width: `${setupChecklist.progressPct}%` }} />
-              </div>
-            </div>
-          </div>
-        )}
-
-
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
           <div className="bg-card border border-border rounded-2xl shadow-sm">
             <div className="px-6 py-4 border-b border-border">
@@ -557,7 +467,7 @@ export default function DoctorDashboard() {
           </div>
         </div>
 
-        <div className="bg-card border border-border rounded-2xl shadow-sm">
+        <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
           <div className="px-6 py-4 border-b border-border">
             <h2 className="font-semibold text-foreground">Citas de Hoy</h2>
           </div>
@@ -640,6 +550,178 @@ export default function DoctorDashboard() {
           </div>
         </div>
 
+        {setupChecklist && (
+          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
+            <div className="px-6 py-4 border-b border-border">
+              <h2 className="font-semibold text-foreground">Checklist de puesta en marcha</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                {setupChecklist.completed}/{setupChecklist.total} completados · {setupChecklist.progressPct}%
+              </p>
+            </div>
+            <div className="p-6">
+              <div className="h-2 rounded-full bg-secondary overflow-hidden mb-6">
+                <div className="h-full bg-primary transition-all" style={{ width: `${setupChecklist.progressPct}%` }} />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {setupChecklist.items.map((item) => (
+                  <div 
+                    key={item.id} 
+                    className={`flex items-start gap-3 p-4 rounded-xl border transition-all ${
+                      item.done 
+                        ? "bg-secondary/10 border-border/50 opacity-75" 
+                        : "bg-card border-border shadow-sm hover:border-primary/30"
+                    }`}
+                  >
+                    <div className={`mt-0.5 shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
+                      item.done ? "bg-success/20 text-success" : "bg-secondary text-muted-foreground"
+                    }`}>
+                      {item.done ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
+                    </div>
+                    
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-medium ${item.done ? "text-muted-foreground line-through" : "text-foreground"}`}>
+                        {item.label}
+                      </p>
+                      {!item.done && (
+                        <>
+                          <p className="text-xs text-muted-foreground mt-1">{item.hint}</p>
+                          <button
+                            onClick={() => router.push(item.actionHref)}
+                            className="mt-3 text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1"
+                          >
+                            {item.actionLabel}
+                            <ArrowRight className="w-3 h-3" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {analytics && (
+          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
+            <div className="px-6 py-4 border-b border-border">
+              <h2 className="font-semibold text-foreground">Analítica mensual</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Corte {analytics.currentMonth.label}
+              </p>
+            </div>
+            <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                <p className="text-xs text-muted-foreground">Citas del mes</p>
+                <p className="text-xl font-semibold text-foreground">{analytics.currentMonth.totalAppointments}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                <p className="text-xs text-muted-foreground">Completadas</p>
+                <p className="text-xl font-semibold text-foreground">{analytics.currentMonth.completedAppointments}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                <p className="text-xs text-muted-foreground">Ingreso realizado</p>
+                <p className="text-xl font-semibold text-foreground">
+                  {currencyFormatter.format(analytics.currentMonth.estimatedRevenueCompleted)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                <p className="text-xs text-muted-foreground">Ingreso programado</p>
+                <p className="text-xl font-semibold text-foreground">
+                  {currencyFormatter.format(analytics.currentMonth.estimatedRevenueScheduled)}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {priorityThree && (
+          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
+            <div className="px-6 py-4 border-b border-border">
+              <h2 className="font-semibold text-foreground">Control de Asistencia y Reglas del Asistente</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Estadísticas de pacientes, reglas de automatización y registro de cambios.
+              </p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Pacientes que no asistieron</p>
+                  <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.noShowRatePct}%</p>
+                </div>
+                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Citas confirmadas</p>
+                  <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.confirmationRatePct}%</p>
+                </div>
+                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Citas canceladas</p>
+                  <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.cancellationRatePct}%</p>
+                </div>
+                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Tiempo de respuesta del paciente</p>
+                  <p className="text-xl font-semibold text-foreground">
+                    {priorityThree.metrics.averageMinutesToConfirmation ?? "—"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-xl border border-border bg-secondary/10 p-4">
+                  <p className="text-sm font-medium text-foreground mb-2">Cómo trabaja tu asistente automático</p>
+                  <p className="text-xs text-muted-foreground">
+                    Marcar cita como vencida tras: {priorityThree.automationRules.pendingOverdueMinutes} min.
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Aviso de confirmación urgente: {priorityThree.automationRules.pendingEscalationMinutes} min antes.
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Cerrar cita por inasistencia tras: {priorityThree.automationRules.pendingAutoCloseHours} horas.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border bg-secondary/10 p-4">
+                  <p className="text-sm font-medium text-foreground mb-2">Tareas realizadas por el sistema</p>
+                  <p className="text-xs text-muted-foreground">
+                    Citas vencidas ahora: {priorityThree.automationExecution.overduePendingNow}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Vencidas (última semana): {priorityThree.automationExecution.last7Days.markedOverdue}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Recordatorios extra (última semana): {priorityThree.automationExecution.last7Days.escalatedReminders}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Citas cerradas por inasistencia (última semana): {priorityThree.automationExecution.last7Days.autoClosedNoShow}
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border bg-secondary/10 p-4">
+                <p className="text-sm font-medium text-foreground mb-3">Últimos movimientos y cambios</p>
+                {priorityThree.recentAuditEvents.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Sin eventos recientes.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {priorityThree.recentAuditEvents.slice(0, 8).map((event) => (
+                      <div key={event.id} className="rounded-lg border border-border bg-card p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium text-foreground">{event.actionLabel}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(event.createdAt).toLocaleString("es-MX")}
+                          </p>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {event.patientName || "Paciente"} · {event.source} · {event.actorType}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {upcomingAppointments.length > 0 && (
           <div className="bg-card border border-border rounded-2xl shadow-sm mt-6">
             <div className="px-6 py-4 border-b border-border">
@@ -671,3 +753,4 @@ export default function DoctorDashboard() {
     </DoctorLayout>
   );
 }
+

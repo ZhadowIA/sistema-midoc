@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { FileText, ChevronDown, ChevronUp, User, Clock, MapPin, AlertCircle } from "lucide-react";
+import { FileText, ChevronDown, ChevronUp, User, Clock, MapPin, AlertCircle, Sparkles } from "lucide-react";
 import { DoctorLayout } from "@/components/DoctorLayout";
 import { Card, CardContent } from "@/components/Card";
 import { Badge } from "@/components/Badge";
@@ -21,6 +21,7 @@ interface QuestionnaireEntry {
     symptomDuration: string;
     painLocation: string;
     answeredAt: string;
+    isAI?: boolean;
   } | null;
 }
 
@@ -30,7 +31,7 @@ export default function DoctorQuestionnaires() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/admin/questionnaires")
+    fetch("/api/clinical/admin/questionnaires")
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) setEntries(data);
@@ -104,6 +105,11 @@ export default function DoctorQuestionnaires() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
+                      {entry.questionnaire?.isAI && (
+                        <Badge className="text-[10px] bg-primary/20 text-primary border-primary/20">
+                          <Sparkles className="w-3 h-3 mr-1" /> IA
+                        </Badge>
+                      )}
                       <Badge variant="success" className="text-xs">Respondido</Badge>
                       {expandedId === entry.id ? (
                         <ChevronUp className="w-5 h-5 text-muted-foreground" />
@@ -124,12 +130,14 @@ export default function DoctorQuestionnaires() {
                       >
                         <div className="px-5 pb-5 border-t border-border">
                           <div className="grid gap-5 pt-5">
-                            <div className="bg-secondary/30 rounded-xl p-4">
+                            <div className={`rounded-xl p-4 ${entry.questionnaire.isAI ? "bg-primary/5 border border-primary/10" : "bg-secondary/30"}`}>
                               <div className="flex items-center gap-2 mb-2">
-                                <AlertCircle className="w-4 h-4 text-primary" />
-                                <span className="text-sm font-semibold text-foreground">Síntomas principales</span>
+                                {entry.questionnaire.isAI ? <Sparkles className="w-4 h-4 text-primary" /> : <AlertCircle className="w-4 h-4 text-primary" />}
+                                <span className="text-sm font-semibold text-foreground">
+                                  {entry.questionnaire.isAI ? "Resumen de Entrevista IA" : "Síntomas principales"}
+                                </span>
                               </div>
-                              <p className="text-foreground leading-relaxed">{entry.questionnaire.symptomsText}</p>
+                              <p className="text-foreground leading-relaxed whitespace-pre-line">{entry.questionnaire.symptomsText}</p>
                             </div>
 
                             <div className="grid sm:grid-cols-2 gap-4">
@@ -167,3 +175,4 @@ export default function DoctorQuestionnaires() {
     </DoctorLayout>
   );
 }
+

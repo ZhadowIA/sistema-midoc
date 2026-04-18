@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedDoctorId } from "@/lib/auth";
+import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { validatePrescription } from "@/lib/aiNoteService";
 import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rateLimit";
 import { z } from "zod";
+import { jsonNoStore } from "@/lib/http";
+import { requireMedicalDoctorApiAccess } from "@/lib/medicalApi";
 
 const prescriptionSchema = z.object({
   medication: z.string().trim().min(1).max(200),
@@ -30,13 +31,14 @@ export async function POST(
     if (!rateLimit.ok) return rateLimitExceededResponse(rateLimit);
 
     const params = await props.params;
-    const doctorId = await getAuthenticatedDoctorId();
-    if (!doctorId) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    const access = await requireMedicalDoctorApiAccess();
+    if (access.response) return access.response;
+    const doctorId = access.context.doctorId;
 
     const body = await req.json().catch(() => ({}));
     const parsedBody = aiValidateRequestSchema.safeParse(body);
     if (!parsedBody.success) {
-      return NextResponse.json({ error: "Payload inválido", details: parsedBody.error.issues }, { status: 400 });
+      return jsonNoStore({ error: "Payload inválido", details: parsedBody.error.issues }, { status: 400 });
     }
 
     const appointment = await prisma.appointment.findFirst({
@@ -48,21 +50,29 @@ export async function POST(
             medicalRecord: true,
           },
         },
+        doctor: {
+          select: {
+            name: true,
+          },
+        },
       },
     });
 
-    if (!appointment) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+    if (!appointment) return jsonNoStore({ error: "No encontrado" }, { status: 404 });
 
     const alerts = await validatePrescription({
       prescriptions: parsedBody.data.prescriptions,
       medicalRecord: appointment.patient?.medicalRecord,
       questionnaire: appointment.questionnaire,
+    }, {
+      patientName: appointment.patient?.fullName,
+      doctorName: appointment.doctor?.name,
     });
 
-    return NextResponse.json({ alerts });
+    return jsonNoStore({ alerts });
   } catch (error: unknown) {
     console.error("AI Validation Error:", error);
-    return NextResponse.json(
+    return jsonNoStore(
       { error: "No fue posible validar la receta con IA en este momento." },
       { status: 500 }
     );

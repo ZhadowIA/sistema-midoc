@@ -175,7 +175,7 @@ async function getCandidateAppointments(doctorId: string, now: Date) {
         in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED],
       },
       startTime: {
-        gte: subHours(now, 3),
+        gte: subHours(now, 24),
         lte: addDays(now, 14),
       },
     },

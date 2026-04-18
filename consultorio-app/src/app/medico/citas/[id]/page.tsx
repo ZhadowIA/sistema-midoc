@@ -76,7 +76,53 @@ type AppointmentData = {
       medications?: string
     } | null
   } | null
+  consentCaptures?: Array<{
+    id: string
+    type: string
+    createdAt: string
+  }>
 }
+
+type AIInsightDiagnosis = {
+  diagnosis: string
+  reasoning: string
+}
+
+type AIInsightTreatment = {
+  treatment: string
+  instructions: string
+}
+
+type AIInsights = {
+  diagnoses?: AIInsightDiagnosis[]
+  treatments?: AIInsightTreatment[]
+  allowedFoods?: string[]
+  forbiddenFoods?: string[]
+}
+
+type PrescriptionAlert = {
+  severity: "high" | "medium" | "low"
+  message: string
+  recommendation: string
+}
+
+type MicrophonePermissionState = "unknown" | "prompt" | "granted" | "denied" | "unsupported";
+
+type NoteGenerationEvent = {
+  id: string;
+  status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED";
+  progressPct: number;
+  statusMessage?: string | null;
+  resultPayload?: {
+    soap?: {
+      subjective?: string;
+      objective?: string;
+      assessment?: string;
+      plan?: string;
+    };
+  } | null;
+  errorMessage?: string | null;
+};
 
 export default function AppointmentDetailPage(props: { params: Promise<{ id: string }> }) {
   const params = use(props.params);
@@ -116,14 +162,19 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
   const [isRecording, setIsRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState("");
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [microphonePermission, setMicrophonePermission] = useState<MicrophonePermissionState>("unknown");
+  const [isConfirmingConsent, setIsConfirmingConsent] = useState(false);
+  const [lastVerbalConsentAt, setLastVerbalConsentAt] = useState<string | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   // AI Insights State
-  const [aiInsights, setAiInsights] = useState<any>(null);
+  const [aiInsights, setAiInsights] = useState<AIInsights | null>(null);
   const [loadingInsights, setLoadingInsights] = useState(false);
-  const [prescriptionAlerts, setPrescriptionAlerts] = useState<any[]>([]);
+  const [prescriptionAlerts, setPrescriptionAlerts] = useState<PrescriptionAlert[]>([]);
   const [validatingPrescription, setValidatingPrescription] = useState(false);
 
   const formatDirectoryPatientLabel = (patient: DirectoryPatientOption) =>
@@ -141,13 +192,17 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
   }, [directoryPatients, patientSearchTerm]);
 
   useEffect(() => {
-    fetch(`/api/admin/appointments/${params.id}`)
+    fetch(`/api/clinical/admin/appointments/${params.id}`)
       .then(res => res.json())
       .then(data => {
         if (data.error) return;
         setAppointment(data);
         setSelectedStatus(data.status === "RESCHEDULED" ? "CONFIRMED" : data.status);
         setNotes(data.notes || "");
+        const latestConsent = Array.isArray(data.consentCaptures)
+          ? data.consentCaptures.find((item: { type?: string }) => item.type === "VERBAL_RECORDING_CONFIRMATION")
+          : null;
+        setLastVerbalConsentAt(latestConsent?.createdAt || null);
         setSelectedDirectoryPatientId(data.patient?.ownerDoctorId ? data.patient.id : "");
         setPatientSearchTerm(
           data.patient?.ownerDoctorId ? `${data.patient.fullName} · ${data.patient.phone}` : ""
@@ -155,7 +210,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
       })
       .catch(console.error);
 
-    fetch(`/api/admin/appointments/${params.id}/note`)
+    fetch(`/api/clinical/admin/appointments/${params.id}/note`)
       .then(res => res.json())
       .then(data => {
         if (!data.error && data.id) {
@@ -173,13 +228,51 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
       .finally(() => setLoading(false));
 
     // Load existing insights
-    fetch(`/api/admin/appointments/${params.id}/ai-insights`)
+    fetch(`/api/clinical/admin/appointments/${params.id}/ai-insights`)
       .then(res => res.json())
       .then(data => {
         if (data.id) setAiInsights(data);
       })
       .catch(console.error);
   }, [params.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!("mediaDevices" in navigator) || typeof MediaRecorder === "undefined") {
+      setMicrophonePermission("unsupported");
+      return;
+    }
+
+    if (!("permissions" in navigator) || typeof navigator.permissions?.query !== "function") {
+      setMicrophonePermission("unknown");
+      return;
+    }
+
+    let active = true;
+    let permissionStatus: PermissionStatus | null = null;
+
+    void navigator.permissions
+      .query({ name: "microphone" as PermissionName })
+      .then((status) => {
+        if (!active) return;
+        permissionStatus = status;
+        setMicrophonePermission(status.state as MicrophonePermissionState);
+        status.onchange = () => setMicrophonePermission(status.state as MicrophonePermissionState);
+      })
+      .catch(() => {
+        if (active) setMicrophonePermission("unknown");
+      });
+
+    return () => {
+      active = false;
+      if (permissionStatus) permissionStatus.onchange = null;
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!showRescheduleMenu || !rescheduleDate || !appointment) {
@@ -195,7 +288,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
     });
 
     setLoadingRescheduleSlots(true);
-    fetch(`/api/public/availability?${qParams}`)
+    fetch(`/api/agenda/public/availability?${qParams}`)
       .then(res => res.json())
       .then(data => {
         if (data && Array.isArray(data.slots)) {
@@ -214,7 +307,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
     if (!appointmentId) return;
 
     setLoadingDirectoryPatients(true);
-    fetch("/api/admin/patients")
+    fetch("/api/clinical/admin/patients")
       .then((res) => res.json())
       .then((data) => {
         const patients = Array.isArray(data) ? (data as DirectoryPatientOption[]) : [];
@@ -237,7 +330,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`/api/admin/appointments/${params.id}`, {
+      const res = await fetch(`/api/clinical/admin/appointments/${params.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: selectedStatus, notes })
@@ -266,7 +359,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
 
     setRescheduling(true);
     try {
-      const res = await fetch(`/api/admin/appointments/${params.id}`, {
+      const res = await fetch(`/api/clinical/admin/appointments/${params.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -313,7 +406,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
 
     setAssigningPatient(true);
     try {
-      const res = await fetch(`/api/admin/appointments/${params.id}`, {
+      const res = await fetch(`/api/clinical/admin/appointments/${params.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -349,7 +442,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
 
     setCreatingAndAssigningPatient(true);
     try {
-      const res = await fetch(`/api/admin/appointments/${params.id}`, {
+      const res = await fetch(`/api/clinical/admin/appointments/${params.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -389,7 +482,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
   const handleSaveNote = async () => {
     setSavingNote(true);
     try {
-      const res = await fetch(`/api/admin/appointments/${params.id}/note`, {
+      const res = await fetch(`/api/clinical/admin/appointments/${params.id}/note`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(noteData)
@@ -430,11 +523,106 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
     }));
   };
 
+  const microphoneStatusMessage = {
+    unknown: "El navegador decidirá el permiso al iniciar la grabación.",
+    prompt: "El navegador solicitará autorización de micrófono al iniciar.",
+    granted: "Micrófono autorizado para esta sesión.",
+    denied: "Permiso denegado. Habilítalo en la configuración del navegador.",
+    unsupported: "Este navegador no soporta grabación clínica con Web Audio API.",
+  } satisfies Record<MicrophonePermissionState, string>;
+
+  const subscribeToGenerationJob = (jobId: string) => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
+    const source = new EventSource(`/api/clinical/admin/appointments/${params.id}/note/generate/events?jobId=${jobId}`);
+    eventSourceRef.current = source;
+
+    source.addEventListener("status", (event) => {
+      const payload = JSON.parse((event as MessageEvent<string>).data) as NoteGenerationEvent;
+      setGenerationProgress(payload.progressPct ?? 0);
+      setGenerationStatus(payload.statusMessage || "");
+
+      if (payload.status === "COMPLETED") {
+        const soap = payload.resultPayload?.soap;
+        if (soap) {
+          setNoteData((prev) => ({
+            ...prev,
+            subjective: soap.subjective && soap.subjective !== "No se menciona en la consulta" ? soap.subjective : prev.subjective,
+            objective: soap.objective && soap.objective !== "No se menciona en la consulta" ? soap.objective : prev.objective,
+            assessment: soap.assessment && soap.assessment !== "No se menciona en la consulta" ? soap.assessment : prev.assessment,
+            plan: soap.plan && soap.plan !== "No se menciona en la consulta" ? soap.plan : prev.plan,
+          }));
+        }
+        setIsGenerating(false);
+        toast.success("Nota generada exitosamente con IA. Por favor, revísala.");
+        source.close();
+        eventSourceRef.current = null;
+      }
+
+      if (payload.status === "FAILED") {
+        setIsGenerating(false);
+        toast.error(payload.errorMessage || "No fue posible generar la nota con IA.");
+        source.close();
+        eventSourceRef.current = null;
+      }
+    });
+
+    source.onerror = () => {
+      if (eventSourceRef.current !== source) return;
+      source.close();
+      eventSourceRef.current = null;
+    };
+  };
+
+  const ensureVerbalConsent = async () => {
+    setIsConfirmingConsent(true);
+    try {
+      const res = await fetch(`/api/clinical/admin/appointments/${params.id}/consent`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "No fue posible registrar el consentimiento verbal.");
+      }
+      setLastVerbalConsentAt(data.consent?.createdAt || new Date().toISOString());
+    } finally {
+      setIsConfirmingConsent(false);
+    }
+  };
+
   // Recording Logic
   const startRecording = async () => {
+    const localHostname = typeof window !== "undefined" ? window.location.hostname : "";
+    const secureContext =
+      typeof window !== "undefined" &&
+      (window.isSecureContext || localHostname === "localhost" || localHostname === "127.0.0.1");
+
+    if (!secureContext) {
+      toast.error("La grabación clínica requiere HTTPS para proteger el acceso al micrófono.");
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      toast.error("Este navegador no soporta grabación clínica con Web Audio API.");
+      return;
+    }
+
+    if (microphonePermission === "denied") {
+      toast.error("El navegador tiene bloqueado el micrófono. Habilítalo y vuelve a intentar.");
+      return;
+    }
+
     try {
+      await ensureVerbalConsent();
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const preferredMime =
+        typeof MediaRecorder.isTypeSupported === "function" && MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : "audio/webm";
+      const recorder = new MediaRecorder(stream, { mimeType: preferredMime });
       const chunks: Blob[] = [];
 
       recorder.ondataavailable = (e) => {
@@ -442,25 +630,24 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: "audio/webm" });
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
         void handleGenerateAI(blob);
-        setAudioChunks([]);
-        // Stop all tracks
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach((track) => track.stop());
       };
 
       setMediaRecorder(recorder);
-      setAudioChunks([]);
       recorder.start();
       setIsRecording(true);
       setRecordingSeconds(0);
+      setGenerationStatus("");
+      setGenerationProgress(0);
       timerRef.current = setInterval(() => {
-        setRecordingSeconds(s => s + 1);
+        setRecordingSeconds((s) => s + 1);
       }, 1000);
 
-      toast.info("Escucha inteligente activada. Asegúrate de tener el consentimiento del paciente.");
+      toast.info("Consentimiento verbal registrado. Grabación iniciada.");
     } catch (err) {
-      toast.error("No se pudo acceder al micrófono.");
+      toast.error(err instanceof Error ? err.message : "No se pudo acceder al micrófono.");
       console.error(err);
     }
   };
@@ -475,11 +662,13 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
 
   const handleGenerateAI = async (blob: Blob) => {
     setIsGenerating(true);
+    setGenerationStatus("Subiendo audio cifrado al backend...");
+    setGenerationProgress(10);
     const formData = new FormData();
-    formData.append("audio", blob);
+    formData.append("audio", blob, `consulta-${params.id}.webm`);
 
     try {
-      const res = await fetch(`/api/admin/appointments/${params.id}/note/generate`, {
+      const res = await fetch(`/api/clinical/admin/appointments/${params.id}/note/generate`, {
         method: "POST",
         body: formData
       });
@@ -487,20 +676,14 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
 
       if (!res.ok) throw new Error(data.error || "Error al generar nota con IA");
 
-      if (data.soap) {
-        setNoteData(prev => ({
-          ...prev,
-          subjective: data.soap.subjective !== "No se menciona en la consulta" ? data.soap.subjective : prev.subjective,
-          objective: data.soap.objective !== "No se menciona en la consulta" ? data.soap.objective : prev.objective,
-          assessment: data.soap.assessment !== "No se menciona en la consulta" ? data.soap.assessment : prev.assessment,
-          plan: data.soap.plan !== "No se menciona en la consulta" ? data.soap.plan : prev.plan,
-        }));
-        toast.success("Nota generada exitosamente con IA. Por favor, revísala.");
+      if (data.jobId) {
+        subscribeToGenerationJob(data.jobId);
       }
-    } catch (err: any) {
-      toast.error(err.message || "Error al procesar audio.");
-    } finally {
+    } catch (err: unknown) {
       setIsGenerating(false);
+      setGenerationStatus("");
+      setGenerationProgress(0);
+      toast.error(err instanceof Error ? err.message : "Error al procesar audio.");
     }
   };
 
@@ -513,17 +696,17 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
   const handleGenerateInsights = async () => {
     setLoadingInsights(true);
     try {
-      const res = await fetch(`/api/admin/appointments/${params.id}/ai-insights`, {
+      const res = await fetch(`/api/clinical/admin/appointments/${params.id}/ai-insights`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ soap: noteData })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error al generar sugerencias");
-      setAiInsights(data);
+      setAiInsights(data as AIInsights);
       toast.success("Sugerencias generadas por la IA.");
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Error al generar sugerencias.");
     } finally {
       setLoadingInsights(false);
     }
@@ -536,21 +719,21 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
     }
     setValidatingPrescription(true);
     try {
-      const res = await fetch(`/api/admin/appointments/${params.id}/ai-validate`, {
+      const res = await fetch(`/api/clinical/admin/appointments/${params.id}/ai-validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prescriptions: noteData.prescriptions })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error al validar");
-      setPrescriptionAlerts(data.alerts || []);
+      setPrescriptionAlerts(Array.isArray(data.alerts) ? (data.alerts as PrescriptionAlert[]) : []);
       if (data.alerts?.length === 0) {
         toast.success("No se detectaron riesgos en la receta.");
       } else {
         toast.warning(`Se detectaron ${data.alerts.length} posibles riesgos.`);
       }
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Error al validar.");
     } finally {
       setValidatingPrescription(false);
     }
@@ -572,7 +755,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
     toast.info("Añadido a Plan");
   };
 
-  const applyMedicationToReceta = (med: any) => {
+  const applyMedicationToReceta = (med: AIInsightTreatment) => {
     setNoteData(prev => ({
       ...prev,
       prescriptions: [
@@ -678,11 +861,22 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                 {format(new Date(appointment.startTime), "EEEE dd 'de' MMMM 'de' yyyy · HH:mm", { locale: es })}
               </p>
             </div>
-            {currentStatusOption && (
-              <div className={`px-4 py-2 rounded-xl border text-sm font-semibold ${currentStatusOption.color}`}>
-                {currentStatusOption.label}
-              </div>
-            )}
+            <div className="flex items-center gap-3 flex-wrap">
+              {currentStatusOption && (
+                <div className={`px-4 py-2 rounded-xl border text-sm font-semibold ${currentStatusOption.color}`}>
+                  {currentStatusOption.label}
+                </div>
+              )}
+              {appointment.status !== "CANCELLED" && appointment.status !== "COMPLETED" && (
+                <Button
+                  size="sm"
+                  onClick={() => router.push(`/medico/citas/${params.id}/consulta`)}
+                >
+                  <Stethoscope className="w-4 h-4 mr-2" />
+                  Modo consulta
+                </Button>
+              )}
+            </div>
           </div>
         </motion.div>
 
@@ -1002,58 +1196,101 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
               {clinicalTab === "soap" ? (
                 <div className="p-5 sm:p-6 space-y-6">
                   {/* AI Scribe Toolbar */}
-                  <div className="flex items-center justify-between p-4 bg-primary/5 border border-primary/20 rounded-2xl">
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-full ${isRecording ? 'bg-destructive animate-pulse' : 'bg-primary/10'}`}>
-                        <Mic className={`w-5 h-5 ${isRecording ? 'text-white' : 'text-primary'}`} />
+                  <div className="rounded-3xl border border-primary/20 bg-primary/5 p-4 sm:p-5">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="flex items-start gap-3">
+                        <div className={`p-3 rounded-2xl ${isRecording ? 'bg-destructive animate-pulse' : 'bg-primary/10'}`}>
+                          <Mic className={`w-6 h-6 ${isRecording ? 'text-white' : 'text-primary'}`} />
+                        </div>
+                        <div className="space-y-1">
+                          <h3 className="text-base font-semibold text-foreground">Escucha Inteligente (IA)</h3>
+                          <p className="text-sm text-muted-foreground">
+                            {isRecording
+                              ? `Grabando consulta... ${formatTime(recordingSeconds)}`
+                              : "Confirma el consentimiento verbal y después inicia la grabación clínica."}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-sm font-semibold text-foreground">Escucha Inteligente (IA)</h3>
-                        <p className="text-xs text-muted-foreground">
-                          {isRecording ? `Grabando consulta... ${formatTime(recordingSeconds)}` : 'Utiliza la IA para generar la nota SOAP automáticamente.'}
-                        </p>
+
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        {isRecording ? (
+                          <Button variant="destructive" className="min-h-[56px]" onClick={stopRecording}>
+                            <Square className="w-4 h-4 mr-2" />
+                            Detener y Generar
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="secondary"
+                            className="min-h-[56px] px-6"
+                            onClick={startRecording}
+                            disabled={isGenerating || isConfirmingConsent}
+                          >
+                            {isGenerating || isConfirmingConsent ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                {isConfirmingConsent ? "Registrando consentimiento..." : "Procesando..."}
+                              </>
+                            ) : (
+                              <>
+                                <Mic className="w-4 h-4 mr-2" />
+                                Confirmar Consentimiento e Iniciar Grabación
+                              </>
+                            )}
+                          </Button>
+                        )}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      {isRecording ? (
-                        <Button variant="destructive" size="sm" onClick={stopRecording}>
-                          <Square className="w-4 h-4 mr-2" />
-                          Detener y Generar
-                        </Button>
-                      ) : (
-                        <Button 
-                          variant="secondary" 
-                          size="sm" 
-                          onClick={startRecording}
-                          disabled={isGenerating}
-                        >
-                          {isGenerating ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              Procesando...
-                            </>
-                          ) : (
-                            <>
-                              <Mic className="w-4 h-4 mr-2" />
-                              Iniciar Grabación
-                            </>
-                          )}
-                        </Button>
-                      )}
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                      <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Micrófono</div>
+                        <div className="mt-1 text-sm font-medium text-foreground">{microphonePermission}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{microphoneStatusMessage[microphonePermission]}</div>
+                      </div>
+                      <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Consentimiento verbal</div>
+                        <div className="mt-1 text-sm font-medium text-foreground">
+                          {lastVerbalConsentAt
+                            ? `Registrado ${format(new Date(lastVerbalConsentAt), "dd/MM/yyyy HH:mm", { locale: es })}`
+                            : "Pendiente de registrar"}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          El botón de inicio guarda evidencia del consentimiento en la base de datos.
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Seguridad</div>
+                        <div className="mt-1 text-sm font-medium text-foreground">HTTPS obligatorio o localhost</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          La captura de audio solo funciona en contexto seguro del navegador.
+                        </div>
+                      </div>
                     </div>
                   </div>
 
                   {isGenerating && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: -10 }} 
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="p-4 bg-secondary/30 border border-border rounded-xl flex items-center gap-3"
+                      className="rounded-2xl border border-border bg-secondary/20 p-4"
                     >
-                      <Wand2 className="w-5 h-5 text-primary animate-bounce" />
-                      <p className="text-sm text-foreground italic">
-                        Analizando la conversación y estructurando los campos SOAP en español...
-                      </p>
+                      <div className="flex items-center gap-3">
+                        <Wand2 className="w-5 h-5 text-primary animate-bounce" />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-foreground">
+                            {generationStatus || "Analizando la conversación y estructurando los campos SOAP en español..."}
+                          </p>
+                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary">
+                            <div
+                              className="h-full rounded-full bg-primary transition-all"
+                              style={{ width: `${Math.max(8, generationProgress)}%` }}
+                            />
+                          </div>
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            La interfaz sigue disponible mientras OpenAI procesa el audio.
+                          </p>
+                        </div>
+                      </div>
                     </motion.div>
                   )}
                   <TextArea
@@ -1328,7 +1565,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                               <h4 className="font-bold">Diagnósticos Sugeridos</h4>
                             </div>
                             <div className="space-y-3">
-                              {aiInsights.diagnoses?.map((d: any, i: number) => (
+                              {aiInsights.diagnoses?.map((d, i: number) => (
                                 <div key={i} className="p-4 bg-secondary/20 border border-border rounded-xl group relative">
                                   <p className="font-bold text-foreground pr-8">{d.diagnosis}</p>
                                   <p className="text-sm text-muted-foreground mt-1">{d.reasoning}</p>
@@ -1348,7 +1585,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                               <h4 className="font-bold">Tratamientos Sugeridos</h4>
                             </div>
                             <div className="space-y-3">
-                              {aiInsights.treatments?.map((t: any, i: number) => (
+                              {aiInsights.treatments?.map((t, i: number) => (
                                 <div key={i} className="p-4 bg-secondary/20 border border-border rounded-xl group relative">
                                   <p className="font-bold text-foreground pr-8">{t.treatment}</p>
                                   <p className="text-sm text-muted-foreground mt-1">{t.instructions}</p>
@@ -1428,3 +1665,6 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
         </DoctorLayout>
       );
     }
+
+
+

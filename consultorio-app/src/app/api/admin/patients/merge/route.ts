@@ -1,7 +1,7 @@
-import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
 import { z } from 'zod'
+import { jsonNoStore } from '@/lib/http'
+import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 
 const mergeSchema = z
   .object({
@@ -32,13 +32,14 @@ function mergeTextFields(primary: string | null, secondary: string | null) {
 
 export async function POST(request: Request) {
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     const body = await request.json()
     const parsed = mergeSchema.safeParse(body)
     if (!parsed.success) {
-      return NextResponse.json({ error: 'IDs de paciente inválidos', details: parsed.error.issues }, { status: 400 })
+      return jsonNoStore({ error: 'IDs de paciente inválidos', details: parsed.error.issues }, { status: 400 })
     }
 
     const { primaryPatientId, secondaryPatientId } = parsed.data
@@ -172,16 +173,16 @@ export async function POST(request: Request) {
       }
     })
 
-    return NextResponse.json({
+    return jsonNoStore({
       success: true,
       message: 'Pacientes unificados correctamente',
       ...result,
     })
   } catch (error: unknown) {
     if (error instanceof MergePatientError) {
-      return NextResponse.json({ error: error.message }, { status: error.status })
+      return jsonNoStore({ error: error.message }, { status: error.status })
     }
     const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return jsonNoStore({ error: message }, { status: 500 })
   }
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { ChevronLeft, ChevronRight, Plus, Ban, CalendarClock, RefreshCcw } from "lucide-react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, Plus, Ban, CalendarClock, RefreshCcw, X } from "lucide-react";
 import { DoctorLayout } from "@/components/DoctorLayout";
 import { Button } from "@/components/Button";
 import { Badge } from "@/components/Badge";
@@ -72,10 +72,11 @@ type AgendaWeekResponse = {
   days: AgendaWeekDay[];
 };
 
-export default function DoctorAgenda() {
+function DoctorAgendaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const dateParam = searchParams.get('date');
+  const statusFilter = searchParams.get('status');
   const [currentDate, setCurrentDate] = useState(() => {
     if (dateParam) return new Date(dateParam + 'T00:00:00');
     return new Date();
@@ -154,7 +155,7 @@ export default function DoctorAgenda() {
   useEffect(() => {
     if (viewMode === "day") {
       const dateStr = format(currentDate, "yyyy-MM-dd");
-      fetch(`/api/admin/agenda/day?date=${dateStr}&showCancelled=${showCancelled}`)
+      fetch(`/api/agenda/admin/agenda/day?date=${dateStr}&showCancelled=${showCancelled}`)
         .then(res => res.json())
         .then(data => {
           const parsed = data as AgendaResponse;
@@ -175,7 +176,7 @@ export default function DoctorAgenda() {
 
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
     const weekStartStr = format(weekStart, "yyyy-MM-dd");
-    fetch(`/api/admin/agenda/week?start=${weekStartStr}&showCancelled=${showCancelled}`)
+    fetch(`/api/agenda/admin/agenda/week?start=${weekStartStr}&showCancelled=${showCancelled}`)
       .then(res => res.json())
       .then(data => {
         const parsed = data as AgendaWeekResponse;
@@ -201,7 +202,7 @@ export default function DoctorAgenda() {
 
     const typeParam = appointmentForm.appointmentType === "EXTENDED" ? "extended" : "normal";
     setLoadingSlots(true);
-    fetch(`/api/admin/availability/slots?date=${appointmentForm.date}&type=${typeParam}`)
+    fetch(`/api/agenda/admin/availability/slots?date=${appointmentForm.date}&type=${typeParam}`)
       .then(res => res.json())
       .then(data => {
         if (data && Array.isArray(data.slots)) {
@@ -218,7 +219,7 @@ export default function DoctorAgenda() {
     if (!newAppointmentOpen) return;
 
     setLoadingDirectoryPatients(true);
-    fetch("/api/admin/patients")
+    fetch("/api/clinical/admin/patients")
       .then((res) => res.json())
       .then((data) => {
         const patients = Array.isArray(data) ? data as DirectoryPatientOption[] : [];
@@ -240,7 +241,7 @@ export default function DoctorAgenda() {
 
     const typeParam = selectedAppointment.consultType === "extended" ? "extended" : "normal";
     setLoadingRescheduleSlots(true);
-    fetch(`/api/admin/availability/slots?date=${rescheduleForm.date}&type=${typeParam}`)
+    fetch(`/api/agenda/admin/availability/slots?date=${rescheduleForm.date}&type=${typeParam}`)
       .then(res => res.json())
       .then(data => {
         const slotsFromApi = data && Array.isArray(data.slots) ? data.slots as AvailabilitySlot[] : [];
@@ -266,9 +267,38 @@ export default function DoctorAgenda() {
     setBlockForm(prev => ({ ...prev, date: dateStr }));
   }, [currentDate]);
 
-  const getAppointmentsForTimeSlot = (time: string): AgendaAppointment[] => {
-    return appointments.filter(apt => apt.time === time);
+  const matchesStatusFilter = (apt: AgendaAppointment): boolean => {
+    if (!statusFilter) return true;
+    if (statusFilter === "overdue") {
+      if (apt.status !== "pending") return false;
+      const end = new Date(`${format(currentDate, "yyyy-MM-dd")}T${apt.time}:00`);
+      return end.getTime() < Date.now();
+    }
+    return apt.status === statusFilter;
   };
+
+  const getAppointmentsForTimeSlot = (time: string): AgendaAppointment[] => {
+    return appointments.filter(apt => apt.time === time && matchesStatusFilter(apt));
+  };
+
+  const clearStatusFilter = () => {
+    const params = new URLSearchParams(Array.from(searchParams.entries()));
+    params.delete("status");
+    const qs = params.toString();
+    router.replace(qs ? `/medico/agenda?${qs}` : "/medico/agenda");
+  };
+
+  const statusFilterLabel = (() => {
+    switch (statusFilter) {
+      case "pending": return "Pendientes";
+      case "confirmed": return "Confirmadas";
+      case "completed": return "Completadas";
+      case "cancelled": return "Canceladas";
+      case "rescheduled": return "Reagendadas";
+      case "overdue": return "Pendientes vencidas";
+      default: return null;
+    }
+  })();
 
   const getBlocksForTimeSlot = (time: string): AgendaBlock[] => {
     return blocks.filter(block => block.time === time);
@@ -293,7 +323,7 @@ export default function DoctorAgenda() {
   const reloadAgenda = () => {
     if (viewMode === "day") {
       const dateStr = format(currentDate, "yyyy-MM-dd");
-      fetch(`/api/admin/agenda/day?date=${dateStr}&showCancelled=${showCancelled}`)
+      fetch(`/api/agenda/admin/agenda/day?date=${dateStr}&showCancelled=${showCancelled}`)
         .then(res => res.json())
         .then(data => {
           const parsed = data as AgendaResponse;
@@ -309,7 +339,7 @@ export default function DoctorAgenda() {
 
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
     const weekStartStr = format(weekStart, "yyyy-MM-dd");
-    fetch(`/api/admin/agenda/week?start=${weekStartStr}&showCancelled=${showCancelled}`)
+    fetch(`/api/agenda/admin/agenda/week?start=${weekStartStr}&showCancelled=${showCancelled}`)
       .then(res => res.json())
       .then(data => {
         const parsed = data as AgendaWeekResponse;
@@ -375,7 +405,7 @@ export default function DoctorAgenda() {
         allowOutsidePublic: appointmentForm.allowOutsidePublic,
       };
 
-      const res = await fetch("/api/admin/appointments", {
+      const res = await fetch("/api/agenda/admin/appointments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -416,7 +446,7 @@ export default function DoctorAgenda() {
       const startTime = new Date(`${blockForm.date}T${blockForm.startTime}:00`).toISOString();
       const endTime = new Date(`${blockForm.date}T${blockForm.endTime}:00`).toISOString();
 
-      const res = await fetch("/api/admin/blocks", {
+      const res = await fetch("/api/agenda/admin/blocks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -475,7 +505,7 @@ export default function DoctorAgenda() {
         newStartTime = rescheduleForm.slotStart;
       }
 
-      const res = await fetch(`/api/admin/appointments/${selectedAppointment.id}`, {
+      const res = await fetch(`/api/agenda/admin/appointments/${selectedAppointment.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -514,7 +544,7 @@ export default function DoctorAgenda() {
       setCancelingIds((prev) => [...prev, apt.id]);
     }
     try {
-      const res = await fetch(`/api/admin/appointments/${apt.id}`, {
+      const res = await fetch(`/api/agenda/admin/appointments/${apt.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -555,7 +585,7 @@ export default function DoctorAgenda() {
             </div>
             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
               <Button
-                variant={viewMode === "day" ? "default" : "secondary"}
+                variant={viewMode === "day" ? "primary" : "secondary"}
                 size="sm"
                 onClick={() => setViewMode("day")}
                 className="w-full sm:w-auto"
@@ -563,7 +593,7 @@ export default function DoctorAgenda() {
                 Día
               </Button>
               <Button
-                variant={viewMode === "week" ? "default" : "secondary"}
+                variant={viewMode === "week" ? "primary" : "secondary"}
                 size="sm"
                 onClick={() => setViewMode("week")}
                 className="w-full sm:w-auto"
@@ -581,11 +611,25 @@ export default function DoctorAgenda() {
             </div>
           </div>
 
+          {statusFilterLabel && (
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+              Filtrando: {statusFilterLabel}
+              <button
+                type="button"
+                onClick={clearStatusFilter}
+                className="rounded-full hover:bg-primary/20 p-0.5"
+                aria-label="Quitar filtro"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2">
-              <input 
-                type="checkbox" 
-                id="showCancelled" 
+              <input
+                type="checkbox"
+                id="showCancelled"
                 className="rounded border-border text-primary cursor-pointer"
                 checked={showCancelled}
                 onChange={(e) => setShowCancelled(e.target.checked)}
@@ -747,7 +791,7 @@ export default function DoctorAgenda() {
                       </div>
                     ))}
 
-                    {day.appointments.map((apt) => (
+                    {day.appointments.filter(matchesStatusFilter).map((apt) => (
                       <div
                         key={apt.id}
                         onClick={() => router.push(`/medico/citas/${apt.id}`)}
@@ -1183,3 +1227,22 @@ export default function DoctorAgenda() {
     </DoctorLayout>
   );
 }
+
+export default function DoctorAgenda() {
+  return (
+    <Suspense
+      fallback={
+        <DoctorLayout>
+          <div className="p-6 lg:p-8 w-full">
+            <div className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">
+              Cargando agenda...
+            </div>
+          </div>
+        </DoctorLayout>
+      }
+    >
+      <DoctorAgendaContent />
+    </Suspense>
+  );
+}
+

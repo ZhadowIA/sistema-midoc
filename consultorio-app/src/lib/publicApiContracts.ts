@@ -46,6 +46,12 @@ const publicAppointmentSchema = z.object({
   startTime: z.string().datetime({ offset: true }),
   doctorId: z.string().cuid(),
   holdToken: z.string().uuid().optional(),
+  privacyConsentAccepted: z
+    .boolean()
+    .refine(
+      (value) => value === true,
+      'Debes aceptar el aviso de privacidad y el uso operativo de tus datos para agendar.'
+    ),
 })
 
 export type AvailabilityDayQuery = z.infer<typeof availabilityDayQuerySchema>

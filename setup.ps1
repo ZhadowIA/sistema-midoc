@@ -25,9 +25,9 @@ function Ensure-EnvFile {
 
   if (-not (Test-Path -LiteralPath $envFile)) {
     Copy-Item -LiteralPath $envExample -Destination $envFile
-    Write-Host "[OK] $ServiceName: creado .env desde .env.example"
+    Write-Host "[OK] ${ServiceName}: creado .env desde .env.example"
   } else {
-    Write-Host "[OK] $ServiceName: .env ya existe (sin cambios)"
+    Write-Host "[OK] ${ServiceName}: .env ya existe (sin cambios)"
   }
 }
 
@@ -72,8 +72,8 @@ if ($Run) {
   Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$botDir'; npm run dev"
 } else {
   Write-Host "Para ejecutar manualmente:"
-  Write-Host " 1) cd '$appDir' && npm run dev"
-  Write-Host " 2) cd '$botDir' && npm run dev"
+  Write-Host " 1) cd '$appDir'; npm run dev"
+  Write-Host " 2) cd '$botDir'; npm run dev"
   Write-Host ""
   Write-Host "Tip: usa .\\setup.ps1 -Run para abrir ambos servicios automaticamente."
 }

@@ -7,6 +7,8 @@ import { NotificationService } from './NotificationService'
 import { AppointmentAuditService } from './AppointmentAuditService'
 import { getServerEnv } from '@/lib/env'
 import { buildSlotHoldReason, getSlotHoldActiveCutoff, SLOT_HOLD_REASON_PREFIX } from '@/lib/slotHold'
+import { ConsentCaptureService } from './ConsentCaptureService'
+import { AuditLogService } from './AuditLogService'
 
 type CreatePublicAppointmentInput = {
   fullName: string
@@ -18,11 +20,27 @@ type CreatePublicAppointmentInput = {
   startTime: string
   doctorId: string
   holdToken?: string
+  privacyConsentAccepted: boolean
+  ipAddress?: string | null
+  userAgent?: string | null
 }
 
 type CreatedAppointmentResult = {
   appointmentId: string
   status: string
+  appointment: {
+    id: string
+    startTime: string
+    endTime: string
+    appointmentType: AppointmentType
+    durationMin: number
+    doctor: {
+      id: string
+      name: string
+      specialty: string | null
+      clinicAddress: string | null
+    }
+  }
   questionnaire: {
     recommended: true
     optional: true
@@ -117,12 +135,15 @@ export class AppointmentService {
                   { startTime: { lt: endTimeDate } },
                   { endTime: { gt: startTimeDate } },
                 ],
-                NOT: {
-                  AND: [
-                    { reason: { startsWith: SLOT_HOLD_REASON_PREFIX } },
-                    { createdAt: { lt: activeHoldCutoff } },
-                  ],
-                },
+                NOT: [
+                  {
+                    AND: [
+                      { reason: { startsWith: SLOT_HOLD_REASON_PREFIX } },
+                      { createdAt: { lt: activeHoldCutoff } },
+                    ],
+                  },
+                  data.holdToken ? { reason: buildSlotHoldReason(data.holdToken) } : {},
+                ].filter((condition) => Object.keys(condition).length > 0) as Prisma.ScheduleBlockWhereInput[],
               },
             })
 
@@ -237,6 +258,42 @@ export class AppointmentService {
                   appointmentType: data.appointmentType,
                   source: 'PATIENT',
                   holdTokenUsed: Boolean(data.holdToken),
+                  privacyConsentAccepted: true,
+                },
+                ipAddress: data.ipAddress,
+                userAgent: data.userAgent,
+              },
+              tx
+            )
+
+            await ConsentCaptureService.capture(
+              {
+                appointmentId: appointment.id,
+                doctorId,
+                patientId: patient.id,
+                capturedByUserId: data.userId ?? null,
+                type: 'BOOKING_PRIVACY_NOTICE',
+                ipAddress: data.ipAddress,
+                userAgent: data.userAgent,
+                metadata: {
+                  source: 'public_booking',
+                  linkedAccount: Boolean(data.userId),
+                },
+              },
+              tx
+            )
+
+            await AuditLogService.safeLog(
+              {
+                doctorId,
+                appointmentId: appointment.id,
+                patientId: patient.id,
+                actorUserId: data.userId ?? null,
+                action: 'PUBLIC_BOOKING_CREATED',
+                ipAddress: data.ipAddress,
+                userAgent: data.userAgent,
+                metadata: {
+                  appointmentType: data.appointmentType,
                 },
               },
               tx
@@ -286,9 +343,27 @@ export class AppointmentService {
       console.error('[AppointmentService] Error procesando cola de notificaciones', error)
     })
 
+    const doctor = await prisma.user.findUnique({
+      where: { id: doctorId },
+      select: { id: true, name: true, specialty: true, clinicAddress: true },
+    })
+
     return {
       appointmentId: createdAppointmentId,
       status: createdAppointmentStatus,
+      appointment: {
+        id: createdAppointmentId,
+        startTime: startTimeDate.toISOString(),
+        endTime: endTimeDate.toISOString(),
+        appointmentType: data.appointmentType,
+        durationMin: slotDuration,
+        doctor: {
+          id: doctorId,
+          name: doctor?.name ?? 'Médico',
+          specialty: doctor?.specialty ?? null,
+          clinicAddress: doctor?.clinicAddress ?? null,
+        },
+      },
       questionnaire: {
         recommended: true,
         optional: true,

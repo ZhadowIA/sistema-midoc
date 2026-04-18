@@ -50,8 +50,8 @@ export default function PrescriptionPrintPage(props: { params: Promise<{ id: str
 
   useEffect(() => {
     Promise.all([
-      fetch(`/api/admin/appointments/${params.id}`).then((res) => res.json()),
-      fetch(`/api/admin/appointments/${params.id}/note`).then((res) => res.json()),
+      fetch(`/api/clinical/admin/appointments/${params.id}`).then((res) => res.json()),
+      fetch(`/api/clinical/admin/appointments/${params.id}/note`).then((res) => res.json()),
       fetch("/api/admin/profile").then((res) => res.json()),
     ])
       .then(([appointment, note, profile]) => {
@@ -102,10 +102,11 @@ export default function PrescriptionPrintPage(props: { params: Promise<{ id: str
         
         {/* Header - Letterhead */}
         <div className="flex items-center justify-between border-b-2 border-primary pb-6 mb-8">
-          <div className="flex items-center gap-4">
-            {doctor.logoImage ? (
-              <img src={doctor.logoImage} alt="Logo del consultorio" className="w-24 h-20 object-contain rounded-xl bg-white border border-gray-200 p-2" />
-            ) : (
+            <div className="flex items-center gap-4">
+              {doctor.logoImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={doctor.logoImage} alt="Logo del consultorio" className="w-24 h-20 object-contain rounded-xl bg-white border border-gray-200 p-2" />
+              ) : (
               <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center">
                 <CopyPlus className="w-10 h-10 text-primary" />
               </div>
@@ -162,3 +163,6 @@ export default function PrescriptionPrintPage(props: { params: Promise<{ id: str
     </div>
   );
 }
+
+
+

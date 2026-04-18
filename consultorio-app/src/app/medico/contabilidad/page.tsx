@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { DoctorLayout } from "@/components/DoctorLayout";
-import { format } from "date-fns";
-import { es } from "date-fns/locale";
 import { toast } from "sonner";
 
 type DashboardSummaryResponse = {
@@ -40,7 +38,7 @@ export default function ContabilidadPage() {
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/admin/dashboard/summary", { cache: "no-store" });
+      const response = await fetch("/api/agenda/admin/dashboard/summary", { cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.error || "No se pudo cargar la contabilidad");
@@ -170,3 +168,4 @@ export default function ContabilidadPage() {
     </DoctorLayout>
   );
 }
+

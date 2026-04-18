@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { QuestionnaireService } from '@/services/QuestionnaireService'
 import { z } from 'zod'
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit'
@@ -133,7 +134,7 @@ export async function POST(request: Request, props: { params: Promise<{ token: s
         sanitizeObjectKey(key),
         sanitizeQuestionnaireValue(value),
       ])
-    )
+    ) as Prisma.InputJsonValue
 
     const result = await QuestionnaireService.saveQuestionnaire(appointment.id, {
       primarySymptom: parsed.primarySymptom,

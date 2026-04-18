@@ -145,7 +145,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
   });
 
   const loadPatientDetail = useCallback(async () => {
-    const res = await fetch(`/api/admin/patients/${params.id}`);
+    const res = await fetch(`/api/clinical/admin/patients/${params.id}`);
     const data = await res.json() as { error?: string } & Partial<PatientDetail>;
     if (data.error || !data.id || !data.fullName || !Array.isArray(data.timeline) || !data.summary) return;
 
@@ -171,7 +171,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
   const handleSaveRecord = async () => {
     setSavingRecord(true);
     try {
-      const res = await fetch(`/api/admin/patients/${params.id}`, {
+      const res = await fetch(`/api/clinical/admin/patients/${params.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(record)
@@ -195,7 +195,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
 
     setLinkingAccount(true);
     try {
-      const res = await fetch(`/api/admin/patients/${params.id}/link-account`, {
+      const res = await fetch(`/api/clinical/admin/patients/${params.id}/link-account`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -237,7 +237,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
 
   useEffect(() => {
      if (mergeSearch.length > 2) {
-       fetch("/api/admin/patients")
+       fetch("/api/clinical/admin/patients")
          .then(res => res.json())
          .then((data: unknown) => {
             const candidates = Array.isArray(data) ? data as MergeCandidate[] : [];
@@ -257,7 +257,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
      
      setMerging(true);
      try {
-       const res = await fetch("/api/admin/patients/merge", {
+       const res = await fetch("/api/clinical/admin/patients/merge", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -630,3 +630,4 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
     </DoctorLayout>
   );
 }
+

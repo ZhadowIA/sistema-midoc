@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedDoctorId } from "@/lib/auth";
+import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { generateComprehensiveInsights } from "@/lib/aiNoteService";
 import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rateLimit";
 import { z } from "zod";
+import { jsonNoStore } from "@/lib/http";
+import { requireMedicalDoctorApiAccess } from "@/lib/medicalApi";
 
 const aiInsightsRequestSchema = z.object({
   soap: z
@@ -30,17 +31,18 @@ export async function GET(
     if (!rateLimit.ok) return rateLimitExceededResponse(rateLimit);
 
     const params = await props.params;
-    const doctorId = await getAuthenticatedDoctorId();
-    if (!doctorId) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    const access = await requireMedicalDoctorApiAccess();
+    if (access.response) return access.response;
+    const doctorId = access.context.doctorId;
 
     const insight = await prisma.aIInsight.findFirst({
       where: { appointmentId: params.id, doctorId },
     });
 
-    return NextResponse.json(insight || {});
+    return jsonNoStore(insight || {});
   } catch (error: unknown) {
     console.error("AI Insights GET Error:", error);
-    return NextResponse.json({ error: "No fue posible cargar los insights de IA." }, { status: 500 });
+    return jsonNoStore({ error: "No fue posible cargar los insights de IA." }, { status: 500 });
   }
 }
 
@@ -57,13 +59,14 @@ export async function POST(
     if (!rateLimit.ok) return rateLimitExceededResponse(rateLimit);
 
     const params = await props.params;
-    const doctorId = await getAuthenticatedDoctorId();
-    if (!doctorId) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    const access = await requireMedicalDoctorApiAccess();
+    if (access.response) return access.response;
+    const doctorId = access.context.doctorId;
 
     const body = await req.json().catch(() => ({}));
     const parsedBody = aiInsightsRequestSchema.safeParse(body);
     if (!parsedBody.success) {
-      return NextResponse.json({ error: "Payload inválido", details: parsedBody.error.issues }, { status: 400 });
+      return jsonNoStore({ error: "Payload inválido", details: parsedBody.error.issues }, { status: 400 });
     }
 
     const appointment = await prisma.appointment.findFirst({
@@ -75,10 +78,15 @@ export async function POST(
             medicalRecord: true,
           },
         },
+        doctor: {
+          select: {
+            name: true,
+          },
+        },
       },
     });
 
-    if (!appointment) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+    if (!appointment) return jsonNoStore({ error: "No encontrado" }, { status: 404 });
 
     const context = {
       soap: parsedBody.data.soap,
@@ -86,7 +94,10 @@ export async function POST(
       medicalRecord: appointment.patient?.medicalRecord,
     };
 
-    const insights = await generateComprehensiveInsights(context);
+    const insights = await generateComprehensiveInsights(context, {
+      patientName: appointment.patient?.fullName,
+      doctorName: appointment.doctor?.name,
+    });
 
     // Save or Update in DB
     const updated = await prisma.aIInsight.upsert({
@@ -107,10 +118,10 @@ export async function POST(
       },
     });
 
-    return NextResponse.json(updated);
+    return jsonNoStore(updated);
   } catch (error: unknown) {
     console.error("AI Insights Error:", error);
-    return NextResponse.json(
+    return jsonNoStore(
       { error: "No fue posible generar sugerencias clínicas con IA. Intenta nuevamente." },
       { status: 500 }
     );

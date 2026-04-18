@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs'
 import { getDoctorSetupStatus } from '@/lib/setupStatus'
 import { attachSessionCookie, buildSessionToken } from '@/lib/session'
 import { captureError, logEvent } from '@/lib/observability'
+import { getDoctorProductAccess } from '@/lib/productAccess'
 
 export async function POST(request: Request) {
   try {
@@ -23,13 +24,23 @@ export async function POST(request: Request) {
     }
 
     const setup = await getDoctorSetupStatus(user.id, user.role)
+    const doctorIdForPlan = user.role === 'SECRETARY' ? user.bossId : user.id
+    const productAccess = doctorIdForPlan
+      ? await getDoctorProductAccess(doctorIdForPlan, user.role)
+      : {
+          plan: 'COMBINED' as const,
+          enabledModules: ['AGENDA', 'CLINICAL_RECORDS'] as const,
+        }
 
     // 3. Generate token
     const token = await buildSessionToken({
       sub: user.id,
       role: user.role,
+      bossId: user.bossId ?? null,
       hasActiveSubscription: setup.hasActiveSubscription,
       onboardingCompleted: setup.onboardingCompleted,
+      productPlan: productAccess.plan,
+      enabledModules: [...productAccess.enabledModules],
     })
 
     // 4. Set cookie
@@ -44,6 +55,8 @@ export async function POST(request: Request) {
         role: user.role,
         hasActiveSubscription: setup.hasActiveSubscription,
         onboardingCompleted: setup.onboardingCompleted,
+        productPlan: productAccess.plan,
+        enabledModules: productAccess.enabledModules,
       },
     })
     attachSessionCookie(response, token)

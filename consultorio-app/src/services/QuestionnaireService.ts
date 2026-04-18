@@ -1,4 +1,5 @@
 import prisma from '../lib/prisma'
+import { Prisma } from '@prisma/client'
 import { SignJWT, jwtVerify } from 'jose'
 import { getServerEnv } from '@/lib/env'
 
@@ -48,7 +49,7 @@ export class QuestionnaireService {
 
   static async saveQuestionnaire(appointmentId: string, data: {
     primarySymptom: string;
-    responses: Record<string, unknown>;
+    responses: Prisma.InputJsonValue;
   }) {
     const questionnaire = await prisma.questionnaire.create({
       data: {

@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "motion/react";
-import { Calendar, Clock, FileText, Shield, CheckCircle2, User } from "lucide-react";
+import { Calendar, Clock, FileText, Shield, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/Button";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 type PublicDoctorCard = {
   id: string;
@@ -20,7 +21,7 @@ export default function PatientLanding() {
   const [doctors, setDoctors] = useState<PublicDoctorCard[]>([]);
 
   useEffect(() => {
-    fetch("/api/public/doctors")
+    fetch("/api/agenda/public/doctors")
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) setDoctors(data);
@@ -30,8 +31,40 @@ export default function PatientLanding() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-md border-b border-border/50">
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Shield className="w-5 h-5 text-primary" />
+            </div>
+            <span className="font-bold text-lg text-foreground tracking-tight">MiDoc</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <Link href="/medico/login">
+              <Button 
+                variant="tertiary" 
+                size="sm" 
+                className="hidden sm:flex"
+              >
+                Acceso Médicos
+              </Button>
+            </Link>
+            <Link href="/paciente/login">
+              <Button 
+                variant="secondary" 
+                size="sm"
+              >
+                <Calendar className="w-4 h-4 mr-2" />
+                Acceso Pacientes
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </header>
+
       {/* Hero Section */}
-      <section className="relative min-h-[90vh] flex items-center justify-center px-6 py-20">
+      <section className="relative min-h-[90vh] flex items-center justify-center px-6 py-20 pt-32 md:pt-20">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-secondary/20 -z-10" />
 
         <motion.div
@@ -65,12 +98,16 @@ export default function PatientLanding() {
             transition={{ delay: 0.4, duration: 0.6 }}
             className="flex flex-col sm:flex-row gap-4 justify-center"
           >
-            <Button size="lg" onClick={() => router.push("/agendar")}>
-              Agendar cita
-            </Button>
-            <Button size="lg" variant="secondary">
-              Conoce más
-            </Button>
+            <Link href="/agendar">
+              <Button size="lg">
+                Agendar cita
+              </Button>
+            </Link>
+            <Link href="/paciente/login">
+              <Button size="lg" variant="secondary">
+                Ver mis citas
+              </Button>
+            </Link>
           </motion.div>
         </motion.div>
       </section>
@@ -107,6 +144,7 @@ export default function PatientLanding() {
                   <div className="p-6 flex flex-col items-center flex-1">
                     <div className="w-24 h-24 rounded-full overflow-hidden mb-4 bg-secondary">
                       {doc.profileImage ? (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img src={doc.profileImage} alt={doc.name} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center bg-primary/10 text-primary text-xl font-bold">{doc.name.substring(0, 2).toUpperCase()}</div>
@@ -265,9 +303,14 @@ export default function PatientLanding() {
           <p className="text-lg text-muted-foreground mb-8">
             Agenda tu cita ahora y recibe atención médica de calidad
           </p>
-          <Button size="lg" onClick={() => router.push("/agendar")}>
-            Agendar cita ahora
-          </Button>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <Button size="lg" onClick={() => router.push("/agendar")}>
+              Agendar cita ahora
+            </Button>
+            <Button size="lg" variant="secondary" onClick={() => router.push("/paciente/login")}>
+              Ver mi historial
+            </Button>
+          </div>
         </motion.div>
       </section>
 
@@ -280,3 +323,4 @@ export default function PatientLanding() {
     </div>
   );
 }
+

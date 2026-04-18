@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { getDoctorProductAccess } from '@/lib/productAccess'
 
 function asNullableString(value: unknown): string | null {
   if (typeof value !== 'string') return null
@@ -18,6 +19,7 @@ export async function GET() {
     })
 
     if (!doctor) return NextResponse.json({ error: 'Doctor not found' }, { status: 404 })
+    const productAccess = await getDoctorProductAccess(doctorId, doctor.role)
 
     let branding: { professionalLicense: string | null; clinicAddress: string | null; logoImage: string | null } = {
       professionalLicense: null,
@@ -48,6 +50,8 @@ export async function GET() {
       professionalLicense: branding.professionalLicense,
       clinicAddress: branding.clinicAddress,
       logoImage: branding.logoImage,
+      productPlan: productAccess.plan,
+      enabledModules: productAccess.enabledModules,
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'

@@ -1,9 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedDoctorId } from "@/lib/auth";
+import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { transcribeAudio, generateSOAPFromTranscript } from "@/lib/aiNoteService";
 import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rateLimit";
 import { z } from "zod";
+import { jsonNoStore } from "@/lib/http";
+import { requireMedicalDoctorApiAccess } from "@/lib/medicalApi";
+import { getRequestIp, getUserAgent } from "@/lib/requestContext";
+import { AINoteGenerationService } from "@/services/AINoteGenerationService";
+import { ConsentCaptureService } from "@/services/ConsentCaptureService";
 
 const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
 const allowedAudioTypes = new Set([
@@ -35,85 +38,134 @@ export async function POST(
     });
     if (!rateLimit.ok) return rateLimitExceededResponse(rateLimit);
 
-    const params = await props.params;
-    const doctorId = await getAuthenticatedDoctorId();
-    if (!doctorId) {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-    }
+    const access = await requireMedicalDoctorApiAccess();
+    if (access.response) return access.response;
 
-    // Verify appointment ownership
-    const appointment = await prisma.appointment.findUnique({
-      where: { id: params.id },
-      select: { doctorId: true },
+    const params = await props.params;
+    const doctorId = access.context.doctorId;
+    const actorUserId = access.context.user.id;
+    const ipAddress = getRequestIp(req);
+    const userAgent = getUserAgent(req);
+
+    const appointment = await prisma.appointment.findFirst({
+      where: { id: params.id, doctorId },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            fullName: true,
+          },
+        },
+        doctor: {
+          select: {
+            name: true,
+          },
+        },
+      },
     });
 
-    if (!appointment || appointment.doctorId !== doctorId) {
-      return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+    if (!appointment) {
+      return jsonNoStore({ error: "No encontrado" }, { status: 404 });
     }
 
     const formData = await req.formData();
     const audioEntry = formData.get("audio");
-
     if (!(audioEntry instanceof Blob)) {
-      return NextResponse.json({ error: "Archivo de audio no encontrado" }, { status: 400 });
+      return jsonNoStore({ error: "Archivo de audio no encontrado" }, { status: 400 });
     }
-    const audioFile = audioEntry;
+
     const url = new URL(req.url);
     const parsedQuery = aiGenerateQuerySchema.safeParse({
       maxBytes: url.searchParams.get("maxBytes") ?? undefined,
     });
     if (!parsedQuery.success) {
-      return NextResponse.json({ error: "Parámetros inválidos" }, { status: 400 });
+      return jsonNoStore({ error: "Parámetros inválidos" }, { status: 400 });
     }
 
+    const audioFile = audioEntry;
     const effectiveMaxBytes = parsedQuery.data.maxBytes ?? MAX_AUDIO_BYTES;
     const mimeType = (audioFile.type || "").toLowerCase().split(";")[0].trim();
     if (!allowedAudioTypes.has(mimeType)) {
-      return NextResponse.json(
+      return jsonNoStore(
         { error: "Formato de audio no permitido. Usa WebM, OGG, MP3, MP4 o WAV." },
         { status: 400 }
       );
     }
 
     if (audioFile.size <= 0) {
-      return NextResponse.json({ error: "El archivo de audio está vacío." }, { status: 400 });
+      return jsonNoStore({ error: "El archivo de audio está vacío." }, { status: 400 });
     }
 
     if (audioFile.size > effectiveMaxBytes) {
-      return NextResponse.json(
+      return jsonNoStore(
         { error: `El audio excede el tamaño máximo permitido (${Math.round(effectiveMaxBytes / 1024 / 1024)}MB).` },
         { status: 413 }
       );
     }
 
-    // Convert Blob to Buffer
-    const arrayBuffer = await audioFile.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const lastVerbalConsent = await prisma.consentCapture.findFirst({
+      where: {
+        appointmentId: params.id,
+        type: "VERBAL_RECORDING_CONFIRMATION",
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
 
-    // 1. Transcribe
+    if (!lastVerbalConsent) {
+      await ConsentCaptureService.capture({
+        appointmentId: appointment.id,
+        doctorId,
+        patientId: appointment.patientId,
+        capturedByUserId: actorUserId,
+        type: "VERBAL_RECORDING_CONFIRMATION",
+        ipAddress,
+        userAgent,
+        metadata: {
+          source: "recording_button_fallback",
+        },
+      });
+    }
+
+    const buffer = Buffer.from(await audioFile.arrayBuffer());
     const fileName = audioEntry instanceof File ? audioEntry.name : "audio";
-    const transcript = await transcribeAudio({
+
+    const job = await AINoteGenerationService.createJob({
+      appointmentId: appointment.id,
+      doctorId,
+      patientId: appointment.patientId,
+      actorUserId,
+      ipAddress,
+      userAgent,
+    });
+
+    void AINoteGenerationService.processJob({
+      jobId: job.id,
+      appointmentId: appointment.id,
+      doctorId,
+      patientId: appointment.patientId,
+      actorUserId,
+      ipAddress,
+      userAgent,
       audioBuffer: buffer,
       mimeType,
       fileName,
+      patientName: appointment.patient.fullName,
+      doctorName: appointment.doctor.name,
     });
-    if (!transcript || transcript.trim().length === 0) {
-      return NextResponse.json(
-        { error: "No se pudo extraer texto del audio. Intenta grabar con más claridad." },
-        { status: 422 }
-      );
-    }
 
-    // 2. Generate SOAP
-    const soapData = await generateSOAPFromTranscript(transcript);
-
-    return NextResponse.json({
-      transcript,
-      soap: soapData,
-    });
+    return jsonNoStore(
+      {
+        jobId: job.id,
+        status: job.status,
+        progressPct: job.progressPct,
+        statusMessage: job.statusMessage,
+      },
+      { status: 202 }
+    );
   } catch (error: unknown) {
     console.error("AI Generation Error:", error);
-    return NextResponse.json(
+    return jsonNoStore(
       { error: "No fue posible generar la nota con IA. Intenta nuevamente en unos minutos." },
       { status: 500 }
     );

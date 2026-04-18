@@ -1,8 +1,8 @@
-import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
 import { z } from 'zod'
 import { parseDateOnlyLocal } from '@/lib/dateTime'
+import { jsonNoStore } from '@/lib/http'
+import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 
 const createPatientSchema = z.object({
   fullName: z.string().min(2, 'Nombre requerido'),
@@ -13,8 +13,9 @@ const createPatientSchema = z.object({
 
 export async function GET() {
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     const patients = await prisma.patient.findMany({
       where: {
@@ -45,21 +46,22 @@ export async function GET() {
       appointmentCount: countByPatientId.get(patient.id) ?? 0,
     }))
 
-    return NextResponse.json(payload)
+    return jsonNoStore(payload)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return jsonNoStore({ error: message }, { status: 500 })
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     const parsed = createPatientSchema.safeParse(await request.json())
     if (!parsed.success) {
-      return NextResponse.json({ error: 'Datos inválidos', details: parsed.error.issues }, { status: 400 })
+      return jsonNoStore({ error: 'Datos inválidos', details: parsed.error.issues }, { status: 400 })
     }
 
     const fullName = parsed.data.fullName.trim()
@@ -76,7 +78,7 @@ export async function POST(request: Request) {
     })
 
     if (duplicate) {
-      return NextResponse.json(
+      return jsonNoStore(
         { error: 'Ya existe un paciente con ese nombre y teléfono en tu directorio.' },
         { status: 409 }
       )
@@ -87,7 +89,7 @@ export async function POST(request: Request) {
       try {
         dateOfBirth = parseDateOnlyLocal(parsed.data.dateOfBirth)
       } catch {
-        return NextResponse.json({ error: 'Fecha de nacimiento inválida' }, { status: 400 })
+        return jsonNoStore({ error: 'Fecha de nacimiento inválida' }, { status: 400 })
       }
     }
 
@@ -108,9 +110,9 @@ export async function POST(request: Request) {
       },
     })
 
-    return NextResponse.json({ success: true, patient }, { status: 201 })
+    return jsonNoStore({ success: true, patient }, { status: 201 })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return jsonNoStore({ error: message }, { status: 500 })
   }
 }

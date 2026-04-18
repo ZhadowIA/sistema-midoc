@@ -3,6 +3,7 @@ import { AppointmentService } from '@/services/AppointmentService'
 import { getAuthenticatedUser } from '@/lib/auth'
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit'
 import { ContractValidationError, parsePublicAppointmentPayload } from '@/lib/publicApiContracts'
+import { getRequestIp, getUserAgent } from '@/lib/requestContext'
 
 export async function POST(request: Request) {
   const rateLimit = checkRateLimit(request, {
@@ -33,6 +34,8 @@ export async function POST(request: Request) {
       ...appointmentPayload,
       userId: patientUserId,
       email: email || undefined,
+      ipAddress: getRequestIp(request),
+      userAgent: getUserAgent(request),
     })
 
     return NextResponse.json(result, { status: 201 })

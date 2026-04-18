@@ -1,0 +1,3 @@
+export const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+export const SESSION_REFRESH_INTERVAL_MS = 4 * 60 * 1000;
+export const SESSION_COOKIE_MAX_AGE_SECONDS = 15 * 60;

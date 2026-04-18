@@ -3,7 +3,7 @@
 import { ReactNode, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { Calendar, Settings, LayoutDashboard, LogOut, Menu, X, Users, Sun, Moon, CreditCard, PieChart } from "lucide-react";
+import { Calendar, Settings, LayoutDashboard, LogOut, Menu, X, Users, Moon, CreditCard, PieChart } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useTheme } from "@/components/ThemeProvider";
 
@@ -19,11 +19,16 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
   const [doctorSpecialty, setDoctorSpecialty] = useState("");
   const [doctorImage, setDoctorImage] = useState("");
   const [waConnected, setWaConnected] = useState(false);
+  const [userRole, setUserRole] = useState<string>("DOCTOR");
+  const [enabledModules, setEnabledModules] = useState<Array<"AGENDA" | "CLINICAL_RECORDS">>([
+    "AGENDA",
+    "CLINICAL_RECORDS",
+  ]);
 
   useEffect(() => {
     const loadDoctorProfile = async () => {
       try {
-        const res = await fetch("/api/admin/profile");
+        const res = await fetch("/api/admin/profile", { cache: "no-store" });
         const data = await res.json();
         if (!res.ok || data?.error) {
           throw new Error(data?.error || "No se pudo cargar el perfil.");
@@ -36,6 +41,16 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
             : "Médico"
         );
         setDoctorImage(typeof data.profileImage === "string" ? data.profileImage : "");
+        setUserRole(data.role || "DOCTOR");
+        if (Array.isArray(data.enabledModules)) {
+          const modules = data.enabledModules.filter(
+            (item: unknown): item is "AGENDA" | "CLINICAL_RECORDS" =>
+              item === "AGENDA" || item === "CLINICAL_RECORDS"
+          );
+          if (modules.length > 0) {
+            setEnabledModules(modules);
+          }
+        }
       } catch {
         setDoctorName("Doctor");
         setDoctorSpecialty("Médico");
@@ -45,7 +60,7 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
 
     const loadConfig = async () => {
       try {
-        const res = await fetch("/api/admin/config");
+        const res = await fetch("/api/admin/config", { cache: "no-store" });
         const data = await res.json();
         if (res.ok && data?.whatsappConnected !== undefined) {
           setWaConnected(!!data.whatsappConnected);
@@ -57,7 +72,48 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
 
     void loadDoctorProfile();
     void loadConfig();
+
+    let intervalId: number | null = null;
+    const start = () => {
+      if (intervalId !== null) return;
+      intervalId = window.setInterval(loadConfig, 60000);
+    };
+    const stop = () => {
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void loadConfig();
+        start();
+      } else {
+        stop();
+      }
+    };
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
   }, []);
+
+  useEffect(() => {
+    if (userRole === "SECRETARY") {
+      const restrictedPaths = [
+        "/medico/pacientes",
+        "/medico/contabilidad",
+        "/medico/suscripcion",
+        "/medico/configuracion",
+        "/medico/cuestionarios"
+      ];
+      if (restrictedPaths.some(p => pathname.startsWith(p))) {
+        router.replace("/medico/agenda");
+      }
+    }
+  }, [userRole, pathname, router]);
 
   const handleLogout = () => {
     fetch('/api/auth/logout', { method: 'POST' }).finally(() => {
@@ -65,16 +121,25 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
     });
   };
 
-  const { theme, toggle } = useTheme();
+  const { toggle } = useTheme();
 
   const navItems = [
-    { icon: LayoutDashboard, label: "Dashboard", path: "/medico/dashboard" },
-    { icon: Calendar, label: "Agenda", path: "/medico/agenda" },
-    { icon: Users, label: "Pacientes", path: "/medico/pacientes" },
-    { icon: PieChart, label: "Contabilidad", path: "/medico/contabilidad" },
-    { icon: CreditCard, label: "Suscripción", path: "/medico/suscripcion" },
-    { icon: Settings, label: "Configuración", path: "/medico/configuracion" },
+    { icon: LayoutDashboard, label: "Dashboard", path: "/medico/dashboard", module: "AGENDA" as const },
+    { icon: Calendar, label: "Agenda", path: "/medico/agenda", module: "AGENDA" as const },
+    { icon: PieChart, label: "Contabilidad", path: "/medico/contabilidad", doctorOnly: true, module: "AGENDA" as const },
+    { icon: Users, label: "Pacientes", path: "/medico/pacientes", doctorOnly: true, module: "CLINICAL_RECORDS" as const },
+    { icon: CreditCard, label: "Suscripción", path: "/medico/suscripcion", doctorOnly: true },
+    { icon: Settings, label: "Configuración", path: "/medico/configuracion", doctorOnly: true },
   ];
+
+  const filteredNavItems = navItems.filter(item => {
+    if (userRole === "SECRETARY" && item.doctorOnly) return false;
+    if (item.module && !enabledModules.includes(item.module)) return false;
+    return true;
+  });
+  const agendaItems = filteredNavItems.filter((item) => item.module === "AGENDA");
+  const clinicalItems = filteredNavItems.filter((item) => item.module === "CLINICAL_RECORDS");
+  const commonItems = filteredNavItems.filter((item) => !item.module);
 
   const initials = doctorName
     .split(" ")
@@ -107,10 +172,11 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
       {/* Doctor profile */}
       <div className="px-5 py-4 border-b border-border">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full overflow-hidden bg-secondary border border-border shrink-0">
-            {doctorImage ? (
-              <img src={doctorImage} alt={doctorName} className="w-full h-full object-cover" />
-            ) : (
+            <div className="w-10 h-10 rounded-full overflow-hidden bg-secondary border border-border shrink-0">
+              {doctorImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={doctorImage} alt={doctorName} className="w-full h-full object-cover" />
+              ) : (
               <div className="w-full h-full flex items-center justify-center text-sm font-semibold text-primary bg-primary/10">
                 {initials}
               </div>
@@ -125,14 +191,65 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-1">
-        {navItems.map((item) => {
+        {agendaItems.length > 0 && (
+          <p className="px-3 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground/80 uppercase">
+            Agenda
+          </p>
+        )}
+        {agendaItems.map((item) => {
           const isActive = pathname.startsWith(item.path);
           return (
             <Link
               key={item.path}
               href={item.path}
               onClick={() => setMobileMenuOpen(false)}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${
+              className={`flex min-h-[48px] items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${
+                isActive
+                  ? "bg-primary text-primary-foreground font-medium shadow-sm"
+                  : "text-foreground hover:bg-secondary"
+              }`}
+            >
+              <item.icon className="w-4.5 h-4.5 shrink-0" />
+              <span>{item.label}</span>
+            </Link>
+          );
+        })}
+        {clinicalItems.length > 0 && (
+          <p className="px-3 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground/80 uppercase">
+            Expediente clínico
+          </p>
+        )}
+        {clinicalItems.map((item) => {
+          const isActive = pathname.startsWith(item.path);
+          return (
+            <Link
+              key={item.path}
+              href={item.path}
+              onClick={() => setMobileMenuOpen(false)}
+              className={`flex min-h-[48px] items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${
+                isActive
+                  ? "bg-primary text-primary-foreground font-medium shadow-sm"
+                  : "text-foreground hover:bg-secondary"
+              }`}
+            >
+              <item.icon className="w-4.5 h-4.5 shrink-0" />
+              <span>{item.label}</span>
+            </Link>
+          );
+        })}
+        {commonItems.length > 0 && (
+          <p className="px-3 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground/80 uppercase">
+            Cuenta
+          </p>
+        )}
+        {commonItems.map((item) => {
+          const isActive = pathname.startsWith(item.path);
+          return (
+            <Link
+              key={item.path}
+              href={item.path}
+              onClick={() => setMobileMenuOpen(false)}
+              className={`flex min-h-[48px] items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${
                 isActive
                   ? "bg-primary text-primary-foreground font-medium shadow-sm"
                   : "text-foreground hover:bg-secondary"
@@ -158,15 +275,15 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
         {/* Theme toggle */}
         <button
           onClick={toggle}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-xl w-full text-muted-foreground hover:text-foreground hover:bg-secondary transition-all text-sm"
+          className="flex min-h-[48px] items-center gap-3 px-3 py-2.5 rounded-xl w-full text-muted-foreground hover:text-foreground hover:bg-secondary transition-all text-sm"
         >
-          {theme === "dark" ? <Sun className="w-4 h-4 shrink-0" /> : <Moon className="w-4 h-4 shrink-0" />}
-          <span>{theme === "dark" ? "Modo claro" : "Modo oscuro"}</span>
+          <Moon className="w-4 h-4 shrink-0" />
+          <span>Cambiar tema</span>
         </button>
 
         <button
           onClick={handleLogout}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-xl w-full text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-all text-sm"
+          className="flex min-h-[48px] items-center gap-3 px-3 py-2.5 rounded-xl w-full text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-all text-sm"
         >
           <LogOut className="w-4 h-4 shrink-0" />
           <span>Cerrar sesión</span>
@@ -197,7 +314,7 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
           </div>
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="p-2 rounded-lg hover:bg-secondary transition-colors"
+            className="min-h-[44px] min-w-[44px] p-2 rounded-lg hover:bg-secondary transition-colors"
           >
             {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>

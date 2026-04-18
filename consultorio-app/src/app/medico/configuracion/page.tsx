@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Clock, LogOut, BellRing, RefreshCw, AlertTriangle, CheckCircle2, AlertCircle } from "lucide-react";
 import { DoctorLayout } from "@/components/DoctorLayout";
 import { Button } from "@/components/Button";
@@ -8,7 +8,7 @@ import { Modal } from "@/components/Modal";
 import { toast } from "sonner";
 import { useSearchParams, useRouter } from "next/navigation";
 
-type Tab = "perfil" | "parametros" | "disponibilidad" | "whatsapp";
+type Tab = "perfil" | "parametros" | "disponibilidad" | "whatsapp" | "equipo";
 
 type AvailabilityBlock = {
   dateLocal: string;
@@ -37,6 +37,30 @@ type WhatsAppHistoryItem = {
   createdAt: string;
   patient: { id: string; fullName: string } | null;
   appointment: { id: string; startTime: string; status: string } | null;
+};
+
+type Secretary = {
+  id: string;
+  name: string;
+  email: string;
+  active: boolean;
+  createdAt: string;
+};
+
+type SetupChecklistItem = {
+  id: string;
+  label: string;
+  hint: string;
+  done: boolean;
+  actionHref: string;
+  actionLabel: string;
+};
+
+type SetupChecklist = {
+  completed: number;
+  total: number;
+  progressPct: number;
+  items: SetupChecklistItem[];
 };
 
 type WhatsAppTemplateType = "booking" | "questionnaire" | "reminder_pending" | "reminder_confirmed";
@@ -373,7 +397,159 @@ function NotificationStatusPanel() {
   );
 }
 
-export default function DoctorConfiguration() {
+function SecretaryManager() {
+  const [secretaries, setSecretaries] = useState<Secretary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newSecretary, setNewSecretary] = useState({ name: "", email: "", password: "" });
+
+  const loadSecretaries = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/medico/secretaries");
+      const data = await res.json();
+      if (res.ok) setSecretaries(data);
+    } catch (error) {
+      console.error(error);
+      toast.error("No se pudieron cargar las secretarias");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadSecretaries();
+  }, []);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreating(true);
+    try {
+      const res = await fetch("/api/medico/secretaries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newSecretary),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error al crear");
+      toast.success("Secretaria creada correctamente");
+      setShowCreateModal(false);
+      setNewSecretary({ name: "", email: "", password: "" });
+      void loadSecretaries();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("¿Estás seguro de eliminar esta cuenta?")) return;
+    setDeleting(id);
+    try {
+      const res = await fetch(`/api/medico/secretaries/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("No se pudo eliminar");
+      toast.success("Cuenta eliminada");
+      void loadSecretaries();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-foreground">Equipo de Trabajo</h2>
+        <Button onClick={() => setShowCreateModal(true)} size="sm">
+          Alta de Secretaria/o
+        </Button>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-muted-foreground animate-pulse">Cargando equipo...</p>
+      ) : secretaries.length === 0 ? (
+        <div className="text-center py-12 border-2 border-dashed border-border rounded-2xl">
+          <p className="text-sm text-muted-foreground">No tienes personal registrado todavía.</p>
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          {secretaries.map((s) => (
+            <div key={s.id} className="p-4 bg-secondary/20 rounded-xl border border-border flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground">{s.name}</p>
+                <p className="text-xs text-muted-foreground">{s.email}</p>
+              </div>
+              <button
+                onClick={() => void handleDelete(s.id)}
+                disabled={deleting === s.id}
+                className="text-xs text-destructive hover:underline font-medium disabled:opacity-50"
+              >
+                {deleting === s.id ? "Eliminando..." : "Eliminar"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal
+        open={showCreateModal}
+        onOpenChange={setShowCreateModal}
+        title="Nueva Secretaria/o"
+        description="Crea una cuenta para tu personal de apoyo. Tendrán acceso exclusivo a la agenda."
+      >
+        <form onSubmit={handleCreate} className="space-y-4 pt-2">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Nombre completo</label>
+            <input
+              required
+              className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              value={newSecretary.name}
+              onChange={(e) => setNewSecretary({ ...newSecretary, name: e.target.value })}
+              placeholder="Ej. Juan Pérez"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Correo electrónico</label>
+            <input
+              required
+              type="email"
+              className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              value={newSecretary.email}
+              onChange={(e) => setNewSecretary({ ...newSecretary, email: e.target.value })}
+              placeholder="ejemplo@correo.com"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Contraseña provisional</label>
+            <input
+              required
+              type="password"
+              minLength={6}
+              className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              value={newSecretary.password}
+              onChange={(e) => setNewSecretary({ ...newSecretary, password: e.target.value })}
+              placeholder="••••••••"
+            />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setShowCreateModal(false)} className="flex-1" type="button">
+              Cancelar
+            </Button>
+            <Button loading={creating} className="flex-1" type="submit">
+              Crear Cuenta
+            </Button>
+          </div>
+        </form>
+      </Modal>
+    </div>
+  );
+}
+
+function DoctorConfigurationContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("perfil");
@@ -444,7 +620,7 @@ export default function DoctorConfiguration() {
   const [waTestPhone, setWaTestPhone] = useState("");
   const [waSendingTest, setWaSendingTest] = useState(false);
   const [waTestMsg, setWaTestMsg] = useState("");
-  const [setupChecklist, setSetupChecklist] = useState<any>(null);
+  const [setupChecklist, setSetupChecklist] = useState<SetupChecklist | null>(null);
 
   useEffect(() => {
     const tabParam = searchParams.get("tab");
@@ -529,7 +705,7 @@ export default function DoctorConfiguration() {
         }));
       }).catch(console.error);
 
-    fetch("/api/admin/dashboard/summary", { cache: "no-store" })
+    fetch("/api/agenda/admin/dashboard/summary", { cache: "no-store" })
       .then(r => r.json())
       .then(data => {
         if (data?.setupChecklist) {
@@ -547,7 +723,7 @@ export default function DoctorConfiguration() {
     const to = new Date(from);
     to.setDate(to.getDate() + 14);
 
-    fetch(`/api/admin/availability?active=true&isPublic=true&from=${toDateOnlyString(from)}&to=${toDateOnlyString(to)}`)
+    fetch(`/api/agenda/admin/availability?active=true&isPublic=true&from=${toDateOnlyString(from)}&to=${toDateOnlyString(to)}`)
       .then(r => r.json())
       .then((data) => {
         if (Array.isArray(data.blocks)) {
@@ -678,7 +854,7 @@ export default function DoctorConfiguration() {
         horizonDays: 365,
       };
 
-      const res = await fetch("/api/admin/schedule/generate", {
+      const res = await fetch("/api/agenda/admin/schedule/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -859,6 +1035,7 @@ export default function DoctorConfiguration() {
     { id: "parametros", label: "Parámetros" },
     { id: "disponibilidad", label: "Disponibilidad" },
     { id: "whatsapp", label: "WhatsApp" },
+    { id: "equipo", label: "Equipo" },
   ];
 
   return (
@@ -887,7 +1064,7 @@ export default function DoctorConfiguration() {
               </div>
 
               <div className="space-y-2">
-                {setupChecklist.items.map((item: any) => (
+                {setupChecklist.items.map((item) => (
                   <div
                     key={item.id}
                     className="rounded-xl border border-border bg-secondary/20 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
@@ -1042,6 +1219,7 @@ export default function DoctorConfiguration() {
                   <span className="text-sm text-muted-foreground">{uploadingImage ? "Subiendo..." : profileData.profileImage ? "Imagen cargada" : "Sin archivos seleccionados"}</span>
                 </div>
                 {profileData.profileImage && (
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={profileData.profileImage}
                     alt="Vista previa de foto de perfil"
@@ -1080,6 +1258,7 @@ export default function DoctorConfiguration() {
                   <span className="text-sm text-muted-foreground">{uploadingLogo ? "Subiendo..." : profileData.logoImage ? "Logo cargado" : "Sin archivos seleccionados"}</span>
                 </div>
                 {profileData.logoImage && (
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={profileData.logoImage}
                     alt="Vista previa de logo"
@@ -1338,6 +1517,7 @@ export default function DoctorConfiguration() {
               {!waConnected && waQr && (
                 <div className="flex justify-center">
                   <div className="w-56 h-56 bg-white border border-border rounded-2xl p-2 overflow-hidden shadow-sm">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={waQr} alt="WhatsApp QR" className="w-full h-full object-contain" />
                   </div>
                 </div>
@@ -1657,6 +1837,11 @@ export default function DoctorConfiguration() {
               <NotificationStatusPanel />
             </div>
           )}
+
+          {/* ═══════════════════════════════════════
+              TAB: EQUIPO
+          ═══════════════════════════════════════ */}
+          {activeTab === "equipo" && <SecretaryManager />}
         </div>
       </div>
 
@@ -1683,3 +1868,22 @@ export default function DoctorConfiguration() {
     </DoctorLayout>
   );
 }
+
+export default function DoctorConfiguration() {
+  return (
+    <Suspense
+      fallback={
+        <DoctorLayout>
+          <div className="p-6 lg:p-8 w-full">
+            <div className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">
+              Cargando configuración...
+            </div>
+          </div>
+        </DoctorLayout>
+      }
+    >
+      <DoctorConfigurationContent />
+    </Suspense>
+  );
+}
+

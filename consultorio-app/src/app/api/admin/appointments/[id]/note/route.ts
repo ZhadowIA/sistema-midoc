@@ -1,8 +1,10 @@
-import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
+import { jsonNoStore } from '@/lib/http'
+import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
+import { getRequestIp, getUserAgent } from '@/lib/requestContext'
+import { AppointmentAuditService } from '@/services/AppointmentAuditService'
 
 const prescriptionSchema = z.object({
   medication: z.string().trim().min(1).max(200),
@@ -24,33 +26,38 @@ const clinicalNoteSchema = z.object({
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     // Validar propiedad de cita
     const appointment = await prisma.appointment.findFirst({
       where: { id: params.id, doctorId },
       select: { id: true },
     })
-    if (!appointment) return NextResponse.json({ error: 'Cita no encontrada' }, { status: 404 })
+    if (!appointment) return jsonNoStore({ error: 'Cita no encontrada' }, { status: 404 })
 
     const note = await prisma.clinicalNote.findUnique({
       where: { appointmentId: params.id },
       include: { prescriptions: true }
     })
 
-    return NextResponse.json(note || {})
+    return jsonNoStore(note || {})
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return jsonNoStore({ error: message }, { status: 500 })
   }
 }
 
 export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
+    const actorUserId = access.context.user.id
+    const ipAddress = getRequestIp(request)
+    const userAgent = getUserAgent(request)
 
     // Verify appointment ownership
     const appointment = await prisma.appointment.findFirst({
@@ -58,12 +65,12 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       select: { patientId: true },
     })
 
-    if (!appointment) return NextResponse.json({ error: 'Operación no válida' }, { status: 403 })
+    if (!appointment) return jsonNoStore({ error: 'Operación no válida' }, { status: 403 })
 
     const body = await request.json()
     const parsedBody = clinicalNoteSchema.safeParse(body)
     if (!parsedBody.success) {
-      return NextResponse.json({ error: 'Datos inválidos', details: parsedBody.error.issues }, { status: 400 })
+      return jsonNoStore({ error: 'Datos inválidos', details: parsedBody.error.issues }, { status: 400 })
     }
 
     // Usamos transaction para actualizar la nota y las recetas
@@ -75,7 +82,13 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
           objective: parsedBody.data.objective,
           assessment: parsedBody.data.assessment,
           plan: parsedBody.data.plan,
-          privateNotes: parsedBody.data.privateNotes
+          privateNotes: parsedBody.data.privateNotes,
+          soapPayload: {
+            subjective: parsedBody.data.subjective,
+            objective: parsedBody.data.objective,
+            assessment: parsedBody.data.assessment,
+            plan: parsedBody.data.plan,
+          },
         },
         create: {
           appointmentId: params.id,
@@ -85,7 +98,13 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
           objective: parsedBody.data.objective,
           assessment: parsedBody.data.assessment,
           plan: parsedBody.data.plan,
-          privateNotes: parsedBody.data.privateNotes
+          privateNotes: parsedBody.data.privateNotes,
+          soapPayload: {
+            subjective: parsedBody.data.subjective,
+            objective: parsedBody.data.objective,
+            assessment: parsedBody.data.assessment,
+            plan: parsedBody.data.plan,
+          },
         }
       })
 
@@ -109,15 +128,34 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         }
       }
 
+      await AppointmentAuditService.safeLog(
+        {
+          doctorId,
+          appointmentId: params.id,
+          patientId: appointment.patientId,
+          actorType: 'DOCTOR',
+          actorUserId,
+          source: 'ADMIN_PANEL',
+          action: 'CLINICAL_NOTE_UPDATED',
+          ipAddress,
+          userAgent,
+          metadata: {
+            updatedByApi: true,
+            prescriptionCount: parsedBody.data.prescriptions?.length ?? 0,
+          },
+        },
+        tx
+      )
+
       return await tx.clinicalNote.findUnique({
         where: { id: note.id },
         include: { prescriptions: true }
       })
     })
 
-    return NextResponse.json(result)
+    return jsonNoStore(result)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return jsonNoStore({ error: message }, { status: 500 })
   }
 }
