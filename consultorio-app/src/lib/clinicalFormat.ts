@@ -73,6 +73,51 @@ export function calculateEncounterCompletionPct(p: EncounterHistoryPayload): num
   return Math.round((filled / sections.length) * 100)
 }
 
+export const ENCOUNTER_SECTION_KEYS = [
+  'chiefComplaint',
+  'presentIllness',
+  'pertinentNegatives',
+  'reviewOfSystems',
+  'vitals',
+  'physicalExam',
+  'assessment',
+  'diagnosticPlan',
+  'treatmentPlan',
+  'followUp',
+] as const
+
+export type EncounterSectionKey = (typeof ENCOUNTER_SECTION_KEYS)[number]
+
+export function calculateSectionCompletions(
+  p: EncounterHistoryPayload,
+): Record<EncounterSectionKey, number> {
+  const toPct = (filled: number, total: number) =>
+    total === 0 ? 0 : Math.round((filled / total) * 100)
+  const chief = p.chiefComplaint.trim().length > 0 ? 100 : 0
+  const pi = countFilled(p.presentIllness)
+  const piTotal = 7 // onset, duration, course, location, intensity, characteristics, summary
+  const neg = p.pertinentNegatives.length > 0 ? 100 : 0
+  const ros = Math.min(100, countFilled(p.reviewOfSystems) * 12)
+  const vitals = Math.min(100, countFilled(p.vitals) * 14)
+  const exam = Math.min(100, countFilled(p.physicalExam) * 14)
+  const assess = p.assessment.length > 0 ? 100 : 0
+  const dxPlan = Math.min(100, countFilled(p.diagnosticPlan) * 34)
+  const txPlan = Math.min(100, countFilled(p.treatmentPlan) * 34)
+  const follow = Math.min(100, countFilled(p.followUp) * 50)
+  return {
+    chiefComplaint: chief,
+    presentIllness: toPct(pi, piTotal),
+    pertinentNegatives: neg,
+    reviewOfSystems: ros,
+    vitals,
+    physicalExam: exam,
+    assessment: assess,
+    diagnosticPlan: dxPlan,
+    treatmentPlan: txPlan,
+    followUp: follow,
+  }
+}
+
 export function hasMinimumForSignoff(p: EncounterHistoryPayload): {
   ok: boolean
   missing: string[]
