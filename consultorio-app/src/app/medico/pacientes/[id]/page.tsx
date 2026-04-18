@@ -393,9 +393,18 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
                   <HeartPulse className="w-5 h-5 text-primary" />
                   Expediente Maestro
                 </CardTitle>
-                <Button size="sm" onClick={handleSaveRecord} disabled={savingRecord}>
-                  {savingRecord ? "..." : <Save className="w-4 h-4" />}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => router.push(`/medico/pacientes/${params.id}/historia-clinica`)}
+                  >
+                    Historia clínica
+                  </Button>
+                  <Button size="sm" onClick={handleSaveRecord} disabled={savingRecord}>
+                    {savingRecord ? "..." : <Save className="w-4 h-4" />}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 <Input 

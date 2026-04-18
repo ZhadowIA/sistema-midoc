@@ -4,6 +4,7 @@ import { useEffect, useState, use } from "react";
 import { CopyPlus } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { PatientClinicalAlerts } from "@/components/clinical/PatientClinicalAlerts";
 
 type PrescriptionItem = {
   medication: string;
@@ -20,6 +21,7 @@ type PrescriptionNote = {
 type PrescriptionAppointment = {
   startTime: string;
   patient: {
+    id: string;
     fullName: string;
     dateOfBirth: string;
   };
@@ -86,6 +88,11 @@ export default function PrescriptionPrintPage(props: { params: Promise<{ id: str
 
   return (
     <div className="bg-white min-h-screen font-sans text-black">
+      {/* Clinical alerts (screen only) */}
+      <div className="print:hidden max-w-4xl mx-auto mt-4">
+        <PatientClinicalAlerts patientId={patient.id} />
+      </div>
+
       {/* Non-Printable Action Bar */}
       <div className="print:hidden bg-secondary border-b p-4 flex justify-between items-center max-w-4xl mx-auto mt-4 rounded-xl shadow-sm">
         <p className="text-sm text-muted-foreground font-medium">Esta vista está optimizada para imprimirse en tamaño Carta (A4) o exportarse a PDF.</p>

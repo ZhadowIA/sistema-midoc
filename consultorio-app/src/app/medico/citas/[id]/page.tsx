@@ -8,6 +8,7 @@ import {
   Mic, Square, Wand2, Loader2, AlertCircle, Brain, Stethoscope, Utensils, AlertTriangle, ChevronRight, Pill, Info
 } from "lucide-react";
 import { DoctorLayout } from "@/components/DoctorLayout";
+import { PatientClinicalAlerts } from "@/components/clinical/PatientClinicalAlerts";
 import { Button } from "@/components/Button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/Card";
 import { TextArea } from "@/components/TextArea";
@@ -876,9 +877,20 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   Modo consulta
                 </Button>
               )}
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => router.push(`/medico/citas/${params.id}/encuentro`)}
+              >
+                Encuentro clínico
+              </Button>
             </div>
           </div>
         </motion.div>
+
+        <div className="mb-4">
+          <PatientClinicalAlerts patientId={appointment.patient.id} />
+        </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
           {/* Patient Info */}
