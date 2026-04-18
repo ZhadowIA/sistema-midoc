@@ -272,18 +272,29 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     [payload],
   );
 
+  const combinedSaveState = useMemo<
+    "idle" | "saving" | "saved" | "error"
+  >(() => {
+    const states = [saveState, clinicalNote.saveState];
+    if (states.includes("error")) return "error";
+    if (states.includes("saving")) return "saving";
+    if (states.every((s) => s === "saved")) return "saved";
+    return "idle";
+  }, [saveState, clinicalNote.saveState]);
+
   const saveLabel = useMemo(() => {
-    switch (saveState) {
+    if (clinicalNote.isSigned) return "Nota firmada";
+    switch (combinedSaveState) {
       case "saving":
         return "Guardando...";
       case "saved":
-        return "Guardado";
+        return "Todo guardado";
       case "error":
         return "Error al guardar";
       default:
         return "Cambios sin guardar";
     }
-  }, [saveState]);
+  }, [combinedSaveState, clinicalNote.isSigned]);
 
   return (
     <div className="space-y-4">
@@ -331,11 +342,13 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
                   <span
                     className={[
                       "text-xs",
-                      saveState === "error"
-                        ? "text-red-600"
-                        : saveState === "saved"
-                          ? "text-emerald-600"
-                          : "text-muted-foreground",
+                      clinicalNote.isSigned
+                        ? "text-emerald-700"
+                        : combinedSaveState === "error"
+                          ? "text-red-600"
+                          : combinedSaveState === "saved"
+                            ? "text-emerald-600"
+                            : "text-muted-foreground",
                     ].join(" ")}
                   >
                     {saveLabel}
@@ -473,8 +486,11 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
 
           <div className="flex justify-end gap-2 pt-2">
             <Button
-              onClick={() => payload && savePayload(payload)}
-              loading={saveState === "saving"}
+              onClick={async () => {
+                if (payload) await savePayload(payload);
+                await clinicalNote.saveNow();
+              }}
+              loading={combinedSaveState === "saving"}
               variant="secondary"
               disabled={clinicalNote.isSigned}
             >
