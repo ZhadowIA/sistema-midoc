@@ -2,12 +2,14 @@ import { runPublicContractsIntegrationTests } from './integration/publicApiContr
 import { runClinicalSchemasIntegrationTests } from './integration/clinicalSchemas.test.ts'
 import { runClinicalDbIntegrationTests } from './integration/clinicalDb.test.ts'
 import { runQuestionnairePrefillIntegrationTests } from './integration/questionnairePrefill.test.ts'
+import { runConsultationSessionIntegrationTests } from './integration/consultationSession.test.ts'
 
 async function main() {
   await runPublicContractsIntegrationTests()
   await runClinicalSchemasIntegrationTests()
   await runClinicalDbIntegrationTests()
   await runQuestionnairePrefillIntegrationTests()
+  await runConsultationSessionIntegrationTests()
   console.log('\nIntegration tests completed successfully.')
 }
 
