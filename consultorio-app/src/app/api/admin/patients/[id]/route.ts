@@ -1,6 +1,14 @@
 import prisma from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/http'
 import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
+import { ClinicalHistoryService } from '@/services/ClinicalHistoryService'
+import { AppointmentAuditService } from '@/services/AppointmentAuditService'
+import { AuditActorType, AuditSource } from '@prisma/client'
+import {
+  ClinicalHistoryPayloadSchema,
+  type ClinicalHistoryPayload,
+} from '@/lib/clinicalHistorySchema'
+import { buildEmptyClinicalHistory } from '@/lib/clinicalFormat'
 
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
@@ -20,6 +28,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
           },
         },
         medicalRecord: true,
+        clinicalHistory: true,
         appointments: {
           where: { doctorId },
           orderBy: { startTime: 'desc' },
@@ -114,6 +123,13 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
     return jsonNoStore({
       ...patient,
+      clinicalHistorySummary: patient.clinicalHistory
+        ? {
+            completionPct: patient.clinicalHistory.completionPct,
+            status: patient.clinicalHistory.status,
+            lastReviewedAt: patient.clinicalHistory.lastReviewedAt,
+          }
+        : null,
       linkedAccount: patient.user
         ? {
             id: patient.user.id,
@@ -166,25 +182,83 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       })
     }
 
-    // Upsert medical record globally for this patient
-    const record = await prisma.medicalRecord.upsert({
-      where: { patientId: params.id },
-      update: {
-        bloodType: body.bloodType !== undefined ? body.bloodType : undefined,
-        allergies: body.allergies !== undefined ? body.allergies : undefined,
-        chronicConditions: body.chronicConditions !== undefined ? body.chronicConditions : undefined,
-        familyHistory: body.familyHistory !== undefined ? body.familyHistory : undefined,
-      },
-      create: {
-        patientId: params.id,
-        bloodType: body.bloodType || null,
-        allergies: body.allergies || null,
-        chronicConditions: body.chronicConditions || null,
-        familyHistory: body.familyHistory || null,
+    // Retiro gradual: los campos legacy (bloodType, allergies, chronicConditions,
+    // familyHistory) ya no se escriben en MedicalRecord. Se redirigen a
+    // ClinicalHistory para consolidar el expediente clínico.
+    const actorUserId = access.context.user.id
+    const { record: current } = await ClinicalHistoryService.getOrBuildForPatient(
+      params.id,
+      doctorId,
+    )
+    const parsed = ClinicalHistoryPayloadSchema.safeParse(current.payload)
+    const payload: ClinicalHistoryPayload = parsed.success
+      ? parsed.data
+      : buildEmptyClinicalHistory()
+
+    if (body.bloodType !== undefined) {
+      payload.identification.bloodType = body.bloodType || null
+    }
+    if (body.allergies !== undefined) {
+      const text = typeof body.allergies === 'string' ? body.allergies.trim() : ''
+      payload.allergies = text
+        ? [{ description: text, source: 'patient:update' }]
+        : []
+    }
+    if (body.chronicConditions !== undefined) {
+      if (body.chronicConditions) {
+        payload.pathologicalHistory.chronicConditions = body.chronicConditions
+      } else {
+        delete payload.pathologicalHistory.chronicConditions
+      }
+    }
+    if (body.familyHistory !== undefined) {
+      if (body.familyHistory) {
+        payload.familyHistory.summary = body.familyHistory
+      } else {
+        delete payload.familyHistory.summary
+      }
+    }
+
+    const saved = await ClinicalHistoryService.upsertByPatientId(
+      params.id,
+      doctorId,
+      payload,
+      { actorUserId },
+    )
+
+    await AppointmentAuditService.safeLog({
+      doctorId,
+      patientId: params.id,
+      actorType: AuditActorType.DOCTOR,
+      actorUserId,
+      source: AuditSource.ADMIN_PANEL,
+      action: 'CLINICAL_HISTORY_UPDATED',
+      metadata: {
+        completionPct: saved.completionPct,
+        status: saved.status,
+        via: 'patient.patch.legacy-compat',
       },
     })
 
-    return jsonNoStore(record)
+    return jsonNoStore({
+      bloodType: payload.identification.bloodType ?? null,
+      allergies:
+        payload.allergies[0] && typeof payload.allergies[0].description === 'string'
+          ? (payload.allergies[0].description as string)
+          : null,
+      chronicConditions:
+        typeof payload.pathologicalHistory.chronicConditions === 'string'
+          ? (payload.pathologicalHistory.chronicConditions as string)
+          : null,
+      familyHistory:
+        typeof payload.familyHistory.summary === 'string'
+          ? (payload.familyHistory.summary as string)
+          : null,
+      clinicalHistory: {
+        completionPct: saved.completionPct,
+        status: saved.status,
+      },
+    })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'
     return jsonNoStore({ error: message }, { status: 500 })

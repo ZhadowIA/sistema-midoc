@@ -5,6 +5,9 @@ import { jsonNoStore } from '@/lib/http'
 import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 import { getRequestIp, getUserAgent } from '@/lib/requestContext'
 import { AppointmentAuditService } from '@/services/AppointmentAuditService'
+import { hasMinimumForSignoff } from '@/lib/clinicalFormat'
+import { EncounterHistoryPayloadSchema } from '@/lib/encounterHistorySchema'
+import { hashSnapshot } from '@/lib/clinicalSignature'
 
 const prescriptionSchema = z.object({
   medication: z.string().trim().min(1).max(200),
@@ -21,6 +24,8 @@ const clinicalNoteSchema = z.object({
   plan: z.string().trim().max(10_000).optional().default(''),
   privateNotes: z.string().trim().max(10_000).optional().default(''),
   prescriptions: z.array(prescriptionSchema).max(50).optional(),
+  sign: z.boolean().optional(),
+  historySnapshot: z.boolean().optional(),
 })
 
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -73,6 +78,60 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       return jsonNoStore({ error: 'Datos inválidos', details: parsedBody.error.issues }, { status: 400 })
     }
 
+    let snapshotEncounterId: string | null = null
+    let signaturePayload: {
+      signatureHash: string
+      signedAt: Date
+      signedByUserId: string
+      signedSnapshot: Prisma.InputJsonValue
+    } | null = null
+    if (parsedBody.data.sign) {
+      const encounter = await prisma.encounterHistory.findUnique({
+        where: { appointmentId: params.id },
+      })
+      if (!encounter) {
+        return jsonNoStore(
+          { error: 'No se puede firmar: falta encuentro clínico de la cita.' },
+          { status: 409 },
+        )
+      }
+      const encounterPayload = EncounterHistoryPayloadSchema.safeParse(encounter.payload)
+      if (!encounterPayload.success) {
+        return jsonNoStore(
+          { error: 'Encuentro clínico con formato inválido.' },
+          { status: 409 },
+        )
+      }
+      const check = hasMinimumForSignoff(encounterPayload.data)
+      if (!check.ok) {
+        return jsonNoStore(
+          { error: 'Faltan mínimos clínicos para firmar', missing: check.missing },
+          { status: 422 },
+        )
+      }
+      snapshotEncounterId = encounter.id
+      const snapshot = {
+        encounterHistoryId: encounter.id,
+        appointmentId: params.id,
+        patientId: appointment.patientId,
+        completionPct: encounter.completionPct,
+        status: encounter.status,
+        payload: encounterPayload.data,
+        soap: {
+          subjective: parsedBody.data.subjective,
+          objective: parsedBody.data.objective,
+          assessment: parsedBody.data.assessment,
+          plan: parsedBody.data.plan,
+        },
+      }
+      signaturePayload = {
+        signatureHash: hashSnapshot(snapshot),
+        signedAt: new Date(),
+        signedByUserId: actorUserId,
+        signedSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+      }
+    }
+
     // Usamos transaction para actualizar la nota y las recetas
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const note = await tx.clinicalNote.upsert({
@@ -89,6 +148,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             assessment: parsedBody.data.assessment,
             plan: parsedBody.data.plan,
           },
+          ...(signaturePayload ?? {}),
         },
         create: {
           appointmentId: params.id,
@@ -105,6 +165,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             assessment: parsedBody.data.assessment,
             plan: parsedBody.data.plan,
           },
+          ...(signaturePayload ?? {}),
         }
       })
 
@@ -146,6 +207,28 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         },
         tx
       )
+
+      if (parsedBody.data.sign) {
+        await AppointmentAuditService.safeLog(
+          {
+            doctorId,
+            appointmentId: params.id,
+            patientId: appointment.patientId,
+            actorType: 'DOCTOR',
+            actorUserId,
+            source: 'ADMIN_PANEL',
+            action: 'CLINICAL_NOTE_SIGNED',
+            ipAddress,
+            userAgent,
+            metadata: {
+              encounterHistoryId: snapshotEncounterId,
+              historySnapshot: parsedBody.data.historySnapshot ?? false,
+              signatureHash: signaturePayload?.signatureHash ?? null,
+            },
+          },
+          tx,
+        )
+      }
 
       return await tx.clinicalNote.findUnique({
         where: { id: note.id },
