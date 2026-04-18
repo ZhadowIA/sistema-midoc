@@ -36,6 +36,7 @@ import {
 import {
   calculateEncounterCompletionPct,
   calculateSectionCompletions,
+  hasMinimumForSignoff,
   type EncounterSectionKey,
 } from "@/lib/clinicalFormat";
 import type { EncounterHistoryPayload } from "@/lib/encounterHistorySchema";
@@ -216,8 +217,19 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     }
   };
 
+  const signoffCheck = useMemo(
+    () => (payload ? hasMinimumForSignoff(payload) : { ok: false, missing: [] }),
+    [payload],
+  );
+
   const handleSignAndClose = async () => {
     if (!payload) return;
+    if (!signoffCheck.ok) {
+      toast.error(
+        `Faltan mínimos clínicos para firmar: ${signoffCheck.missing.join(", ")}`,
+      );
+      return;
+    }
     setClosing(true);
     try {
       await savePayload(payload);
@@ -484,6 +496,11 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
             )}
           </SectionAccordion>
 
+          {!clinicalNote.isSigned && !signoffCheck.ok && (
+            <p className="text-xs text-amber-700 text-right">
+              Para firmar faltan: {signoffCheck.missing.join(", ")}
+            </p>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button
               onClick={async () => {
@@ -499,11 +516,15 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
             <Button
               onClick={handleSignAndClose}
               loading={closing}
-              disabled={clinicalNote.isSigned || !clinicalNote.loaded}
+              disabled={
+                clinicalNote.isSigned || !clinicalNote.loaded || !signoffCheck.ok
+              }
               title={
                 clinicalNote.isSigned
                   ? "La nota ya está firmada"
-                  : "Firma la nota y marca la cita como realizada"
+                  : !signoffCheck.ok
+                    ? `Faltan: ${signoffCheck.missing.join(", ")}`
+                    : "Firma la nota y marca la cita como realizada"
               }
             >
               {clinicalNote.isSigned ? "Consulta cerrada" : "Firmar y cerrar"}
