@@ -22,6 +22,10 @@ export type NoteData = {
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
+export type SignResult =
+  | { ok: true }
+  | { ok: false; error: string; missing?: string[] };
+
 const EMPTY: NoteData = {
   subjective: "",
   objective: "",
@@ -37,6 +41,7 @@ export function useClinicalNote(appointmentId: string) {
   const [note, setNote] = useState<NoteData>(EMPTY);
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [signedAt, setSignedAt] = useState<string | null>(null);
   const firstChangeRef = useRef(true);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -57,6 +62,7 @@ export function useClinicalNote(appointmentId: string) {
             privateNotes: data.privateNotes ?? "",
             prescriptions: Array.isArray(data.prescriptions) ? data.prescriptions : [],
           });
+          setSignedAt(data.signedAt ?? null);
         }
         setLoaded(true);
       })
@@ -72,7 +78,7 @@ export function useClinicalNote(appointmentId: string) {
       const res = await fetch(
         `/api/clinical/admin/appointments/${appointmentId}/note`,
         {
-          method: "PATCH",
+          method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(next),
@@ -89,8 +95,34 @@ export function useClinicalNote(appointmentId: string) {
     [appointmentId],
   );
 
+  const sign = useCallback(async (): Promise<SignResult> => {
+    setSaveState("saving");
+    const res = await fetch(
+      `/api/clinical/admin/appointments/${appointmentId}/note`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...note, sign: true }),
+      },
+    );
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setSaveState("error");
+      return {
+        ok: false,
+        error: body.error ?? "No se pudo firmar la nota",
+        missing: Array.isArray(body.missing) ? body.missing : undefined,
+      };
+    }
+    setSaveState("saved");
+    setSignedAt(body?.signedAt ?? new Date().toISOString());
+    return { ok: true };
+  }, [appointmentId, note]);
+
   useEffect(() => {
     if (!loaded) return;
+    if (signedAt) return;
     if (firstChangeRef.current) {
       firstChangeRef.current = false;
       return;
@@ -103,7 +135,7 @@ export function useClinicalNote(appointmentId: string) {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [note, loaded, save]);
+  }, [note, loaded, signedAt, save]);
 
   const update = useCallback(
     <K extends keyof NoteData>(key: K, value: NoteData[K]) =>
@@ -146,7 +178,10 @@ export function useClinicalNote(appointmentId: string) {
     note,
     loaded,
     saveState,
+    signedAt,
+    isSigned: Boolean(signedAt),
     saveNow: () => save(note),
+    sign,
     update,
     addPrescription,
     updatePrescription,

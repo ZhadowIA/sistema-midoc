@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Wand2 } from "lucide-react";
 import { Button } from "@/components/Button";
@@ -97,6 +98,8 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
   const savedOnceRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clinicalNote = useClinicalNote(appointmentId);
+  const [closing, setClosing] = useState(false);
+  const router = useRouter();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -211,6 +214,37 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     }
   };
 
+  const handleSignAndClose = async () => {
+    if (!payload) return;
+    setClosing(true);
+    try {
+      await savePayload(payload);
+      const result = await clinicalNote.sign();
+      if (!result.ok) {
+        const missingMsg = result.missing?.length
+          ? ` Faltan: ${result.missing.join(", ")}`
+          : "";
+        toast.error(`${result.error}.${missingMsg}`);
+        return;
+      }
+      const res = await fetch(`/api/clinical/admin/appointments/${appointmentId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "COMPLETED" }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? body.message ?? "No se pudo cerrar la consulta");
+        return;
+      }
+      toast.success("Consulta firmada y cerrada");
+      router.push("/medico/agenda");
+    } finally {
+      setClosing(false);
+    }
+  };
+
   const handlePrefill = async () => {
     setPrefilling(true);
     try {
@@ -275,6 +309,15 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
                 <CompletionMeter pct={completionPct} className="min-w-[180px]" />
               </div>
               <PatientClinicalAlerts patientId={ctx.appointment.patientId} />
+              {clinicalNote.isSigned && (
+                <p className="text-xs rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-2">
+                  Nota firmada el{" "}
+                  {clinicalNote.signedAt
+                    ? new Date(clinicalNote.signedAt).toLocaleString()
+                    : ""}
+                  . La consulta está cerrada en modo solo lectura.
+                </p>
+              )}
             </CardContent>
           </Card>
 
@@ -376,6 +419,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
               <SoapSection
                 note={clinicalNote.note}
                 update={clinicalNote.update}
+                disabled={clinicalNote.isSigned}
               />
             )}
           </SectionAccordion>
@@ -396,6 +440,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
                 onAdd={clinicalNote.addPrescription}
                 onUpdate={clinicalNote.updatePrescription}
                 onRemove={clinicalNote.removePrescription}
+                disabled={clinicalNote.isSigned}
               />
             )}
           </SectionAccordion>
@@ -405,11 +450,21 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
               onClick={() => payload && savePayload(payload)}
               loading={saveState === "saving"}
               variant="secondary"
+              disabled={clinicalNote.isSigned}
             >
               Guardar ahora
             </Button>
-            <Button disabled title="Firma se añadirá con la nota SOAP integrada">
-              Firmar y cerrar
+            <Button
+              onClick={handleSignAndClose}
+              loading={closing}
+              disabled={clinicalNote.isSigned || !clinicalNote.loaded}
+              title={
+                clinicalNote.isSigned
+                  ? "La nota ya está firmada"
+                  : "Firma la nota y marca la cita como realizada"
+              }
+            >
+              {clinicalNote.isSigned ? "Consulta cerrada" : "Firmar y cerrar"}
             </Button>
           </div>
         </>
