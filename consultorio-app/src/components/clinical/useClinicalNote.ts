@@ -165,6 +165,23 @@ export function useClinicalNote(appointmentId: string) {
     [],
   );
 
+  const applySoapPartial = useCallback(
+    (soap: Partial<Pick<NoteData, "subjective" | "objective" | "assessment" | "plan">>) => {
+      const IGNORED = "No se menciona en la consulta";
+      setNote((p) => ({
+        ...p,
+        subjective:
+          soap.subjective && soap.subjective !== IGNORED ? soap.subjective : p.subjective,
+        objective:
+          soap.objective && soap.objective !== IGNORED ? soap.objective : p.objective,
+        assessment:
+          soap.assessment && soap.assessment !== IGNORED ? soap.assessment : p.assessment,
+        plan: soap.plan && soap.plan !== IGNORED ? soap.plan : p.plan,
+      }));
+    },
+    [],
+  );
+
   const removePrescription = useCallback((index: number) => {
     setNote((p) => ({
       ...p,
@@ -186,6 +203,7 @@ export function useClinicalNote(appointmentId: string) {
     addPrescription,
     updatePrescription,
     removePrescription,
+    applySoapPartial,
     soapCompletion,
   };
 }
