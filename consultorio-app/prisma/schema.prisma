@@ -18,10 +18,10 @@ model User {
   bossId       String?
 
   // Public Profile Fields
-  specialty    String?
-  slug         String? @unique
-  bio          String?
-  profileImage String?
+  specialty           String?
+  slug                String? @unique
+  bio                 String?
+  profileImage        String?
   professionalLicense String?
   clinicAddress       String?
   logoImage           String?
@@ -29,138 +29,140 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  manager          User?           @relation("SecretaryManager", fields: [bossId], references: [id], onDelete: SetNull)
-  managedUsers     User[]          @relation("SecretaryManager")
-  doctorConfig  DoctorConfig?
-  subscription  DoctorSubscription?
-  onboarding    DoctorOnboarding?
-  legalAcceptance LegalAcceptance?
-  blocks        AvailabilityBlock[]
-  schedules     ScheduleBlock[]
-  appointments  Appointment[]
-  clinicalNotes ClinicalNote[]
-  whatsappMessages WhatsAppMessageLog[]
-  patientAccounts  Patient[] @relation("PatientAccount")
-  directoryPatients Patient[] @relation("DoctorPatientDirectory")
-  appointmentAuditLogs AppointmentAuditLog[]
-  auditLogs       AuditLog[]       @relation("UserToAuditLogs")
-  doctorConsentCaptures ConsentCapture[] @relation("DoctorConsentCaptures")
-  capturedConsentLogs ConsentCapture[] @relation("ConsentCapturedByUser")
-  aiProcessingJobs AIProcessingJob[]
+  manager               User?                 @relation("SecretaryManager", fields: [bossId], references: [id], onDelete: SetNull)
+  managedUsers          User[]                @relation("SecretaryManager")
+  doctorConfig          DoctorConfig?
+  subscription          DoctorSubscription?
+  onboarding            DoctorOnboarding?
+  legalAcceptance       LegalAcceptance?
+  blocks                AvailabilityBlock[]
+  schedules             ScheduleBlock[]
+  appointments          Appointment[]
+  clinicalNotes         ClinicalNote[]
+  signedClinicalNotes   ClinicalNote[]        @relation("SignedClinicalNotes")
+  whatsappMessages      WhatsAppMessageLog[]
+  patientAccounts       Patient[]             @relation("PatientAccount")
+  directoryPatients     Patient[]             @relation("DoctorPatientDirectory")
+  appointmentAuditLogs  AppointmentAuditLog[]
+  auditLogs             AuditLog[]            @relation("UserToAuditLogs")
+  doctorConsentCaptures ConsentCapture[]      @relation("DoctorConsentCaptures")
+  capturedConsentLogs   ConsentCapture[]      @relation("ConsentCapturedByUser")
+  aiProcessingJobs      AIProcessingJob[]
 
   @@index([bossId])
 }
 
 model DoctorSubscription {
-  id                 String   @id @default(cuid())
-  doctorId           String   @unique
-  status             String   @default("PENDING")
-  provider           String   @default("MOCK")
-  planName           String   @default("Plan Mensual")
-  amount             Decimal? @db.Decimal(10, 2)
-  currency           String   @default("MXN")
-  customerId         String?
+  id                     String    @id @default(cuid())
+  doctorId               String    @unique
+  status                 String    @default("PENDING")
+  provider               String    @default("MOCK")
+  planName               String    @default("Plan Mensual")
+  amount                 Decimal?  @db.Decimal(10, 2)
+  currency               String    @default("MXN")
+  customerId             String?
   externalSubscriptionId String?
-  externalPriceId    String?
-  paymentMethodLast4 String?
-  cancelAtPeriodEnd  Boolean  @default(false)
-  canceledAt         DateTime?
-  lastPaymentAt      DateTime?
-  currentPeriodStart DateTime?
-  currentPeriodEnd   DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  externalPriceId        String?
+  paymentMethodLast4     String?
+  cancelAtPeriodEnd      Boolean   @default(false)
+  canceledAt             DateTime?
+  lastPaymentAt          DateTime?
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
 
-  @@index([status, currentPeriodEnd])
   @@unique([provider, externalSubscriptionId])
+  @@index([status, currentPeriodEnd])
 }
 
 model DoctorOnboarding {
-  id          String   @id @default(cuid())
-  doctorId    String   @unique
-  completed   Boolean  @default(false)
+  id          String    @id @default(cuid())
+  doctorId    String    @unique
+  completed   Boolean   @default(false)
   completedAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
 }
 
 model LegalAcceptance {
-  id              String   @id @default(cuid())
-  userId          String   @unique
-  termsVersion    String
-  privacyVersion  String
-  termsAcceptedAt DateTime
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  termsVersion      String
+  privacyVersion    String
+  termsAcceptedAt   DateTime
   privacyAcceptedAt DateTime
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model PaymentWebhookEvent {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   provider        String
   eventId         String
   eventType       String
-  status          String   @default("RECEIVED")
+  status          String    @default("RECEIVED")
   payload         Json
   processingError String?
   processedAt     DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@unique([provider, eventId])
   @@index([status, createdAt])
 }
 
 model DoctorConfig {
-  id                          String    @id @default(cuid())
-  doctorId                    String    @unique
-  consultationDurationMin     Int
-  extendedConsultationEnabled Boolean   @default(true)
-  whatsappConnected           Boolean   @default(false)
-  reminderLeadHours           String?
-  reminderWindowMinutes       Int?      @default(15)
-  whatsappAutoReplyEnabled    Boolean   @default(true)
-  whatsappAutoConfirmEnabled  Boolean   @default(true)
-  whatsappAutoCancelEnabled   Boolean   @default(true)
-  whatsappBookingMessageTemplate   String?
-  whatsappQuestionnaireTemplate    String?
-  whatsappReminderPendingTemplate  String?
+  id                                String    @id @default(cuid())
+  doctorId                          String    @unique
+  consultationDurationMin           Int
+  extendedConsultationEnabled       Boolean   @default(true)
+  whatsappConnected                 Boolean   @default(false)
+  reminderLeadHours                 String?
+  reminderWindowMinutes             Int?      @default(15)
+  whatsappAutoReplyEnabled          Boolean   @default(true)
+  whatsappAutoConfirmEnabled        Boolean   @default(true)
+  whatsappAutoCancelEnabled         Boolean   @default(true)
+  whatsappBookingMessageTemplate    String?
+  whatsappQuestionnaireTemplate     String?
+  whatsappReminderPendingTemplate   String?
   whatsappReminderConfirmedTemplate String?
-  normalConsultationPrice     Decimal?  @db.Decimal(10, 2)
-  extendedConsultationPrice   Decimal?  @db.Decimal(10, 2)
-  effectiveFrom               DateTime?
-  createdAt                   DateTime  @default(now())
-  updatedAt                   DateTime  @updatedAt
+  normalConsultationPrice           Decimal?  @db.Decimal(10, 2)
+  extendedConsultationPrice         Decimal?  @db.Decimal(10, 2)
+  effectiveFrom                     DateTime?
+  createdAt                         DateTime  @default(now())
+  updatedAt                         DateTime  @updatedAt
 
   doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
 }
 
 model Patient {
-  id          String   @id @default(cuid())
-  userId      String?
+  id            String   @id @default(cuid())
+  userId        String?
   ownerDoctorId String?
-  fullName    String
-  dateOfBirth DateTime @default(now())
-  phone       String
-  email       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  fullName      String
+  dateOfBirth   DateTime @default(now())
+  phone         String
+  email         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  user          User?          @relation("PatientAccount", fields: [userId], references: [id], onDelete: SetNull)
-  ownerDoctor   User?          @relation("DoctorPatientDirectory", fields: [ownerDoctorId], references: [id], onDelete: Cascade)
-  appointments  Appointment[]
-  medicalRecord MedicalRecord?
-  clinicalNotes ClinicalNote[]
-  whatsappMessages WhatsAppMessageLog[]
+  user                 User?                 @relation("PatientAccount", fields: [userId], references: [id], onDelete: SetNull)
+  ownerDoctor          User?                 @relation("DoctorPatientDirectory", fields: [ownerDoctorId], references: [id], onDelete: Cascade)
+  appointments         Appointment[]
+  medicalRecord        MedicalRecord?
+  clinicalHistory      ClinicalHistory?
+  clinicalNotes        ClinicalNote[]
+  whatsappMessages     WhatsAppMessageLog[]
   appointmentAuditLogs AppointmentAuditLog[]
-  auditLogs AuditLog[]
-  consentCaptures ConsentCapture[]
+  auditLogs            AuditLog[]
+  consentCaptures      ConsentCapture[]
 
   @@index([ownerDoctorId])
   @@index([ownerDoctorId, fullName])
@@ -210,21 +212,22 @@ model Appointment {
   createdAt             DateTime          @default(now())
   updatedAt             DateTime          @updatedAt
 
-  doctor        User           @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  patient       Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  questionnaire Questionnaire?
-  notifications Notification[]
-  clinicalNote  ClinicalNote?
-  aiInsight     AIInsight?
+  doctor           User                  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  patient          Patient               @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  questionnaire    Questionnaire?
+  notifications    Notification[]
+  clinicalNote     ClinicalNote?
+  encounterHistory EncounterHistory?
+  aiInsight        AIInsight?
   whatsappMessages WhatsAppMessageLog[]
-  auditLogs     AppointmentAuditLog[]
-  systemAuditLogs AuditLog[]
-  consentCaptures ConsentCapture[]
+  auditLogs        AppointmentAuditLog[]
+  systemAuditLogs  AuditLog[]
+  consentCaptures  ConsentCapture[]
   aiProcessingJobs AIProcessingJob[]
 }
 
 model AppointmentAuditLog {
-  id            String            @id @default(cuid())
+  id            String             @id @default(cuid())
   doctorId      String
   appointmentId String?
   patientId     String?
@@ -237,7 +240,7 @@ model AppointmentAuditLog {
   metadata      Json?
   ipAddress     String?
   userAgent     String?
-  createdAt     DateTime          @default(now())
+  createdAt     DateTime           @default(now())
 
   doctor      User         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
@@ -296,7 +299,7 @@ model Notification {
 }
 
 model WhatsAppMessageLog {
-  id            String                  @id @default(cuid())
+  id            String                   @id @default(cuid())
   doctorId      String
   appointmentId String?
   patientId     String?
@@ -305,7 +308,7 @@ model WhatsAppMessageLog {
   intent        WhatsAppIntent?
   action        WhatsAppMessageAction?
   message       String
-  createdAt     DateTime                @default(now())
+  createdAt     DateTime                 @default(now())
 
   doctor      User         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
@@ -328,6 +331,77 @@ model MedicalRecord {
   patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
 }
 
+model ClinicalHistory {
+  id             String            @id @default(cuid())
+  patientId      String            @unique
+  doctorId       String
+  payload        Json
+  completionPct  Int               @default(0)
+  status         ClinicalDocStatus @default(DRAFT)
+  lastReviewedAt DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  patient  Patient                  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  versions ClinicalHistoryVersion[]
+
+  @@index([doctorId])
+}
+
+model ClinicalHistoryVersion {
+  id                String            @id @default(cuid())
+  clinicalHistoryId String
+  patientId         String
+  doctorId          String
+  payload           Json
+  completionPct     Int
+  status            ClinicalDocStatus
+  actorUserId       String?
+  createdAt         DateTime          @default(now())
+
+  clinicalHistory ClinicalHistory @relation(fields: [clinicalHistoryId], references: [id], onDelete: Cascade)
+
+  @@index([clinicalHistoryId, createdAt])
+  @@index([patientId, createdAt])
+}
+
+model EncounterHistory {
+  id                         String            @id @default(cuid())
+  appointmentId              String            @unique
+  patientId                  String
+  doctorId                   String
+  payload                    Json
+  completionPct              Int               @default(0)
+  status                     ClinicalDocStatus @default(DRAFT)
+  prefilledFromQuestionnaire Boolean           @default(false)
+  createdAt                  DateTime          @default(now())
+  updatedAt                  DateTime          @updatedAt
+
+  appointment Appointment                @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  versions    EncounterHistoryVersion[]
+
+  @@index([doctorId])
+  @@index([patientId])
+}
+
+model EncounterHistoryVersion {
+  id                 String            @id @default(cuid())
+  encounterHistoryId String
+  appointmentId      String
+  patientId          String
+  doctorId           String
+  payload            Json
+  completionPct      Int
+  status             ClinicalDocStatus
+  actorUserId        String?
+  createdAt          DateTime          @default(now())
+
+  encounterHistory EncounterHistory @relation(fields: [encounterHistoryId], references: [id], onDelete: Cascade)
+
+  @@index([encounterHistoryId, createdAt])
+  @@index([appointmentId, createdAt])
+}
+
 model ClinicalNote {
   id            String @id @default(cuid())
   appointmentId String @unique
@@ -342,12 +416,18 @@ model ClinicalNote {
   privateNotes String? @db.Text
   soapPayload  Json?
 
+  signatureHash   String?
+  signedAt        DateTime?
+  signedByUserId  String?
+  signedSnapshot  Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   appointment   Appointment    @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   doctor        User           @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   patient       Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  signedBy      User?          @relation("SignedClinicalNotes", fields: [signedByUserId], references: [id], onDelete: SetNull)
   prescriptions Prescription[]
 }
 
@@ -460,6 +540,9 @@ enum AuditAction {
   PATIENT_ASSIGNED_TO_APPOINTMENT
   PATIENT_CREATED_FROM_APPOINTMENT
   CLINICAL_NOTE_UPDATED
+  CLINICAL_NOTE_SIGNED
+  CLINICAL_HISTORY_UPDATED
+  ENCOUNTER_HISTORY_UPDATED
   AI_NOTE_GENERATION_REQUESTED
   AI_NOTE_GENERATION_COMPLETED
   AI_NOTE_GENERATION_FAILED
@@ -495,6 +578,13 @@ enum ConsentType {
   VERBAL_RECORDING_CONFIRMATION
 }
 
+enum ClinicalDocStatus {
+  DRAFT
+  IN_REVIEW
+  FINAL
+  SIGNED
+}
+
 enum AIJobKind {
   SOAP_NOTE_GENERATION
 }
@@ -507,21 +597,21 @@ enum AIJobStatus {
 }
 
 model AIInsight {
-  id            String   @id @default(cuid())
-  appointmentId String   @unique
+  id            String @id @default(cuid())
+  appointmentId String @unique
   doctorId      String
-  
-  diagnoses     Json?    // Array of { diagnosis, reasoning }
-  treatments    Json?    // Array of { treatment, instructions }
-  allowedFoods  Json?    // Array of strings
-  forbiddenFoods Json?   // Array of strings
-  
-  medicationContext String? @db.Text
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
 
-  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  diagnoses      Json? // Array of { diagnosis, reasoning }
+  treatments     Json? // Array of { treatment, instructions }
+  allowedFoods   Json? // Array of strings
+  forbiddenFoods Json? // Array of strings
+
+  medicationContext String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
 }
 
 model AIProcessingJob {
