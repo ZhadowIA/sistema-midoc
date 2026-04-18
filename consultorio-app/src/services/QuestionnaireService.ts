@@ -2,6 +2,8 @@ import prisma from '../lib/prisma'
 import { Prisma } from '@prisma/client'
 import { SignJWT, jwtVerify } from 'jose'
 import { getServerEnv } from '@/lib/env'
+import { buildEmptyEncounterHistory, calculateEncounterCompletionPct } from '@/lib/clinicalFormat'
+import type { EncounterHistoryPayload } from '@/lib/encounterHistorySchema'
 
 const env = getServerEnv()
 const questionnaireSecret = new TextEncoder().encode(env.QUESTIONNAIRE_TOKEN_SECRET)
@@ -65,5 +67,49 @@ export class QuestionnaireService {
     });
 
     return questionnaire;
+  }
+
+  static async buildEncounterPrefill(appointmentId: string): Promise<{
+    payload: EncounterHistoryPayload
+    source: 'questionnaire' | 'empty'
+  }> {
+    const questionnaire = await prisma.questionnaire.findUnique({
+      where: { appointmentId },
+    })
+    const payload = buildEmptyEncounterHistory()
+    if (!questionnaire) return { payload, source: 'empty' }
+
+    const responses = (questionnaire.responses ?? {}) as Record<string, unknown>
+    const readString = (key: string) =>
+      typeof responses[key] === 'string' ? (responses[key] as string) : undefined
+    const readObject = (key: string) =>
+      responses[key] && typeof responses[key] === 'object' && !Array.isArray(responses[key])
+        ? (responses[key] as Record<string, unknown>)
+        : undefined
+    const readStringArray = (key: string): string[] | undefined => {
+      const v = responses[key]
+      if (!Array.isArray(v)) return undefined
+      return v.filter((x): x is string => typeof x === 'string')
+    }
+
+    payload.chiefComplaint =
+      readString('chiefComplaint') ?? questionnaire.primarySymptom ?? ''
+
+    const presentIllness = readObject('presentIllness')
+    if (presentIllness) {
+      payload.presentIllness = {
+        ...payload.presentIllness,
+        ...presentIllness,
+      }
+    }
+
+    const pertinentNegatives = readStringArray('pertinentNegatives')
+    if (pertinentNegatives) payload.pertinentNegatives = pertinentNegatives
+
+    const ros = readObject('ros')
+    if (ros) payload.reviewOfSystems = ros
+
+    payload.completionPct = calculateEncounterCompletionPct(payload)
+    return { payload, source: 'questionnaire' }
   }
 }

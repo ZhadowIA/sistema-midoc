@@ -2,6 +2,33 @@ import prisma from "@/lib/prisma";
 import { generateSOAPFromTranscript, transcribeAudio } from "@/lib/aiNoteService";
 import { AppointmentAuditService } from "./AppointmentAuditService";
 
+async function loadClinicalContext(appointmentId: string, patientId: string) {
+  const [clinicalHistory, encounterHistory, questionnaire] = await Promise.all([
+    prisma.clinicalHistory.findUnique({
+      where: { patientId },
+      select: { payload: true, completionPct: true, status: true },
+    }),
+    prisma.encounterHistory.findUnique({
+      where: { appointmentId },
+      select: { payload: true, completionPct: true, status: true },
+    }),
+    prisma.questionnaire.findUnique({
+      where: { appointmentId },
+      select: { primarySymptom: true, responses: true },
+    }),
+  ]);
+
+  const context: {
+    clinicalHistory?: unknown;
+    encounterHistory?: unknown;
+    questionnaire?: unknown;
+  } = {};
+  if (clinicalHistory) context.clinicalHistory = clinicalHistory;
+  if (encounterHistory) context.encounterHistory = encounterHistory;
+  if (questionnaire) context.questionnaire = questionnaire;
+  return Object.keys(context).length > 0 ? context : undefined;
+}
+
 type CreateJobInput = {
   appointmentId: string;
   doctorId: string;
@@ -76,10 +103,16 @@ export class AINoteGenerationService {
         },
       });
 
-      const soap = await generateSOAPFromTranscript(transcript, {
-        patientName: input.patientName,
-        doctorName: input.doctorName,
-      });
+      const clinicalContext = await loadClinicalContext(input.appointmentId, input.patientId);
+
+      const soap = await generateSOAPFromTranscript(
+        transcript,
+        {
+          patientName: input.patientName,
+          doctorName: input.doctorName,
+        },
+        clinicalContext
+      );
 
       await prisma.$transaction(async (tx) => {
         await tx.clinicalNote.upsert({
