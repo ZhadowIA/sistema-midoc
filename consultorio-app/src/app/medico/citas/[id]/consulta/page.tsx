@@ -21,6 +21,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { Button } from "@/components/Button";
+import { PatientClinicalAlerts } from "@/components/clinical/PatientClinicalAlerts";
 import { TextArea } from "@/components/TextArea";
 import { format, differenceInMinutes } from "date-fns";
 import { es } from "date-fns/locale";
@@ -592,6 +593,10 @@ export default function ConsultaModePage(props: { params: Promise<{ id: string }
           </Button>
         </div>
       </header>
+
+      <div className="px-4 md:px-6 pt-3 flex-shrink-0">
+        <PatientClinicalAlerts patientId={appointment.patient.id} />
+      </div>
 
       {/* Body split */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
