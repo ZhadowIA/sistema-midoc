@@ -26,6 +26,10 @@ const serverEnvSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  CONSULTA_UNIFIED_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 type ServerEnv = z.infer<typeof serverEnvSchema>;
