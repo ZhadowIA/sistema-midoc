@@ -44,19 +44,24 @@ type ContextResponse = {
     questionnaireAnswered: boolean;
   };
   encounter: {
-    id: string | null;
-    appointmentId: string;
-    payload: EncounterHistoryPayload;
-    completionPct: number;
-    prefilledFromQuestionnaire: boolean;
+    record: {
+      id: string | null;
+      appointmentId: string;
+      payload: EncounterHistoryPayload;
+      completionPct: number;
+      prefilledFromQuestionnaire: boolean;
+    };
+    built: boolean;
+  };
+  session: {
+    consultationMode: ConsultationMode;
+    aiConsent: ConsentState;
+    aiConsentDecidedAt: string | null;
   };
   capabilities: { aiAvailable: boolean };
 };
 
 type Props = { appointmentId: string };
-
-const MODE_KEY = (id: string) => `consulta:mode:${id}`;
-const CONSENT_KEY = (id: string) => `consulta:consent:${id}`;
 
 const SECTIONS: Array<{
   key: EncounterSectionKey;
@@ -89,17 +94,6 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
   const savedOnceRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    const storedMode = localStorage.getItem(MODE_KEY(appointmentId));
-    if (storedMode === "MANUAL" || storedMode === "AI_DICTATION" || storedMode === "HYBRID") {
-      setMode(storedMode);
-    }
-    const storedConsent = localStorage.getItem(CONSENT_KEY(appointmentId));
-    if (storedConsent === "GRANTED" || storedConsent === "DENIED") {
-      setConsent(storedConsent);
-    }
-  }, [appointmentId]);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -110,7 +104,9 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
       if (!res.ok) throw new Error((await res.json()).error ?? "Error al cargar");
       const body = (await res.json()) as ContextResponse;
       setCtx(body);
-      setPayload(body.encounter.payload);
+      setPayload(body.encounter.record.payload);
+      setMode(body.session.consultationMode);
+      setConsent(body.session.aiConsent);
       savedOnceRef.current = false;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -172,22 +168,41 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     [],
   );
 
+  const persistSession = useCallback(
+    async (patch: { consultationMode?: ConsultationMode; aiConsent?: ConsentState }) => {
+      const res = await fetch(
+        `/api/admin/appointments/${appointmentId}/consultation-session`,
+        {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "No se pudo guardar la preferencia");
+      }
+    },
+    [appointmentId],
+  );
+
   const handleModeChange = (next: ConsultationMode) => {
     if (next !== "MANUAL" && consent !== "GRANTED") {
       setConsentOpen(true);
       return;
     }
     setMode(next);
-    localStorage.setItem(MODE_KEY(appointmentId), next);
+    persistSession({ consultationMode: next });
   };
 
   const handleConsent = (decision: "GRANTED" | "DENIED") => {
     setConsent(decision);
-    localStorage.setItem(CONSENT_KEY(appointmentId), decision);
     setConsentOpen(false);
+    persistSession({ aiConsent: decision });
     if (decision === "DENIED") {
       setMode("MANUAL");
-      localStorage.setItem(MODE_KEY(appointmentId), "MANUAL");
+      persistSession({ consultationMode: "MANUAL" });
       toast.info("Modo forzado a Manual: paciente no autorizó IA");
     }
   };

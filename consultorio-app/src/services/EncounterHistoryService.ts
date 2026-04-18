@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client'
+import { Prisma, AiConsentState, ConsultationMode } from '@prisma/client'
 import prisma from '@/lib/prisma'
 import {
   EncounterHistoryPayloadSchema,
@@ -80,6 +80,51 @@ export class EncounterHistoryService {
       })
 
       return record
+    })
+  }
+
+  static async setConsultationMode(
+    appointmentId: string,
+    patientId: string,
+    doctorId: string,
+    mode: ConsultationMode,
+  ) {
+    return prisma.encounterHistory.upsert({
+      where: { appointmentId },
+      create: {
+        appointmentId,
+        patientId,
+        doctorId,
+        payload: buildEmptyEncounterHistory() as unknown as Prisma.InputJsonValue,
+        consultationMode: mode,
+      },
+      update: { consultationMode: mode },
+    })
+  }
+
+  static async setAiConsent(
+    appointmentId: string,
+    patientId: string,
+    doctorId: string,
+    decision: AiConsentState,
+    actorUserId: string | null,
+  ) {
+    return prisma.encounterHistory.upsert({
+      where: { appointmentId },
+      create: {
+        appointmentId,
+        patientId,
+        doctorId,
+        payload: buildEmptyEncounterHistory() as unknown as Prisma.InputJsonValue,
+        aiConsent: decision,
+        aiConsentDecidedAt: decision === 'PENDING' ? null : new Date(),
+        aiConsentActorUserId: actorUserId,
+      },
+      update: {
+        aiConsent: decision,
+        aiConsentDecidedAt: decision === 'PENDING' ? null : new Date(),
+        aiConsentActorUserId: actorUserId,
+      },
     })
   }
 }

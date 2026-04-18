@@ -48,10 +48,26 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
     const encounter = await EncounterHistoryService.getOrBuildForAppointment(
       appointment.id,
     )
+    const existing = await prisma.encounterHistory.findUnique({
+      where: { appointmentId: appointment.id },
+      select: { consultationMode: true, aiConsent: true, aiConsentDecidedAt: true },
+    })
+    const doctorConfig = await prisma.doctorConfig.findUnique({
+      where: { doctorId },
+      select: { preferredConsultationMode: true },
+    })
 
     return jsonNoStore({
       appointment,
       encounter,
+      session: {
+        consultationMode:
+          existing?.consultationMode ??
+          doctorConfig?.preferredConsultationMode ??
+          'MANUAL',
+        aiConsent: existing?.aiConsent ?? 'PENDING',
+        aiConsentDecidedAt: existing?.aiConsentDecidedAt ?? null,
+      },
       capabilities: {
         aiAvailable: isAiAvailableOnServer(),
       },

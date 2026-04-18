@@ -119,25 +119,26 @@ model PaymentWebhookEvent {
 }
 
 model DoctorConfig {
-  id                                String    @id @default(cuid())
-  doctorId                          String    @unique
+  id                                String           @id @default(cuid())
+  doctorId                          String           @unique
   consultationDurationMin           Int
-  extendedConsultationEnabled       Boolean   @default(true)
-  whatsappConnected                 Boolean   @default(false)
+  extendedConsultationEnabled       Boolean          @default(true)
+  whatsappConnected                 Boolean          @default(false)
   reminderLeadHours                 String?
-  reminderWindowMinutes             Int?      @default(15)
-  whatsappAutoReplyEnabled          Boolean   @default(true)
-  whatsappAutoConfirmEnabled        Boolean   @default(true)
-  whatsappAutoCancelEnabled         Boolean   @default(true)
+  reminderWindowMinutes             Int?             @default(15)
+  whatsappAutoReplyEnabled          Boolean          @default(true)
+  whatsappAutoConfirmEnabled        Boolean          @default(true)
+  whatsappAutoCancelEnabled         Boolean          @default(true)
   whatsappBookingMessageTemplate    String?
   whatsappQuestionnaireTemplate     String?
   whatsappReminderPendingTemplate   String?
   whatsappReminderConfirmedTemplate String?
-  normalConsultationPrice           Decimal?  @db.Decimal(10, 2)
-  extendedConsultationPrice         Decimal?  @db.Decimal(10, 2)
+  normalConsultationPrice           Decimal?         @db.Decimal(10, 2)
+  extendedConsultationPrice         Decimal?         @db.Decimal(10, 2)
   effectiveFrom                     DateTime?
-  createdAt                         DateTime  @default(now())
-  updatedAt                         DateTime  @updatedAt
+  preferredConsultationMode         ConsultationMode @default(MANUAL)
+  createdAt                         DateTime         @default(now())
+  updatedAt                         DateTime         @updatedAt
 
   doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
 }
@@ -374,10 +375,14 @@ model EncounterHistory {
   completionPct              Int               @default(0)
   status                     ClinicalDocStatus @default(DRAFT)
   prefilledFromQuestionnaire Boolean           @default(false)
+  consultationMode           ConsultationMode  @default(MANUAL)
+  aiConsent                  AiConsentState    @default(PENDING)
+  aiConsentDecidedAt         DateTime?
+  aiConsentActorUserId       String?
   createdAt                  DateTime          @default(now())
   updatedAt                  DateTime          @updatedAt
 
-  appointment Appointment                @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  appointment Appointment               @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   versions    EncounterHistoryVersion[]
 
   @@index([doctorId])
@@ -416,10 +421,10 @@ model ClinicalNote {
   privateNotes String? @db.Text
   soapPayload  Json?
 
-  signatureHash   String?
-  signedAt        DateTime?
-  signedByUserId  String?
-  signedSnapshot  Json?
+  signatureHash  String?
+  signedAt       DateTime?
+  signedByUserId String?
+  signedSnapshot Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -583,6 +588,18 @@ enum ClinicalDocStatus {
   IN_REVIEW
   FINAL
   SIGNED
+}
+
+enum ConsultationMode {
+  MANUAL
+  AI_DICTATION
+  HYBRID
+}
+
+enum AiConsentState {
+  PENDING
+  GRANTED
+  DENIED
 }
 
 enum AIJobKind {
