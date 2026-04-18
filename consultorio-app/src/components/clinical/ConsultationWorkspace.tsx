@@ -12,6 +12,7 @@ import { SectionAccordion } from "./SectionAccordion";
 import { SoapSection } from "./SoapSection";
 import { PrescriptionsSection } from "./PrescriptionsSection";
 import { useClinicalNote } from "./useClinicalNote";
+import { DictationPanel } from "./DictationPanel";
 import {
   ConsultationModeSelector,
   type ConsultationMode,
@@ -360,6 +361,13 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
                   Los modos con IA no están disponibles en este plan o entorno.
                   El modo Manual cubre toda la funcionalidad clínica.
                 </p>
+              )}
+              {mode !== "MANUAL" && consent === "GRANTED" && ctx.capabilities.aiAvailable && (
+                <DictationPanel
+                  appointmentId={appointmentId}
+                  disabled={clinicalNote.isSigned}
+                  onSoapGenerated={clinicalNote.applySoapPartial}
+                />
               )}
               {consent === "DENIED" && (
                 <p className="text-xs text-amber-600">
