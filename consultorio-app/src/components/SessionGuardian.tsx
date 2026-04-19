@@ -15,7 +15,7 @@ const ACTIVITY_EVENTS: Array<keyof WindowEventMap> = [
 ];
 
 function getLogoutTarget(pathname: string) {
-  return pathname.startsWith("/paciente") ? "/agendar" : "/medico/login";
+  return pathname.startsWith("/paciente") ? "/paciente/login" : "/medico/login";
 }
 
 export function SessionGuardian() {
@@ -26,7 +26,9 @@ export function SessionGuardian() {
 
   useEffect(() => {
     const shouldProtect =
-      pathname.startsWith("/paciente") ||
+      (pathname.startsWith("/paciente") &&
+        !pathname.startsWith("/paciente/login") &&
+        !pathname.startsWith("/paciente/registro")) ||
       (pathname.startsWith("/medico") &&
         !pathname.startsWith("/medico/login") &&
         !pathname.startsWith("/medico/registro"));
