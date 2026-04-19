@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { parseDateOnlyLocal } from './dateTime.ts'
+import { buildFullName, parseFullName } from './patientName.ts'
 
 export class ContractValidationError extends Error {
   public readonly status: number
@@ -26,26 +27,90 @@ const availabilityMonthQuerySchema = z.object({
   doctorId: z.string().cuid(),
 })
 
+const PATIENT_SEX_VALUES = ['MALE', 'FEMALE', 'INTERSEX'] as const
+const PATIENT_GENDER_VALUES = [
+  'NOT_SPECIFIED',
+  'MASCULINE',
+  'FEMININE',
+  'TRANSGENDER',
+  'TRANSSEXUAL',
+  'TRAVESTI',
+  'INTERSEX',
+  'OTHER',
+] as const
+const PATIENT_RELATION_VALUES = [
+  'SELF',
+  'SPOUSE',
+  'PARENT',
+  'CHILD',
+  'SIBLING',
+  'FRIEND',
+  'CAREGIVER',
+  'OTHER',
+] as const
+
+const phoneSchema = z
+  .string()
+  .min(7, 'El teléfono es requerido')
+  .max(30, 'El teléfono es inválido')
+  .transform((value) => value.replace(/\D+/g, ''))
+  .refine((value) => /^\d{10,15}$/.test(value), 'El teléfono debe tener entre 10 y 15 dígitos')
+
+const emailSchema = z
+  .union([z.string().trim().email('Correo inválido'), z.literal('')])
+  .optional()
+  .default('')
+
+const contactSchema = z.object({
+  relation: z.enum(PATIENT_RELATION_VALUES),
+  firstName: z.string().trim().min(1, 'Nombre del contacto requerido').max(60),
+  lastNamePaternal: z.string().trim().min(1, 'Apellido paterno del contacto requerido').max(60),
+  lastNameMaternal: z
+    .string()
+    .trim()
+    .max(60)
+    .optional()
+    .nullable()
+    .transform((value) => (value && value.length > 0 ? value : null)),
+  phone: phoneSchema,
+  email: emailSchema,
+})
+
 const publicAppointmentSchema = z.object({
+  // Campos estructurados (preferidos)
+  firstName: z.string().trim().min(1).max(60).optional(),
+  lastNamePaternal: z.string().trim().min(1).max(60).optional(),
+  lastNameMaternal: z
+    .string()
+    .trim()
+    .max(60)
+    .optional()
+    .nullable()
+    .transform((value) => (value && value.length > 0 ? value : null)),
+  sex: z.enum(PATIENT_SEX_VALUES).optional().nullable(),
+  gender: z.enum(PATIENT_GENDER_VALUES).optional().nullable(),
+
+  // Legacy: fullName se sigue aceptando y se parsea internamente
   fullName: z
     .string()
     .trim()
     .min(2, 'El nombre es requerido')
     .max(120, 'El nombre es demasiado largo')
-    .transform((value) => value.replace(/\s+/g, ' ')),
+    .transform((value) => value.replace(/\s+/g, ' '))
+    .optional(),
+
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha de nacimiento inválida'),
-  phone: z
-    .string()
-    .min(7, 'El teléfono es requerido')
-    .max(30, 'El teléfono es inválido')
-    .transform((value) => value.replace(/\D+/g, ''))
-    .refine((value) => /^\d{10,15}$/.test(value), 'El teléfono debe tener entre 10 y 15 dígitos'),
-  email: z.union([z.string().trim().email('Correo inválido'), z.literal('')]).optional().default(''),
+  phone: phoneSchema,
+  email: emailSchema,
   bookAsGuest: z.boolean().optional().default(false),
   appointmentType: z.enum(['NORMAL', 'EXTENDED']),
   startTime: z.string().datetime({ offset: true }),
   doctorId: z.string().cuid(),
   holdToken: z.string().uuid().optional(),
+
+  contact: contactSchema.optional().nullable(),
+  recaptchaToken: z.string().min(1).optional().nullable(),
+
   privacyConsentAccepted: z
     .boolean()
     .refine(
@@ -54,9 +119,20 @@ const publicAppointmentSchema = z.object({
     ),
 })
 
+type RawPublicAppointmentPayload = z.infer<typeof publicAppointmentSchema>
+
+export type PublicAppointmentPayload = Omit<
+  RawPublicAppointmentPayload,
+  'firstName' | 'lastNamePaternal' | 'lastNameMaternal' | 'fullName'
+> & {
+  firstName: string
+  lastNamePaternal: string
+  lastNameMaternal: string | null
+  fullName: string
+}
+
 export type AvailabilityDayQuery = z.infer<typeof availabilityDayQuerySchema>
 export type AvailabilityMonthQuery = z.infer<typeof availabilityMonthQuerySchema>
-export type PublicAppointmentPayload = z.infer<typeof publicAppointmentSchema>
 
 export function parseAvailabilityDayQuery(input: unknown): AvailabilityDayQuery {
   const parsedQuery = availabilityDayQuerySchema.safeParse(input)
@@ -114,6 +190,42 @@ export function parsePublicAppointmentPayload(input: unknown): PublicAppointment
   }
 
   const payload = parsedPayload.data
+  const hasStructured = Boolean(payload.firstName && payload.lastNamePaternal)
+  const hasLegacyFullName = Boolean(payload.fullName)
+
+  if (!hasStructured && !hasLegacyFullName) {
+    throw new ContractValidationError(
+      'El nombre y apellido paterno del paciente son requeridos.'
+    )
+  }
+
+  if (payload.firstName && !payload.lastNamePaternal) {
+    throw new ContractValidationError('El apellido paterno del paciente es requerido.')
+  }
+
+  let firstName: string
+  let lastNamePaternal: string
+  let lastNameMaternal: string | null
+  let fullName: string
+
+  if (hasStructured) {
+    firstName = payload.firstName!
+    lastNamePaternal = payload.lastNamePaternal!
+    lastNameMaternal = payload.lastNameMaternal ?? null
+    fullName = buildFullName({ firstName, lastNamePaternal, lastNameMaternal })
+  } else {
+    const parsedName = parseFullName(payload.fullName!)
+    firstName = parsedName.firstName
+    lastNamePaternal = parsedName.lastNamePaternal
+    lastNameMaternal = parsedName.lastNameMaternal
+    fullName = payload.fullName!
+    if (!lastNamePaternal) {
+      throw new ContractValidationError(
+        'El nombre proporcionado no incluye apellido paterno.'
+      )
+    }
+  }
+
   let parsedDateOfBirth: Date
   try {
     parsedDateOfBirth = parseDateOnlyLocal(payload.dateOfBirth)
@@ -132,5 +244,11 @@ export function parsePublicAppointmentPayload(input: unknown): PublicAppointment
     throw new ContractValidationError('La fecha de nacimiento es inválida para registro.')
   }
 
-  return payload
+  return {
+    ...payload,
+    firstName,
+    lastNamePaternal,
+    lastNameMaternal,
+    fullName,
+  }
 }

@@ -1,6 +1,25 @@
 import prisma from '../lib/prisma'
 import { Prisma } from '@prisma/client'
 type AppointmentType = 'NORMAL' | 'EXTENDED'
+type PatientSex = 'MALE' | 'FEMALE' | 'INTERSEX'
+type PatientGender =
+  | 'NOT_SPECIFIED'
+  | 'MASCULINE'
+  | 'FEMININE'
+  | 'TRANSGENDER'
+  | 'TRANSSEXUAL'
+  | 'TRAVESTI'
+  | 'INTERSEX'
+  | 'OTHER'
+type PatientRelation =
+  | 'SELF'
+  | 'SPOUSE'
+  | 'PARENT'
+  | 'CHILD'
+  | 'SIBLING'
+  | 'FRIEND'
+  | 'CAREGIVER'
+  | 'OTHER'
 import { addMinutes } from 'date-fns'
 import { QuestionnaireService } from './QuestionnaireService'
 import { NotificationService } from './NotificationService'
@@ -9,8 +28,23 @@ import { getServerEnv } from '@/lib/env'
 import { buildSlotHoldReason, getSlotHoldActiveCutoff, SLOT_HOLD_REASON_PREFIX } from '@/lib/slotHold'
 import { ConsentCaptureService } from './ConsentCaptureService'
 import { AuditLogService } from './AuditLogService'
+import { buildFullName } from '@/lib/patientName'
+
+type ContactInput = {
+  relation: PatientRelation
+  firstName: string
+  lastNamePaternal: string
+  lastNameMaternal?: string | null
+  phone: string
+  email?: string | null
+}
 
 type CreatePublicAppointmentInput = {
+  firstName: string
+  lastNamePaternal: string
+  lastNameMaternal?: string | null
+  sex?: PatientSex | null
+  gender?: PatientGender | null
   fullName: string
   dateOfBirth: string
   userId?: string
@@ -21,6 +55,7 @@ type CreatePublicAppointmentInput = {
   doctorId: string
   holdToken?: string
   privacyConsentAccepted: boolean
+  contact?: ContactInput | null
   ipAddress?: string | null
   userAgent?: string | null
 }
@@ -212,27 +247,83 @@ export class AppointmentService {
               })
             }
 
+            const structuredFullName = buildFullName({
+              firstName: data.firstName,
+              lastNamePaternal: data.lastNamePaternal,
+              lastNameMaternal: data.lastNameMaternal ?? null,
+            }) || data.fullName.trim()
+
             if (!patient) {
               patient = await tx.patient.create({
                 data: {
                   userId: data.userId,
-                  fullName: data.fullName.trim(),
+                  fullName: structuredFullName,
+                  firstName: data.firstName.trim(),
+                  lastNamePaternal: data.lastNamePaternal.trim(),
+                  lastNameMaternal: data.lastNameMaternal?.trim() || null,
+                  sex: data.sex ?? null,
+                  gender: data.gender ?? null,
                   dateOfBirth,
                   phone: data.phone.trim(),
                   email: data.email?.trim().toLowerCase() || undefined,
                 },
               })
-            } else if (data.userId && !patient.userId) {
-              patient = await tx.patient.update({
-                where: { id: patient.id },
-                data: { userId: data.userId },
+            } else {
+              const patch: Prisma.PatientUpdateInput = {}
+              if (data.userId && !patient.userId) patch.user = { connect: { id: data.userId } }
+              if (!patient.firstName) patch.firstName = data.firstName.trim()
+              if (!patient.lastNamePaternal) patch.lastNamePaternal = data.lastNamePaternal.trim()
+              if (!patient.lastNameMaternal && data.lastNameMaternal) {
+                patch.lastNameMaternal = data.lastNameMaternal.trim()
+              }
+              if (!patient.sex && data.sex) patch.sex = data.sex
+              if (!patient.gender && data.gender) patch.gender = data.gender
+              if (patient.fullName !== structuredFullName) patch.fullName = structuredFullName
+              if (Object.keys(patch).length > 0) {
+                patient = await tx.patient.update({ where: { id: patient.id }, data: patch })
+              }
+            }
+
+            let contactId: string | null = null
+            if (data.contact) {
+              const contactPhone = data.contact.phone.trim()
+              const existingContact = await tx.patientContact.findFirst({
+                where: {
+                  patientId: patient.id,
+                  relation: data.contact.relation,
+                  phone: contactPhone,
+                },
+                select: { id: true },
               })
+
+              if (existingContact) {
+                contactId = existingContact.id
+              } else {
+                const totalContacts = await tx.patientContact.count({
+                  where: { patientId: patient.id },
+                })
+                const created = await tx.patientContact.create({
+                  data: {
+                    patientId: patient.id,
+                    relation: data.contact.relation,
+                    firstName: data.contact.firstName.trim(),
+                    lastNamePaternal: data.contact.lastNamePaternal.trim(),
+                    lastNameMaternal: data.contact.lastNameMaternal?.trim() || null,
+                    phone: contactPhone,
+                    email: data.contact.email?.trim().toLowerCase() || null,
+                    isPrimary: totalContacts === 0,
+                  },
+                  select: { id: true },
+                })
+                contactId = created.id
+              }
             }
 
             const appointment = await tx.appointment.create({
               data: {
                 doctorId,
                 patientId: patient.id,
+                contactId,
                 date: startOfAptDay,
                 startTime: startTimeDate,
                 endTime: endTimeDate,
