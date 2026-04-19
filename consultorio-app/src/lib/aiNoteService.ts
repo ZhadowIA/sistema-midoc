@@ -59,6 +59,57 @@ const aiContextSchema = z.object({
 
 export type AIStructuredSOAP = z.infer<typeof soapSchema>
 export type AIInsights = z.infer<typeof insightsSchema>
+
+const encounterPartialSchema = z
+  .object({
+    chiefComplaint: z.string().trim().max(2_000).optional(),
+    presentIllness: z
+      .object({
+        onset: z.string().trim().max(500).optional(),
+        duration: z.string().trim().max(500).optional(),
+        course: z.string().trim().max(500).optional(),
+        location: z.string().trim().max(500).optional(),
+        radiation: z.string().trim().max(500).optional(),
+        characteristics: z.string().trim().max(1_000).optional(),
+        intensity: z.string().trim().max(500).optional(),
+        aggravatingFactors: z.string().trim().max(1_000).optional(),
+        relievingFactors: z.string().trim().max(1_000).optional(),
+        associatedSymptoms: z.array(z.string().trim().min(1).max(300)).max(40).optional(),
+        previousTreatments: z.array(z.string().trim().min(1).max(300)).max(40).optional(),
+        summary: z.string().trim().max(4_000).optional(),
+      })
+      .partial()
+      .optional(),
+    pertinentNegatives: z.array(z.string().trim().min(1).max(300)).max(40).optional(),
+    reviewOfSystems: z.record(z.string(), z.string().trim().max(1_500)).optional(),
+    vitals: z
+      .record(
+        z.string(),
+        z.union([z.string().trim().max(120), z.number()]).transform((v) =>
+          typeof v === 'number' ? String(v) : v
+        )
+      )
+      .optional(),
+    physicalExam: z.record(z.string(), z.string().trim().max(2_000)).optional(),
+    assessment: z
+      .array(
+        z.object({
+          diagnosis: z.string().trim().min(1).max(500),
+          probabilityPct: z.number().int().min(0).max(100).optional(),
+          basis: z.string().trim().max(2_000).optional(),
+          studiesToConfirm: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
+        })
+      )
+      .max(10)
+      .optional(),
+    diagnosticPlan: z.record(z.string(), z.string().trim().max(2_000)).optional(),
+    treatmentPlan: z.record(z.string(), z.string().trim().max(2_000)).optional(),
+    followUp: z.record(z.string(), z.string().trim().max(2_000)).optional(),
+  })
+  .partial()
+
+export type AIEncounterPartial = z.infer<typeof encounterPartialSchema>
+export type AIDictationResult = { soap: AIStructuredSOAP; encounter: AIEncounterPartial }
 export type PrescriptionAlert = z.infer<typeof prescriptionAlertSchema>
 export type IdentifierContext = {
   patientName?: string | null
@@ -421,6 +472,80 @@ export async function generateSOAPFromTranscript(
 
   const raw = extractResponseJsonText(response.choices?.[0]?.message?.content, 'SOAP')
   return normalizeSoapOutput(raw)
+}
+
+export async function generateDictationFromTranscript(
+  transcript: string,
+  identifiers?: IdentifierContext,
+  clinicalContext?: {
+    clinicalHistory?: unknown
+    encounterHistory?: unknown
+    questionnaire?: unknown
+  }
+): Promise<AIDictationResult> {
+  const openai = getOpenAIClient()
+  const normalizedTranscript = truncateText(
+    pseudonymizeClinicalText(transcript.trim(), identifiers),
+    TRANSCRIPT_MAX_CHARS
+  )
+  if (!normalizedTranscript) {
+    throw new Error('La transcripción está vacía.')
+  }
+
+  const safeContext = clinicalContext
+    ? pseudonymizeStructuredData(clinicalContext, identifiers)
+    : null
+  const contextBlock = safeContext
+    ? `\n\nContexto clínico estructurado (referencia, no inventes datos fuera de esto ni del audio):\n${serializeContextForPrompt(
+        safeContext,
+        INSIGHTS_CONTEXT_MAX_CHARS
+      )}`
+    : ''
+
+  const response = await runOpenAIRequest('generación de dictado clínico', () =>
+    openai.chat.completions.create({
+      model: 'gpt-4o',
+      temperature: 0.2,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Eres un asistente clínico que estructura la consulta médica a partir del audio transcrito. ' +
+            'Devuelves SOLO JSON con dos llaves de nivel superior: "soap" y "encounter". ' +
+            'soap: {subjective, objective, assessment, plan} con strings; si falta info usa "No se menciona en la consulta". ' +
+            'encounter: objeto parcial con las llaves opcionales: chiefComplaint (string corto), ' +
+            'presentIllness {onset, duration, course, location, radiation, characteristics, intensity, aggravatingFactors, relievingFactors, associatedSymptoms[], previousTreatments[], summary}, ' +
+            'pertinentNegatives[] (síntomas que el paciente negó explícitamente), ' +
+            'reviewOfSystems (objeto con llaves por aparato: cardiovascular, respiratorio, digestivo, neurologico, genitourinario, musculoesqueletico, piel, endocrino, psiquiatrico), ' +
+            'vitals (objeto con llaves: ta, fc, fr, temp, spo2, peso, talla, imc) solo con valores string, ' +
+            'physicalExam (objeto con llaves por sistema), ' +
+            'assessment[] (array de {diagnosis, probabilityPct?, basis?, studiesToConfirm?[]}), ' +
+            'diagnosticPlan, treatmentPlan, followUp (objetos con strings). ' +
+            'REGLAS ESTRICTAS: ' +
+            '1) Omite llaves de encounter de las que no haya información en el audio (no inventes). ' +
+            '2) No incluyas PII; usa lo dicho en la consulta tal cual. ' +
+            '3) associatedSymptoms y pertinentNegatives deben ser listas cortas de términos clínicos. ' +
+            '4) No agregues texto fuera del JSON.',
+        },
+        {
+          role: 'user',
+          content: `Transcripción clínica:\n${normalizedTranscript}${contextBlock}`,
+        },
+      ],
+      response_format: { type: 'json_object' },
+    })
+  )
+
+  const raw = extractResponseJsonText(
+    response.choices?.[0]?.message?.content,
+    'dictado clínico'
+  ) as { soap?: unknown; encounter?: unknown }
+
+  const soap = normalizeSoapOutput(raw?.soap)
+  const encounterParsed = encounterPartialSchema.safeParse(raw?.encounter ?? {})
+  const encounter = encounterParsed.success ? encounterParsed.data : {}
+
+  return { soap, encounter }
 }
 
 export async function generateComprehensiveInsights(context: {

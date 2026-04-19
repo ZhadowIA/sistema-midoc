@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { generateSOAPFromTranscript, transcribeAudio } from "@/lib/aiNoteService";
+import { generateDictationFromTranscript, transcribeAudio } from "@/lib/aiNoteService";
 import { AppointmentAuditService } from "./AppointmentAuditService";
 
 async function loadClinicalContext(appointmentId: string, patientId: string) {
@@ -105,7 +105,7 @@ export class AINoteGenerationService {
 
       const clinicalContext = await loadClinicalContext(input.appointmentId, input.patientId);
 
-      const soap = await generateSOAPFromTranscript(
+      const { soap, encounter } = await generateDictationFromTranscript(
         transcript,
         {
           patientName: input.patientName,
@@ -144,6 +144,7 @@ export class AINoteGenerationService {
             statusMessage: "Nota lista para revisión",
             resultPayload: {
               soap,
+              encounter,
             },
             finishedAt: new Date(),
           },

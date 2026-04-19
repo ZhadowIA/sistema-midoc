@@ -12,11 +12,13 @@ type SoapPartial = {
   plan?: string;
 };
 
+export type EncounterPartial = Record<string, unknown>;
+
 type GenerationEvent = {
   status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED";
   progressPct?: number;
   statusMessage?: string | null;
-  resultPayload?: { soap?: SoapPartial } | null;
+  resultPayload?: { soap?: SoapPartial; encounter?: EncounterPartial } | null;
   errorMessage?: string | null;
 };
 
@@ -24,9 +26,15 @@ type Props = {
   appointmentId: string;
   disabled?: boolean;
   onSoapGenerated: (soap: SoapPartial) => void;
+  onEncounterGenerated?: (encounter: EncounterPartial) => void;
 };
 
-export function DictationPanel({ appointmentId, disabled, onSoapGenerated }: Props) {
+export function DictationPanel({
+  appointmentId,
+  disabled,
+  onSoapGenerated,
+  onEncounterGenerated,
+}: Props) {
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [generating, setGenerating] = useState(false);
@@ -57,8 +65,11 @@ export function DictationPanel({ appointmentId, disabled, onSoapGenerated }: Pro
         setStatusMsg(data.statusMessage ?? "");
         if (data.status === "COMPLETED") {
           if (data.resultPayload?.soap) onSoapGenerated(data.resultPayload.soap);
+          if (data.resultPayload?.encounter && onEncounterGenerated) {
+            onEncounterGenerated(data.resultPayload.encounter);
+          }
           setGenerating(false);
-          toast.success("Nota generada con IA. Revisa antes de firmar.");
+          toast.success("Nota y encuentro generados con IA. Revisa antes de firmar.");
           src.close();
           sseRef.current = null;
         }
@@ -75,7 +86,7 @@ export function DictationPanel({ appointmentId, disabled, onSoapGenerated }: Pro
         sseRef.current = null;
       };
     },
-    [appointmentId, onSoapGenerated],
+    [appointmentId, onSoapGenerated, onEncounterGenerated],
   );
 
   const uploadAudio = useCallback(
@@ -158,7 +169,8 @@ export function DictationPanel({ appointmentId, disabled, onSoapGenerated }: Pro
         <div>
           <p className="text-sm font-medium">Dictado asistido por IA</p>
           <p className="text-xs text-muted-foreground">
-            Graba la consulta y la IA prellenará el SOAP. Revisa siempre antes de firmar.
+            Graba la consulta y la IA prellenará el SOAP y las secciones del encuentro.
+            Revisa siempre antes de firmar.
           </p>
         </div>
         {recording ? (
