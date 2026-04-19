@@ -29,6 +29,8 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  clinicId String?
+
   manager               User?                 @relation("SecretaryManager", fields: [bossId], references: [id], onDelete: SetNull)
   managedUsers          User[]                @relation("SecretaryManager")
   doctorConfig          DoctorConfig?
@@ -50,6 +52,7 @@ model User {
   aiProcessingJobs      AIProcessingJob[]
 
   @@index([bossId])
+  @@index([clinicId])
 }
 
 model DoctorSubscription {
@@ -69,6 +72,7 @@ model DoctorSubscription {
   lastPaymentAt          DateTime?
   currentPeriodStart     DateTime?
   currentPeriodEnd       DateTime?
+  features               Json      @default("{}")
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
@@ -144,15 +148,21 @@ model DoctorConfig {
 }
 
 model Patient {
-  id            String   @id @default(cuid())
-  userId        String?
-  ownerDoctorId String?
-  fullName      String
-  dateOfBirth   DateTime @default(now())
-  phone         String
-  email         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id               String         @id @default(cuid())
+  userId           String?
+  ownerDoctorId    String?
+  clinicId         String?
+  firstName        String?
+  lastNamePaternal String?
+  lastNameMaternal String?
+  sex              PatientSex?
+  gender           PatientGender?
+  fullName         String
+  dateOfBirth      DateTime       @default(now())
+  phone            String
+  email            String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
   user                 User?                 @relation("PatientAccount", fields: [userId], references: [id], onDelete: SetNull)
   ownerDoctor          User?                 @relation("DoctorPatientDirectory", fields: [ownerDoctorId], references: [id], onDelete: Cascade)
@@ -164,9 +174,31 @@ model Patient {
   appointmentAuditLogs AppointmentAuditLog[]
   auditLogs            AuditLog[]
   consentCaptures      ConsentCapture[]
+  contacts             PatientContact[]
 
   @@index([ownerDoctorId])
   @@index([ownerDoctorId, fullName])
+  @@index([clinicId])
+}
+
+model PatientContact {
+  id               String          @id @default(cuid())
+  patientId        String
+  relation         PatientRelation
+  firstName        String
+  lastNamePaternal String
+  lastNameMaternal String?
+  phone            String
+  email            String?
+  isPrimary        Boolean         @default(false)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  patient      Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+
+  @@index([patientId])
+  @@index([patientId, isPrimary])
 }
 
 model AvailabilityBlock {
@@ -201,6 +233,8 @@ model Appointment {
   id                    String            @id @default(cuid())
   doctorId              String
   patientId             String
+  clinicId              String?
+  contactId             String?
   date                  DateTime
   startTime             DateTime
   endTime               DateTime
@@ -215,6 +249,7 @@ model Appointment {
 
   doctor           User                  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   patient          Patient               @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  contact          PatientContact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
   questionnaire    Questionnaire?
   notifications    Notification[]
   clinicalNote     ClinicalNote?
@@ -225,6 +260,8 @@ model Appointment {
   systemAuditLogs  AuditLog[]
   consentCaptures  ConsentCapture[]
   aiProcessingJobs AIProcessingJob[]
+
+  @@index([clinicId])
 }
 
 model AppointmentAuditLog {
@@ -611,6 +648,34 @@ enum AIJobStatus {
   PROCESSING
   COMPLETED
   FAILED
+}
+
+enum PatientSex {
+  MALE
+  FEMALE
+  INTERSEX
+}
+
+enum PatientGender {
+  NOT_SPECIFIED
+  MASCULINE
+  FEMININE
+  TRANSGENDER
+  TRANSSEXUAL
+  TRAVESTI
+  INTERSEX
+  OTHER
+}
+
+enum PatientRelation {
+  SELF
+  SPOUSE
+  PARENT
+  CHILD
+  SIBLING
+  FRIEND
+  CAREGIVER
+  OTHER
 }
 
 model AIInsight {
