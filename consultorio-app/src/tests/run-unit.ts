@@ -1,11 +1,17 @@
 import { runDateTimeUnitTests } from './unit/dateTime.test.ts'
 import { runRateLimitUnitTests } from './unit/rateLimit.test.ts'
 import { runClinicalFormatUnitTests } from './unit/clinicalFormat.test.ts'
+import { runSignoffSummaryUnitTests } from './unit/signoffSummary.test.ts'
+import { runConsultationWorkspaceUnitTests } from './unit/consultationWorkspace.test.ts'
+import { runPatientNameUnitTests } from './unit/patientName.test.ts'
 
 async function main() {
   await runDateTimeUnitTests()
   await runRateLimitUnitTests()
   await runClinicalFormatUnitTests()
+  await runSignoffSummaryUnitTests()
+  await runConsultationWorkspaceUnitTests()
+  await runPatientNameUnitTests()
   console.log('\nUnit tests completed successfully.')
 }
 
