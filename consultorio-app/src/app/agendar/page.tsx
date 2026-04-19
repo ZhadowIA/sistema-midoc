@@ -8,10 +8,49 @@ import { Button } from "@/components/Button";
 import { FeedbackState } from "@/components/FeedbackState";
 import { Input } from "@/components/Input";
 import { RadioGroup } from "@/components/RadioGroup";
+import { Select } from "@/components/Select";
 import { TimeSlot } from "@/components/TimeSlot";
 import { useSearchParams, useRouter } from "next/navigation";
 import { format, addDays, addMonths, startOfMonth, startOfToday } from "date-fns";
 import { es } from "date-fns/locale";
+import { parseFullName } from "@/lib/patientName";
+
+const RECAPTCHA_SITE_KEY = process.env.NEXT_PUBLIC_RECAPTCHA_V3_SITE_KEY || "";
+
+const SEX_OPTIONS = [
+  { value: "HOMBRE", label: "Hombre" },
+  { value: "MUJER", label: "Mujer" },
+  { value: "INTERSEXUAL", label: "Intersexual" },
+];
+
+const GENDER_OPTIONS = [
+  { value: "NOT_SPECIFIED", label: "No especificado" },
+  { value: "MASCULINE", label: "Masculino" },
+  { value: "FEMININE", label: "Femenino" },
+  { value: "TRANSGENDER", label: "Transgénero" },
+  { value: "TRANSSEXUAL", label: "Transexual" },
+  { value: "TRAVESTI", label: "Travesti" },
+  { value: "INTERSEX", label: "Intersexual" },
+  { value: "OTHER", label: "Otro" },
+];
+
+const RELATION_OPTIONS = [
+  { value: "SELF", label: "El paciente mismo" },
+  { value: "PARENT", label: "Padre / Madre" },
+  { value: "SPOUSE", label: "Cónyuge / Pareja" },
+  { value: "SIBLING", label: "Hermano(a)" },
+  { value: "CHILD", label: "Hijo(a)" },
+  { value: "OTHER", label: "Otro" },
+];
+
+declare global {
+  interface Window {
+    grecaptcha?: {
+      ready: (cb: () => void) => void;
+      execute: (siteKey: string, options: { action: string }) => Promise<string>;
+    };
+  }
+}
 
 type Step = "auth" | "doctor" | "type" | "date" | "time" | "info" | "confirm";
 
@@ -77,10 +116,22 @@ function BookingFlowContent() {
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
   const [consultType, setConsultType] = useState<"normal" | "extended">("normal");
   const [formData, setFormData] = useState({
-    name: "",
+    firstName: "",
+    lastNamePaternal: "",
+    lastNameMaternal: "",
     email: "",
     phone: "",
-    dateOfBirth: ""
+    dateOfBirth: "",
+    sex: "",
+    gender: "NOT_SPECIFIED",
+  });
+  const [contactData, setContactData] = useState({
+    relation: "SELF",
+    firstName: "",
+    lastNamePaternal: "",
+    lastNameMaternal: "",
+    phone: "",
+    email: "",
   });
   const [privacyConsentAccepted, setPrivacyConsentAccepted] = useState(false);
 
@@ -139,6 +190,44 @@ function BookingFlowContent() {
   const requiresLinkedEmail = isLoggedIn && !bookAsGuest;
   const normalizedEmail = formData.email.trim();
   const calculatedAge = calculateAge(formData.dateOfBirth);
+
+  const fillContactFromPatient = useCallback(() => {
+    setContactData((prev) => ({
+      ...prev,
+      relation: "SELF",
+      firstName: formData.firstName,
+      lastNamePaternal: formData.lastNamePaternal,
+      lastNameMaternal: formData.lastNameMaternal,
+      phone: prev.phone || formData.phone,
+      email: prev.email || formData.email,
+    }));
+  }, [formData.firstName, formData.lastNamePaternal, formData.lastNameMaternal, formData.phone, formData.email]);
+
+  const executeRecaptcha = useCallback(async (): Promise<string> => {
+    if (!RECAPTCHA_SITE_KEY) return "";
+    if (typeof window === "undefined" || !window.grecaptcha) return "";
+    return new Promise((resolve) => {
+      window.grecaptcha!.ready(async () => {
+        try {
+          const token = await window.grecaptcha!.execute(RECAPTCHA_SITE_KEY, { action: "booking" });
+          resolve(token);
+        } catch {
+          resolve("");
+        }
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!RECAPTCHA_SITE_KEY) return;
+    if (document.querySelector(`script[data-recaptcha="${RECAPTCHA_SITE_KEY}"]`)) return;
+    const script = document.createElement("script");
+    script.src = `https://www.google.com/recaptcha/api.js?render=${RECAPTCHA_SITE_KEY}`;
+    script.async = true;
+    script.defer = true;
+    script.dataset.recaptcha = RECAPTCHA_SITE_KEY;
+    document.head.appendChild(script);
+  }, []);
 
   const releaseSlotHold = useCallback(async (holdToRelease?: SlotHoldState | null) => {
     const hold = holdToRelease ?? slotHoldRef.current;
@@ -264,9 +353,13 @@ function BookingFlowContent() {
     setPatientUserId(payload.user.id);
     setBookAsGuest(false);
     setAuthMode("guest");
+    const sourceName = payload.profile?.fullName || payload.user?.name || "";
+    const parsed = parseFullName(sourceName);
     setFormData((prev) => ({
       ...prev,
-      name: payload.profile?.fullName || payload.user?.name || prev.name,
+      firstName: parsed.firstName || prev.firstName,
+      lastNamePaternal: parsed.lastNamePaternal || prev.lastNamePaternal,
+      lastNameMaternal: parsed.lastNameMaternal ?? prev.lastNameMaternal,
       email: payload.profile?.email || payload.user?.email || prev.email,
       phone: payload.profile?.phone || prev.phone,
       dateOfBirth: payload.profile?.dateOfBirth || prev.dateOfBirth,
@@ -483,9 +576,14 @@ function BookingFlowContent() {
 
   const hasCompletePatientData = () => {
     return Boolean(
-      formData.name &&
-      formData.phone &&
+      formData.firstName.trim() &&
+      formData.lastNamePaternal.trim() &&
       formData.dateOfBirth &&
+      formData.sex &&
+      contactData.firstName.trim() &&
+      contactData.lastNamePaternal.trim() &&
+      contactData.phone.trim() &&
+      contactData.relation &&
       (!requiresLinkedEmail || normalizedEmail)
     );
   };
@@ -615,14 +713,27 @@ function BookingFlowContent() {
       }
 
       try {
+        const recaptchaToken = await executeRecaptcha();
         const res = await fetch('/api/agenda/public/appointments', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
-            fullName: formData.name,
+            firstName: formData.firstName.trim(),
+            lastNamePaternal: formData.lastNamePaternal.trim(),
+            lastNameMaternal: formData.lastNameMaternal.trim() || undefined,
             email: normalizedEmail,
             phone: formData.phone,
             dateOfBirth: formData.dateOfBirth,
+            sex: formData.sex || undefined,
+            gender: formData.gender || undefined,
+            contact: {
+              relation: contactData.relation,
+              firstName: contactData.firstName.trim(),
+              lastNamePaternal: contactData.lastNamePaternal.trim(),
+              lastNameMaternal: contactData.lastNameMaternal.trim() || undefined,
+              phone: contactData.phone.trim(),
+              email: contactData.email.trim() || undefined,
+            },
             userId: bookAsGuest ? undefined : patientUserId || undefined,
             bookAsGuest,
             appointmentType: consultType.toUpperCase(),
@@ -630,6 +741,7 @@ function BookingFlowContent() {
             doctorId: selectedDoctorId,
             holdToken: activeHold.token,
             privacyConsentAccepted,
+            recaptchaToken,
           })
         });
 
@@ -651,7 +763,7 @@ function BookingFlowContent() {
                 appointmentType: data.appointment.appointmentType,
                 durationMin: data.appointment.durationMin,
                 doctor: data.appointment.doctor,
-                patientName: formData.name,
+                patientName: [formData.firstName, formData.lastNamePaternal, formData.lastNameMaternal].filter(Boolean).join(" ").trim(),
                 questionnaireUrl: data.questionnaire?.url ?? null,
               })
             );
@@ -688,14 +800,8 @@ function BookingFlowContent() {
           )
         );
       case "type": return consultType !== null;
-      case "info": 
-        return !!(
-          formData.name &&
-          formData.phone &&
-          formData.dateOfBirth &&
-          (!requiresLinkedEmail || normalizedEmail) &&
-          privacyConsentAccepted
-        );
+      case "info":
+        return !!(hasCompletePatientData() && privacyConsentAccepted);
       case "confirm": return true;
       default: return false;
     }
@@ -1245,58 +1351,118 @@ function BookingFlowContent() {
             {/* INFO STEP */}
             {currentStep === "info" && (
               <motion.div key="info" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                <h2 className="text-2xl font-semibold mb-2">Tus datos</h2>
+                <h2 className="text-2xl font-semibold mb-2">Datos para la cita</h2>
                 <p className="text-muted-foreground mb-8">
                   {isLoggedIn && !bookAsGuest
                     ? "Tus datos básicos (puedes cambiarlos si agendas para alguien más)"
-                    : isLoggedIn && bookAsGuest
-                      ? "Sesión activa, pero esta cita se guardará sin vincular cuenta."
-                      : "Completa tu información personal"}
+                    : "Completa la información del paciente y el acompañante"}
                 </p>
-                <div className="grid sm:grid-cols-2 gap-4 max-w-xl">
-                  <div className="sm:col-span-2">
-                    <Input label="Nombre completo" placeholder="Ingresa el nombre del paciente" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
+
+                {/* Datos del paciente */}
+                <section className="max-w-2xl">
+                  <h3 className="text-lg font-semibold mb-4">Datos del paciente</h3>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <Input label="Nombre(s)*" placeholder="Ej. María Fernanda" value={formData.firstName} onChange={e => setFormData({ ...formData, firstName: e.target.value })} />
+                    <Input label="Apellido Paterno*" placeholder="Ej. González" value={formData.lastNamePaternal} onChange={e => setFormData({ ...formData, lastNamePaternal: e.target.value })} />
+                    <Input label="Apellido Materno" placeholder="Opcional" value={formData.lastNameMaternal} onChange={e => setFormData({ ...formData, lastNameMaternal: e.target.value })} />
+                    <Input
+                      label="Fecha de Nacimiento*"
+                      type="date"
+                      value={formData.dateOfBirth}
+                      onChange={e => setFormData({ ...formData, dateOfBirth: e.target.value })}
+                      helperText={calculatedAge !== null ? `Edad: ${calculatedAge} años` : undefined}
+                    />
+                    <Select
+                      label="Sexo*"
+                      placeholder="Selecciona..."
+                      options={SEX_OPTIONS}
+                      value={formData.sex}
+                      onValueChange={(value) => setFormData({ ...formData, sex: value })}
+                    />
+                    <Select
+                      label="Género"
+                      placeholder="Selecciona..."
+                      options={GENDER_OPTIONS}
+                      value={formData.gender}
+                      onValueChange={(value) => setFormData({ ...formData, gender: value })}
+                    />
                   </div>
-                  <Input label="Teléfono" type="tel" placeholder="10 dígitos..." value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} />
-                  <Input
-                    label="Fecha de Nacimiento"
-                    type="date"
-                    value={formData.dateOfBirth}
-                    onChange={e => setFormData({ ...formData, dateOfBirth: e.target.value })}
-                    helperText={
-                      calculatedAge !== null
-                        ? `Edad calculada automáticamente: ${calculatedAge} años`
-                        : "La edad se calcula automáticamente para visualización."
-                    }
-                  />
-                  <div className="sm:col-span-2">
-                    <Input 
-                      label={requiresLinkedEmail ? "Correo electrónico" : "Correo electrónico (opcional)"}
-                      type="email" 
-                      placeholder="Para recibir confirmación por email..." 
-                      value={formData.email} 
+                </section>
+
+                {/* Datos del acompañante */}
+                <section className="max-w-2xl mt-10">
+                  <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                    <h3 className="text-lg font-semibold">Datos del acompañante</h3>
+                    <button
+                      type="button"
+                      onClick={fillContactFromPatient}
+                      className="text-sm font-medium text-primary hover:underline"
+                    >
+                      Usar mismo nombre del paciente
+                    </button>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <Select
+                        label="Relación con el paciente*"
+                        placeholder="Selecciona..."
+                        options={RELATION_OPTIONS}
+                        value={contactData.relation}
+                        onValueChange={(value) => setContactData({ ...contactData, relation: value })}
+                      />
+                    </div>
+                    <Input label="Nombre(s)*" value={contactData.firstName} onChange={e => setContactData({ ...contactData, firstName: e.target.value })} />
+                    <Input label="Apellido Paterno*" value={contactData.lastNamePaternal} onChange={e => setContactData({ ...contactData, lastNamePaternal: e.target.value })} />
+                    <Input label="Apellido Materno" placeholder="Opcional" value={contactData.lastNameMaternal} onChange={e => setContactData({ ...contactData, lastNameMaternal: e.target.value })} />
+                    <Input label="Celular*" type="tel" inputMode="numeric" placeholder="10 dígitos" value={contactData.phone} onChange={e => setContactData({ ...contactData, phone: e.target.value })} />
+                    <div className="sm:col-span-2">
+                      <Input
+                        label="Correo Electrónico"
+                        type="email"
+                        placeholder="Opcional"
+                        value={contactData.email}
+                        onChange={e => setContactData({ ...contactData, email: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                {/* Teléfono de contacto del paciente (legacy — requerido por la API) */}
+                <section className="max-w-2xl mt-10">
+                  <h3 className="text-lg font-semibold mb-4">Contacto del paciente</h3>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <Input label="Teléfono*" type="tel" inputMode="numeric" placeholder="10 dígitos" value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} />
+                    <Input
+                      label={requiresLinkedEmail ? "Correo electrónico*" : "Correo electrónico"}
+                      type="email"
+                      placeholder={requiresLinkedEmail ? "Obligatorio con cuenta vinculada" : "Opcional"}
+                      value={formData.email}
                       onChange={e => setFormData({ ...formData, email: e.target.value })}
                       required={requiresLinkedEmail}
-                      helperText={
-                        requiresLinkedEmail
-                          ? "Obligatorio cuando agendas la cita vinculada a tu cuenta."
-                          : "Opcional si agendas como invitado."
-                      }
                     />
                   </div>
-                  <label className="sm:col-span-2 flex items-start gap-3 rounded-2xl border border-border bg-secondary/20 p-4">
-                    <input
-                      type="checkbox"
-                      checked={privacyConsentAccepted}
-                      onChange={(e) => setPrivacyConsentAccepted(e.target.checked)}
-                      className="mt-1 h-5 w-5 rounded border-border accent-primary"
-                    />
-                    <span className="text-sm text-foreground">
-                      Acepto el aviso de privacidad y autorizo el uso operativo de mis datos para agendar, confirmar la cita y
-                      poner el expediente a disposición del médico responsable.
-                    </span>
-                  </label>
-                </div>
+                </section>
+
+                <label className="max-w-2xl mt-8 flex items-start gap-3 rounded-2xl border border-border bg-secondary/20 p-4">
+                  <input
+                    type="checkbox"
+                    checked={privacyConsentAccepted}
+                    onChange={(e) => setPrivacyConsentAccepted(e.target.checked)}
+                    className="mt-1 h-5 w-5 rounded border-border accent-primary"
+                  />
+                  <span className="text-sm text-foreground">
+                    Acepto el aviso de privacidad y autorizo el uso operativo de mis datos para agendar, confirmar la cita y
+                    poner el expediente a disposición del médico responsable.
+                  </span>
+                </label>
+
+                {RECAPTCHA_SITE_KEY && (
+                  <p className="mt-6 text-xs text-muted-foreground max-w-2xl">
+                    Este sitio está protegido por reCAPTCHA y aplican la{" "}
+                    <a href="https://policies.google.com/privacy" target="_blank" rel="noreferrer" className="underline">Política de Privacidad</a> y los{" "}
+                    <a href="https://policies.google.com/terms" target="_blank" rel="noreferrer" className="underline">Términos de Servicio</a> de Google.
+                  </p>
+                )}
               </motion.div>
             )}
 
@@ -1320,7 +1486,9 @@ function BookingFlowContent() {
                   </div>
                   <div className="border-t border-border pt-4">
                     <div className="text-sm text-muted-foreground mb-1">Paciente</div>
-                    <div className="font-semibold text-lg">{formData.name}</div>
+                    <div className="font-semibold text-lg">
+                      {[formData.firstName, formData.lastNamePaternal, formData.lastNameMaternal].filter(Boolean).join(" ").trim()}
+                    </div>
                     <div className="text-muted-foreground mt-1 flex flex-col gap-1">
                       <span>📱 {formData.phone}</span>
                       <span>
