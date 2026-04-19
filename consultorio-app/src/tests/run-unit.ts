@@ -4,6 +4,7 @@ import { runClinicalFormatUnitTests } from './unit/clinicalFormat.test.ts'
 import { runSignoffSummaryUnitTests } from './unit/signoffSummary.test.ts'
 import { runConsultationWorkspaceUnitTests } from './unit/consultationWorkspace.test.ts'
 import { runPatientNameUnitTests } from './unit/patientName.test.ts'
+import { runRecaptchaUnitTests } from './unit/recaptcha.test.ts'
 
 async function main() {
   await runDateTimeUnitTests()
@@ -12,6 +13,7 @@ async function main() {
   await runSignoffSummaryUnitTests()
   await runConsultationWorkspaceUnitTests()
   await runPatientNameUnitTests()
+  await runRecaptchaUnitTests()
   console.log('\nUnit tests completed successfully.')
 }
 

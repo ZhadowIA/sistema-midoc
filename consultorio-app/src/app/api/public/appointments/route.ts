@@ -4,6 +4,7 @@ import { getAuthenticatedUser } from '@/lib/auth'
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit'
 import { ContractValidationError, parsePublicAppointmentPayload } from '@/lib/publicApiContracts'
 import { getRequestIp, getUserAgent } from '@/lib/requestContext'
+import { verifyRecaptchaToken } from '@/lib/recaptcha'
 
 export async function POST(request: Request) {
   const rateLimit = checkRateLimit(request, {
@@ -16,7 +17,19 @@ export async function POST(request: Request) {
   try {
     const body = await request.json()
     const parsed = parsePublicAppointmentPayload(body)
-    const { bookAsGuest, ...appointmentPayload } = parsed
+    const { bookAsGuest, recaptchaToken, ...appointmentPayload } = parsed
+
+    const recaptcha = await verifyRecaptchaToken(recaptchaToken, { expectedAction: 'booking' })
+    if (!recaptcha.ok) {
+      const status = recaptcha.reason === 'missing-token' ? 400 : 403
+      return NextResponse.json(
+        {
+          error: 'No fue posible verificar que la solicitud provenga de un usuario real.',
+          recaptchaReason: recaptcha.reason,
+        },
+        { status }
+      )
+    }
 
     const authUser = await getAuthenticatedUser()
     const bookingWithLinkedAccount = authUser?.role === 'PATIENT' && !bookAsGuest

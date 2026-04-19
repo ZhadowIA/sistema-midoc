@@ -10,6 +10,8 @@ const serverEnvSchema = z.object({
   WHATSAPP_WEBHOOK_SECRET: z.string().min(8).optional(),
   WHATSAPP_API_URL: z.string().url().optional(),
   OPENAI_API_KEY: z.string().min(20).optional(),
+  DEEPGRAM_API_KEY: z.string().min(20).optional(),
+  DEEPGRAM_PROJECT_ID: z.string().min(8).optional(),
   NOTIFICATION_REMINDER_LEAD_MINUTES: z.string().optional(),
   NOTIFICATION_REMINDER_LEAD_HOURS: z.string().optional(),
   NOTIFICATION_REMINDER_WINDOW_MINUTES: z.string().optional(),
@@ -30,6 +32,19 @@ const serverEnvSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  CONSULTA_UNIFIED_DOCTOR_IDS: z.string().optional(),
+  RECAPTCHA_V3_SECRET: z.string().min(1).optional(),
+  RECAPTCHA_V3_MIN_SCORE: z
+    .string()
+    .optional()
+    .default("0.5")
+    .transform((value) => {
+      const parsed = Number.parseFloat(value);
+      if (Number.isNaN(parsed) || parsed < 0 || parsed > 1) {
+        throw new Error("RECAPTCHA_V3_MIN_SCORE debe ser un número entre 0 y 1");
+      }
+      return parsed;
+    }),
 });
 
 type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -47,4 +62,8 @@ export function getServerEnv(): ServerEnv {
   }
   cachedEnv = parsed.data;
   return cachedEnv;
+}
+
+export function __resetServerEnvForTests(): void {
+  cachedEnv = null;
 }

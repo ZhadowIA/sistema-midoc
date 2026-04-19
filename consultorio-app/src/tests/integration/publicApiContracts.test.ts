@@ -56,10 +56,10 @@ export async function runPublicContractsIntegrationTests() {
       },
     },
     {
-      name: 'appointments contract normalizes name and phone',
+      name: 'appointments contract normalizes legacy fullName and phone',
       run: () => {
         const payload = parsePublicAppointmentPayload({
-          fullName: '  Ana   López   ',
+          fullName: '  Ana   López Gómez  ',
           dateOfBirth: '1995-07-10',
           phone: '(614) 123-45-67',
           email: 'ana@example.com',
@@ -69,8 +69,103 @@ export async function runPublicContractsIntegrationTests() {
           privacyConsentAccepted: true,
         })
 
-        assert.equal(payload.fullName, 'Ana López')
+        assert.equal(payload.fullName, 'Ana López Gómez')
         assert.equal(payload.phone, '6141234567')
+        assert.equal(payload.firstName, 'Ana')
+        assert.equal(payload.lastNamePaternal, 'López')
+        assert.equal(payload.lastNameMaternal, 'Gómez')
+      },
+    },
+    {
+      name: 'appointments contract accepts structured fields and builds fullName',
+      run: () => {
+        const payload = parsePublicAppointmentPayload({
+          firstName: 'Ana',
+          lastNamePaternal: 'López',
+          sex: 'FEMALE',
+          gender: 'FEMININE',
+          dateOfBirth: '1995-07-10',
+          phone: '6141234567',
+          appointmentType: 'NORMAL',
+          startTime: '2026-05-01T10:00:00.000-07:00',
+          doctorId: validDoctorId,
+          privacyConsentAccepted: true,
+          contact: {
+            relation: 'SELF',
+            firstName: 'Ana',
+            lastNamePaternal: 'López',
+            phone: '6141234567',
+          },
+        })
+
+        assert.equal(payload.fullName, 'Ana López')
+        assert.equal(payload.lastNameMaternal, null)
+        assert.equal(payload.sex, 'FEMALE')
+        assert.equal(payload.gender, 'FEMININE')
+        assert.equal(payload.contact?.relation, 'SELF')
+        assert.equal(payload.contact?.phone, '6141234567')
+      },
+    },
+    {
+      name: 'appointments contract rejects missing lastNamePaternal when structured',
+      run: () => {
+        assert.throws(
+          () =>
+            parsePublicAppointmentPayload({
+              firstName: 'Ana',
+              dateOfBirth: '1995-07-10',
+              phone: '6141234567',
+              appointmentType: 'NORMAL',
+              startTime: '2026-05-01T10:00:00.000-07:00',
+              doctorId: validDoctorId,
+              privacyConsentAccepted: true,
+            }),
+          (error: unknown) =>
+            error instanceof ContractValidationError &&
+            error.message.includes('apellido paterno')
+        )
+      },
+    },
+    {
+      name: 'appointments contract rejects payload with neither structured nor fullName',
+      run: () => {
+        assert.throws(
+          () =>
+            parsePublicAppointmentPayload({
+              dateOfBirth: '1995-07-10',
+              phone: '6141234567',
+              appointmentType: 'NORMAL',
+              startTime: '2026-05-01T10:00:00.000-07:00',
+              doctorId: validDoctorId,
+              privacyConsentAccepted: true,
+            }),
+          (error: unknown) => error instanceof ContractValidationError
+        )
+      },
+    },
+    {
+      name: 'appointments contract validates contact phone format',
+      run: () => {
+        assert.throws(
+          () =>
+            parsePublicAppointmentPayload({
+              firstName: 'Ana',
+              lastNamePaternal: 'López',
+              dateOfBirth: '1995-07-10',
+              phone: '6141234567',
+              appointmentType: 'NORMAL',
+              startTime: '2026-05-01T10:00:00.000-07:00',
+              doctorId: validDoctorId,
+              privacyConsentAccepted: true,
+              contact: {
+                relation: 'SPOUSE',
+                firstName: 'Juan',
+                lastNamePaternal: 'Pérez',
+                phone: '123', // demasiado corto
+              },
+            }),
+          (error: unknown) => error instanceof ContractValidationError
+        )
       },
     },
     {
