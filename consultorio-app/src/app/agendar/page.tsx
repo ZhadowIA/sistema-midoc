@@ -787,7 +787,7 @@ function BookingFlowContent() {
         const seconds = holdSecondsLeft % 60;
         const urgent = holdSecondsLeft <= 60;
         return (
-          <div className={`sticky top-[64px] md:top-[116px] z-20 border-b transition-colors ${urgent ? "bg-destructive/10 border-destructive/30" : "bg-primary/10 border-primary/20"}`}>
+          <div className={`sticky top-16 z-30 border-b bg-card shadow-sm transition-colors ${urgent ? "border-destructive/40" : "border-primary/30"}`}>
             <div className="max-w-4xl mx-auto px-4 py-2 flex items-center gap-3">
               <Clock className={`w-4 h-4 flex-shrink-0 ${urgent ? "text-destructive" : "text-primary"}`} />
               <div className="flex-1 min-w-0">
