@@ -13,12 +13,14 @@ import { SoapSection } from "./SoapSection";
 import { PrescriptionsSection } from "./PrescriptionsSection";
 import { useClinicalNote } from "./useClinicalNote";
 import { DictationPanel } from "./DictationPanel";
+import { NarrationScript } from "./NarrationScript";
 import { AiInsightsPanel } from "./AiInsightsPanel";
 import {
   ConsultationModeSelector,
   type ConsultationMode,
 } from "./ConsultationModeSelector";
 import { AiConsentModal } from "./AiConsentModal";
+import { SignoffSummary } from "./SignoffSummary";
 import {
   ChiefComplaintSection,
   PresentIllnessSection,
@@ -37,8 +39,11 @@ import {
   calculateEncounterCompletionPct,
   calculateSectionCompletions,
   hasMinimumForSignoff,
+  buildSignoffBlockedMessage,
+  evaluateSignoffButtonState,
   type EncounterSectionKey,
 } from "@/lib/clinicalFormat";
+import { resolveWorkspaceShortcut } from "@/lib/consultationWorkspace";
 import type { EncounterHistoryPayload } from "@/lib/encounterHistorySchema";
 
 type ConsentState = "PENDING" | "GRANTED" | "DENIED";
@@ -47,7 +52,7 @@ type ContextResponse = {
   appointment: {
     id: string;
     patientId: string;
-    patient: { id: string; fullName: string };
+    patient: { id: string; fullName: string; phone?: string | null };
     questionnaireAnswered: boolean;
   };
   encounter: {
@@ -103,6 +108,13 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
   const clinicalNote = useClinicalNote(appointmentId);
   const [closing, setClosing] = useState(false);
   const router = useRouter();
+  const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    SECTIONS.forEach((s, i) => {
+      init[s.key] = i < 2;
+    });
+    return init;
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,6 +166,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
 
   useEffect(() => {
     if (!payload) return;
+    if (clinicalNote.isSigned) return;
     if (!savedOnceRef.current) {
       savedOnceRef.current = true;
       return;
@@ -166,7 +179,79 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [payload, savePayload]);
+  }, [payload, savePayload, clinicalNote.isSigned]);
+
+  const mergeEncounterFromAi = useCallback(
+    (partial: Record<string, unknown>) => {
+      if (!partial || typeof partial !== "object") return;
+      setPayload((prev) => {
+        if (!prev) return prev;
+        const next: EncounterHistoryPayload = { ...prev };
+        const isNonEmptyString = (v: unknown): v is string =>
+          typeof v === "string" && v.trim().length > 0;
+        const isNonEmptyArray = (v: unknown): v is unknown[] =>
+          Array.isArray(v) && v.length > 0;
+        const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+          typeof v === "object" && v !== null && !Array.isArray(v);
+
+        if (isNonEmptyString(partial.chiefComplaint) && !prev.chiefComplaint.trim()) {
+          next.chiefComplaint = partial.chiefComplaint;
+        }
+        if (isPlainObject(partial.presentIllness)) {
+          next.presentIllness = { ...prev.presentIllness };
+          for (const [k, v] of Object.entries(partial.presentIllness)) {
+            const current = (prev.presentIllness as Record<string, unknown>)[k];
+            const empty =
+              current === undefined ||
+              current === null ||
+              (typeof current === "string" && !current.trim()) ||
+              (Array.isArray(current) && current.length === 0);
+            if (!empty) continue;
+            if (isNonEmptyString(v) || isNonEmptyArray(v)) {
+              (next.presentIllness as Record<string, unknown>)[k] = v;
+            }
+          }
+        }
+        if (isNonEmptyArray(partial.pertinentNegatives) && prev.pertinentNegatives.length === 0) {
+          next.pertinentNegatives = partial.pertinentNegatives.filter(
+            (x): x is string => typeof x === "string" && x.trim().length > 0,
+          );
+        }
+        const mergeRecord = (key: keyof EncounterHistoryPayload) => {
+          const incoming = partial[key as string];
+          if (!isPlainObject(incoming)) return;
+          const currentRec = prev[key] as Record<string, unknown>;
+          const merged: Record<string, unknown> = { ...currentRec };
+          for (const [k, v] of Object.entries(incoming)) {
+            const cur = currentRec?.[k];
+            const empty =
+              cur === undefined || cur === null || (typeof cur === "string" && !cur.trim());
+            if (empty && (isNonEmptyString(v) || typeof v === "number")) {
+              merged[k] = typeof v === "number" ? String(v) : v;
+            }
+          }
+          (next as Record<string, unknown>)[key as string] = merged;
+        };
+        mergeRecord("reviewOfSystems");
+        mergeRecord("vitals");
+        mergeRecord("physicalExam");
+        mergeRecord("diagnosticPlan");
+        mergeRecord("treatmentPlan");
+        mergeRecord("followUp");
+        if (isNonEmptyArray(partial.assessment) && prev.assessment.length === 0) {
+          next.assessment = partial.assessment.filter(
+            (a): a is { diagnosis: string } =>
+              typeof a === "object" &&
+              a !== null &&
+              typeof (a as { diagnosis?: unknown }).diagnosis === "string" &&
+              (a as { diagnosis: string }).diagnosis.trim().length > 0,
+          ) as EncounterHistoryPayload["assessment"];
+        }
+        return next;
+      });
+    },
+    [],
+  );
 
   const update = useCallback(
     <K extends keyof EncounterHistoryPayload>(
@@ -180,6 +265,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
 
   const persistSession = useCallback(
     async (patch: { consultationMode?: ConsultationMode; aiConsent?: ConsentState }) => {
+      if (clinicalNote.isSigned) return;
       const res = await fetch(
         `/api/admin/appointments/${appointmentId}/consultation-session`,
         {
@@ -194,7 +280,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
         toast.error(body.error ?? "No se pudo guardar la preferencia");
       }
     },
-    [appointmentId],
+    [appointmentId, clinicalNote.isSigned],
   );
 
   const handleModeChange = (next: ConsultationMode) => {
@@ -221,13 +307,25 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     () => (payload ? hasMinimumForSignoff(payload) : { ok: false, missing: [] }),
     [payload],
   );
+  const signoffButton = useMemo(
+    () =>
+      evaluateSignoffButtonState({
+        payload,
+        isSigned: clinicalNote.isSigned,
+        loaded: clinicalNote.loaded,
+      }),
+    [payload, clinicalNote.isSigned, clinicalNote.loaded],
+  );
+
+  const saveNow = useCallback(async () => {
+    if (payload) await savePayload(payload);
+    await clinicalNote.saveNow();
+  }, [payload, savePayload, clinicalNote]);
 
   const handleSignAndClose = async () => {
     if (!payload) return;
     if (!signoffCheck.ok) {
-      toast.error(
-        `Faltan mínimos clínicos para firmar: ${signoffCheck.missing.join(", ")}`,
-      );
+      toast.error(buildSignoffBlockedMessage(signoffCheck.missing));
       return;
     }
     setClosing(true);
@@ -253,7 +351,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
         return;
       }
       toast.success("Consulta firmada y cerrada");
-      router.push("/medico/agenda");
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } finally {
       setClosing(false);
     }
@@ -294,6 +392,68 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     return "idle";
   }, [saveState, clinicalNote.saveState]);
 
+  const handlersRef = useRef({
+    saveNow,
+    handleSignAndClose,
+    canSign: signoffButton.canSign,
+  });
+  handlersRef.current = {
+    saveNow,
+    handleSignAndClose,
+    canSign: signoffButton.canSign,
+  };
+
+  useEffect(() => {
+    const sectionKeys = SECTIONS.map((s) => s.key);
+    const focusSection = (delta: 1 | -1) => {
+      const active = document.activeElement as HTMLElement | null;
+      const currentId = active?.closest?.("[data-consultation-section]")?.getAttribute(
+        "data-consultation-section",
+      );
+      const currentKey = currentId?.replace(/^section-/, "") ?? "";
+      let idx = sectionKeys.indexOf(currentKey as EncounterSectionKey);
+      if (idx === -1) idx = delta === 1 ? -1 : sectionKeys.length;
+      const next = Math.max(0, Math.min(sectionKeys.length - 1, idx + delta));
+      const nextKey = sectionKeys[next];
+      setSectionOpen((m) => ({ ...m, [nextKey]: true }));
+      const btn = document.getElementById(`section-${nextKey}`);
+      if (btn) {
+        btn.scrollIntoView({ block: "center", behavior: "smooth" });
+        btn.focus();
+      }
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      const action = resolveWorkspaceShortcut({
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        canSign: handlersRef.current.canSign,
+      });
+      if (action === "save") {
+        e.preventDefault();
+        void handlersRef.current.saveNow();
+        return;
+      }
+      if (action === "sign") {
+        e.preventDefault();
+        void handlersRef.current.handleSignAndClose();
+        return;
+      }
+      if (action === "next-section") {
+        e.preventDefault();
+        focusSection(1);
+      } else if (action === "prev-section") {
+        e.preventDefault();
+        focusSection(-1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const saveLabel = useMemo(() => {
     if (clinicalNote.isSigned) return "Nota firmada";
     switch (combinedSaveState) {
@@ -319,6 +479,21 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
 
       {loading && <p className="text-muted-foreground">Cargando consulta...</p>}
       {error && <p className="text-red-600">{error}</p>}
+
+      {ctx && payload && clinicalNote.isSigned && clinicalNote.signedAt && (
+        <SignoffSummary
+          patientName={ctx.appointment.patient.fullName}
+          patientPhone={ctx.appointment.patient.phone ?? null}
+          signedAt={clinicalNote.signedAt}
+          signatureHash={clinicalNote.signatureHash}
+          chiefComplaint={payload.chiefComplaint}
+          assessmentSummary={(payload.assessment ?? [])
+            .map((a: { diagnosis?: string }) => a.diagnosis)
+            .filter((d): d is string => Boolean(d))
+            .join("\n")}
+          onBackToAgenda={() => router.push("/medico/agenda")}
+        />
+      )}
 
       {ctx && payload && (
         <>
@@ -346,6 +521,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
             </CardContent>
           </Card>
 
+          {!clinicalNote.isSigned && (
           <Card>
             <CardContent className="p-4 space-y-3">
               <div className="flex items-center justify-between gap-2">
@@ -389,11 +565,15 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
                 </p>
               )}
               {mode !== "MANUAL" && consent === "GRANTED" && ctx.capabilities.aiAvailable && (
-                <DictationPanel
-                  appointmentId={appointmentId}
-                  disabled={clinicalNote.isSigned}
-                  onSoapGenerated={clinicalNote.applySoapPartial}
-                />
+                <>
+                  <NarrationScript />
+                  <DictationPanel
+                    appointmentId={appointmentId}
+                    disabled={clinicalNote.isSigned}
+                    onSoapGenerated={clinicalNote.applySoapPartial}
+                    onEncounterGenerated={mergeEncounterFromAi}
+                  />
+                </>
               )}
               {consent === "DENIED" && (
                 <p className="text-xs text-amber-600">
@@ -402,14 +582,19 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
               )}
             </CardContent>
           </Card>
+          )}
 
-          {SECTIONS.map(({ key, Component }, idx) => {
+          {SECTIONS.map(({ key, Component }) => {
             const pct = sectionPcts?.[key] ?? 0;
             return (
               <SectionAccordion
                 key={key}
+                id={`section-${key}`}
                 title={ENCOUNTER_SECTION_TITLES[key]}
-                defaultOpen={idx < 2}
+                open={sectionOpen[key] ?? false}
+                onOpenChange={(next) =>
+                  setSectionOpen((m) => ({ ...m, [key]: next }))
+                }
                 badge={
                   <span
                     className={[
@@ -501,35 +686,27 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
               Para firmar faltan: {signoffCheck.missing.join(", ")}
             </p>
           )}
+          {!clinicalNote.isSigned && (
           <div className="flex justify-end gap-2 pt-2">
             <Button
-              onClick={async () => {
-                if (payload) await savePayload(payload);
-                await clinicalNote.saveNow();
-              }}
+              onClick={saveNow}
               loading={combinedSaveState === "saving"}
               variant="secondary"
               disabled={clinicalNote.isSigned}
+              title="Guardar ahora (Ctrl+S)"
             >
               Guardar ahora
             </Button>
             <Button
               onClick={handleSignAndClose}
               loading={closing}
-              disabled={
-                clinicalNote.isSigned || !clinicalNote.loaded || !signoffCheck.ok
-              }
-              title={
-                clinicalNote.isSigned
-                  ? "La nota ya está firmada"
-                  : !signoffCheck.ok
-                    ? `Faltan: ${signoffCheck.missing.join(", ")}`
-                    : "Firma la nota y marca la cita como realizada"
-              }
+              disabled={signoffButton.disabled}
+              title={signoffButton.title}
             >
               {clinicalNote.isSigned ? "Consulta cerrada" : "Firmar y cerrar"}
             </Button>
           </div>
+          )}
         </>
       )}
     </div>
