@@ -28,11 +28,6 @@ const serverEnvSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
-  CONSULTA_UNIFIED_ENABLED: z
-    .enum(["true", "false"])
-    .default("false")
-    .transform((v) => v === "true"),
-  CONSULTA_UNIFIED_DOCTOR_IDS: z.string().optional(),
   RECAPTCHA_V3_SECRET: z.string().min(1).optional(),
   RECAPTCHA_V3_MIN_SCORE: z
     .string()

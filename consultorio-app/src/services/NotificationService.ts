@@ -13,6 +13,7 @@ import prisma from '../lib/prisma'
 import { WhatsAppMessageLogService } from './WhatsAppMessageLogService'
 import { getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
 import { AppointmentAuditService } from './AppointmentAuditService'
+import { formatPatientName } from '@/lib/patientName'
 
 type QueueNotificationInput = {
   appointmentId: string
@@ -491,7 +492,7 @@ export class NotificationService {
 
     const templates = await this.getDoctorMessageTemplates(appointment.doctorId)
     const templateVars = {
-      paciente: appointment.patient.fullName,
+      paciente: formatPatientName(appointment.patient),
       fecha_hora: this.formatDateTime(appointment.startTime),
       fecha: format(appointment.startTime, 'dd/MM/yyyy'),
       hora: format(appointment.startTime, 'HH:mm'),
@@ -522,7 +523,7 @@ export class NotificationService {
 
     const templates = await this.getDoctorMessageTemplates(appointment.doctorId)
     const templateVars = {
-      paciente: appointment.patient.fullName,
+      paciente: formatPatientName(appointment.patient),
       fecha_hora: this.formatDateTime(appointment.startTime),
       fecha: format(appointment.startTime, 'dd/MM/yyyy'),
       hora: format(appointment.startTime, 'HH:mm'),
@@ -662,9 +663,10 @@ export class NotificationService {
         !appointmentActions.has(AuditAction.APPOINTMENT_REMINDER_ESCALATED) &&
         !escalationNotificationSet.has(appointment.id)
       ) {
+        const patientDisplay = formatPatientName(appointment.patient)
         const message = isOverdue
-          ? `Hola ${appointment.patient.fullName}, tu cita del ${this.formatDateTime(appointment.startTime)} está marcada como vencida por falta de confirmación. Si aún asistirás responde "CONFIRMO".`
-          : `Hola ${appointment.patient.fullName}, tu cita del ${this.formatDateTime(appointment.startTime)} sigue pendiente. Responde "CONFIRMO" para confirmar asistencia o "CANCELAR" si no podrás asistir.`
+          ? `Hola ${patientDisplay}, tu cita del ${this.formatDateTime(appointment.startTime)} está marcada como vencida por falta de confirmación. Si aún asistirás responde "CONFIRMO".`
+          : `Hola ${patientDisplay}, tu cita del ${this.formatDateTime(appointment.startTime)} sigue pendiente. Responde "CONFIRMO" para confirmar asistencia o "CANCELAR" si no podrás asistir.`
 
         await prisma.notification.create({
           data: {
@@ -734,7 +736,7 @@ export class NotificationService {
                 status: NotificationStatus.PENDING,
                 externalId: AUTO_CLOSE_NOTIFICATION_MARKER,
                 message:
-                  `Hola ${appointment.patient.fullName}, tu cita del ${this.formatDateTime(appointment.startTime)} ` +
+                  `Hola ${formatPatientName(appointment.patient)}, tu cita del ${this.formatDateTime(appointment.startTime)} ` +
                   'se canceló automáticamente por falta de confirmación. Si deseas reagendar, responde a este mensaje.',
               },
             })
@@ -860,7 +862,7 @@ export class NotificationService {
 
         const leadLabel = this.formatLeadTime(leadMinutes)
         const templateVars = {
-          paciente: appointment.patient.fullName,
+          paciente: formatPatientName(appointment.patient),
           fecha_hora: this.formatDateTime(appointment.startTime),
           fecha: format(appointment.startTime, 'dd/MM/yyyy'),
           hora: format(appointment.startTime, 'HH:mm'),
@@ -1123,7 +1125,7 @@ export class NotificationService {
             id: true,
             startTime: true,
             patient: {
-              select: { fullName: true },
+              select: { firstName: true, lastNamePaternal: true, lastNameMaternal: true },
             },
           },
         },
@@ -1175,7 +1177,7 @@ export class NotificationService {
             type: record.type,
             createdAt: record.createdAt.toISOString(),
             reason: this.extractFailureReason(record.externalId),
-            patientName: record.appointment.patient.fullName,
+            patientName: formatPatientName(record.appointment.patient),
             appointmentStartTime: record.appointment.startTime.toISOString(),
           })
         }

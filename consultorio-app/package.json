@@ -13,9 +13,9 @@
     "db:migrate:dev": "npx prisma migrate dev",
     "db:migrate:deploy": "npx prisma migrate deploy",
     "db:migrate:status": "npx prisma migrate status",
-    "test": "node --experimental-strip-types --experimental-specifier-resolution=node src/tests/run-all.ts",
-    "test:unit": "node --experimental-strip-types --experimental-specifier-resolution=node src/tests/run-unit.ts",
-    "test:integration": "node --env-file-if-exists=.env --experimental-strip-types --experimental-specifier-resolution=node src/tests/run-integration.ts"
+    "test": "node --import tsx src/tests/run-all.ts",
+    "test:unit": "node --import tsx src/tests/run-unit.ts",
+    "test:integration": "node --env-file-if-exists=.env --import tsx src/tests/run-integration.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

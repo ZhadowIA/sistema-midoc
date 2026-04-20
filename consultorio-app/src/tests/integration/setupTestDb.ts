@@ -70,7 +70,8 @@ export async function seedDoctorAndPatient(prisma: PrismaClient) {
   })
   const patient = await prisma.patient.create({
     data: {
-      fullName: 'Paciente Test',
+      firstName: 'Paciente',
+      lastNamePaternal: 'Test',
       phone: `+52100000${Math.floor(Math.random() * 10000)}`,
       dateOfBirth: new Date('1990-01-01'),
       ownerDoctorId: doctor.id,

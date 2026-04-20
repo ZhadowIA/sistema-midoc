@@ -220,6 +220,68 @@ function normalizeText(value: string) {
     .trim()
 }
 
+const MEDICATION_DEDUPE_STOPWORDS = new Set([
+  'mg',
+  'ml',
+  'mcg',
+  'g',
+  'gr',
+  'ui',
+  'tableta',
+  'tabletas',
+  'tab',
+  'tabs',
+  'capsula',
+  'capsulas',
+  'cap',
+  'caps',
+  'comprimido',
+  'comprimidos',
+  'ampolleta',
+  'ampolletas',
+  'jarabe',
+  'suspension',
+  'solucion',
+  'inyectable',
+  'inyeccion',
+  'vo',
+  'iv',
+  'im',
+  'cada',
+  'c',
+  'hr',
+  'hrs',
+  'hora',
+  'horas',
+  'dia',
+  'dias',
+  'x',
+  'por',
+])
+
+function normalizeAlertText(value: string) {
+  return normalizeText(value)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function buildMedicationDedupKey(value: string) {
+  const normalized = normalizeText(value).replace(/[^\p{L}\p{N}\s]/gu, ' ')
+  const tokens = normalized
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => {
+      if (MEDICATION_DEDUPE_STOPWORDS.has(token)) return false
+      if (/^\d+([.,]\d+)?$/.test(token)) return false
+      if (/^\d+([.,]\d+)?(mg|ml|mcg|g|gr|ui|%)$/.test(token)) return false
+      return true
+    })
+
+  const key = tokens.join(' ').trim()
+  return key || normalizeText(value)
+}
+
 function safeJsonParse(raw: string, context: string): unknown {
   try {
     return JSON.parse(raw)
@@ -294,12 +356,12 @@ function normalizeSoapOutput(raw: unknown): AIStructuredSOAP {
   return soapSchema.parse(fallback)
 }
 
-function dedupeAlerts(alerts: PrescriptionAlert[]): PrescriptionAlert[] {
+export function dedupeAlerts(alerts: PrescriptionAlert[]): PrescriptionAlert[] {
   const seen = new Set<string>()
   const deduped: PrescriptionAlert[] = []
 
   for (const alert of alerts) {
-    const key = `${alert.severity}|${normalizeText(alert.message)}|${normalizeText(alert.recommendation)}`
+    const key = `${alert.severity}|${normalizeAlertText(alert.message)}|${normalizeAlertText(alert.recommendation)}`
     if (seen.has(key)) continue
     seen.add(key)
     deduped.push(alert)
@@ -308,7 +370,7 @@ function dedupeAlerts(alerts: PrescriptionAlert[]): PrescriptionAlert[] {
   return deduped
 }
 
-function deterministicPrescriptionAlerts(params: {
+export function deterministicPrescriptionAlerts(params: {
   prescriptions: Array<z.infer<typeof prescriptionInputSchema>>
   medicalRecord: unknown
   questionnaire: unknown
@@ -318,15 +380,16 @@ function deterministicPrescriptionAlerts(params: {
   const medications = params.prescriptions.map((item) => ({
     raw: item.medication,
     normalized: normalizeText(item.medication),
+    dedupeKey: buildMedicationDedupKey(item.medication),
   }))
 
   const grouped = new Map<string, { count: number; raw: string }>()
   for (const medication of medications) {
-    const existing = grouped.get(medication.normalized)
+    const existing = grouped.get(medication.dedupeKey)
     if (existing) {
       existing.count += 1
     } else {
-      grouped.set(medication.normalized, { count: 1, raw: medication.raw })
+      grouped.set(medication.dedupeKey, { count: 1, raw: medication.raw })
     }
   }
 
@@ -391,6 +454,41 @@ function deterministicPrescriptionAlerts(params: {
       severity: 'high',
       message: 'Uso de AINE con posible antecedente renal.',
       recommendation: 'Valora función renal actual y considera opciones terapéuticas alternativas.',
+    })
+  }
+
+  const hasAceOrArb = medications.some((medication) =>
+    ['enalapril', 'losartan', 'valsartan', 'captopril', 'lisinopril'].some((keyword) =>
+      medication.normalized.includes(keyword)
+    )
+  )
+  const hasDiuretic = medications.some((medication) =>
+    ['furosemida', 'hidroclorotiazida', 'espironolactona', 'torasemida'].some((keyword) =>
+      medication.normalized.includes(keyword)
+    )
+  )
+
+  if (hasAceOrArb && hasDiuretic && hasNsaid) {
+    alerts.push({
+      severity: 'high',
+      message: 'Posible triple combinación de riesgo renal (AINE + IECA/ARA-II + diurético).',
+      recommendation:
+        'Confirma indicación, vigila función renal/electrolitos y considera alternativa analgésica.',
+    })
+  }
+
+  const hasSerotonergicAgent = medications.some((medication) =>
+    ['sertralina', 'fluoxetina', 'paroxetina', 'citalopram', 'escitalopram', 'venlafaxina', 'duloxetina'].some(
+      (keyword) => medication.normalized.includes(keyword)
+    )
+  )
+  const hasTramadol = medications.some((medication) => medication.normalized.includes('tramadol'))
+  if (hasSerotonergicAgent && hasTramadol) {
+    alerts.push({
+      severity: 'high',
+      message: 'Combinación con potencial riesgo serotoninérgico detectada (tramadol + antidepresivo serotoninérgico).',
+      recommendation:
+        'Revalora combinación, educa signos de alarma neurológica/autonómica y ajusta tratamiento si aplica.',
     })
   }
 
@@ -511,6 +609,9 @@ export async function generateDictationFromTranscript(
           role: 'system',
           content:
             'Eres un asistente clínico que estructura la consulta médica a partir del audio transcrito. ' +
+            'La transcripción puede incluir diarización con etiquetas [Doctor]: y [Paciente]: al inicio de cada intervención. ' +
+            'Usa esas etiquetas para atribuir correctamente: lo que dice el paciente va a subjective; lo que el doctor observa/examina va a objective; ' +
+            'órdenes, planes y recomendaciones del doctor van a plan. Ignora las etiquetas en el texto final; no las copies. ' +
             'Devuelves SOLO JSON con dos llaves de nivel superior: "soap" y "encounter". ' +
             'soap: {subjective, objective, assessment, plan} con strings; si falta info usa "No se menciona en la consulta". ' +
             'encounter: objeto parcial con las llaves opcionales: chiefComplaint (string corto), ' +

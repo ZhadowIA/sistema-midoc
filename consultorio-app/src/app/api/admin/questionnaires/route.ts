@@ -2,6 +2,7 @@ import prisma from '@/lib/prisma'
 import { formatQuestionnaireTag, formatQuestionnaireValue } from '@/lib/questionnaireFormatting'
 import { jsonNoStore } from '@/lib/http'
 import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
+import { formatPatientName } from '@/lib/patientName'
 
 type JsonRecord = Record<string, unknown>
 
@@ -52,7 +53,7 @@ export async function GET() {
 
       return {
         id: apt.id,
-        patientName: apt.patient.fullName,
+        patientName: formatPatientName(apt.patient),
         patientPhone: apt.patient.phone,
         date: apt.startTime,
         appointmentType: apt.appointmentType,

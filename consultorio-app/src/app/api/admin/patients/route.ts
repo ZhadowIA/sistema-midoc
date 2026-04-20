@@ -4,12 +4,24 @@ import { parseDateOnlyLocal } from '@/lib/dateTime'
 import { jsonNoStore } from '@/lib/http'
 import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 
-const createPatientSchema = z.object({
-  fullName: z.string().min(2, 'Nombre requerido'),
-  phone: z.string().min(7, 'Teléfono requerido'),
-  email: z.string().email('Correo inválido').optional().or(z.literal('')),
-  dateOfBirth: z.string().optional().or(z.literal('')),
-})
+const createPatientSchema = z
+  .object({
+    firstName: z.string().trim().min(1).max(60),
+    lastNamePaternal: z.string().trim().min(1).max(60),
+    lastNameMaternal: z.string().trim().max(60).optional().nullable(),
+    phone: z.string().min(7, 'Teléfono requerido'),
+    email: z.string().email('Correo inválido').optional().or(z.literal('')),
+    dateOfBirth: z.string().optional().or(z.literal('')),
+  })
+  
+
+function resolveStructuredPatientName(input: z.infer<typeof createPatientSchema>) {
+  const firstName = input.firstName.trim()
+  const lastNamePaternal = input.lastNamePaternal.trim()
+  const lastNameMaternal = input.lastNameMaternal?.trim() || null
+
+  return { firstName, lastNamePaternal, lastNameMaternal }
+}
 
 export async function GET() {
   try {
@@ -28,7 +40,7 @@ export async function GET() {
           take: 1
         }
       },
-      orderBy: { fullName: 'asc' }
+      orderBy: [{ lastNamePaternal: 'asc' }, { firstName: 'asc' }]
     })
 
     const appointmentCounts = await prisma.appointment.groupBy({
@@ -64,14 +76,23 @@ export async function POST(request: Request) {
       return jsonNoStore({ error: 'Datos inválidos', details: parsed.error.issues }, { status: 400 })
     }
 
-    const fullName = parsed.data.fullName.trim()
+    const structuredName = resolveStructuredPatientName(parsed.data)
+    const firstName = structuredName.firstName
+    const lastNamePaternal = structuredName.lastNamePaternal
+    const lastNameMaternal = structuredName.lastNameMaternal
+
+    if (!firstName || !lastNamePaternal) {
+      return jsonNoStore({ error: 'Nombre y apellido paterno son requeridos' }, { status: 400 })
+    }
+
     const phone = parsed.data.phone.trim()
     const email = parsed.data.email?.trim().toLowerCase() || null
 
     const duplicate = await prisma.patient.findFirst({
       where: {
         ownerDoctorId: doctorId,
-        fullName,
+        firstName,
+        lastNamePaternal,
         phone,
       },
       select: { id: true },
@@ -96,21 +117,28 @@ export async function POST(request: Request) {
     const patient = await prisma.patient.create({
       data: {
         ownerDoctorId: doctorId,
-        fullName,
+        firstName,
+        lastNamePaternal,
+        lastNameMaternal,
         phone,
         email,
         dateOfBirth,
       },
       select: {
         id: true,
-        fullName: true,
+        firstName: true,
+        lastNamePaternal: true,
+        lastNameMaternal: true,
         phone: true,
         email: true,
         dateOfBirth: true,
       },
     })
 
-    return jsonNoStore({ success: true, patient }, { status: 201 })
+    return jsonNoStore(
+      { success: true, patient },
+      { status: 201 }
+    )
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'
     return jsonNoStore({ error: message }, { status: 500 })

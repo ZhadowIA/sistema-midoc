@@ -9,7 +9,7 @@ export type DoctorSetupStatus = {
 };
 
 export async function getDoctorSetupStatus(userId: string, role: string): Promise<DoctorSetupStatus> {
-  if (role === "ADMIN") {
+  if (role === "ADMIN" || role === "CLINIC_ADMIN") {
     return {
       hasActiveSubscription: true,
       onboardingCompleted: true,

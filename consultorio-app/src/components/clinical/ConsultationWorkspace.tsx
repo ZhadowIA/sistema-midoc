@@ -44,6 +44,7 @@ import {
   type EncounterSectionKey,
 } from "@/lib/clinicalFormat";
 import { resolveWorkspaceShortcut } from "@/lib/consultationWorkspace";
+import { formatPatientName } from "@/lib/patientName";
 import type { EncounterHistoryPayload } from "@/lib/encounterHistorySchema";
 
 type ConsentState = "PENDING" | "GRANTED" | "DENIED";
@@ -52,7 +53,13 @@ type ContextResponse = {
   appointment: {
     id: string;
     patientId: string;
-    patient: { id: string; fullName: string; phone?: string | null };
+    patient: {
+      id: string;
+      firstName?: string | null;
+      lastNamePaternal?: string | null;
+      lastNameMaternal?: string | null;
+      phone?: string | null;
+    };
     questionnaireAnswered: boolean;
   };
   encounter: {
@@ -482,7 +489,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
 
       {ctx && payload && clinicalNote.isSigned && clinicalNote.signedAt && (
         <SignoffSummary
-          patientName={ctx.appointment.patient.fullName}
+          patientName={formatPatientName(ctx.appointment.patient)}
           patientPhone={ctx.appointment.patient.phone ?? null}
           signedAt={clinicalNote.signedAt}
           signatureHash={clinicalNote.signatureHash}
@@ -503,7 +510,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
                 <div>
                   <p className="text-sm text-muted-foreground">Paciente</p>
                   <p className="font-semibold text-lg">
-                    {ctx.appointment.patient.fullName}
+                    {formatPatientName(ctx.appointment.patient)}
                   </p>
                 </div>
                 <CompletionMeter pct={completionPct} className="min-w-[180px]" />

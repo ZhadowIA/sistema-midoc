@@ -99,7 +99,7 @@ export function hasModuleAccess(access: ProductAccess, module: ProductModule): b
 }
 
 export async function getDoctorProductAccess(doctorId: string, role: string): Promise<ProductAccess> {
-  if (role === "ADMIN") {
+  if (role === "ADMIN" || role === "CLINIC_ADMIN") {
     return {
       plan: PRODUCT_PLANS.COMBINED,
       enabledModules: getPlanModules(PRODUCT_PLANS.COMBINED),

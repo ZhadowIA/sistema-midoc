@@ -4,11 +4,20 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, LogOut, UserCircle2 } from "lucide-react";
 import { Button } from "@/components/Button";
+import { formatPatientName } from "@/lib/patientName";
 
 type PatientMeResponse = {
   authenticated: boolean;
   user?: { id: string; name: string | null; email: string; role: string };
-  profile?: { id: string; fullName: string; phone: string | null; email: string | null; dateOfBirth: string | null } | null;
+  profile?: {
+    id: string;
+    firstName?: string | null;
+    lastNamePaternal?: string | null;
+    lastNameMaternal?: string | null;
+    phone: string | null;
+    email: string | null;
+    dateOfBirth: string | null;
+  } | null;
   error?: string;
 };
 
@@ -85,7 +94,7 @@ export default function PatientAccountPage() {
               </div>
               <div className="flex-1">
                 <p className="text-sm text-muted-foreground">Cuenta</p>
-                <p className="text-lg font-semibold">{profile?.fullName || user?.name || "Paciente"}</p>
+                <p className="text-lg font-semibold">{(profile ? formatPatientName(profile) : "") || user?.name || "Paciente"}</p>
                 <div className="mt-2 grid gap-1 text-sm text-muted-foreground">
                   <p>
                     <span className="text-foreground/80">Correo:</span> {profile?.email || user?.email || "—"}

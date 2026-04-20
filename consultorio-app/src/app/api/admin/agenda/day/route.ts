@@ -1,20 +1,48 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { format } from 'date-fns'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { getAuthenticatedUser } from '@/lib/auth'
 import { getDayRangeLocal } from '@/lib/dateTime'
+import { formatPatientName } from '@/lib/patientName'
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const dateStr = searchParams.get('date')
   const showCancelled = searchParams.get('showCancelled') === 'true'
+  const requestedDoctorId = searchParams.get('doctorId')
 
   try {
     const dayKey = dateStr ?? format(new Date(), 'yyyy-MM-dd')
     const { start, endExclusive } = getDayRangeLocal(dayKey)
 
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const authUser = await getAuthenticatedUser()
+    if (!authUser) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+    const actorUser = await prisma.user.findUnique({
+      where: { id: authUser.id },
+      select: { id: true, role: true, clinicId: true },
+    })
+    if (!actorUser) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+    let doctorId = actorUser.id
+    let clinicDoctors: Array<{ id: string; name: string }> = []
+    const canViewClinicAgenda = actorUser.role === 'CLINIC_ADMIN' && Boolean(actorUser.clinicId)
+
+    if (canViewClinicAgenda && actorUser.clinicId) {
+      clinicDoctors = await prisma.user.findMany({
+        where: {
+          clinicId: actorUser.clinicId,
+          active: true,
+          role: { in: ['DOCTOR', 'CLINIC_ADMIN'] },
+        },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      })
+
+      if (requestedDoctorId && clinicDoctors.some((doctor) => doctor.id === requestedDoctorId)) {
+        doctorId = requestedDoctorId
+      }
+    }
 
     const config = await prisma.doctorConfig.findUnique({
       where: { doctorId },
@@ -27,7 +55,7 @@ export async function GET(request: Request) {
         ...(showCancelled ? {} : { status: { notIn: ['CANCELLED'] } }),
         startTime: { gte: start, lt: endExclusive } 
       },
-      include: { patient: true },
+      include: { patient: true, doctor: { select: { id: true, name: true } } },
       orderBy: { startTime: 'asc' }
     })
 
@@ -41,7 +69,9 @@ export async function GET(request: Request) {
 
     const transformedAppointments = appointments.map((apt) => ({
       id: apt.id,
-      patientName: apt.patient.fullName,
+      doctorId: apt.doctorId,
+      doctorName: apt.doctor.name,
+      patientName: formatPatientName(apt.patient),
       patientPhone: apt.patient.phone,
       date: apt.date,
       dateLocal: format(apt.startTime, 'yyyy-MM-dd'),
@@ -68,6 +98,13 @@ export async function GET(request: Request) {
       consultationDurationMin: config?.consultationDurationMin ?? 30,
       appointments: transformedAppointments,
       blocks: transformedBlocks,
+      scope: {
+        actorDoctorId: actorUser.id,
+        currentDoctorId: doctorId,
+        canViewClinicAgenda,
+        canEditCrossDoctor: canViewClinicAgenda,
+        doctors: clinicDoctors,
+      },
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'

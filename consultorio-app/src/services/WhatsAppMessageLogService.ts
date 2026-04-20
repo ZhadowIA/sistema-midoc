@@ -57,7 +57,9 @@ export class WhatsAppMessageLogService {
         patient: {
           select: {
             id: true,
-            fullName: true,
+            firstName: true,
+            lastNamePaternal: true,
+            lastNameMaternal: true,
           },
         },
       },

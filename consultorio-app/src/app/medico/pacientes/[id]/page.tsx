@@ -14,6 +14,7 @@ import { es } from "date-fns/locale";
 import { Badge } from "@/components/Badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { formatPatientName } from "@/lib/patientName";
 
 type MedicalRecordData = {
   bloodType: string | null;
@@ -63,7 +64,9 @@ type PatientSummary = {
 
 type PatientDetail = {
   id: string;
-  fullName: string;
+  firstName?: string | null;
+  lastNamePaternal?: string | null;
+  lastNameMaternal?: string | null;
   phone: string;
   dateOfBirth: string;
   email?: string | null;
@@ -80,7 +83,9 @@ type PatientDetail = {
 
 type MergeCandidate = {
   id: string;
-  fullName: string;
+  firstName?: string | null;
+  lastNamePaternal?: string | null;
+  lastNameMaternal?: string | null;
   phone: string;
 };
 
@@ -147,7 +152,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
   const loadPatientDetail = useCallback(async () => {
     const res = await fetch(`/api/clinical/admin/patients/${params.id}`);
     const data = await res.json() as { error?: string } & Partial<PatientDetail>;
-    if (data.error || !data.id || !data.fullName || !Array.isArray(data.timeline) || !data.summary) return;
+    if (data.error || !data.id || !Array.isArray(data.timeline) || !data.summary) return;
 
     const typedPatient = data as PatientDetail;
     setPatient(typedPatient);
@@ -224,7 +229,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
     try {
       const inviteUrl = `${window.location.origin}/agendar?auth=register&inviteEmail=${encodeURIComponent(email)}`;
       const message =
-        `Hola ${patient?.fullName || "paciente"}, para vincular tu cuenta con tu expediente médico ` +
+        `Hola ${patient ? formatPatientName(patient) : "paciente"}, para vincular tu cuenta con tu expediente médico ` +
         `regístrate o inicia sesión con este correo (${email}) en: ${inviteUrl}`;
       await navigator.clipboard.writeText(message);
       toast.success("Invitación copiada. Ya puedes enviarla al paciente.");
@@ -243,7 +248,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
             const candidates = Array.isArray(data) ? data as MergeCandidate[] : [];
             const filtered = candidates.filter((p) => 
                p.id !== params.id && 
-               p.fullName.toLowerCase().includes(mergeSearch.toLowerCase())
+              formatPatientName(p).toLowerCase().includes(mergeSearch.toLowerCase())
             );
             setMergeCandidates(filtered);
          });
@@ -318,7 +323,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
                   <User className="w-10 h-10 text-white" />
                 </div>
                 <div>
-                  <h1 className="text-3xl font-bold">{patient.fullName}</h1>
+                  <h1 className="text-3xl font-bold">{formatPatientName(patient)}</h1>
                   <p className="text-primary-foreground/80 mt-1 flex items-center gap-4">
                     <span>{patientAge !== null ? `${patientAge} años` : "Edad no disponible"}</span>
                     <span className="w-1 h-1 bg-white/50 rounded-full" />
@@ -355,7 +360,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
                               onClick={() => setSelectedMergeId(c.id)}
                               className={`p-3 border-b border-border/50 cursor-pointer transition-colors ${selectedMergeId === c.id ? 'bg-primary/10 border-primary' : 'hover:bg-secondary/30'}`}
                             >
-                              <div className="font-semibold">{c.fullName}</div>
+                              <div className="font-semibold">{formatPatientName(c)}</div>
                               <div className="text-xs text-muted-foreground">{c.phone}</div>
                             </div>
                           ))}

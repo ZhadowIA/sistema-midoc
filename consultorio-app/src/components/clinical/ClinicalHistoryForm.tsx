@@ -125,6 +125,9 @@ export function ClinicalHistoryForm({
             ["dislipidemia", "Dislipidemia"],
             ["enf_renal", "Enfermedad renal"],
             ["enf_tiroidea", "Enfermedad tiroidea"],
+            ["autoinmunes", "Autoinmunes"],
+            ["psiquiatricos", "Psiquiátricos"],
+            ["trombosis", "Trombosis"],
             ["otros", "Otros"],
           ].map(([k, label]) => {
             const val = String((payload.familyHistory as Record<string, unknown>)[k] ?? "");
@@ -161,6 +164,11 @@ export function ClinicalHistoryForm({
             ["vivienda", "Vivienda / servicios"],
             ["ocupacion_riesgos", "Riesgos ocupacionales"],
             ["inmunizaciones", "Inmunizaciones"],
+            ["sueno", "Sueño"],
+            ["higiene", "Higiene"],
+            ["viajes_recientes", "Viajes recientes"],
+            ["contacto_animales", "Contacto con animales"],
+            ["sexualidad_resumen", "Sexualidad resumida"],
           ].map(([k, label]) => {
             const val = String((payload.nonPathologicalHistory as Record<string, unknown>)[k] ?? "");
             return (
@@ -223,6 +231,7 @@ export function ClinicalHistoryForm({
             ["menarca", "Menarca"],
             ["fum", "FUM"],
             ["ciclo", "Ciclo"],
+            ["ivsa", "IVSA"],
             ["mpf", "Método planificación"],
             ["gestas", "Gestas"],
             ["partos", "Partos"],
@@ -256,9 +265,12 @@ export function ClinicalHistoryForm({
         </CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {[
+            ["ivsa", "IVSA"],
+            ["ets_previas", "ETS previas"],
+            ["sintomas_prostaticos", "Síntomas prostáticos"],
+            ["disfuncion_erectil", "Disfunción eréctil"],
             ["urologicos", "Antecedentes urológicos"],
             ["vasectomia", "Vasectomía"],
-            ["disfuncion", "Disfunción"],
             ["psa", "PSA (último valor)"],
           ].map(([k, label]) => {
             const src = (payload.andrologicHistory ?? {}) as Record<string, unknown>;

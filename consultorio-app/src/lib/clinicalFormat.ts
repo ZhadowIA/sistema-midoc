@@ -133,6 +133,27 @@ export function hasMinimumForSignoff(p: EncounterHistoryPayload): {
   return { ok: missing.length === 0, missing }
 }
 
+export function buildSignoffBlockedMessage(missing: string[]): string {
+  return `Faltan mínimos clínicos para firmar: ${missing.join(', ')}`
+}
+
+export function evaluateSignoffButtonState(args: {
+  payload: EncounterHistoryPayload | null
+  isSigned: boolean
+  loaded: boolean
+}): { disabled: boolean; title: string; missing: string[]; canSign: boolean } {
+  const check = args.payload
+    ? hasMinimumForSignoff(args.payload)
+    : { ok: false, missing: [] as string[] }
+  const disabled = args.isSigned || !args.loaded || !check.ok
+  const title = args.isSigned
+    ? 'La nota ya está firmada'
+    : !check.ok
+      ? `Faltan: ${check.missing.join(', ')}`
+      : 'Firmar y cerrar (Ctrl+Enter)'
+  return { disabled, title, missing: check.missing, canSign: check.ok }
+}
+
 export function migrateFromMedicalRecord(record: {
   bloodType: string | null
   allergies: string | null

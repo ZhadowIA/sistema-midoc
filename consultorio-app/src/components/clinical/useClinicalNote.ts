@@ -42,6 +42,7 @@ export function useClinicalNote(appointmentId: string) {
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [signedAt, setSignedAt] = useState<string | null>(null);
+  const [signatureHash, setSignatureHash] = useState<string | null>(null);
   const firstChangeRef = useRef(true);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -63,6 +64,7 @@ export function useClinicalNote(appointmentId: string) {
             prescriptions: Array.isArray(data.prescriptions) ? data.prescriptions : [],
           });
           setSignedAt(data.signedAt ?? null);
+          setSignatureHash(data.signatureHash ?? null);
         }
         setLoaded(true);
       })
@@ -117,6 +119,7 @@ export function useClinicalNote(appointmentId: string) {
     }
     setSaveState("saved");
     setSignedAt(body?.signedAt ?? new Date().toISOString());
+    setSignatureHash(body?.signatureHash ?? null);
     return { ok: true };
   }, [appointmentId, note]);
 
@@ -207,6 +210,7 @@ export function useClinicalNote(appointmentId: string) {
     loaded,
     saveState,
     signedAt,
+    signatureHash,
     isSigned: Boolean(signedAt),
     saveNow: () => save(note),
     sign,

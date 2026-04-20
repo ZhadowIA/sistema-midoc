@@ -28,7 +28,6 @@ import { getServerEnv } from '@/lib/env'
 import { buildSlotHoldReason, getSlotHoldActiveCutoff, SLOT_HOLD_REASON_PREFIX } from '@/lib/slotHold'
 import { ConsentCaptureService } from './ConsentCaptureService'
 import { AuditLogService } from './AuditLogService'
-import { buildFullName } from '@/lib/patientName'
 
 type ContactInput = {
   relation: PatientRelation
@@ -45,7 +44,6 @@ type CreatePublicAppointmentInput = {
   lastNameMaternal?: string | null
   sex?: PatientSex | null
   gender?: PatientGender | null
-  fullName: string
   dateOfBirth: string
   userId?: string
   phone: string
@@ -234,10 +232,15 @@ export class AppointmentService {
               })
             }
 
+            const firstName = data.firstName.trim()
+            const lastNamePaternal = data.lastNamePaternal.trim()
+            const lastNameMaternal = data.lastNameMaternal?.trim() || null
+
             if (!patient) {
               patient = await tx.patient.findFirst({
                 where: {
-                  fullName: data.fullName,
+                  firstName,
+                  lastNamePaternal,
                   phone: data.phone,
                   ownerDoctorId: null,
                   appointments: {
@@ -247,20 +250,13 @@ export class AppointmentService {
               })
             }
 
-            const structuredFullName = buildFullName({
-              firstName: data.firstName,
-              lastNamePaternal: data.lastNamePaternal,
-              lastNameMaternal: data.lastNameMaternal ?? null,
-            }) || data.fullName.trim()
-
             if (!patient) {
               patient = await tx.patient.create({
                 data: {
                   userId: data.userId,
-                  fullName: structuredFullName,
-                  firstName: data.firstName.trim(),
-                  lastNamePaternal: data.lastNamePaternal.trim(),
-                  lastNameMaternal: data.lastNameMaternal?.trim() || null,
+                  firstName,
+                  lastNamePaternal,
+                  lastNameMaternal,
                   sex: data.sex ?? null,
                   gender: data.gender ?? null,
                   dateOfBirth,
@@ -271,14 +267,11 @@ export class AppointmentService {
             } else {
               const patch: Prisma.PatientUpdateInput = {}
               if (data.userId && !patient.userId) patch.user = { connect: { id: data.userId } }
-              if (!patient.firstName) patch.firstName = data.firstName.trim()
-              if (!patient.lastNamePaternal) patch.lastNamePaternal = data.lastNamePaternal.trim()
-              if (!patient.lastNameMaternal && data.lastNameMaternal) {
-                patch.lastNameMaternal = data.lastNameMaternal.trim()
+              if (!patient.lastNameMaternal && lastNameMaternal) {
+                patch.lastNameMaternal = lastNameMaternal
               }
               if (!patient.sex && data.sex) patch.sex = data.sex
               if (!patient.gender && data.gender) patch.gender = data.gender
-              if (patient.fullName !== structuredFullName) patch.fullName = structuredFullName
               if (Object.keys(patch).length > 0) {
                 patient = await tx.patient.update({ where: { id: patient.id }, data: patch })
               }

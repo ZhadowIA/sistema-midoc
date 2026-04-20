@@ -60,13 +60,13 @@ export async function proxy(request: NextRequest) {
       const { payload } = await jwtVerify(token, secret)
       const role = payload.role
 
-      if (role !== 'DOCTOR' && role !== 'ADMIN' && role !== 'SECRETARY') {
+      if (role !== 'DOCTOR' && role !== 'ADMIN' && role !== 'CLINIC_ADMIN' && role !== 'SECRETARY') {
         if (isProductApi) {
           return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
         }
         return NextResponse.redirect(new URL('/medico/login', request.url))
       }
-      if (role === 'ADMIN') {
+      if (role === 'ADMIN' || role === 'CLINIC_ADMIN') {
         return NextResponse.next()
       }
 

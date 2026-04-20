@@ -41,8 +41,20 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
     if (!patient) return jsonNoStore({ error: 'Paciente no encontrado' }, { status: 404 })
     if (!ok) return jsonNoStore({ error: 'No autorizado' }, { status: 403 })
 
-    const result = await ClinicalHistoryService.getOrBuildForPatient(params.id, doctorId)
-    return jsonNoStore(result)
+    const [result, versions] = await Promise.all([
+      ClinicalHistoryService.getOrBuildForPatient(params.id, doctorId),
+      ClinicalHistoryService.listVersionsByPatientId(params.id, 12),
+    ])
+    return jsonNoStore({
+      ...result,
+      versions: versions.map((version) => ({
+        id: version.id,
+        createdAt: version.createdAt,
+        status: version.status,
+        completionPct: version.completionPct,
+        actorUserId: version.actorUserId,
+      })),
+    })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'
     return jsonNoStore({ error: message }, { status: 500 })

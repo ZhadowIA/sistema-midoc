@@ -3,7 +3,7 @@ import { addMinutes } from 'date-fns'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { getAuthenticatedUser } from '@/lib/auth'
 import { parseDateOnlyLocal } from '@/lib/dateTime'
 import { NotificationService } from '@/services/NotificationService'
 import { QuestionnaireService } from '@/services/QuestionnaireService'
@@ -13,13 +13,16 @@ import { getServerEnv } from '@/lib/env'
 const env = getServerEnv()
 
 const createPatientSchema = z.object({
-  fullName: z.string().min(1, 'Nombre del paciente requerido'),
+  firstName: z.string().trim().min(1),
+  lastNamePaternal: z.string().trim().min(1),
+  lastNameMaternal: z.string().trim().optional().or(z.literal('')),
   phone: z.string().min(1, 'Teléfono requerido'),
   email: z.string().email().optional().or(z.literal('')),
   dateOfBirth: z.string().optional().or(z.literal('')),
 })
 
 const createManualAppointmentSchema = z.object({
+  doctorId: z.string().min(1).optional(),
   patientId: z.string().min(1).optional(),
   createPatient: createPatientSchema.optional(),
   appointmentType: z.enum(['NORMAL', 'EXTENDED']),
@@ -37,19 +40,6 @@ const createManualAppointmentSchema = z.object({
       path: ['patientId'],
     })
   }
-})
-
-const legacyCreateManualAppointmentSchema = z.object({
-  patient: z.object({
-    fullName: z.string().min(1, 'Nombre del paciente requerido'),
-    phone: z.string().min(1, 'Teléfono requerido'),
-    email: z.string().email().optional().or(z.literal('')),
-    dateOfBirth: z.string().optional().or(z.literal('')),
-  }),
-  appointmentType: z.enum(['NORMAL', 'EXTENDED']),
-  startTime: z.string().min(1, 'startTime requerido'),
-  notes: z.string().optional(),
-  allowOutsidePublic: z.boolean().optional().default(true),
 })
 
 const MAX_SERIALIZABLE_RETRIES = 3
@@ -71,31 +61,62 @@ function isSerializableConflict(error: unknown): boolean {
   )
 }
 
+function resolveStructuredPatientName(input: z.infer<typeof createPatientSchema>) {
+  const firstName = input.firstName.trim()
+  const lastNamePaternal = input.lastNamePaternal.trim()
+  const lastNameMaternal = input.lastNameMaternal?.trim() || null
+
+  return { firstName, lastNamePaternal, lastNameMaternal }
+}
+
 export async function POST(request: Request) {
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const authUser = await getAuthenticatedUser()
+    if (!authUser) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    if (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN') {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
+    }
 
-    const body = await request.json()
-    const parsed = createManualAppointmentSchema.safeParse(body)
-    const parsedLegacy = parsed.success ? null : legacyCreateManualAppointmentSchema.safeParse(body)
-
-    if (!parsed.success && !parsedLegacy?.success) {
+    const parsed = createManualAppointmentSchema.safeParse(await request.json())
+    if (!parsed.success) {
       const issues = parsed.error.issues
       return NextResponse.json({ error: 'Payload inválido', details: issues }, { status: 400 })
     }
-    const legacyData = parsedLegacy?.success ? parsedLegacy.data : null
+    const normalized = parsed.data
+    let doctorId = authUser.id
+    const actorUserId = authUser.id
+    const actorRole = authUser.role
 
-    const normalized = parsed.success
-      ? parsed.data
-      : {
-          patientId: undefined,
-          createPatient: legacyData!.patient,
-          appointmentType: legacyData!.appointmentType,
-          startTime: legacyData!.startTime,
-          notes: legacyData!.notes,
-          allowOutsidePublic: legacyData!.allowOutsidePublic,
-        }
+    if (normalized.doctorId && normalized.doctorId !== authUser.id) {
+      if (authUser.role !== 'CLINIC_ADMIN') {
+        return NextResponse.json({ error: 'No autorizado para gestionar agenda de otro médico.' }, { status: 403 })
+      }
+
+      const actor = await prisma.user.findUnique({
+        where: { id: authUser.id },
+        select: { clinicId: true },
+      })
+
+      if (!actor?.clinicId) {
+        return NextResponse.json({ error: 'CLINIC_ADMIN sin clínica asignada.' }, { status: 403 })
+      }
+
+      const targetDoctor = await prisma.user.findFirst({
+        where: {
+          id: normalized.doctorId,
+          clinicId: actor.clinicId,
+          active: true,
+          role: { in: ['DOCTOR', 'CLINIC_ADMIN'] },
+        },
+        select: { id: true },
+      })
+
+      if (!targetDoctor) {
+        return NextResponse.json({ error: 'El médico seleccionado no pertenece a tu clínica.' }, { status: 403 })
+      }
+
+      doctorId = targetDoctor.id
+    }
 
     const config = await prisma.doctorConfig.findUnique({ where: { doctorId } })
     if (!config) {
@@ -194,10 +215,15 @@ export async function POST(request: Request) {
               }
             } else {
               const patientInput = normalized.createPatient!
+              const structuredName = resolveStructuredPatientName(patientInput)
+              if (!structuredName.firstName || !structuredName.lastNamePaternal) {
+                throw new Error('El nombre proporcionado debe incluir al menos nombre y apellido paterno.')
+              }
               const duplicate = await tx.patient.findFirst({
                 where: {
                   ownerDoctorId: doctorId,
-                  fullName: patientInput.fullName.trim(),
+                  firstName: structuredName.firstName,
+                  lastNamePaternal: structuredName.lastNamePaternal,
                   phone: patientInput.phone.trim(),
                 },
                 select: { id: true },
@@ -209,7 +235,9 @@ export async function POST(request: Request) {
               patient = await tx.patient.create({
                 data: {
                   ownerDoctorId: doctorId,
-                  fullName: patientInput.fullName.trim(),
+                  firstName: structuredName.firstName,
+                  lastNamePaternal: structuredName.lastNamePaternal,
+                  lastNameMaternal: structuredName.lastNameMaternal,
                   phone: patientInput.phone.trim(),
                   email: patientInput.email?.trim().toLowerCase() || undefined,
                   ...(parsedDob ? { dateOfBirth: parsedDob } : {}),
@@ -244,11 +272,13 @@ export async function POST(request: Request) {
                   appointmentId: appointment.id,
                   patientId: patient.id,
                   actorType: 'DOCTOR',
-                  actorUserId: doctorId,
+                  actorUserId,
                   source: 'ADMIN_PANEL',
                   action: 'PATIENT_CREATED_FROM_APPOINTMENT',
                   metadata: {
                     reason: 'manual_appointment_create',
+                    actorRole,
+                    delegatedDoctorId: doctorId !== actorUserId ? doctorId : null,
                   },
                 },
                 tx
@@ -261,7 +291,7 @@ export async function POST(request: Request) {
                 appointmentId: appointment.id,
                 patientId: patient.id,
                 actorType: 'DOCTOR',
-                actorUserId: doctorId,
+                actorUserId,
                 source: 'ADMIN_PANEL',
                 action: 'APPOINTMENT_CREATED',
                 fromStatus: null,
@@ -269,6 +299,8 @@ export async function POST(request: Request) {
                 metadata: {
                   source: 'DOCTOR',
                   appointmentType: normalized.appointmentType,
+                  actorRole,
+                  delegatedDoctorId: doctorId !== actorUserId ? doctorId : null,
                 },
               },
               tx

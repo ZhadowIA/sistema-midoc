@@ -2,6 +2,7 @@ import { z } from 'zod'
 import prisma from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/http'
 import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
+import { formatPatientName } from '@/lib/patientName'
 
 const linkAccountSchema = z.object({
   email: z.string().email('Correo inválido'),
@@ -75,7 +76,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
           },
         ],
       },
-      select: { id: true, fullName: true },
+      select: { id: true, firstName: true, lastNamePaternal: true, lastNameMaternal: true },
     })
 
     if (alreadyLinkedForDoctor) {
@@ -83,7 +84,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         {
           error: 'Esta cuenta ya está vinculada a otro expediente de este médico.',
           existingPatientId: alreadyLinkedForDoctor.id,
-          existingPatientName: alreadyLinkedForDoctor.fullName,
+          existingPatientName: formatPatientName(alreadyLinkedForDoctor),
         },
         { status: 409 }
       )

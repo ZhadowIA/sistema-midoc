@@ -84,4 +84,20 @@ export class ClinicalHistoryService {
       return record
     })
   }
+
+  static async listVersionsByPatientId(patientId: string, limit = 10) {
+    return prisma.clinicalHistoryVersion.findMany({
+      where: { patientId },
+      orderBy: { createdAt: 'desc' },
+      take: Math.max(1, Math.min(limit, 50)),
+      select: {
+        id: true,
+        createdAt: true,
+        status: true,
+        completionPct: true,
+        actorUserId: true,
+        payload: true,
+      },
+    })
+  }
 }

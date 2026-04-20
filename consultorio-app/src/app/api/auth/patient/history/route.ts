@@ -36,7 +36,9 @@ export async function GET() {
         patient: {
           select: {
             id: true,
-            fullName: true,
+            firstName: true,
+            lastNamePaternal: true,
+            lastNameMaternal: true,
           },
         },
       },

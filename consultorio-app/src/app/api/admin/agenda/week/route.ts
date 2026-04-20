@@ -1,17 +1,45 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { addDays, format, startOfWeek } from 'date-fns'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { getAuthenticatedUser } from '@/lib/auth'
 import { getDayRangeLocal } from '@/lib/dateTime'
+import { formatPatientName } from '@/lib/patientName'
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const startStr = searchParams.get('start')
   const showCancelled = searchParams.get('showCancelled') === 'true'
+  const requestedDoctorId = searchParams.get('doctorId')
 
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const authUser = await getAuthenticatedUser()
+    if (!authUser) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+    const actorUser = await prisma.user.findUnique({
+      where: { id: authUser.id },
+      select: { id: true, role: true, clinicId: true },
+    })
+    if (!actorUser) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+    let doctorId = actorUser.id
+    let clinicDoctors: Array<{ id: string; name: string }> = []
+    const canViewClinicAgenda = actorUser.role === 'CLINIC_ADMIN' && Boolean(actorUser.clinicId)
+
+    if (canViewClinicAgenda && actorUser.clinicId) {
+      clinicDoctors = await prisma.user.findMany({
+        where: {
+          clinicId: actorUser.clinicId,
+          active: true,
+          role: { in: ['DOCTOR', 'CLINIC_ADMIN'] },
+        },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      })
+
+      if (requestedDoctorId && clinicDoctors.some((doctor) => doctor.id === requestedDoctorId)) {
+        doctorId = requestedDoctorId
+      }
+    }
 
     const anchorDate = startStr ? getDayRangeLocal(startStr).start : new Date()
     const weekStart = startOfWeek(anchorDate, { weekStartsOn: 1 })
@@ -31,7 +59,7 @@ export async function GET(request: Request) {
         startTime: { lt: weekEndExclusive },
         endTime: { gt: weekStart },
       },
-      include: { patient: true },
+      include: { patient: true, doctor: { select: { id: true, name: true } } },
       orderBy: { startTime: 'asc' },
     })
 
@@ -46,8 +74,10 @@ export async function GET(request: Request) {
 
     const transformedAppointments = appointments.map((apt) => ({
       id: apt.id,
+      doctorId: apt.doctorId,
+      doctorName: apt.doctor.name,
       patientId: apt.patient.id,
-      patientName: apt.patient.fullName,
+      patientName: formatPatientName(apt.patient),
       patientPhone: apt.patient.phone,
       date: apt.date,
       dateLocal: format(apt.startTime, 'yyyy-MM-dd'),
@@ -87,6 +117,13 @@ export async function GET(request: Request) {
       appointments: transformedAppointments,
       blocks: transformedBlocks,
       days,
+      scope: {
+        actorDoctorId: actorUser.id,
+        currentDoctorId: doctorId,
+        canViewClinicAgenda,
+        canEditCrossDoctor: canViewClinicAgenda,
+        doctors: clinicDoctors,
+      },
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'

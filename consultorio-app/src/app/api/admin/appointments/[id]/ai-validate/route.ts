@@ -5,6 +5,7 @@ import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rateLimit";
 import { z } from "zod";
 import { jsonNoStore } from "@/lib/http";
 import { requireMedicalDoctorApiAccess } from "@/lib/medicalApi";
+import { formatPatientName } from "@/lib/patientName";
 
 const prescriptionSchema = z.object({
   medication: z.string().trim().min(1).max(200),
@@ -65,7 +66,7 @@ export async function POST(
       medicalRecord: appointment.patient?.medicalRecord,
       questionnaire: appointment.questionnaire,
     }, {
-      patientName: appointment.patient?.fullName,
+      patientName: appointment.patient ? formatPatientName(appointment.patient) : undefined,
       doctorName: appointment.doctor?.name,
     });
 

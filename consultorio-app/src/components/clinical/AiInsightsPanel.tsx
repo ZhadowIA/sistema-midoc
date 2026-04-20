@@ -4,6 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { Sparkles, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/Button";
+import {
+  buildInsightApplicationKey,
+  isInsightApplied,
+  markInsightApplied,
+} from "@/lib/aiInsights";
 
 type Diagnosis = { diagnosis: string; reasoning?: string };
 type Treatment = { treatment: string; instructions?: string };
@@ -37,8 +42,13 @@ export function AiInsightsPanel({
   onApplyDiagnosis,
   onApplyTreatment,
 }: Props) {
+  // Loading local y no unificado con combinedSaveState del workspace: generar
+  // sugerencias es una acción one-shot del usuario, no un autosave. Mezclarlo
+  // haría que disparar IA marcara "Guardando..." en el header.
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<Insights | null>(null);
+  const [appliedDiagnoses, setAppliedDiagnoses] = useState<Record<string, boolean>>({});
+  const [appliedTreatments, setAppliedTreatments] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -71,6 +81,8 @@ export function AiInsightsPanel({
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Error generando sugerencias");
       setData(body as Insights);
+      setAppliedDiagnoses({});
+      setAppliedTreatments({});
       toast.success("Sugerencias generadas.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Error generando sugerencias");
@@ -85,6 +97,43 @@ export function AiInsightsPanel({
       (data.treatments?.length ?? 0) > 0 ||
       (data.allowedFoods?.length ?? 0) > 0 ||
       (data.forbiddenFoods?.length ?? 0) > 0);
+
+  const trackApply = useCallback(
+    async (kind: "DIAGNOSIS" | "TREATMENT", text: string) => {
+      await fetch(`/api/clinical/admin/appointments/${appointmentId}/ai-insights/apply`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, text }),
+      }).catch(() => undefined);
+    },
+    [appointmentId],
+  );
+
+  const applyDiagnosis = useCallback(
+    (diagnosis: string) => {
+      const key = buildInsightApplicationKey(diagnosis);
+      if (!key || appliedDiagnoses[key]) return;
+      onApplyDiagnosis(diagnosis);
+      setAppliedDiagnoses((prev) => markInsightApplied(prev, diagnosis));
+      void trackApply("DIAGNOSIS", diagnosis);
+      toast.success("Diagnóstico aplicado en Assessment.");
+    },
+    [appliedDiagnoses, onApplyDiagnosis, trackApply],
+  );
+
+  const applyTreatment = useCallback(
+    (treatment: string, instructions?: string) => {
+      const payload = instructions ? `${treatment} — ${instructions}` : treatment;
+      const key = buildInsightApplicationKey(payload);
+      if (!key || appliedTreatments[key]) return;
+      onApplyTreatment(payload);
+      setAppliedTreatments((prev) => markInsightApplied(prev, payload));
+      void trackApply("TREATMENT", payload);
+      toast.success("Tratamiento aplicado en Plan.");
+    },
+    [appliedTreatments, onApplyTreatment, trackApply],
+  );
 
   return (
     <div className="space-y-3">
@@ -108,6 +157,9 @@ export function AiInsightsPanel({
           <p className="text-sm font-medium mb-1">Diagnósticos sugeridos</p>
           <ul className="space-y-1">
             {data.diagnoses.map((d, i) => (
+              (() => {
+                const alreadyApplied = isInsightApplied(appliedDiagnoses, d.diagnosis);
+                return (
               <li
                 key={i}
                 className="flex items-start justify-between gap-2 rounded-lg border border-border bg-secondary/10 p-2"
@@ -121,12 +173,14 @@ export function AiInsightsPanel({
                 <Button
                   size="sm"
                   variant="tertiary"
-                  onClick={() => onApplyDiagnosis(d.diagnosis)}
-                  disabled={disabled}
+                  onClick={() => applyDiagnosis(d.diagnosis)}
+                  disabled={disabled || alreadyApplied}
                 >
-                  <Plus className="w-4 h-4" /> Assessment
+                  <Plus className="w-4 h-4" /> {alreadyApplied ? "Aplicado" : "Assessment"}
                 </Button>
               </li>
+                );
+              })()
             ))}
           </ul>
         </div>
@@ -137,6 +191,10 @@ export function AiInsightsPanel({
           <p className="text-sm font-medium mb-1">Tratamientos sugeridos</p>
           <ul className="space-y-1">
             {data.treatments.map((t, i) => (
+              (() => {
+                const payload = t.instructions ? `${t.treatment} — ${t.instructions}` : t.treatment;
+                const alreadyApplied = isInsightApplied(appliedTreatments, payload);
+                return (
               <li
                 key={i}
                 className="flex items-start justify-between gap-2 rounded-lg border border-border bg-secondary/10 p-2"
@@ -150,16 +208,14 @@ export function AiInsightsPanel({
                 <Button
                   size="sm"
                   variant="tertiary"
-                  onClick={() =>
-                    onApplyTreatment(
-                      t.instructions ? `${t.treatment} — ${t.instructions}` : t.treatment,
-                    )
-                  }
-                  disabled={disabled}
+                  onClick={() => applyTreatment(t.treatment, t.instructions)}
+                  disabled={disabled || alreadyApplied}
                 >
-                  <Plus className="w-4 h-4" /> Plan
+                  <Plus className="w-4 h-4" /> {alreadyApplied ? "Aplicado" : "Plan"}
                 </Button>
               </li>
+                );
+              })()
             ))}
           </ul>
         </div>

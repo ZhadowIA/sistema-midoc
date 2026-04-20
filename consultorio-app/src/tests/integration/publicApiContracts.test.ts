@@ -56,10 +56,12 @@ export async function runPublicContractsIntegrationTests() {
       },
     },
     {
-      name: 'appointments contract normalizes legacy fullName and phone',
+      name: 'appointments contract requires structured fields and normalizes phone',
       run: () => {
         const payload = parsePublicAppointmentPayload({
-          fullName: '  Ana   López Gómez  ',
+          firstName: 'Ana',
+          lastNamePaternal: 'López',
+          lastNameMaternal: 'Gómez',
           dateOfBirth: '1995-07-10',
           phone: '(614) 123-45-67',
           email: 'ana@example.com',
@@ -120,14 +122,12 @@ export async function runPublicContractsIntegrationTests() {
               doctorId: validDoctorId,
               privacyConsentAccepted: true,
             }),
-          (error: unknown) =>
-            error instanceof ContractValidationError &&
-            error.message.includes('apellido paterno')
+          (error: unknown) => error instanceof ContractValidationError
         )
       },
     },
     {
-      name: 'appointments contract rejects payload with neither structured nor fullName',
+      name: 'appointments contract rejects payload without required structured names',
       run: () => {
         assert.throws(
           () =>
@@ -175,7 +175,8 @@ export async function runPublicContractsIntegrationTests() {
         assert.throws(
           () =>
             parsePublicAppointmentPayload({
-              fullName: 'Paciente Prueba',
+              firstName: 'Paciente',
+              lastNamePaternal: 'Prueba',
               dateOfBirth: `${nextYear}-01-01`,
               phone: '6141234567',
               email: '',

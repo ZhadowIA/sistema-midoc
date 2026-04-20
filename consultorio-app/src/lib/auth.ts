@@ -5,7 +5,7 @@ import { getServerEnv } from './env'
 
 const secret = new TextEncoder().encode(getServerEnv().NEXTAUTH_SECRET)
 
-export type AuthenticatedRole = 'DOCTOR' | 'ADMIN' | 'PATIENT' | 'SECRETARY'
+export type AuthenticatedRole = 'DOCTOR' | 'ADMIN' | 'CLINIC_ADMIN' | 'PATIENT' | 'SECRETARY'
 
 export type AuthenticatedUser = {
   id: string
@@ -67,14 +67,14 @@ export async function getAuthenticatedDoctorId(): Promise<string | null> {
 
 /**
  * Returns the doctor ID for the current context.
- * If the user is a DOCTOR, returns their ID.
+ * If the user is a DOCTOR, ADMIN or CLINIC_ADMIN, returns their ID.
  * If the user is a SECRETARY, returns their bossId.
  */
 export async function getEffectiveDoctorId(): Promise<string | null> {
   const user = await getAuthenticatedUser()
   if (!user) return null
 
-  if (user.role === 'DOCTOR' || user.role === 'ADMIN') {
+  if (user.role === 'DOCTOR' || user.role === 'ADMIN' || user.role === 'CLINIC_ADMIN') {
     return user.id
   }
 
@@ -90,7 +90,7 @@ export async function getAuthenticatedMedicalContext(options?: { allowSecretary?
   const user = await getAuthenticatedUser()
   if (!user) return null
 
-  if (user.role === 'DOCTOR' || user.role === 'ADMIN') {
+  if (user.role === 'DOCTOR' || user.role === 'ADMIN' || user.role === 'CLINIC_ADMIN') {
     return {
       user,
       doctorId: user.id,

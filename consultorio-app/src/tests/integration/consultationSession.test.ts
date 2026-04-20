@@ -22,6 +22,9 @@ export async function runConsultationSessionIntegrationTests() {
   const { EncounterHistoryService } = await import(
     '../../services/EncounterHistoryService.ts'
   )
+  const { resolveConsultationSession, shouldSkipSessionQueries } = await import(
+    '../../lib/consultationWorkspace.ts'
+  )
 
   await runSuite('Integration: consultation session', [
     {
@@ -66,6 +69,37 @@ export async function runConsultationSessionIntegrationTests() {
           where: { appointmentId: appt.id },
         })
         assert.equal(row?.consultationMode, 'MANUAL')
+      },
+    },
+    {
+      name: 'context fallback usa preferredConsultationMode cuando no hay EncounterHistory',
+      run: async () => {
+        await truncateAll(prisma)
+        const { doctor, patient } = await seedDoctorAndPatient(prisma)
+        const appt = await seedAppointment(prisma, doctor.id, patient.id)
+        await prisma.doctorConfig.create({
+          data: {
+            doctorId: doctor.id,
+            consultationDurationMin: 30,
+            preferredConsultationMode: 'HYBRID',
+          },
+        })
+        const existing = await prisma.encounterHistory.findUnique({
+          where: { appointmentId: appt.id },
+          select: { consultationMode: true, aiConsent: true, aiConsentDecidedAt: true },
+        })
+        assert.equal(existing, null, 'no debe existir encounter aún')
+        const preferred = await prisma.doctorConfig.findUnique({
+          where: { doctorId: doctor.id },
+          select: { preferredConsultationMode: true },
+        })
+        const session = resolveConsultationSession({
+          isReadOnly: false,
+          existing,
+          preferredConsultationMode: preferred?.preferredConsultationMode ?? null,
+        })
+        assert.equal(session.consultationMode, 'HYBRID')
+        assert.equal(session.aiConsent, 'PENDING')
       },
     },
     {
@@ -144,6 +178,33 @@ export async function runConsultationSessionIntegrationTests() {
         })
         assert.equal(row?.aiConsent, 'PENDING')
         assert.equal(row?.aiConsentDecidedAt, null)
+      },
+    },
+    {
+      name: 'readonly COMPLETED evita cargar modo/consent dinámicos',
+      run: async () => {
+        await truncateAll(prisma)
+        const { doctor, patient } = await seedDoctorAndPatient(prisma)
+        const appt = await prisma.appointment.create({
+          data: {
+            doctorId: doctor.id,
+            patientId: patient.id,
+            date: new Date(Date.now() + 3600_000),
+            startTime: new Date(Date.now() + 3600_000),
+            endTime: new Date(Date.now() + 5400_000),
+            durationMin: 30,
+            appointmentType: 'NORMAL',
+            status: 'COMPLETED',
+            source: 'DOCTOR',
+          },
+        })
+        assert.equal(
+          shouldSkipSessionQueries({
+            appointmentStatus: appt.status,
+            noteSignedAt: null,
+          }),
+          true,
+        )
       },
     },
   ])

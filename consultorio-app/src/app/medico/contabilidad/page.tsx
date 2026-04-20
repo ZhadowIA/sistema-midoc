@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { DoctorLayout } from "@/components/DoctorLayout";
 import { toast } from "sonner";
+import { Download } from "lucide-react";
+import { Button } from "@/components/Button";
 
 type DashboardSummaryResponse = {
   analytics?: {
@@ -31,19 +33,54 @@ type DashboardSummaryResponse = {
   };
 };
 
+type BillingReceiptsResponse = {
+  receipts: Array<{
+    appointmentId: string;
+    folio: string;
+    series: string;
+    folioNumber: number;
+    date: string;
+    patientName: string;
+    appointmentType: string;
+    amountMx: number;
+    currency: string;
+    issuerFiscalData: {
+      legalName: string;
+      taxId: string;
+      taxRegime: string;
+      fiscalZipCode: string;
+    };
+    receiverFiscalData: {
+      legalName: string;
+      taxId: string;
+      fiscalZipCode: string;
+    };
+  }>;
+};
+
 export default function ContabilidadPage() {
   const [dashboardData, setDashboardData] = useState<DashboardSummaryResponse | null>(null);
+  const [receiptsData, setReceiptsData] = useState<BillingReceiptsResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [downloadingAppointmentId, setDownloadingAppointmentId] = useState<string | null>(null);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/agenda/admin/dashboard/summary", { cache: "no-store" });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data.error || "No se pudo cargar la contabilidad");
+      const [summaryResponse, receiptsResponse] = await Promise.all([
+        fetch("/api/agenda/admin/dashboard/summary", { cache: "no-store" }),
+        fetch("/api/agenda/admin/billing/receipts", { cache: "no-store" }),
+      ]);
+      const summaryData = await summaryResponse.json().catch(() => ({}));
+      const receiptsData = await receiptsResponse.json().catch(() => ({}));
+      if (!summaryResponse.ok) {
+        throw new Error(summaryData.error || "No se pudo cargar la contabilidad");
       }
-      setDashboardData(data);
+      if (!receiptsResponse.ok) {
+        throw new Error(receiptsData.error || "No se pudo cargar los recibos");
+      }
+      setDashboardData(summaryData);
+      setReceiptsData(receiptsData as BillingReceiptsResponse);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Error inesperado";
       toast.error(message);
@@ -51,6 +88,36 @@ export default function ContabilidadPage() {
       setLoading(false);
     }
   }, []);
+
+  const handleDownloadReceipt = async (appointmentId: string) => {
+    setDownloadingAppointmentId(appointmentId);
+    try {
+      const res = await fetch(
+        `/api/agenda/admin/billing/receipts/${appointmentId}/download`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "No se pudo descargar el recibo.");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const disposition = res.headers.get("Content-Disposition") ?? "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      a.href = url;
+      a.download = match?.[1] ?? "recibo.txt";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Error inesperado";
+      toast.error(message);
+    } finally {
+      setDownloadingAppointmentId(null);
+    }
+  };
 
   useEffect(() => {
     void loadDashboard();
@@ -74,6 +141,7 @@ export default function ContabilidadPage() {
         {loading ? (
           <p className="text-sm text-muted-foreground text-center py-6 animate-pulse">Cargando datos contables...</p>
         ) : analytics ? (
+          <>
           <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
             <div className="px-6 py-4 border-b border-border">
               <h2 className="font-semibold text-foreground">Analítica mensual</h2>
@@ -161,6 +229,58 @@ export default function ContabilidadPage() {
               </div>
             </div>
           </div>
+          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
+            <div className="px-6 py-4 border-b border-border">
+              <h2 className="font-semibold text-foreground">Recibos básicos</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Lista de consultas completadas con descarga de recibo simple.
+              </p>
+            </div>
+            <div className="p-6">
+              {!receiptsData || receiptsData.receipts.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Aún no hay recibos disponibles.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {receiptsData.receipts.slice(0, 20).map((receipt) => (
+                    <div
+                      key={receipt.appointmentId}
+                      className="rounded-lg border border-border bg-secondary/10 p-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2"
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-foreground">
+                          {receipt.folio} · {receipt.patientName}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {format(new Date(receipt.date), "dd/MM/yyyy HH:mm")} ·{" "}
+                          {receipt.appointmentType === "EXTENDED" ? "Consulta extendida" : "Consulta normal"}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Emisor RFC: {receipt.issuerFiscalData.taxId} · Receptor RFC: {receipt.receiverFiscalData.taxId}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-foreground">
+                          {currencyFormatter.format(receipt.amountMx)}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="tertiary"
+                          onClick={() => void handleDownloadReceipt(receipt.appointmentId)}
+                          disabled={downloadingAppointmentId === receipt.appointmentId}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Recibo
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          </>
         ) : (
           <p className="text-sm text-muted-foreground text-center py-6">No hay datos contables disponibles.</p>
         )}

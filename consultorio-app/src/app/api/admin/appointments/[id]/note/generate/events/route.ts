@@ -5,6 +5,19 @@ function serializeEvent(event: string, data: unknown) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
+function classifyFailureCause(errorMessage: string | null): string | null {
+  if (!errorMessage) return null;
+  const m = errorMessage.toLowerCase();
+  if (m.includes("timeout")) return "TIMEOUT";
+  if (m.includes("rate limit") || m.includes("429")) return "RATE_LIMIT";
+  if (m.includes("deepgram")) return "TRANSCRIPTION_PROVIDER";
+  if (m.includes("openai")) return "LLM_PROVIDER";
+  if (m.includes("no fue posible") || m.includes("invalid") || m.includes("inválid")) {
+    return "VALIDATION_OR_PROCESSING";
+  }
+  return "UNKNOWN";
+}
+
 export async function GET(
   request: Request,
   props: { params: Promise<{ id: string }> }
@@ -43,6 +56,8 @@ export async function GET(
             statusMessage: true,
             resultPayload: true,
             errorMessage: true,
+            createdAt: true,
+            finishedAt: true,
           },
         });
 
@@ -55,7 +70,20 @@ export async function GET(
           return;
         }
 
-        controller.enqueue(encoder.encode(serializeEvent("status", job)));
+        const durationMs = job.finishedAt
+          ? Math.max(0, job.finishedAt.getTime() - job.createdAt.getTime())
+          : null;
+        controller.enqueue(
+          encoder.encode(
+            serializeEvent("status", {
+              ...job,
+              metrics: {
+                durationMs,
+                failureCause: classifyFailureCause(job.errorMessage ?? null),
+              },
+            }),
+          ),
+        );
 
         if (job.status === "COMPLETED" || job.status === "FAILED") {
           clearInterval(interval);

@@ -50,6 +50,9 @@ model User {
   doctorConsentCaptures ConsentCapture[]      @relation("DoctorConsentCaptures")
   capturedConsentLogs   ConsentCapture[]      @relation("ConsentCapturedByUser")
   aiProcessingJobs      AIProcessingJob[]
+  billingReceipts       BillingReceipt[]
+  clinic               Clinic?                @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  ownedClinic          Clinic?                @relation("ClinicOwner")
 
   @@index([bossId])
   @@index([clinicId])
@@ -139,6 +142,11 @@ model DoctorConfig {
   whatsappReminderConfirmedTemplate String?
   normalConsultationPrice           Decimal?         @db.Decimal(10, 2)
   extendedConsultationPrice         Decimal?         @db.Decimal(10, 2)
+  receiptSeries                     String?
+  issuerLegalName                   String?
+  issuerTaxId                       String?
+  issuerTaxRegime                   String?
+  issuerFiscalZipCode               String?
   effectiveFrom                     DateTime?
   preferredConsultationMode         ConsultationMode @default(MANUAL)
   createdAt                         DateTime         @default(now())
@@ -152,15 +160,16 @@ model Patient {
   userId           String?
   ownerDoctorId    String?
   clinicId         String?
-  firstName        String?
-  lastNamePaternal String?
+  firstName        String
+  lastNamePaternal String
   lastNameMaternal String?
   sex              PatientSex?
   gender           PatientGender?
-  fullName         String
   dateOfBirth      DateTime       @default(now())
   phone            String
   email            String?
+  taxId            String?
+  fiscalZipCode    String?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
@@ -175,9 +184,10 @@ model Patient {
   auditLogs            AuditLog[]
   consentCaptures      ConsentCapture[]
   contacts             PatientContact[]
+  clinic               Clinic?                @relation(fields: [clinicId], references: [id], onDelete: SetNull)
 
   @@index([ownerDoctorId])
-  @@index([ownerDoctorId, fullName])
+  @@index([ownerDoctorId, lastNamePaternal, firstName])
   @@index([clinicId])
 }
 
@@ -260,8 +270,42 @@ model Appointment {
   systemAuditLogs  AuditLog[]
   consentCaptures  ConsentCapture[]
   aiProcessingJobs AIProcessingJob[]
+  billingReceipt   BillingReceipt?
+  clinic           Clinic?                 @relation(fields: [clinicId], references: [id], onDelete: SetNull)
 
   @@index([clinicId])
+}
+
+model BillingReceipt {
+  id            String      @id @default(cuid())
+  doctorId      String
+  appointmentId String      @unique
+  series        String
+  folioNumber   Int
+  issuedAt      DateTime
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  doctor      User        @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, series, folioNumber])
+  @@index([doctorId, issuedAt])
+}
+
+model Clinic {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  ownerId   String?  @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner        User?         @relation("ClinicOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  users        User[]
+  patients     Patient[]
+  appointments Appointment[]
 }
 
 model AppointmentAuditLog {
@@ -510,6 +554,7 @@ model Prescription {
 enum UserRole {
   DOCTOR
   ADMIN
+  CLINIC_ADMIN
   PATIENT
   SECRETARY
 }

@@ -5,6 +5,8 @@ import {
   calculateClinicalCompletionPct,
   calculateEncounterCompletionPct,
   hasMinimumForSignoff,
+  buildSignoffBlockedMessage,
+  evaluateSignoffButtonState,
   migrateFromMedicalRecord,
 } from '../../lib/clinicalFormat.ts'
 import { runSuite } from '../testHarness.ts'
@@ -138,6 +140,98 @@ export async function runClinicalFormatUnitTests() {
         const r = hasMinimumForSignoff(p)
         assert.equal(r.ok, false)
         assert.ok(r.missing.includes('impresión diagnóstica'))
+      },
+    },
+    {
+      name: 'buildSignoffBlockedMessage concatena faltantes en mensaje de error',
+      run: () => {
+        const msg = buildSignoffBlockedMessage(['motivo de consulta', 'plan'])
+        assert.equal(
+          msg,
+          'Faltan mínimos clínicos para firmar: motivo de consulta, plan',
+        )
+      },
+    },
+    {
+      name: 'evaluateSignoffButtonState deshabilita y lista faltantes cuando payload es null',
+      run: () => {
+        const s = evaluateSignoffButtonState({
+          payload: null,
+          isSigned: false,
+          loaded: true,
+        })
+        assert.equal(s.disabled, true)
+        assert.equal(s.canSign, false)
+        assert.equal(s.title, 'Faltan: ')
+      },
+    },
+    {
+      name: 'evaluateSignoffButtonState deshabilita mientras la nota no carga',
+      run: () => {
+        const p = buildEmptyEncounterHistory()
+        p.chiefComplaint = 'cefalea'
+        p.presentIllness = { summary: 'x' }
+        p.vitals = { ta: '120/80' }
+        p.physicalExam = { general: 'ok' }
+        p.assessment = [{ diagnosis: 'x' }]
+        p.treatmentPlan = { farmacologico: 'x' }
+        const s = evaluateSignoffButtonState({
+          payload: p,
+          isSigned: false,
+          loaded: false,
+        })
+        assert.equal(s.disabled, true, 'loaded=false debe bloquear firma')
+        assert.equal(s.canSign, true, 'mínimos cumplidos independiente del loaded')
+      },
+    },
+    {
+      name: 'evaluateSignoffButtonState reporta mínimos faltantes en title',
+      run: () => {
+        const p = buildEmptyEncounterHistory()
+        const s = evaluateSignoffButtonState({
+          payload: p,
+          isSigned: false,
+          loaded: true,
+        })
+        assert.equal(s.disabled, true)
+        assert.equal(s.canSign, false)
+        assert.ok(s.missing.includes('motivo de consulta'))
+        assert.ok(s.title.startsWith('Faltan: '))
+        assert.ok(s.title.includes('motivo de consulta'))
+      },
+    },
+    {
+      name: 'evaluateSignoffButtonState con nota firmada muestra mensaje fijo',
+      run: () => {
+        const p = buildEmptyEncounterHistory()
+        const s = evaluateSignoffButtonState({
+          payload: p,
+          isSigned: true,
+          loaded: true,
+        })
+        assert.equal(s.disabled, true)
+        assert.equal(s.title, 'La nota ya está firmada')
+      },
+    },
+    {
+      name: 'evaluateSignoffButtonState habilita cuando mínimos + loaded + sin firmar',
+      run: () => {
+        const p = buildEmptyEncounterHistory()
+        p.chiefComplaint = 'cefalea'
+        p.presentIllness = { summary: 'x' }
+        p.vitals = { ta: '120/80' }
+        p.physicalExam = { general: 'ok' }
+        p.assessment = [{ diagnosis: 'cefalea tensional' }]
+        p.treatmentPlan = { farmacologico: 'paracetamol' }
+        const s = evaluateSignoffButtonState({
+          payload: p,
+          isSigned: false,
+          loaded: true,
+        })
+        assert.equal(s.disabled, false)
+        assert.equal(s.canSign, true)
+        assert.equal(s.title, 'Firmar y cerrar (Ctrl+Enter)')
+        assert.deepEqual(s.missing, [])
       },
     },
     {
