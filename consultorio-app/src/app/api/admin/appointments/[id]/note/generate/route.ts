@@ -7,6 +7,7 @@ import { requireMedicalDoctorApiAccess } from "@/lib/medicalApi";
 import { getRequestIp, getUserAgent } from "@/lib/requestContext";
 import { AINoteGenerationService } from "@/services/AINoteGenerationService";
 import { ConsentCaptureService } from "@/services/ConsentCaptureService";
+import { formatPatientName } from "@/lib/patientName";
 
 const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
 const allowedAudioTypes = new Set([
@@ -53,7 +54,9 @@ export async function POST(
         patient: {
           select: {
             id: true,
-            fullName: true,
+            firstName: true,
+            lastNamePaternal: true,
+            lastNameMaternal: true,
           },
         },
         doctor: {
@@ -150,7 +153,7 @@ export async function POST(
       audioBuffer: buffer,
       mimeType,
       fileName,
-      patientName: appointment.patient.fullName,
+      patientName: formatPatientName(appointment.patient),
       doctorName: appointment.doctor.name,
     });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Plus, Ban, CalendarClock, RefreshCcw, X } from "lucide-react";
 import { DoctorLayout } from "@/components/DoctorLayout";
 import { Button } from "@/components/Button";
@@ -12,9 +12,12 @@ import { Modal } from "@/components/Modal";
 import { Input } from "@/components/Input";
 import { Select } from "@/components/Select";
 import { toast } from "sonner";
+import { formatPatientName, parseFullName } from "@/lib/patientName";
 
 type AgendaAppointment = {
   id: string;
+  doctorId?: string;
+  doctorName?: string;
   patientName: string;
   patientPhone: string;
   dateLocal: string;
@@ -45,7 +48,9 @@ type AvailabilitySlot = {
 
 type DirectoryPatientOption = {
   id: string;
-  fullName: string;
+  firstName?: string | null;
+  lastNamePaternal?: string | null;
+  lastNameMaternal?: string | null;
   phone: string;
   email?: string | null;
   dateOfBirth: string;
@@ -70,6 +75,15 @@ type AgendaWeekResponse = {
   appointments: AgendaAppointment[];
   blocks: AgendaBlock[];
   days: AgendaWeekDay[];
+  scope?: AgendaScope;
+};
+
+type AgendaScope = {
+  actorDoctorId: string;
+  currentDoctorId: string;
+  canViewClinicAgenda: boolean;
+  canEditCrossDoctor?: boolean;
+  doctors: Array<{ id: string; name: string }>;
 };
 
 function DoctorAgendaContent() {
@@ -84,6 +98,8 @@ function DoctorAgendaContent() {
   const [appointments, setAppointments] = useState<AgendaAppointment[]>([]);
   const [blocks, setBlocks] = useState<AgendaBlock[]>([]);
   const [weekDays, setWeekDays] = useState<AgendaWeekDay[]>([]);
+  const [agendaScope, setAgendaScope] = useState<AgendaScope | null>(null);
+  const [selectedDoctorId, setSelectedDoctorId] = useState("");
   const [showCancelled, setShowCancelled] = useState(false);
   const [consultationDurationMin, setConsultationDurationMin] = useState(30);
   const [viewMode, setViewMode] = useState<"day" | "week">("day");
@@ -152,18 +168,39 @@ function DoctorAgendaContent() {
     return `${format(start, "dd MMM", { locale: es })} - ${format(end, "dd MMM yyyy", { locale: es })}`;
   }, [currentDate]);
 
+  const isViewingAnotherDoctor = Boolean(
+    agendaScope && agendaScope.currentDoctorId !== agendaScope.actorDoctorId
+  );
+  const canEditCurrentAgenda = !isViewingAnotherDoctor || Boolean(agendaScope?.canEditCrossDoctor);
+
+  const buildAgendaUrl = useCallback((basePath: string, params: Record<string, string | boolean | undefined>) => {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined) return;
+      query.set(key, String(value));
+    });
+    if (selectedDoctorId) {
+      query.set("doctorId", selectedDoctorId);
+    }
+    return `${basePath}?${query.toString()}`;
+  }, [selectedDoctorId]);
+
   useEffect(() => {
     if (viewMode === "day") {
       const dateStr = format(currentDate, "yyyy-MM-dd");
-      fetch(`/api/agenda/admin/agenda/day?date=${dateStr}&showCancelled=${showCancelled}`)
+      fetch(buildAgendaUrl("/api/agenda/admin/agenda/day", { date: dateStr, showCancelled }))
         .then(res => res.json())
         .then(data => {
-          const parsed = data as AgendaResponse;
+          const parsed = data as AgendaResponse & { scope?: AgendaScope };
           if (parsed && Array.isArray(parsed.appointments)) {
             setAppointments(parsed.appointments);
             setBlocks(Array.isArray(parsed.blocks) ? parsed.blocks : []);
             setWeekDays([]);
             setConsultationDurationMin(parsed.consultationDurationMin || 30);
+            if (parsed.scope) {
+              setAgendaScope(parsed.scope);
+              if (!selectedDoctorId) setSelectedDoctorId(parsed.scope.currentDoctorId);
+            }
           } else {
             setAppointments([]);
             setBlocks([]);
@@ -176,7 +213,7 @@ function DoctorAgendaContent() {
 
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
     const weekStartStr = format(weekStart, "yyyy-MM-dd");
-    fetch(`/api/agenda/admin/agenda/week?start=${weekStartStr}&showCancelled=${showCancelled}`)
+    fetch(buildAgendaUrl("/api/agenda/admin/agenda/week", { start: weekStartStr, showCancelled }))
       .then(res => res.json())
       .then(data => {
         const parsed = data as AgendaWeekResponse;
@@ -185,6 +222,10 @@ function DoctorAgendaContent() {
           setBlocks(Array.isArray(parsed.blocks) ? parsed.blocks : []);
           setWeekDays(Array.isArray(parsed.days) ? parsed.days : []);
           setConsultationDurationMin(parsed.consultationDurationMin || 30);
+          if (parsed.scope) {
+            setAgendaScope(parsed.scope);
+            if (!selectedDoctorId) setSelectedDoctorId(parsed.scope.currentDoctorId);
+          }
         } else {
           setAppointments([]);
           setBlocks([]);
@@ -192,7 +233,7 @@ function DoctorAgendaContent() {
         }
       })
       .catch(console.error);
-  }, [currentDate, showCancelled, viewMode]);
+  }, [buildAgendaUrl, currentDate, showCancelled, viewMode, selectedDoctorId]);
 
   useEffect(() => {
     if (!newAppointmentOpen || appointmentForm.allowOutsidePublic || !appointmentForm.date) {
@@ -323,14 +364,15 @@ function DoctorAgendaContent() {
   const reloadAgenda = () => {
     if (viewMode === "day") {
       const dateStr = format(currentDate, "yyyy-MM-dd");
-      fetch(`/api/agenda/admin/agenda/day?date=${dateStr}&showCancelled=${showCancelled}`)
+      fetch(buildAgendaUrl("/api/agenda/admin/agenda/day", { date: dateStr, showCancelled }))
         .then(res => res.json())
         .then(data => {
-          const parsed = data as AgendaResponse;
+          const parsed = data as AgendaResponse & { scope?: AgendaScope };
           if (parsed && Array.isArray(parsed.appointments)) {
             setAppointments(parsed.appointments);
             setBlocks(Array.isArray(parsed.blocks) ? parsed.blocks : []);
             setConsultationDurationMin(parsed.consultationDurationMin || 30);
+            if (parsed.scope) setAgendaScope(parsed.scope);
           }
         })
         .catch(console.error);
@@ -339,7 +381,7 @@ function DoctorAgendaContent() {
 
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
     const weekStartStr = format(weekStart, "yyyy-MM-dd");
-    fetch(`/api/agenda/admin/agenda/week?start=${weekStartStr}&showCancelled=${showCancelled}`)
+    fetch(buildAgendaUrl("/api/agenda/admin/agenda/week", { start: weekStartStr, showCancelled }))
       .then(res => res.json())
       .then(data => {
         const parsed = data as AgendaWeekResponse;
@@ -348,12 +390,17 @@ function DoctorAgendaContent() {
           setBlocks(Array.isArray(parsed.blocks) ? parsed.blocks : []);
           setWeekDays(Array.isArray(parsed.days) ? parsed.days : []);
           setConsultationDurationMin(parsed.consultationDurationMin || 30);
+          if (parsed.scope) setAgendaScope(parsed.scope);
         }
       })
       .catch(console.error);
   };
 
   const openNewAppointmentModal = () => {
+    if (!canEditCurrentAgenda) {
+      toast.error("Solo puedes crear citas en tu propia agenda.");
+      return;
+    }
     const dateStr = format(currentDate, "yyyy-MM-dd");
     setAppointmentForm((prev) => ({
       ...prev,
@@ -373,6 +420,10 @@ function DoctorAgendaContent() {
   };
 
   const handleCreateManualAppointment = async () => {
+    if (!canEditCurrentAgenda) {
+      toast.error("Solo puedes crear citas en tu propia agenda.");
+      return;
+    }
     setSubmittingAppointment(true);
     try {
       let startTime: string;
@@ -389,14 +440,22 @@ function DoctorAgendaContent() {
       }
 
       const payload = {
+        ...(isViewingAnotherDoctor ? { doctorId: selectedDoctorId } : {}),
         ...(appointmentForm.patientMode === "existing"
           ? { patientId: appointmentForm.patientId }
           : {
               createPatient: {
-                fullName: appointmentForm.newPatientName,
                 phone: appointmentForm.newPatientPhone,
                 email: appointmentForm.newPatientEmail || undefined,
                 dateOfBirth: appointmentForm.newPatientDateOfBirth || undefined,
+                ...(function () {
+                  const parsed = parseFullName(appointmentForm.newPatientName);
+                  return {
+                    firstName: parsed.firstName,
+                    lastNamePaternal: parsed.lastNamePaternal,
+                    lastNameMaternal: parsed.lastNameMaternal || undefined,
+                  };
+                })(),
               },
             }),
         appointmentType: appointmentForm.appointmentType,
@@ -437,6 +496,10 @@ function DoctorAgendaContent() {
   };
 
   const handleCreateBlock = async () => {
+    if (!canEditCurrentAgenda) {
+      toast.error("Solo puedes bloquear horarios en tu propia agenda.");
+      return;
+    }
     setSubmittingBlock(true);
     try {
       if (!blockForm.startTime || !blockForm.endTime) {
@@ -450,6 +513,7 @@ function DoctorAgendaContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...(isViewingAnotherDoctor ? { doctorId: selectedDoctorId } : {}),
           startTime,
           endTime,
           reason: blockForm.reason || undefined,
@@ -490,6 +554,10 @@ function DoctorAgendaContent() {
 
   const handleQuickReschedule = async () => {
     if (!selectedAppointment) return;
+    if (!canEditCurrentAgenda) {
+      toast.error("Solo puedes reagendar citas de tu propia agenda.");
+      return;
+    }
     setSubmittingReschedule(true);
     try {
       let newStartTime: string;
@@ -534,6 +602,10 @@ function DoctorAgendaContent() {
     apt: AgendaAppointment,
     status: "CONFIRMED" | "COMPLETED" | "CANCELLED"
   ) => {
+    if (!canEditCurrentAgenda) {
+      toast.error("Solo puedes modificar estados en tu propia agenda.");
+      return;
+    }
     const statusKey = status.toLowerCase();
     if (status === "CONFIRMED" && !canConfirmAppointment(apt)) return;
     if (status === "COMPLETED" && !canCompleteAppointment(apt)) return;
@@ -600,16 +672,42 @@ function DoctorAgendaContent() {
               >
                 Semana
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => setNewBlockOpen(true)} className="w-full sm:w-auto">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setNewBlockOpen(true)}
+                className="w-full sm:w-auto"
+                disabled={!canEditCurrentAgenda}
+              >
                 <Ban className="w-4 h-4 mr-2" />
                 Bloquear horario
               </Button>
-              <Button size="sm" onClick={openNewAppointmentModal} className="w-full sm:w-auto">
+              <Button size="sm" onClick={openNewAppointmentModal} className="w-full sm:w-auto" disabled={!canEditCurrentAgenda}>
                 <Plus className="w-4 h-4 mr-2" />
                 Nueva cita
               </Button>
             </div>
           </div>
+
+          {agendaScope?.canViewClinicAgenda && agendaScope.doctors.length > 0 && (
+            <div className="mb-3">
+              <Select
+                label="Agenda del médico"
+                value={selectedDoctorId || agendaScope.currentDoctorId}
+                onValueChange={setSelectedDoctorId}
+                options={agendaScope.doctors.map((doctor) => ({
+                  value: doctor.id,
+                  label: doctor.name,
+                }))}
+              />
+            </div>
+          )}
+
+          {isViewingAnotherDoctor && !canEditCurrentAgenda && (
+            <div className="mb-3 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground">
+              Vista compartida activa: puedes consultar la agenda del médico seleccionado, pero las acciones de edición permanecen en solo lectura.
+            </div>
+          )}
 
           {statusFilterLabel && (
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
@@ -691,6 +789,9 @@ function DoctorAgendaContent() {
                               <div className="flex items-start justify-between">
                                 <div>
                                   <div className="font-semibold text-foreground">{apt.patientName}</div>
+                                  {agendaScope?.canViewClinicAgenda && apt.doctorName && (
+                                    <div className="text-xs text-muted-foreground">Dr(a). {apt.doctorName}</div>
+                                  )}
                                   <div className="text-sm text-muted-foreground mt-1 capitalize">{apt.consultType} · {apt.patientPhone}</div>
                                 </div>
                                 <div className="flex flex-col items-end gap-2">
@@ -802,6 +903,9 @@ function DoctorAgendaContent() {
                         <div className="text-xs font-semibold text-foreground">
                           {apt.time} · {apt.patientName}
                         </div>
+                        {agendaScope?.canViewClinicAgenda && apt.doctorName && (
+                          <div className="text-[11px] text-muted-foreground">Dr(a). {apt.doctorName}</div>
+                        )}
                         <div className="text-xs text-muted-foreground capitalize">{apt.consultType}</div>
                         {canModifyAppointment(apt) && (
                           <div className="mt-1 flex gap-1">
@@ -908,7 +1012,7 @@ function DoctorAgendaContent() {
                   placeholder="Selecciona un paciente..."
                   options={directoryPatients.map((patient) => ({
                     value: patient.id,
-                    label: `${patient.fullName} · ${patient.phone}`,
+                    label: `${formatPatientName(patient)} · ${patient.phone}`,
                   }))}
                 />
               )}

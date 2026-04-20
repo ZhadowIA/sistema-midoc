@@ -111,6 +111,29 @@ type DashboardSummaryResponse = {
       actionHref: string;
     }>;
   };
+  clinicAggregates?: {
+    mode: "SINGLE_DOCTOR" | "CLINIC";
+    clinicId: string | null;
+    doctorsCount: number;
+    totals: {
+      todayAppointments: number;
+      upcomingAppointments: number;
+      pending: number;
+      confirmed: number;
+      completed: number;
+      cancelled: number;
+      overduePending: number;
+    };
+    doctors: Array<{
+      doctorId: string;
+      doctorName: string;
+      todayAppointments: number;
+      pending: number;
+      confirmed: number;
+      completed: number;
+      overduePending: number;
+    }>;
+  };
 };
 
 const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> = {
@@ -239,6 +262,7 @@ export default function DoctorDashboard() {
   const analytics = dashboardData?.analytics;
   const priorityThree = dashboardData?.priorityThree;
   const setupChecklist = dashboardData?.setupChecklist;
+  const clinicAggregates = dashboardData?.clinicAggregates;
   const currencyFormatter = new Intl.NumberFormat("es-MX", {
     style: "currency",
     currency: "MXN",
@@ -330,6 +354,48 @@ export default function DoctorDashboard() {
             </button>
           ))}
         </div>
+
+        {clinicAggregates?.mode === "CLINIC" && (
+          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
+            <div className="px-6 py-4 border-b border-border">
+              <h2 className="font-semibold text-foreground">Reporte agregado de clínica</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                {clinicAggregates.doctorsCount} médicos activos en la clínica
+              </p>
+            </div>
+            <div className="p-6">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Citas hoy (clínica)</p>
+                  <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.todayAppointments}</p>
+                </div>
+                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Pendientes</p>
+                  <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.pending}</p>
+                </div>
+                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Confirmadas</p>
+                  <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.confirmed}</p>
+                </div>
+                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Completadas</p>
+                  <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.completed}</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {clinicAggregates.doctors.map((doctor) => (
+                  <div key={doctor.doctorId} className="rounded-lg border border-border p-3 bg-secondary/10">
+                    <p className="text-sm font-semibold text-foreground">{doctor.doctorName}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Hoy: {doctor.todayAppointments} · Pendientes: {doctor.pending} · Confirmadas: {doctor.confirmed} · Completadas: {doctor.completed} · Vencidas: {doctor.overduePending}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
           <div className="bg-card border border-border rounded-2xl shadow-sm">
             <div className="px-6 py-4 border-b border-border">

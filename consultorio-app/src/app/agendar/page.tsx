@@ -56,7 +56,9 @@ type Step = "auth" | "doctor" | "type" | "date" | "time" | "info" | "confirm";
 
 type PatientAuthProfile = {
   id: string;
-  fullName: string;
+  firstName?: string | null;
+  lastNamePaternal?: string | null;
+  lastNameMaternal?: string | null;
   phone: string;
   email?: string | null;
   dateOfBirth: string;
@@ -353,8 +355,15 @@ function BookingFlowContent() {
     setPatientUserId(payload.user.id);
     setBookAsGuest(false);
     setAuthMode("guest");
-    const sourceName = payload.profile?.fullName || payload.user?.name || "";
-    const parsed = parseFullName(sourceName);
+    const profile = payload.profile;
+    const hasStructuredName = Boolean(profile?.firstName && profile?.lastNamePaternal);
+    const parsed = hasStructuredName
+      ? {
+          firstName: profile?.firstName ?? "",
+          lastNamePaternal: profile?.lastNamePaternal ?? "",
+          lastNameMaternal: profile?.lastNameMaternal ?? null,
+        }
+      : parseFullName(payload.user?.name || "");
     setFormData((prev) => ({
       ...prev,
       firstName: parsed.firstName || prev.firstName,

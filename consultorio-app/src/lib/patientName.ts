@@ -8,6 +8,7 @@ export interface NameParts {
   firstName?: string | null
   lastNamePaternal?: string | null
   lastNameMaternal?: string | null
+  fullName?: string | null
 }
 
 export function buildFullName(parts: NameParts): string {
@@ -15,6 +16,12 @@ export function buildFullName(parts: NameParts): string {
     .map((part) => (part ?? '').trim())
     .filter((part) => part.length > 0)
     .join(' ')
+}
+
+export function formatPatientName(patient: NameParts): string {
+  const structured = buildFullName(patient)
+  if (structured.length > 0) return structured
+  return (patient.fullName ?? '').trim()
 }
 
 export function parseFullName(fullName: string): StructuredName {

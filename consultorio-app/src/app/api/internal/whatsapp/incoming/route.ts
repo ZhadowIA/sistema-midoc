@@ -56,6 +56,16 @@ const CANCEL_KEYWORDS = [
 ]
 
 const GREETING_KEYWORDS = ['hola', 'buen dia', 'buenos dias', 'buenas tardes', 'buenas noches']
+const RESCHEDULE_KEYWORDS = [
+  'reagendar',
+  'reagendo',
+  'reagendar cita',
+  'reprogramar',
+  'reprogramo',
+  'cambiar cita',
+  'cambiar horario',
+  'mover cita',
+]
 
 function normalizeText(value: string) {
   return value
@@ -78,6 +88,30 @@ function normalizePhone(value: string) {
   return digits
 }
 
+function parseRescheduleDateTimeFromMessage(message: string): Date | null {
+  const normalized = message.trim()
+  const match = normalized.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})/)
+  if (!match) return null
+  const [, dd, mm, yyyy, hh, min] = match
+  const day = Number(dd)
+  const month = Number(mm)
+  const year = Number(yyyy)
+  const hour = Number(hh)
+  const minute = Number(min)
+  const candidate = new Date(year, month - 1, day, hour, minute, 0, 0)
+  if (
+    Number.isNaN(candidate.getTime()) ||
+    candidate.getFullYear() !== year ||
+    candidate.getMonth() !== month - 1 ||
+    candidate.getDate() !== day ||
+    candidate.getHours() !== hour ||
+    candidate.getMinutes() !== minute
+  ) {
+    return null
+  }
+  return candidate
+}
+
 function detectIntent(message: string): WhatsAppIntent {
   const normalized = normalizeText(message)
   if (!normalized) return WhatsAppIntent.UNKNOWN
@@ -95,6 +129,10 @@ function detectIntent(message: string): WhatsAppIntent {
 
   if (GREETING_KEYWORDS.some((keyword) => normalized.includes(keyword))) {
     return WhatsAppIntent.GREETING
+  }
+
+  if (RESCHEDULE_KEYWORDS.some((keyword) => normalized.includes(keyword))) {
+    return WhatsAppIntent.QUESTION
   }
 
   if (normalized.includes('?') || normalized.includes('que ') || normalized.includes('qué ')) {
@@ -183,7 +221,9 @@ async function getCandidateAppointments(doctorId: string, now: Date) {
       patient: {
         select: {
           id: true,
-          fullName: true,
+          firstName: true,
+          lastNamePaternal: true,
+          lastNameMaternal: true,
           phone: true,
         },
       },
@@ -224,6 +264,8 @@ export async function POST(request: Request) {
     const incomingPhone = normalizePhone(parsed.data.from)
     const message = parsed.data.message.trim()
     const intent = detectIntent(message)
+    const normalizedMessage = normalizeText(message)
+    const wantsReschedule = RESCHEDULE_KEYWORDS.some((keyword) => normalizedMessage.includes(keyword))
     const now = new Date()
 
     const rules = await getDoctorWhatsAppRules(doctorId)
@@ -340,16 +382,110 @@ export async function POST(request: Request) {
         })
       }
     } else if (rules.autoReplyEnabled) {
-      if (matchedAppointment) {
+      if (wantsReschedule) {
+        if (!matchedAppointment) {
+          replyMessage =
+            'Recibimos tu solicitud para reagendar, pero no encontramos una cita próxima con este número. ' +
+            'Comparte tu nombre completo y la fecha aproximada de la cita para ayudarte.'
+        } else {
+          const parsedNewStart = parseRescheduleDateTimeFromMessage(message)
+          if (!parsedNewStart) {
+            replyMessage =
+              `Recibimos tu solicitud para reagendar la cita del ${formatDateTime(matchedAppointment.startTime)}. ` +
+              'Envíanos la nueva fecha y hora en formato DD/MM/AAAA HH:mm para validar disponibilidad.'
+          } else if (parsedNewStart <= now) {
+            replyMessage =
+              'La nueva fecha/hora debe ser futura. Envíala en formato DD/MM/AAAA HH:mm.'
+          } else if (matchedAppointment.status === AppointmentStatus.CANCELLED) {
+            replyMessage =
+              `La cita del ${formatDateTime(matchedAppointment.startTime)} aparece cancelada. ` +
+              'Por favor solicita una nueva cita al consultorio.'
+          } else {
+            const newEnd = new Date(parsedNewStart.getTime() + matchedAppointment.durationMin * 60_000)
+            const overlapAppointment = await prisma.appointment.findFirst({
+              where: {
+                doctorId,
+                id: { not: matchedAppointment.id },
+                status: { notIn: [AppointmentStatus.CANCELLED] },
+                startTime: { lt: newEnd },
+                endTime: { gt: parsedNewStart },
+              },
+              select: { id: true },
+            })
+
+            const overlapBlock = overlapAppointment
+              ? null
+              : await prisma.scheduleBlock.findFirst({
+                  where: {
+                    doctorId,
+                    startTime: { lt: newEnd },
+                    endTime: { gt: parsedNewStart },
+                  },
+                  select: { id: true },
+                })
+
+            if (overlapAppointment || overlapBlock) {
+              replyMessage =
+                'Ese horario no está disponible. Envíanos otra opción en formato DD/MM/AAAA HH:mm.'
+            } else {
+              const localDate = new Date(parsedNewStart)
+              localDate.setHours(0, 0, 0, 0)
+              const previousStatus = matchedAppointment.status
+              const updated = await prisma.appointment.update({
+                where: { id: matchedAppointment.id },
+                data: {
+                  date: localDate,
+                  startTime: parsedNewStart,
+                  endTime: newEnd,
+                  status: previousStatus === AppointmentStatus.PENDING ? AppointmentStatus.PENDING : AppointmentStatus.CONFIRMED,
+                },
+              })
+
+              await AppointmentAuditService.safeLog({
+                doctorId,
+                appointmentId: updated.id,
+                patientId: matchedAppointment.patient.id,
+                actorType: 'BOT',
+                source: 'WHATSAPP_BOT',
+                action: 'APPOINTMENT_RESCHEDULED',
+                fromStatus: previousStatus,
+                toStatus: updated.status,
+                metadata: {
+                  trigger: 'patient_whatsapp_message',
+                  intent: 'RESCHEDULE_REQUEST',
+                  messageId: parsed.data.messageId ?? null,
+                  previousStartTime: matchedAppointment.startTime.toISOString(),
+                  previousEndTime: matchedAppointment.endTime.toISOString(),
+                  nextStartTime: updated.startTime.toISOString(),
+                  nextEndTime: updated.endTime.toISOString(),
+                },
+              })
+
+              replyMessage =
+                `Tu cita fue reagendada al ${formatDateTime(updated.startTime)}. ` +
+                'Si deseas otro cambio, responde con la nueva fecha y hora.'
+              logEvent('info', 'whatsapp.appointment.rescheduled_from_message', {
+                appointmentId: updated.id,
+                doctorId,
+                patientId: matchedAppointment.patient.id,
+                messageId: parsed.data.messageId ?? null,
+              })
+            }
+          }
+        }
+        action = WhatsAppMessageAction.NO_CHANGE
+      } else if (matchedAppointment) {
         replyMessage =
           `Tu próxima cita es el ${formatDateTime(matchedAppointment.startTime)}. ` +
-          'Si deseas confirmarla responde "CONFIRMO". Si deseas cancelarla responde "CANCELAR".'
+          'Si deseas confirmarla responde "CONFIRMO". Si deseas cancelarla responde "CANCELAR". Si deseas reagendar responde "REAGENDAR".'
       } else {
         replyMessage =
           'Hola, gracias por escribir al consultorio. Te responderemos a la brevedad. ' +
-          'Si deseas confirmar una cita, responde "CONFIRMO". Para cancelar, responde "CANCELAR".'
+          'Si deseas confirmar una cita, responde "CONFIRMO". Para cancelar, responde "CANCELAR". Para reagendar, responde "REAGENDAR".'
       }
-      action = WhatsAppMessageAction.AUTO_REPLY
+      if (!wantsReschedule) {
+        action = WhatsAppMessageAction.AUTO_REPLY
+      }
     }
 
     await WhatsAppMessageLogService.create({

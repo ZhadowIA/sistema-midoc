@@ -45,7 +45,9 @@ export async function POST(request: Request) {
       orderBy: { updatedAt: 'desc' },
       select: {
         id: true,
-        fullName: true,
+        firstName: true,
+        lastNamePaternal: true,
+        lastNameMaternal: true,
         phone: true,
         email: true,
         dateOfBirth: true,
@@ -63,7 +65,9 @@ export async function POST(request: Request) {
       profile: latestPatient
         ? {
             id: latestPatient.id,
-            fullName: latestPatient.fullName,
+            firstName: latestPatient.firstName,
+            lastNamePaternal: latestPatient.lastNamePaternal,
+            lastNameMaternal: latestPatient.lastNameMaternal,
             phone: latestPatient.phone,
             email: latestPatient.email,
             dateOfBirth: toLocalDateKey(latestPatient.dateOfBirth),

@@ -4,12 +4,15 @@ import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 import {
   isAiAvailableOnServer,
   isClinicalHistoryEnabled,
-  isConsultaUnifiedEnabled,
 } from '@/lib/featureFlags'
+import {
+  resolveConsultationSession,
+  shouldSkipSessionQueries,
+} from '@/lib/consultationWorkspace'
 import { EncounterHistoryService } from '@/services/EncounterHistoryService'
 
 export async function GET(_request: Request, props: { params: Promise<{ id: string }> }) {
-  if (!isConsultaUnifiedEnabled() || !isClinicalHistoryEnabled()) {
+  if (!isClinicalHistoryEnabled()) {
     return jsonNoStore({ error: 'Modo consulta unificado no habilitado' }, { status: 404 })
   }
   const params = await props.params
@@ -31,7 +34,9 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
         patient: {
           select: {
             id: true,
-            fullName: true,
+            firstName: true,
+            lastNamePaternal: true,
+            lastNameMaternal: true,
             dateOfBirth: true,
             phone: true,
           },
@@ -48,26 +53,34 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
     const encounter = await EncounterHistoryService.getOrBuildForAppointment(
       appointment.id,
     )
-    const existing = await prisma.encounterHistory.findUnique({
-      where: { appointmentId: appointment.id },
-      select: { consultationMode: true, aiConsent: true, aiConsentDecidedAt: true },
+    const isReadOnly = shouldSkipSessionQueries({
+      appointmentStatus: appointment.status,
+      noteSignedAt: appointment.clinicalNote?.signedAt ?? null,
     })
-    const doctorConfig = await prisma.doctorConfig.findUnique({
-      where: { doctorId },
-      select: { preferredConsultationMode: true },
+    const existing = isReadOnly
+      ? null
+      : await prisma.encounterHistory.findUnique({
+          where: { appointmentId: appointment.id },
+          select: { consultationMode: true, aiConsent: true, aiConsentDecidedAt: true },
+        })
+    const doctorConfig = isReadOnly
+      ? null
+      : await prisma.doctorConfig.findUnique({
+          where: { doctorId },
+          select: { preferredConsultationMode: true },
+        })
+    const session = resolveConsultationSession({
+      isReadOnly,
+      existing,
+      preferredConsultationMode: doctorConfig?.preferredConsultationMode ?? null,
     })
 
     return jsonNoStore({
-      appointment,
-      encounter,
-      session: {
-        consultationMode:
-          existing?.consultationMode ??
-          doctorConfig?.preferredConsultationMode ??
-          'MANUAL',
-        aiConsent: existing?.aiConsent ?? 'PENDING',
-        aiConsentDecidedAt: existing?.aiConsentDecidedAt ?? null,
+      appointment: {
+        ...appointment,
       },
+      encounter,
+      session,
       capabilities: {
         aiAvailable: isAiAvailableOnServer(),
       },

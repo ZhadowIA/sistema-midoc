@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { buildFullName, parseFullName } from '../../lib/patientName.ts'
+import { buildFullName, parseFullName, formatPatientName } from '../../lib/patientName.ts'
 import { runSuite } from '../testHarness.ts'
 
 export async function runPatientNameUnitTests() {
@@ -112,6 +112,40 @@ export async function runPatientNameUnitTests() {
         const original = 'Juan Pérez Gómez'
         const parsed = parseFullName(original)
         assert.equal(buildFullName(parsed), original)
+      },
+    },
+    {
+      name: 'formatPatientName returns estructurado completo',
+      run: () => {
+        const r = formatPatientName({
+          firstName: 'Juan',
+          lastNamePaternal: 'Pérez',
+          lastNameMaternal: 'Gómez',
+        })
+        assert.equal(r, 'Juan Pérez Gómez')
+      },
+    },
+    {
+      name: 'formatPatientName omite apellido materno ausente',
+      run: () => {
+        const r = formatPatientName({
+          firstName: 'María',
+          lastNamePaternal: 'López',
+          lastNameMaternal: null,
+        })
+        assert.equal(r, 'María López')
+      },
+    },
+    {
+      name: 'formatPatientName usa fallback fullName legacy cuando faltan campos estructurados',
+      run: () => {
+        const r = formatPatientName({
+          firstName: '',
+          lastNamePaternal: '',
+          lastNameMaternal: null,
+          fullName: '  Paciente Legacy  ',
+        })
+        assert.equal(r, 'Paciente Legacy')
       },
     },
   ])

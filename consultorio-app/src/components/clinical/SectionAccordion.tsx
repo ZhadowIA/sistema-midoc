@@ -8,15 +8,34 @@ type Props = {
   badge?: ReactNode;
   defaultOpen?: boolean;
   children: ReactNode;
+  id?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
-export function SectionAccordion({ title, badge, defaultOpen = false, children }: Props) {
-  const [open, setOpen] = useState(defaultOpen);
+export function SectionAccordion({
+  title,
+  badge,
+  defaultOpen = false,
+  children,
+  id,
+  open: controlledOpen,
+  onOpenChange,
+}: Props) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    if (!isControlled) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
   return (
     <div className="rounded-2xl border border-border bg-background overflow-hidden">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        id={id}
+        data-consultation-section={id ?? undefined}
+        onClick={() => setOpen(!open)}
         className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/30 transition-colors"
         aria-expanded={open}
       >

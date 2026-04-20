@@ -5,6 +5,7 @@ import { CopyPlus } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { PatientClinicalAlerts } from "@/components/clinical/PatientClinicalAlerts";
+import { formatPatientName } from "@/lib/patientName";
 
 type PrescriptionItem = {
   medication: string;
@@ -22,7 +23,9 @@ type PrescriptionAppointment = {
   startTime: string;
   patient: {
     id: string;
-    fullName: string;
+    firstName?: string | null;
+    lastNamePaternal?: string | null;
+    lastNameMaternal?: string | null;
     dateOfBirth: string;
   };
   doctor: {
@@ -132,7 +135,7 @@ export default function PrescriptionPrintPage(props: { params: Promise<{ id: str
 
         {/* Patient Info Box */}
         <div className="bg-gray-50 rounded-xl p-4 mb-8 grid grid-cols-2 gap-4 text-sm border">
-           <div><span className="font-semibold text-gray-500">Paciente:</span> {patient.fullName}</div>
+          <div><span className="font-semibold text-gray-500">Paciente:</span> {formatPatientName(patient)}</div>
            <div><span className="font-semibold text-gray-500">Edad:</span> {new Date().getFullYear() - new Date(patient.dateOfBirth).getFullYear()} años</div>
            <div><span className="font-semibold text-gray-500">Fecha de Consulta:</span> {format(new Date(appointment.startTime), "dd/MM/yyyy HH:mm")}</div>
            <div><span className="font-semibold text-gray-500">Peso / Talla:</span> __________________</div>

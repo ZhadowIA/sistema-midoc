@@ -8,6 +8,7 @@ import { Button } from "@/components/Button";
 import { Modal } from "@/components/Modal";
 import { Input } from "@/components/Input";
 import { toast } from "sonner";
+import { formatPatientName } from "@/lib/patientName";
 
 type PatientAppointmentSummary = {
   startTime: string;
@@ -16,7 +17,9 @@ type PatientAppointmentSummary = {
 
 type PatientDirectoryItem = {
   id: string;
-  fullName: string;
+  firstName?: string | null;
+  lastNamePaternal?: string | null;
+  lastNameMaternal?: string | null;
   dateOfBirth: string;
   phone: string;
   appointmentCount?: number;
@@ -50,7 +53,9 @@ export default function PatientsDirectoryPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({
-    fullName: "",
+    firstName: "",
+    lastNamePaternal: "",
+    lastNameMaternal: "",
     phone: "",
     email: "",
     dateOfBirth: "",
@@ -74,14 +79,23 @@ export default function PatientsDirectoryPage() {
       const res = await fetch("/api/clinical/admin/patients", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(createForm),
+        body: JSON.stringify({
+          firstName: createForm.firstName,
+          lastNamePaternal: createForm.lastNamePaternal,
+          lastNameMaternal: createForm.lastNameMaternal || undefined,
+          phone: createForm.phone,
+          email: createForm.email,
+          dateOfBirth: createForm.dateOfBirth,
+        }),
       });
       const data = await res.json() as { error?: string; patient?: { id: string } };
       if (!res.ok) throw new Error(data.error || "No se pudo crear el paciente");
 
       setCreateOpen(false);
       setCreateForm({
-        fullName: "",
+        firstName: "",
+        lastNamePaternal: "",
+        lastNameMaternal: "",
         phone: "",
         email: "",
         dateOfBirth: "",
@@ -100,7 +114,7 @@ export default function PatientsDirectoryPage() {
   };
 
   const filtered = patients.filter(p =>
-    p.fullName.toLowerCase().includes(search.toLowerCase()) ||
+    formatPatientName(p).toLowerCase().includes(search.toLowerCase()) ||
     p.phone.includes(search)
   );
 
@@ -159,7 +173,7 @@ export default function PatientsDirectoryPage() {
                       <User className="w-6 h-6 text-primary" />
                     </div>
                     <div className="min-w-0">
-                      <h3 className="font-medium text-foreground truncate">{patient.fullName}</h3>
+                      <h3 className="font-medium text-foreground truncate">{formatPatientName(patient)}</h3>
                       <p className="text-sm text-muted-foreground">{age} años</p>
                     </div>
                   </div>
@@ -193,10 +207,22 @@ export default function PatientsDirectoryPage() {
         description="Este paciente se agregará a tu directorio para poder asignarle citas."
       >
         <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Input
+              label="Nombre(s)"
+              value={createForm.firstName}
+              onChange={(e) => setCreateForm((prev) => ({ ...prev, firstName: e.target.value }))}
+            />
+            <Input
+              label="Apellido paterno"
+              value={createForm.lastNamePaternal}
+              onChange={(e) => setCreateForm((prev) => ({ ...prev, lastNamePaternal: e.target.value }))}
+            />
+          </div>
           <Input
-            label="Nombre completo"
-            value={createForm.fullName}
-            onChange={(e) => setCreateForm((prev) => ({ ...prev, fullName: e.target.value }))}
+            label="Apellido materno (opcional)"
+            value={createForm.lastNameMaternal}
+            onChange={(e) => setCreateForm((prev) => ({ ...prev, lastNameMaternal: e.target.value }))}
           />
           <div className="grid grid-cols-2 gap-3">
             <Input
@@ -221,7 +247,7 @@ export default function PatientsDirectoryPage() {
           <Button
             fullWidth
             onClick={handleCreatePatient}
-            disabled={creating || !createForm.fullName || !createForm.phone}
+            disabled={creating || !createForm.firstName || !createForm.lastNamePaternal || !createForm.phone}
           >
             {creating ? "Creando..." : "Guardar paciente"}
           </Button>

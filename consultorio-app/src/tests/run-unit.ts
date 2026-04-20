@@ -5,6 +5,10 @@ import { runSignoffSummaryUnitTests } from './unit/signoffSummary.test.ts'
 import { runConsultationWorkspaceUnitTests } from './unit/consultationWorkspace.test.ts'
 import { runPatientNameUnitTests } from './unit/patientName.test.ts'
 import { runRecaptchaUnitTests } from './unit/recaptcha.test.ts'
+import { runAiNoteGenerationServiceUnitTests } from './unit/aiNoteGenerationService.test.ts'
+import { runAiInsightsUnitTests } from './unit/aiInsights.test.ts'
+import { runPharmacovigilanceDedupeUnitTests } from './unit/pharmacovigilanceDedupe.test.ts'
+import { runFeatureFlagsUnitTests } from './unit/featureFlags.test.ts'
 
 async function main() {
   await runDateTimeUnitTests()
@@ -14,6 +18,10 @@ async function main() {
   await runConsultationWorkspaceUnitTests()
   await runPatientNameUnitTests()
   await runRecaptchaUnitTests()
+  await runAiNoteGenerationServiceUnitTests()
+  await runAiInsightsUnitTests()
+  await runPharmacovigilanceDedupeUnitTests()
+  await runFeatureFlagsUnitTests()
   console.log('\nUnit tests completed successfully.')
 }
 

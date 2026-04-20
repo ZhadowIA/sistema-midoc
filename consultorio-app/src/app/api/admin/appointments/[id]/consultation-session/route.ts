@@ -3,7 +3,6 @@ import { jsonNoStore } from '@/lib/http'
 import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 import {
   isClinicalHistoryEnabled,
-  isConsultaUnifiedEnabled,
 } from '@/lib/featureFlags'
 import { EncounterHistoryService } from '@/services/EncounterHistoryService'
 import { z } from 'zod'
@@ -15,7 +14,7 @@ const bodySchema = z.object({
 })
 
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
-  if (!isConsultaUnifiedEnabled() || !isClinicalHistoryEnabled()) {
+  if (!isClinicalHistoryEnabled()) {
     return jsonNoStore({ error: 'Modo consulta unificado no habilitado' }, { status: 404 })
   }
   const params = await props.params
@@ -48,6 +47,10 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         doctorId,
         parsed.data.consultationMode,
       )
+      await prisma.doctorConfig.updateMany({
+        where: { doctorId },
+        data: { preferredConsultationMode: parsed.data.consultationMode },
+      })
     }
     if (parsed.data.aiConsent) {
       await EncounterHistoryService.setAiConsent(

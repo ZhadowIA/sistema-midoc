@@ -29,6 +29,17 @@ type SubscriptionRecord = {
 
 type SubscriptionResponse = {
   subscription: SubscriptionRecord | null;
+  scope?: {
+    mode: "DOCTOR" | "CLINIC";
+    clinicId: string | null;
+    billingDoctorId: string;
+  };
+  seats?: {
+    included: number;
+    used: number;
+    available: number;
+    overLimit: boolean;
+  } | null;
 };
 
 export default function DoctorSubscriptionPage() {
@@ -38,6 +49,8 @@ export default function DoctorSubscriptionPage() {
   const [subscription, setSubscription] = useState<SubscriptionRecord | null>(null);
   const [setup, setSetup] = useState<SetupStatusResponse>({});
   const [error, setError] = useState("");
+  const [subscriptionScope, setSubscriptionScope] = useState<SubscriptionResponse["scope"] | null>(null);
+  const [seats, setSeats] = useState<SubscriptionResponse["seats"]>(null);
 
   const loadSubscriptionContext = useCallback(async () => {
     const [setupResponse, subscriptionResponse] = await Promise.all([
@@ -52,6 +65,8 @@ export default function DoctorSubscriptionPage() {
 
     setSetup(setupResponse);
     setSubscription(subscriptionResponse.subscription || null);
+    setSubscriptionScope(subscriptionResponse.scope || null);
+    setSeats(subscriptionResponse.seats || null);
   }, [router]);
 
   useEffect(() => {
@@ -164,6 +179,19 @@ export default function DoctorSubscriptionPage() {
             <p className="text-sm text-muted-foreground">
               Método: {subscription.paymentMethodLast4 ? `**** ${subscription.paymentMethodLast4}` : "No disponible"}
             </p>
+            {subscriptionScope?.mode === "CLINIC" && seats && (
+              <div className="rounded-lg border border-border p-3 bg-background/70">
+                <p className="text-sm text-foreground font-medium">Seats de clínica</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Usados: {seats.used} / Incluidos: {seats.included} · Disponibles: {seats.available}
+                </p>
+                {seats.overLimit && (
+                  <p className="text-xs text-destructive mt-1">
+                    La clínica está por encima de seats incluidos.
+                  </p>
+                )}
+              </div>
+            )}
             {subscription.cancelAtPeriodEnd && (
               <div className="rounded-lg bg-warning/10 border border-warning/30 text-warning text-sm p-3">
                 Tu suscripción está programada para cancelarse al final del periodo actual.

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { parseDateOnlyLocal } from './dateTime.ts'
-import { buildFullName, parseFullName } from './patientName.ts'
+import { buildFullName } from './patientName.ts'
 
 export class ContractValidationError extends Error {
   public readonly status: number
@@ -77,9 +77,9 @@ const contactSchema = z.object({
 })
 
 const publicAppointmentSchema = z.object({
-  // Campos estructurados (preferidos)
-  firstName: z.string().trim().min(1).max(60).optional(),
-  lastNamePaternal: z.string().trim().min(1).max(60).optional(),
+  // Campos estructurados (obligatorios)
+  firstName: z.string().trim().min(1).max(60),
+  lastNamePaternal: z.string().trim().min(1).max(60),
   lastNameMaternal: z
     .string()
     .trim()
@@ -89,15 +89,6 @@ const publicAppointmentSchema = z.object({
     .transform((value) => (value && value.length > 0 ? value : null)),
   sex: z.enum(PATIENT_SEX_VALUES).optional().nullable(),
   gender: z.enum(PATIENT_GENDER_VALUES).optional().nullable(),
-
-  // Legacy: fullName se sigue aceptando y se parsea internamente
-  fullName: z
-    .string()
-    .trim()
-    .min(2, 'El nombre es requerido')
-    .max(120, 'El nombre es demasiado largo')
-    .transform((value) => value.replace(/\s+/g, ' '))
-    .optional(),
 
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha de nacimiento inválida'),
   phone: phoneSchema,
@@ -123,7 +114,7 @@ type RawPublicAppointmentPayload = z.infer<typeof publicAppointmentSchema>
 
 export type PublicAppointmentPayload = Omit<
   RawPublicAppointmentPayload,
-  'firstName' | 'lastNamePaternal' | 'lastNameMaternal' | 'fullName'
+  'firstName' | 'lastNamePaternal' | 'lastNameMaternal'
 > & {
   firstName: string
   lastNamePaternal: string
@@ -190,41 +181,10 @@ export function parsePublicAppointmentPayload(input: unknown): PublicAppointment
   }
 
   const payload = parsedPayload.data
-  const hasStructured = Boolean(payload.firstName && payload.lastNamePaternal)
-  const hasLegacyFullName = Boolean(payload.fullName)
-
-  if (!hasStructured && !hasLegacyFullName) {
-    throw new ContractValidationError(
-      'El nombre y apellido paterno del paciente son requeridos.'
-    )
-  }
-
-  if (payload.firstName && !payload.lastNamePaternal) {
-    throw new ContractValidationError('El apellido paterno del paciente es requerido.')
-  }
-
-  let firstName: string
-  let lastNamePaternal: string
-  let lastNameMaternal: string | null
-  let fullName: string
-
-  if (hasStructured) {
-    firstName = payload.firstName!
-    lastNamePaternal = payload.lastNamePaternal!
-    lastNameMaternal = payload.lastNameMaternal ?? null
-    fullName = buildFullName({ firstName, lastNamePaternal, lastNameMaternal })
-  } else {
-    const parsedName = parseFullName(payload.fullName!)
-    firstName = parsedName.firstName
-    lastNamePaternal = parsedName.lastNamePaternal
-    lastNameMaternal = parsedName.lastNameMaternal
-    fullName = payload.fullName!
-    if (!lastNamePaternal) {
-      throw new ContractValidationError(
-        'El nombre proporcionado no incluye apellido paterno.'
-      )
-    }
-  }
+  const firstName = payload.firstName
+  const lastNamePaternal = payload.lastNamePaternal
+  const lastNameMaternal = payload.lastNameMaternal ?? null
+  const fullName = buildFullName({ firstName, lastNamePaternal, lastNameMaternal })
 
   let parsedDateOfBirth: Date
   try {

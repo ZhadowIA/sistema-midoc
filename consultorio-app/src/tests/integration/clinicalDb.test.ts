@@ -59,6 +59,19 @@ export async function runClinicalDbIntegrationTests() {
           where: { patientId: patient.id },
         })
         assert.equal(v2, 2, 'segundo upsert crea nueva versión')
+
+        const versions = await ClinicalHistoryService.listVersionsByPatientId(patient.id, 10)
+        assert.equal(versions.length, 2, 'debe listar versiones creadas')
+        assert.ok(
+          versions[0].createdAt.getTime() >= versions[1].createdAt.getTime(),
+          'debe regresar ordenado desc por createdAt',
+        )
+        assert.equal(versions[0].status, payload.status)
+        assert.equal(
+          (versions[0].payload as { identification?: { bloodType?: string } }).identification
+            ?.bloodType,
+          'A+',
+        )
       },
     },
     {
@@ -123,6 +136,68 @@ export async function runClinicalDbIntegrationTests() {
         const h1 = hashSnapshot({ a: 1, b: [2, 3] })
         const h2 = hashSnapshot({ b: [2, 3], a: 1 })
         assert.equal(h1, h2, 'canonicalize debe producir hashes estables')
+      },
+    },
+    {
+      name: 'firma de SOAP con mínimos completos produce signatureHash válido (equivalente a POST /note sign:true)',
+      run: async () => {
+        await truncateAll(prisma)
+        const { doctor, patient } = await seedDoctorAndPatient(prisma)
+        const appointment = await seedAppointment(prisma, doctor.id, patient.id)
+        const payload = buildEmptyEncounterHistory()
+        payload.chiefComplaint = 'cefalea'
+        payload.presentIllness = { summary: 'dolor de 2 días' }
+        payload.vitals = { ta: '120/80', fc: '72' }
+        payload.physicalExam = { neurologico: 'sin focalización' }
+        payload.assessment = [{ diagnosis: 'cefalea tensional' }]
+        payload.treatmentPlan = { farmacologico: 'paracetamol' }
+        const encounter = await EncounterHistoryService.upsertByAppointmentId(
+          appointment.id,
+          patient.id,
+          doctor.id,
+          payload,
+          { actorUserId: doctor.id },
+        )
+        const check = hasMinimumForSignoff(payload)
+        assert.equal(check.ok, true, 'debe permitir firmar con mínimos completos')
+
+        const snapshot = {
+          encounterHistoryId: encounter.id,
+          appointmentId: appointment.id,
+          patientId: patient.id,
+          completionPct: encounter.completionPct,
+          status: encounter.status,
+          payload,
+          soap: {
+            subjective: 'Refiere dolor opresivo frontal',
+            objective: 'Signos vitales estables',
+            assessment: 'Cefalea tensional',
+            plan: 'Paracetamol y medidas generales',
+          },
+        }
+        const signatureHash = hashSnapshot(snapshot)
+        const signed = await prisma.clinicalNote.create({
+          data: {
+            appointmentId: appointment.id,
+            doctorId: doctor.id,
+            patientId: patient.id,
+            subjective: snapshot.soap.subjective,
+            objective: snapshot.soap.objective,
+            assessment: snapshot.soap.assessment,
+            plan: snapshot.soap.plan,
+            signatureHash,
+            signedAt: new Date(),
+            signedByUserId: doctor.id,
+            signedSnapshot: snapshot,
+          },
+        })
+        assert.match(
+          signed.signatureHash ?? '',
+          /^[a-f0-9]{64}$/,
+          'signatureHash debe ser SHA-256 hex',
+        )
+        const recomputed = hashSnapshot(snapshot)
+        assert.equal(signed.signatureHash, recomputed)
       },
     },
     {

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
+import { parseFullName } from '@/lib/patientName'
 
 const registerPatientSchema = z.object({
   name: z.string().min(2, 'El nombre es requerido'),
@@ -49,10 +50,16 @@ export async function POST(request: Request) {
         },
       })
 
+      const parsedName = parseFullName(name)
+      if (!parsedName.firstName || !parsedName.lastNamePaternal) {
+        throw new Error('El nombre debe incluir al menos nombre y apellido paterno.')
+      }
       await tx.patient.create({
         data: {
           userId: user.id,
-          fullName: name,
+          firstName: parsedName.firstName,
+          lastNamePaternal: parsedName.lastNamePaternal,
+          lastNameMaternal: parsedName.lastNameMaternal,
           email,
           phone,
           dateOfBirth,

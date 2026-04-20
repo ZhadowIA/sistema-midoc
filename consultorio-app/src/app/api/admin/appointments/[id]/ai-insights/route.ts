@@ -5,6 +5,7 @@ import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rateLimit";
 import { z } from "zod";
 import { jsonNoStore } from "@/lib/http";
 import { requireMedicalDoctorApiAccess } from "@/lib/medicalApi";
+import { formatPatientName } from "@/lib/patientName";
 
 const aiInsightsRequestSchema = z.object({
   soap: z
@@ -95,7 +96,7 @@ export async function POST(
     };
 
     const insights = await generateComprehensiveInsights(context, {
-      patientName: appointment.patient?.fullName,
+      patientName: appointment.patient ? formatPatientName(appointment.patient) : undefined,
       doctorName: appointment.doctor?.name,
     });
 

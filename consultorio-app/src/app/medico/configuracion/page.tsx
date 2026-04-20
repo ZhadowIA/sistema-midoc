@@ -7,6 +7,7 @@ import { Button } from "@/components/Button";
 import { Modal } from "@/components/Modal";
 import { toast } from "sonner";
 import { useSearchParams, useRouter } from "next/navigation";
+import { formatPatientName } from "@/lib/patientName";
 
 type Tab = "perfil" | "parametros" | "disponibilidad" | "whatsapp" | "equipo";
 
@@ -35,7 +36,12 @@ type WhatsAppHistoryItem = {
   action: string | null;
   message: string;
   createdAt: string;
-  patient: { id: string; fullName: string } | null;
+  patient: {
+    id: string;
+    firstName?: string | null;
+    lastNamePaternal?: string | null;
+    lastNameMaternal?: string | null;
+  } | null;
   appointment: { id: string; startTime: string; status: string } | null;
 };
 
@@ -1824,7 +1830,7 @@ function DoctorConfigurationContent() {
                           </p>
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {item.patient?.fullName || item.phone} · {item.intent || "SIN_INTENCION"} · {item.action || "SIN_ACCION"}
+                          {item.patient ? formatPatientName(item.patient) : item.phone} · {item.intent || "SIN_INTENCION"} · {item.action || "SIN_ACCION"}
                         </p>
                         <p className="text-sm text-foreground mt-2 whitespace-pre-wrap">{item.message}</p>
                       </div>

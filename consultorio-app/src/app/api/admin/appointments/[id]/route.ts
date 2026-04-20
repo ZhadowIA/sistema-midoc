@@ -4,24 +4,35 @@ import prisma from '@/lib/prisma'
 import { getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
 import { AppointmentAuditService } from '@/services/AppointmentAuditService'
 import { jsonNoStore } from '@/lib/http'
-import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
+import { getAuthenticatedUser } from '@/lib/auth'
 import { getRequestIp, getUserAgent } from '@/lib/requestContext'
+import { formatPatientName } from '@/lib/patientName'
 
 const ALLOWED_STATUS = new Set(['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED'])
 
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   try {
-    const access = await requireMedicalDoctorApiAccess()
-    if (access.response) return access.response
-    const doctorId = access.context.doctorId
+    const authUser = await getAuthenticatedUser()
+    if (!authUser) return jsonNoStore({ error: 'No autorizado' }, { status: 401 })
+    if (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN') {
+      return jsonNoStore({ error: 'No autorizado' }, { status: 403 })
+    }
+
+    const actor = await prisma.user.findUnique({
+      where: { id: authUser.id },
+      select: { id: true, role: true, clinicId: true },
+    })
+    if (!actor) return jsonNoStore({ error: 'No autorizado' }, { status: 401 })
 
     const appointment = await prisma.appointment.findFirst({
-      where: { id: params.id, doctorId },
+      where: { id: params.id },
       include: {
         patient: true,
         questionnaire: true,
-        doctor: true,
+        doctor: {
+          select: { id: true, name: true, clinicId: true },
+        },
         consentCaptures: {
           orderBy: { createdAt: 'desc' },
           take: 5,
@@ -31,6 +42,15 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
     if (!appointment) {
       return jsonNoStore({ error: 'Cita no encontrada' }, { status: 404 })
+    }
+    const isOwnAgenda = appointment.doctorId === actor.id
+    const canManageClinicDoctor =
+      actor.role === 'CLINIC_ADMIN' &&
+      Boolean(actor.clinicId) &&
+      appointment.doctor.clinicId === actor.clinicId
+
+    if (!isOwnAgenda && !canManageClinicDoctor) {
+      return jsonNoStore({ error: 'No autorizado' }, { status: 403 })
     }
 
     return jsonNoStore(appointment)
@@ -50,20 +70,44 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   try {
-    const access = await requireMedicalDoctorApiAccess()
-    if (access.response) return access.response
-    const doctorId = access.context.doctorId
-    const actorUserId = access.context.user.id
+    const authUser = await getAuthenticatedUser()
+    if (!authUser) return jsonNoStore({ error: 'No autorizado' }, { status: 401 })
+    if (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN') {
+      return jsonNoStore({ error: 'No autorizado' }, { status: 403 })
+    }
+    const actor = await prisma.user.findUnique({
+      where: { id: authUser.id },
+      select: { id: true, role: true, clinicId: true },
+    })
+    if (!actor) return jsonNoStore({ error: 'No autorizado' }, { status: 401 })
+    const actorUserId = actor.id
+    const actorRole = actor.role
     const ipAddress = getRequestIp(request)
     const userAgent = getUserAgent(request)
 
     const body = await request.json()
 
     const existing = await prisma.appointment.findFirst({
-      where: { id: params.id, doctorId },
-      include: { patient: true },
+      where: { id: params.id },
+      include: {
+        patient: true,
+        doctor: {
+          select: { id: true, clinicId: true },
+        },
+      },
     })
-    if (!existing) return jsonNoStore({ error: 'No autorizado' }, { status: 403 })
+    if (!existing) return jsonNoStore({ error: 'Cita no encontrada' }, { status: 404 })
+
+    const isOwnAgenda = existing.doctorId === actor.id
+    const canManageClinicDoctor =
+      actor.role === 'CLINIC_ADMIN' &&
+      Boolean(actor.clinicId) &&
+      existing.doctor.clinicId === actor.clinicId
+
+    if (!isOwnAgenda && !canManageClinicDoctor) {
+      return jsonNoStore({ error: 'No autorizado' }, { status: 403 })
+    }
+    const doctorId = existing.doctorId
 
     if (body.action === 'ASSIGN_PATIENT') {
       if (!body.patientId || typeof body.patientId !== 'string') {
@@ -107,12 +151,14 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
             action: 'PATIENT_ASSIGNED_TO_APPOINTMENT',
             ipAddress,
             userAgent,
-            metadata: {
-              previousPatientId: existing.patientId,
-              nextPatientId: targetPatient.id,
+              metadata: {
+                previousPatientId: existing.patientId,
+                nextPatientId: targetPatient.id,
+                actorRole,
+                delegatedDoctorId: doctorId !== actorUserId ? doctorId : null,
+              },
             },
-          },
-          tx
+            tx
         )
 
         return tx.appointment.findUnique({
@@ -133,7 +179,9 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     }
 
     if (body.action === 'CREATE_AND_ASSIGN_PATIENT') {
-      const normalizedFullName = existing.patient.fullName.trim()
+      const normalizedFirstName = existing.patient.firstName.trim()
+      const normalizedLastNamePaternal = existing.patient.lastNamePaternal.trim()
+      const normalizedLastNameMaternal = existing.patient.lastNameMaternal?.trim() || null
       const normalizedPhone = existing.patient.phone.trim()
 
       const updated = await prisma.$transaction(async (tx) => {
@@ -141,7 +189,8 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         let targetPatient = await tx.patient.findFirst({
           where: {
             ownerDoctorId: doctorId,
-            fullName: normalizedFullName,
+            firstName: normalizedFirstName,
+            lastNamePaternal: normalizedLastNamePaternal,
             phone: normalizedPhone,
           },
         })
@@ -151,7 +200,9 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
             data: {
               ownerDoctorId: doctorId,
               userId: existing.patient.userId || undefined,
-              fullName: normalizedFullName,
+              firstName: normalizedFirstName,
+              lastNamePaternal: normalizedLastNamePaternal,
+              lastNameMaternal: normalizedLastNameMaternal,
               phone: normalizedPhone,
               email: existing.patient.email?.trim().toLowerCase() || undefined,
               dateOfBirth: existing.patient.dateOfBirth,
@@ -188,8 +239,12 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
               ipAddress,
               userAgent,
               metadata: {
-                fullName: normalizedFullName,
+                firstName: normalizedFirstName,
+                lastNamePaternal: normalizedLastNamePaternal,
+                lastNameMaternal: normalizedLastNameMaternal,
                 phone: normalizedPhone,
+                actorRole,
+                delegatedDoctorId: doctorId !== actorUserId ? doctorId : null,
               },
             },
             tx
@@ -207,13 +262,15 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
             action: 'PATIENT_ASSIGNED_TO_APPOINTMENT',
             ipAddress,
             userAgent,
-            metadata: {
-              previousPatientId: existing.patientId,
-              nextPatientId: targetPatient.id,
-              createdPatientInAction,
+              metadata: {
+                previousPatientId: existing.patientId,
+                nextPatientId: targetPatient.id,
+                createdPatientInAction,
+                actorRole,
+                delegatedDoctorId: doctorId !== actorUserId ? doctorId : null,
+              },
             },
-          },
-          tx
+            tx
         )
 
         return tx.appointment.findUnique({
@@ -320,12 +377,14 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
           previousEndTime: existing.endTime.toISOString(),
           nextStartTime: updated.startTime.toISOString(),
           nextEndTime: updated.endTime.toISOString(),
+          actorRole,
+          delegatedDoctorId: doctorId !== actorUserId ? doctorId : null,
         },
       })
 
       const config = await prisma.doctorConfig.findUnique({ where: { doctorId } })
       if (config?.whatsappConnected) {
-        const msg = `Hola *${updated.patient.fullName}*, te informamos que tu cita fue reagendada. Nueva fecha y hora: *${format(updated.startTime, 'dd/MM/yyyy HH:mm')}*.`
+        const msg = `Hola *${formatPatientName(updated.patient)}*, te informamos que tu cita fue reagendada. Nueva fecha y hora: *${format(updated.startTime, 'dd/MM/yyyy HH:mm')}*.`
         try {
           await fetch(getWhatsAppProviderSendUrl(), {
             method: 'POST',
@@ -381,6 +440,10 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
             : 'APPOINTMENT_STATUS_CHANGED',
         fromStatus: existing.status,
         toStatus: updated.status,
+        metadata: {
+          actorRole,
+          delegatedDoctorId: doctorId !== actorUserId ? doctorId : null,
+        },
       })
     }
 
@@ -388,7 +451,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     if (config?.whatsappConnected && existing.status !== updated.status) {
       let msg = ''
       if (updated.status === 'CANCELLED') {
-        msg = `Hola *${updated.patient.fullName}*, lamentamos informarte que tu cita programada para el ${format(existing.startTime, 'dd/MM/yyyy HH:mm')} ha sido *CANCELADA* por el doctor. Por favor contáctanos para más información.`
+        msg = `Hola *${formatPatientName(updated.patient)}*, lamentamos informarte que tu cita programada para el ${format(existing.startTime, 'dd/MM/yyyy HH:mm')} ha sido *CANCELADA* por el doctor. Por favor contáctanos para más información.`
       }
 
       if (msg) {

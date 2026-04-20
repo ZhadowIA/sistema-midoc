@@ -2,9 +2,10 @@ import { NextResponse } from 'next/server'
 import { AuditAction, Prisma } from '@prisma/client'
 import { addMonths, format, startOfMonth, subDays, subMonths } from 'date-fns'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { getAuthenticatedUser } from '@/lib/auth'
 import { getDayRangeLocal } from '@/lib/dateTime'
 import { NotificationService } from '@/services/NotificationService'
+import { formatPatientName } from '@/lib/patientName'
 
 type DashboardItem = {
   id: string
@@ -96,6 +97,30 @@ type DashboardPriorityThreeSummary = {
   }>
 }
 
+type ClinicAggregateSummary = {
+  mode: 'SINGLE_DOCTOR' | 'CLINIC'
+  clinicId: string | null
+  doctorsCount: number
+  totals: {
+    todayAppointments: number
+    upcomingAppointments: number
+    pending: number
+    confirmed: number
+    completed: number
+    cancelled: number
+    overduePending: number
+  }
+  doctors: Array<{
+    doctorId: string
+    doctorName: string
+    todayAppointments: number
+    pending: number
+    confirmed: number
+    completed: number
+    overduePending: number
+  }>
+}
+
 const PRIORITY_THREE_ACTION_LABELS: Record<string, string> = {
   APPOINTMENT_CREATED: 'Cita creada',
   APPOINTMENT_STATUS_CHANGED: 'Cambio de estado',
@@ -138,7 +163,7 @@ function buildPriorityThreeSummary(input: {
     fromStatus: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'RESCHEDULED' | 'COMPLETED' | null
     toStatus: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'RESCHEDULED' | 'COMPLETED' | null
     appointment: { id: string; startTime: Date } | null
-    patient: { fullName: string } | null
+    patient: { firstName: string; lastNamePaternal: string; lastNameMaternal: string | null } | null
   }>
   overduePendingNow: number
   autoRules: {
@@ -217,7 +242,7 @@ function buildPriorityThreeSummary(input: {
       actorType: event.actorType,
       appointmentId: event.appointment?.id ?? event.appointmentId,
       appointmentStartTime: event.appointment?.startTime.toISOString() ?? null,
-      patientName: event.patient?.fullName ?? null,
+      patientName: event.patient ? formatPatientName(event.patient) : null,
       fromStatus: event.fromStatus,
       toStatus: event.toStatus,
     })),
@@ -227,7 +252,7 @@ function buildPriorityThreeSummary(input: {
 function mapAppointment(appointment: {
   id: string
   patientId: string
-  patient: { fullName: string }
+  patient: { firstName: string; lastNamePaternal: string; lastNameMaternal: string | null }
   date: Date
   startTime: Date
   endTime: Date
@@ -238,7 +263,7 @@ function mapAppointment(appointment: {
   return {
     id: appointment.id,
     patientId: appointment.patientId,
-    patientName: appointment.patient.fullName,
+    patientName: formatPatientName(appointment.patient),
     date: appointment.date.toISOString(),
     dateLocal: format(appointment.startTime, 'yyyy-MM-dd'),
     time: format(appointment.startTime, 'HH:mm'),
@@ -439,8 +464,144 @@ function buildSetupChecklist(input: {
 
 export async function GET() {
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const authUser = await getAuthenticatedUser()
+    if (!authUser) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    if (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN') {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
+    }
+
+    const actor = await prisma.user.findUnique({
+      where: { id: authUser.id },
+      select: { id: true, role: true, clinicId: true },
+    })
+    if (!actor) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+    let doctorId = actor.id
+    let clinicDoctorIds: string[] = [actor.id]
+    let clinicAggregates: ClinicAggregateSummary | null = null
+
+    if (actor.role === 'CLINIC_ADMIN' && actor.clinicId) {
+      const clinicDoctors = await prisma.user.findMany({
+        where: {
+          clinicId: actor.clinicId,
+          active: true,
+          role: { in: ['DOCTOR', 'CLINIC_ADMIN'] },
+        },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      })
+
+      if (clinicDoctors.length > 0) {
+        clinicDoctorIds = clinicDoctors.map((doctor) => doctor.id)
+        doctorId = actor.id
+
+        const [
+          groupedClinicStatuses,
+          clinicTodayCount,
+          clinicUpcomingCount,
+          clinicOverduePendingCount,
+          perDoctorGroupedStatuses,
+          perDoctorTodayCounts,
+          perDoctorOverdueCounts,
+        ] = await Promise.all([
+          prisma.appointment.groupBy({
+            by: ['status'],
+            where: { doctorId: { in: clinicDoctorIds } },
+            _count: { _all: true },
+          }),
+          prisma.appointment.count({
+            where: {
+              doctorId: { in: clinicDoctorIds },
+              startTime: { gte: getDayRangeLocal(format(new Date(), 'yyyy-MM-dd')).start, lt: getDayRangeLocal(format(new Date(), 'yyyy-MM-dd')).endExclusive },
+            },
+          }),
+          prisma.appointment.count({
+            where: {
+              doctorId: { in: clinicDoctorIds },
+              status: { in: ['PENDING', 'CONFIRMED', 'RESCHEDULED'] },
+              startTime: { gt: new Date() },
+            },
+          }),
+          prisma.appointment.count({
+            where: {
+              doctorId: { in: clinicDoctorIds },
+              status: 'PENDING',
+              endTime: { lt: new Date() },
+            },
+          }),
+          prisma.appointment.groupBy({
+            by: ['doctorId', 'status'],
+            where: { doctorId: { in: clinicDoctorIds } },
+            _count: { _all: true },
+          }),
+          prisma.appointment.groupBy({
+            by: ['doctorId'],
+            where: {
+              doctorId: { in: clinicDoctorIds },
+              startTime: { gte: getDayRangeLocal(format(new Date(), 'yyyy-MM-dd')).start, lt: getDayRangeLocal(format(new Date(), 'yyyy-MM-dd')).endExclusive },
+            },
+            _count: { _all: true },
+          }),
+          prisma.appointment.groupBy({
+            by: ['doctorId'],
+            where: {
+              doctorId: { in: clinicDoctorIds },
+              status: 'PENDING',
+              endTime: { lt: new Date() },
+            },
+            _count: { _all: true },
+          }),
+        ])
+
+        const totals = {
+          todayAppointments: clinicTodayCount,
+          upcomingAppointments: clinicUpcomingCount,
+          pending: 0,
+          confirmed: 0,
+          completed: 0,
+          cancelled: 0,
+          overduePending: clinicOverduePendingCount,
+        }
+
+        for (const row of groupedClinicStatuses) {
+          const key = row.status.toLowerCase() as keyof typeof totals
+          if (key in totals) {
+            ;(totals as Record<string, number>)[key] = row._count._all
+          }
+        }
+
+        const todayMap = new Map(perDoctorTodayCounts.map((row) => [row.doctorId, row._count._all]))
+        const overdueMap = new Map(perDoctorOverdueCounts.map((row) => [row.doctorId, row._count._all]))
+        const perDoctorStatusMap = new Map<string, { pending: number; confirmed: number; completed: number }>()
+
+        for (const row of perDoctorGroupedStatuses) {
+          const current = perDoctorStatusMap.get(row.doctorId) ?? { pending: 0, confirmed: 0, completed: 0 }
+          if (row.status === 'PENDING') current.pending = row._count._all
+          if (row.status === 'CONFIRMED' || row.status === 'RESCHEDULED') current.confirmed += row._count._all
+          if (row.status === 'COMPLETED') current.completed = row._count._all
+          perDoctorStatusMap.set(row.doctorId, current)
+        }
+
+        clinicAggregates = {
+          mode: 'CLINIC',
+          clinicId: actor.clinicId,
+          doctorsCount: clinicDoctors.length,
+          totals,
+          doctors: clinicDoctors.map((doctor) => {
+            const status = perDoctorStatusMap.get(doctor.id) ?? { pending: 0, confirmed: 0, completed: 0 }
+            return {
+              doctorId: doctor.id,
+              doctorName: doctor.name,
+              todayAppointments: todayMap.get(doctor.id) ?? 0,
+              pending: status.pending,
+              confirmed: status.confirmed,
+              completed: status.completed,
+              overduePending: overdueMap.get(doctor.id) ?? 0,
+            }
+          }),
+        }
+      }
+    }
 
     const now = new Date()
     const dayKey = format(now, 'yyyy-MM-dd')
@@ -471,7 +632,7 @@ export async function GET() {
           startTime: { gte: todayStart, lt: todayEndExclusive },
         },
         include: {
-          patient: { select: { fullName: true } },
+          patient: { select: { firstName: true, lastNamePaternal: true, lastNameMaternal: true } },
         },
         orderBy: { startTime: 'asc' },
       }),
@@ -483,7 +644,7 @@ export async function GET() {
           endTime: { gt: now },
         },
         include: {
-          patient: { select: { fullName: true } },
+          patient: { select: { firstName: true, lastNamePaternal: true, lastNameMaternal: true } },
         },
         orderBy: { startTime: 'asc' },
       }),
@@ -494,7 +655,7 @@ export async function GET() {
           endTime: { lt: now },
         },
         include: {
-          patient: { select: { fullName: true } },
+          patient: { select: { firstName: true, lastNamePaternal: true, lastNameMaternal: true } },
         },
         orderBy: { endTime: 'asc' },
         take: 20,
@@ -506,7 +667,7 @@ export async function GET() {
           startTime: { gt: now },
         },
         include: {
-          patient: { select: { fullName: true } },
+          patient: { select: { firstName: true, lastNamePaternal: true, lastNameMaternal: true } },
         },
         orderBy: { startTime: 'asc' },
         take: 5,
@@ -606,7 +767,9 @@ export async function GET() {
           },
           patient: {
             select: {
-              fullName: true,
+              firstName: true,
+              lastNamePaternal: true,
+              lastNameMaternal: true,
             },
           },
         },
@@ -668,6 +831,23 @@ export async function GET() {
       analytics,
       priorityThree,
       setupChecklist,
+      clinicAggregates:
+        clinicAggregates ??
+        ({
+          mode: 'SINGLE_DOCTOR',
+          clinicId: null,
+          doctorsCount: 1,
+          totals: {
+            todayAppointments: todayAppointments.length,
+            upcomingAppointments: upcomingAppointments.length,
+            pending: statsByStatus.pending,
+            confirmed: statsByStatus.confirmed + statsByStatus.rescheduled,
+            completed: statsByStatus.completed,
+            cancelled: statsByStatus.cancelled,
+            overduePending: overduePendingCount,
+          },
+          doctors: [],
+        } satisfies ClinicAggregateSummary),
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'

@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { getAuthenticatedUser } from '@/lib/auth'
 
 const createBlockSchema = z.object({
+  doctorId: z.string().min(1).optional(),
   startTime: z.string().min(1),
   endTime: z.string().min(1),
   reason: z.string().optional(),
@@ -12,11 +13,44 @@ const createBlockSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const authUser = await getAuthenticatedUser()
+    if (!authUser) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    if (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN') {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
+    }
 
     const body = await request.json()
     const parsed = createBlockSchema.parse(body)
+    let doctorId = authUser.id
+
+    if (parsed.doctorId && parsed.doctorId !== authUser.id) {
+      if (authUser.role !== 'CLINIC_ADMIN') {
+        return NextResponse.json({ error: 'No autorizado para bloquear agenda de otro médico.' }, { status: 403 })
+      }
+
+      const actor = await prisma.user.findUnique({
+        where: { id: authUser.id },
+        select: { clinicId: true },
+      })
+      if (!actor?.clinicId) {
+        return NextResponse.json({ error: 'CLINIC_ADMIN sin clínica asignada.' }, { status: 403 })
+      }
+
+      const targetDoctor = await prisma.user.findFirst({
+        where: {
+          id: parsed.doctorId,
+          clinicId: actor.clinicId,
+          active: true,
+          role: { in: ['DOCTOR', 'CLINIC_ADMIN'] },
+        },
+        select: { id: true },
+      })
+      if (!targetDoctor) {
+        return NextResponse.json({ error: 'El médico seleccionado no pertenece a tu clínica.' }, { status: 403 })
+      }
+
+      doctorId = targetDoctor.id
+    }
 
     const startTime = new Date(parsed.startTime)
     const endTime = new Date(parsed.endTime)

@@ -17,6 +17,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Input } from "@/components/Input";
 import { toast } from "sonner";
+import { formatPatientName } from "@/lib/patientName";
 import {
   formatQuestionnaireLabel,
   formatQuestionnaireTag,
@@ -40,7 +41,9 @@ type PrescriptionForm = {
 
 type DirectoryPatientOption = {
   id: string
-  fullName: string
+  firstName?: string | null
+  lastNamePaternal?: string | null
+  lastNameMaternal?: string | null
   phone: string
 }
 
@@ -55,7 +58,9 @@ type AppointmentData = {
   source: string
   patient: {
     id: string
-    fullName: string
+    firstName?: string | null
+    lastNamePaternal?: string | null
+    lastNameMaternal?: string | null
     phone: string
     email?: string | null
     dateOfBirth: string
@@ -179,7 +184,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
   const [validatingPrescription, setValidatingPrescription] = useState(false);
 
   const formatDirectoryPatientLabel = (patient: DirectoryPatientOption) =>
-    `${patient.fullName} · ${patient.phone}`;
+    `${formatPatientName(patient)} · ${patient.phone}`;
 
   const filteredDirectoryPatients = useMemo(() => {
     const normalizedTerm = patientSearchTerm.trim().toLowerCase();
@@ -187,7 +192,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
 
     return directoryPatients
       .filter((patient) =>
-        `${patient.fullName} ${patient.phone}`.toLowerCase().includes(normalizedTerm)
+        `${formatPatientName(patient)} ${patient.phone}`.toLowerCase().includes(normalizedTerm)
       )
       .slice(0, 12);
   }, [directoryPatients, patientSearchTerm]);
@@ -206,7 +211,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
         setLastVerbalConsentAt(latestConsent?.createdAt || null);
         setSelectedDirectoryPatientId(data.patient?.ownerDoctorId ? data.patient.id : "");
         setPatientSearchTerm(
-          data.patient?.ownerDoctorId ? `${data.patient.fullName} · ${data.patient.phone}` : ""
+          data.patient?.ownerDoctorId ? formatDirectoryPatientLabel(data.patient) : ""
         );
       })
       .catch(console.error);
@@ -423,7 +428,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
 
       setAppointment(data);
       setSelectedDirectoryPatientId(data.patient.id);
-      setPatientSearchTerm(`${data.patient.fullName} · ${data.patient.phone}`);
+      setPatientSearchTerm(formatDirectoryPatientLabel(data.patient));
       setPatientSearchOpen(false);
       toast.success("Cita vinculada al paciente del directorio.");
     } catch (err: unknown) {
@@ -458,14 +463,16 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
 
       setAppointment(data);
       setSelectedDirectoryPatientId(data.patient.id);
-      setPatientSearchTerm(`${data.patient.fullName} · ${data.patient.phone}`);
+      setPatientSearchTerm(formatDirectoryPatientLabel(data.patient));
       setPatientSearchOpen(false);
       setDirectoryPatients((prev) => {
         if (prev.some((item) => item.id === data.patient.id)) return prev;
         return [
           {
             id: data.patient.id,
-            fullName: data.patient.fullName,
+            firstName: data.patient.firstName,
+            lastNamePaternal: data.patient.lastNamePaternal,
+            lastNameMaternal: data.patient.lastNameMaternal ?? null,
             phone: data.patient.phone,
           },
           ...prev,
@@ -907,7 +914,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   <User className="w-5 h-5 text-muted-foreground" />
                   <div>
                     <div className="text-xs text-muted-foreground">Nombre</div>
-                    <div className="font-semibold">{appointment.patient.fullName}</div>
+                    <div className="font-semibold">{formatPatientName(appointment.patient)}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">

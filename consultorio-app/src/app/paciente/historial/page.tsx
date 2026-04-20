@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ArrowLeft, CalendarClock, CheckCircle2, LogOut, RefreshCcw, Settings2, XCircle } from "lucide-react";
+import { ArrowLeft, CalendarClock, CheckCircle2, Download, LogOut, RefreshCcw, Settings2, XCircle } from "lucide-react";
 import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
 import { Modal } from "@/components/Modal";
@@ -27,7 +27,9 @@ type HistoryAppointment = {
   };
   patient: {
     id: string;
-    fullName: string;
+    firstName?: string | null;
+    lastNamePaternal?: string | null;
+    lastNameMaternal?: string | null;
   };
 };
 
@@ -46,6 +48,12 @@ type AvailabilitySlot = {
   start: string;
   end: string;
   type: "normal" | "extended";
+};
+
+type DownloadHistoryItem = {
+  appointmentId: string;
+  doctorName: string;
+  downloadedAt: string;
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -72,6 +80,7 @@ export default function PatientHistoryPage() {
   const [rescheduleSlots, setRescheduleSlots] = useState<AvailabilitySlot[]>([]);
   const [loadingRescheduleSlots, setLoadingRescheduleSlots] = useState(false);
   const [selectedRescheduleSlot, setSelectedRescheduleSlot] = useState("");
+  const [downloadHistory, setDownloadHistory] = useState<DownloadHistoryItem[]>([]);
 
   const loadHistory = useCallback(async () => {
     const res = await fetch("/api/auth/patient/history", { cache: "no-store" });
@@ -89,6 +98,17 @@ export default function PatientHistoryPage() {
       })
       .finally(() => setLoading(false));
   }, [loadHistory]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("patient_download_history");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as DownloadHistoryItem[];
+      if (Array.isArray(parsed)) setDownloadHistory(parsed.slice(0, 8));
+    } catch {
+      // ignore corrupt local cache
+    }
+  }, []);
 
   const selectedAppointment = appointments.find((item) => item.id === rescheduleAppointmentId) || null;
 
@@ -134,6 +154,43 @@ export default function PatientHistoryPage() {
       if (payload.action === "CONFIRM") toast.success("Cita confirmada.");
       if (payload.action === "CANCEL") toast.success("Cita cancelada.");
       if (payload.action === "RESCHEDULE") toast.success("Cita reagendada.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Error inesperado";
+      toast.error(message);
+    } finally {
+      setActingAppointmentId(null);
+    }
+  };
+
+  const downloadSummary = async (appointmentId: string) => {
+    setActingAppointmentId(appointmentId);
+    try {
+      const res = await fetch(`/api/auth/patient/appointments/${appointmentId}/download?format=pdf`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "No se pudo generar la descarga.");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const disposition = res.headers.get("Content-Disposition") ?? "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      a.href = url;
+      a.download = match?.[1] ?? "resumen-consulta.txt";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      const doctorName = appointments.find((item) => item.id === appointmentId)?.doctor.name ?? "Médico";
+      const nextHistory: DownloadHistoryItem[] = [
+        { appointmentId, doctorName, downloadedAt: new Date().toISOString() },
+        ...downloadHistory.filter((item) => item.appointmentId !== appointmentId),
+      ].slice(0, 8);
+      setDownloadHistory(nextHistory);
+      window.localStorage.setItem("patient_download_history", JSON.stringify(nextHistory));
+      toast.success("Descarga iniciada.");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Error inesperado";
       toast.error(message);
@@ -202,6 +259,23 @@ export default function PatientHistoryPage() {
           </div>
         ) : (
           <div className="space-y-4">
+            {downloadHistory.length > 0 && (
+              <div className="rounded-xl border border-border bg-card p-4">
+                <h3 className="text-sm font-semibold text-foreground">Descargas recientes</h3>
+                <ul className="mt-3 space-y-2">
+                  {downloadHistory.map((item) => (
+                    <li
+                      key={item.appointmentId}
+                      className="text-xs text-muted-foreground flex items-center justify-between gap-2"
+                    >
+                      <span>{item.doctorName} · cita {item.appointmentId.slice(0, 8)}</span>
+                      <span>{new Date(item.downloadedAt).toLocaleString("es-MX")}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {appointments.map((appointment) => (
               <div key={appointment.id} className="rounded-xl border border-border bg-card p-5">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -283,6 +357,18 @@ export default function PatientHistoryPage() {
                   >
                     Agendar de nuevo
                   </Button>
+
+                  {appointment.status === "COMPLETED" && (
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      onClick={() => void downloadSummary(appointment.id)}
+                      disabled={actingAppointmentId === appointment.id}
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      Descargar resumen
+                    </Button>
+                  )}
                 </div>
 
                 {rescheduleAppointmentId === appointment.id && (
