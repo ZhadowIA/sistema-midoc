@@ -1,74 +1,59 @@
 # MiDoc - Roadmap de fases y bloques
 
-Estado: Vigente  
-Ultima actualizacion: 2026-04-15  
-Referencia principal: `docs/SISTEMA_ACTUAL.md`
+Estado: Vigente (resumen ejecutivo)  
+Última actualización: 2026-04-20  
+Referencia canónica: `docs/roadmap_fases_midoc.md`
 
 ## Objetivo
-Dar una vista ejecutiva de lo ya implementado y del backlog recomendado para las siguientes iteraciones.
+Dar una vista ejecutiva de alto nivel de lo ya completado y de los próximos bloques recomendados.
 
-## Fases implementadas (historico consolidado)
+## Estado global actual
 
-### Fase 1 - Base operativa
-- Agenda publica funcional (dia/mes).
-- Reserva de cita publica con validaciones de slot.
-- Base de auth medico y panel admin.
+- El roadmap operativo por fases (`roadmap_fases_midoc.md`) está cerrado en su alcance actual (fases 0–4 en ✅).
+- Ya se completó la capa multi-doctor base de clínica:
+  - agenda compartida con permisos,
+  - suscripción por clínica + seats,
+  - reportes agregados por clínica.
+- La expansión siguiente pasa de “fase funcional base” a “escala y comercialización”.
 
-### Fase 2 - Operacion clinica diaria
-- Agenda medico dia/semana.
-- Creacion manual de citas y bloqueos.
-- Acciones rapidas de cita (reagendar/cancelar/cambiar estado).
+## Capacidades consolidadas (resumen)
 
-### Fase 3 - Cuenta de paciente opcional
-- Registro/login paciente.
-- Flujo dual para agendar (cuenta o invitado).
-- Historial para paciente autenticado.
+### Operación clínica base
+- Agenda pública y agenda médica día/semana.
+- Reserva pública y creación manual con validación de solapes/bloqueos.
+- Estados de cita, reagenda y auditoría de cambios.
 
-### Fase 4 - Calendario publico avanzado
-- Calendario mensual de 7 dias.
-- Dias no agendables deshabilitados.
-- Navegacion mensual extendida.
+### Expediente y continuidad de atención
+- Historia clínica ampliada y versionada.
+- Workspace clínico unificado (`consulta` canónica).
+- Portal paciente con historial y descargas.
 
-### Fase 5 - Directorio y expediente por medico
-- Directorio de pacientes por medico.
-- Vinculacion de cita a paciente existente.
-- Creacion de expediente desde cita y vinculacion con cuenta paciente.
-- Fusion legacy disponible para depuracion historica.
+### Automatización y mensajería
+- Recordatorios WhatsApp y flujo bidireccional (confirmar/reagendar).
+- Trazabilidad de mensajes entrantes/salientes.
 
-### Fase 6 - Notificaciones y WhatsApp
-- Confirmacion de cita + invitacion a cuestionario.
-- Recordatorios configurables por medico (horas y templates).
-- Bot entrante para confirmar/cancelar por mensaje.
-- Historial y trazabilidad de mensajes.
+### IA clínica asistida
+- Narración/transcripción con generación SOAP.
+- Insights accionables y farmacovigilancia determinística.
 
-### Fase 7 - Calidad, seguridad y trazabilidad
-- Validaciones y rate limiting en rutas criticas.
-- Auditoria de cambios de cita (`AppointmentAuditLog`).
-- Robustez de colas y reintentos de notificaciones.
-
-### Fase 8 - Suscripcion y operacion SaaS
-- Registro medico orientado a suscripcion.
-- Setup por etapas: suscripcion -> onboarding -> dashboard.
-- Webhook de pagos con idempotencia y estructura productiva.
-
-### Fase 9 - IA clinica asistida
-- Generacion de SOAP desde audio.
-- Insights clinicos (diagnosticos/tratamientos/plan alimenticio).
-- Validacion automatica de receta con reglas deterministicas.
+### Multi-doctor / clínica
+- Modelo `Clinic` + `CLINIC_ADMIN`.
+- Gestión cross-doctor de agenda con auditoría de actor.
+- Seats por clínica y reportes agregados por doctor.
 
 ## Backlog recomendado (siguiente ciclo)
 
-### Bloque A - Produccion comercial (P0)
-- Activar pasarela real de cobro mensual.
-- Cerrar P0 de seguridad, migraciones y QA de go-live.
-- Formalizar cumplimiento legal final.
+### Bloque A - Producción comercial (P0)
+- Endurecimiento final de seguridad y cumplimiento pre go-live.
+- Cierre operativo de despliegue y observabilidad de producción.
+- Definir playbook de soporte y manejo de incidentes.
 
 ### Bloque B - Escala operativa (P1)
-- Alertas operativas y metricas de negocio por medico.
-- Dashboard de citas vencidas pendiente de cierre automatico.
-- Mejoras de onboarding guiado para medico.
+- KPIs operativos por clínica y alertas de degradación.
+- Mejoras de onboarding y activación de equipos clínicos (adopción).
+- Herramientas de administración de clínica (permisos/seats avanzados).
 
-### Bloque C - IA y eficiencia clinica (P2)
-- Control de costos por uso de IA.
-- Versionado de prompts y auditoria de recomendaciones.
-- Copiloto de seguimiento para citas de control.
+### Bloque C - IA y eficiencia clínica (P2)
+- Gobernanza de costos IA por clínica y por flujo.
+- Versionado de prompts con trazabilidad clínica/auditoría.
+- Flujos de seguimiento inteligente post-consulta.
