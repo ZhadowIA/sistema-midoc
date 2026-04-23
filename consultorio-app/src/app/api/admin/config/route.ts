@@ -18,6 +18,12 @@ const configSchema = z.object({
   whatsappConnected: z.boolean().optional(),
   priceNormal: z.coerce.number().finite().nonnegative().optional(),
   priceExtended: z.coerce.number().finite().nonnegative().optional(),
+  depositEnabled: z.boolean().optional(),
+  depositAmount: z.coerce.number().finite().nonnegative().optional(),
+  depositExpiresInMinutes: z.coerce.number().int().min(5).max(24 * 60).optional(),
+  cancellationWindowHours: z.coerce.number().int().min(0).max(24 * 30).optional(),
+  cancellationRefundMode: z.enum(['FULL', 'PARTIAL', 'CREDIT', 'FORFEIT']).optional(),
+  cancellationPartialRefundPct: z.coerce.number().int().min(0).max(100).optional(),
   reminderLeadHours: z.string().optional(),
   reminderWindowMinutes: z.coerce.number().int().min(1).max(240).optional(),
   whatsappAutoReplyEnabled: z.boolean().optional(),
@@ -92,6 +98,16 @@ export async function PUT(request: Request) {
     const baseDuration = parsedData.data.baseDuration ?? current?.consultationDurationMin ?? 30
     const extendedEnabled = parsedData.data.extendedEnabled ?? current?.extendedConsultationEnabled ?? true
     const whatsappConnected = parsedData.data.whatsappConnected ?? current?.whatsappConnected ?? false
+    const depositEnabled = parsedData.data.depositEnabled ?? current?.depositEnabled ?? false
+    const depositAmount = parsedData.data.depositAmount ?? current?.depositAmount ?? undefined
+    const depositExpiresInMinutes =
+      parsedData.data.depositExpiresInMinutes ?? current?.depositExpiresInMinutes ?? 30
+    const cancellationWindowHours =
+      parsedData.data.cancellationWindowHours ?? current?.cancellationWindowHours ?? 24
+    const cancellationRefundMode =
+      parsedData.data.cancellationRefundMode ?? current?.cancellationRefundMode ?? 'FULL'
+    const cancellationPartialRefundPct =
+      parsedData.data.cancellationPartialRefundPct ?? current?.cancellationPartialRefundPct ?? 50
     const reminderLeadHours =
       parsedData.data.reminderLeadHours !== undefined
         ? asNullableString(parsedData.data.reminderLeadHours)
@@ -129,6 +145,12 @@ export async function PUT(request: Request) {
         whatsappConnected,
         normalConsultationPrice: parsedData.data.priceNormal,
         extendedConsultationPrice: parsedData.data.priceExtended,
+        depositEnabled,
+        depositAmount,
+        depositExpiresInMinutes,
+        cancellationWindowHours,
+        cancellationRefundMode,
+        cancellationPartialRefundPct,
         reminderLeadHours,
         reminderWindowMinutes,
         whatsappAutoReplyEnabled,
@@ -146,6 +168,12 @@ export async function PUT(request: Request) {
         whatsappConnected,
         normalConsultationPrice: parsedData.data.priceNormal,
         extendedConsultationPrice: parsedData.data.priceExtended,
+        depositEnabled,
+        depositAmount,
+        depositExpiresInMinutes,
+        cancellationWindowHours,
+        cancellationRefundMode,
+        cancellationPartialRefundPct,
         reminderLeadHours,
         reminderWindowMinutes,
         whatsappAutoReplyEnabled,

@@ -12,7 +12,8 @@ export default function DoctorRegisterPage() {
   const router = useRouter();
   const [form, setForm] = useState({
     firstName: "",
-    lastName: "",
+    lastNamePaternal: "",
+    lastNameMaternal: "",
     email: "",
     phone: "",
     password: "",
@@ -87,7 +88,7 @@ export default function DoctorRegisterPage() {
           {error && <div className="mb-4 p-3 bg-red-100/10 border border-red-500 rounded-md text-red-500 text-sm">{error}</div>}
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Input
                 label="Nombre"
                 placeholder="Juan"
@@ -96,11 +97,17 @@ export default function DoctorRegisterPage() {
                 required
               />
               <Input
-                label="Apellidos"
-                placeholder="Pérez López"
-                value={form.lastName}
-                onChange={(e) => setForm({ ...form, lastName: e.target.value })}
+                label="Apellido paterno"
+                placeholder="Pérez"
+                value={form.lastNamePaternal}
+                onChange={(e) => setForm({ ...form, lastNamePaternal: e.target.value })}
                 required
+              />
+              <Input
+                label="Apellido materno"
+                placeholder="López"
+                value={form.lastNameMaternal}
+                onChange={(e) => setForm({ ...form, lastNameMaternal: e.target.value })}
               />
             </div>
 

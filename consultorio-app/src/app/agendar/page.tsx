@@ -14,34 +14,17 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { format, addDays, addMonths, startOfMonth, startOfToday } from "date-fns";
 import { es } from "date-fns/locale";
 import { parseFullName } from "@/lib/patientName";
+import { GENDER_OPTIONS, RELATION_OPTIONS, SEX_OPTIONS } from "@/lib/bookingOptions";
+import {
+  buildPublicBookingPayload,
+  getNextBookingStep,
+  getPreviousBookingStep,
+  hasCompleteBookingInfo,
+  hasValidPhone,
+  isSlotHoldActive,
+} from "@/lib/bookingFlow";
 
 const RECAPTCHA_SITE_KEY = process.env.NEXT_PUBLIC_RECAPTCHA_V3_SITE_KEY || "";
-
-const SEX_OPTIONS = [
-  { value: "HOMBRE", label: "Hombre" },
-  { value: "MUJER", label: "Mujer" },
-  { value: "INTERSEXUAL", label: "Intersexual" },
-];
-
-const GENDER_OPTIONS = [
-  { value: "NOT_SPECIFIED", label: "No especificado" },
-  { value: "MASCULINE", label: "Masculino" },
-  { value: "FEMININE", label: "Femenino" },
-  { value: "TRANSGENDER", label: "Transgénero" },
-  { value: "TRANSSEXUAL", label: "Transexual" },
-  { value: "TRAVESTI", label: "Travesti" },
-  { value: "INTERSEX", label: "Intersexual" },
-  { value: "OTHER", label: "Otro" },
-];
-
-const RELATION_OPTIONS = [
-  { value: "SELF", label: "El paciente mismo" },
-  { value: "PARENT", label: "Padre / Madre" },
-  { value: "SPOUSE", label: "Cónyuge / Pareja" },
-  { value: "SIBLING", label: "Hermano(a)" },
-  { value: "CHILD", label: "Hijo(a)" },
-  { value: "OTHER", label: "Otro" },
-];
 
 declare global {
   interface Window {
@@ -160,7 +143,9 @@ function BookingFlowContent() {
   
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
   const [registerForm, setRegisterForm] = useState({
-    name: "",
+    firstName: "",
+    lastNamePaternal: "",
+    lastNameMaternal: "",
     email: "",
     password: "",
     confirmPassword: "",
@@ -200,10 +185,9 @@ function BookingFlowContent() {
       firstName: formData.firstName,
       lastNamePaternal: formData.lastNamePaternal,
       lastNameMaternal: formData.lastNameMaternal,
-      phone: prev.phone || formData.phone,
       email: prev.email || formData.email,
     }));
-  }, [formData.firstName, formData.lastNamePaternal, formData.lastNameMaternal, formData.phone, formData.email]);
+  }, [formData.firstName, formData.lastNamePaternal, formData.lastNameMaternal, formData.email]);
 
   const executeRecaptcha = useCallback(async (): Promise<string> => {
     if (!RECAPTCHA_SITE_KEY) return "";
@@ -584,47 +568,32 @@ function BookingFlowContent() {
   };
 
   const hasCompletePatientData = () => {
-    return Boolean(
-      formData.firstName.trim() &&
-      formData.lastNamePaternal.trim() &&
-      formData.dateOfBirth &&
-      formData.sex &&
-      contactData.firstName.trim() &&
-      contactData.lastNamePaternal.trim() &&
-      contactData.phone.trim() &&
-      contactData.relation &&
-      (!requiresLinkedEmail || normalizedEmail)
-    );
+    return hasCompleteBookingInfo({
+      formData,
+      contactData,
+      requiresLinkedEmail,
+      normalizedEmail,
+    });
   };
 
   const handleNext = () => {
-    const stepOrder: Step[] = slugParam
-      ? ["auth", "type", "date", "time", "info", "confirm"]
-      : ["auth", "doctor", "type", "date", "time", "info", "confirm"];
-    const nextIndex = stepOrder.indexOf(currentStep) + 1;
-    if (nextIndex >= stepOrder.length) return;
-
-    const nextStep = stepOrder[nextIndex];
-    if (nextStep === "info" && hasCompletePatientData()) {
-      setCurrentStep("confirm");
-      return;
-    }
+    const nextStep = getNextBookingStep({
+      currentStep,
+      hasPreselectedDoctor: Boolean(slugParam),
+      hasCompletePatientData: hasCompletePatientData(),
+    });
+    if (!nextStep) return;
     setCurrentStep(nextStep);
   };
 
   const handleBack = () => {
-    const stepOrder: Step[] = slugParam
-      ? ["auth", "type", "date", "time", "info", "confirm"]
-      : ["auth", "doctor", "type", "date", "time", "info", "confirm"];
-    const prevIndex = stepOrder.indexOf(currentStep) - 1;
-    if (prevIndex < 0) {
+    const prevStep = getPreviousBookingStep({
+      currentStep,
+      hasPreselectedDoctor: Boolean(slugParam),
+      hasCompletePatientData: hasCompletePatientData(),
+    });
+    if (!prevStep) {
       router.push("/");
-      return;
-    }
-
-    const prevStep = stepOrder[prevIndex];
-    if (prevStep === "info" && hasCompletePatientData()) {
-      setCurrentStep("time");
       return;
     }
     setCurrentStep(prevStep);
@@ -638,14 +607,16 @@ function BookingFlowContent() {
       return;
     }
     try {
-      const res = await fetch('/api/auth/patient/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: registerForm.name,
-          email: registerForm.email,
-          password: registerForm.password,
-          phone: registerForm.phone,
+        const res = await fetch('/api/auth/patient/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            firstName: registerForm.firstName,
+            lastNamePaternal: registerForm.lastNamePaternal,
+            lastNameMaternal: registerForm.lastNameMaternal,
+            email: registerForm.email,
+            password: registerForm.password,
+            phone: registerForm.phone,
           dateOfBirth: registerForm.dateOfBirth
         })
       });
@@ -705,6 +676,11 @@ function BookingFlowContent() {
         setCurrentStep("info");
         return;
       }
+      if (!hasValidPhone(contactData.phone)) {
+        setApiError("El teléfono del acompañante debe tener entre 10 y 15 dígitos.");
+        setCurrentStep("info");
+        return;
+      }
 
       const activeHold = slotHoldRef.current;
       if (
@@ -726,36 +702,31 @@ function BookingFlowContent() {
         const res = await fetch('/api/agenda/public/appointments', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            firstName: formData.firstName.trim(),
-            lastNamePaternal: formData.lastNamePaternal.trim(),
-            lastNameMaternal: formData.lastNameMaternal.trim() || undefined,
-            email: normalizedEmail,
-            phone: formData.phone,
-            dateOfBirth: formData.dateOfBirth,
-            sex: formData.sex || undefined,
-            gender: formData.gender || undefined,
-            contact: {
-              relation: contactData.relation,
-              firstName: contactData.firstName.trim(),
-              lastNamePaternal: contactData.lastNamePaternal.trim(),
-              lastNameMaternal: contactData.lastNameMaternal.trim() || undefined,
-              phone: contactData.phone.trim(),
-              email: contactData.email.trim() || undefined,
-            },
-            userId: bookAsGuest ? undefined : patientUserId || undefined,
-            bookAsGuest,
-            appointmentType: consultType.toUpperCase(),
-            startTime: selectedTime,
-            doctorId: selectedDoctorId,
-            holdToken: activeHold.token,
-            privacyConsentAccepted,
-            recaptchaToken,
-          })
+          body: JSON.stringify(
+            buildPublicBookingPayload({
+              formData,
+              contactData,
+              normalizedEmail,
+              selectedTime,
+              selectedDoctorId,
+              consultType,
+              patientUserId: patientUserId || undefined,
+              bookAsGuest,
+              holdToken: activeHold.token,
+              privacyConsentAccepted,
+              recaptchaToken,
+            })
+          )
         });
 
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Error al agendar cita');
+        if (!res.ok) {
+          const detailMessage =
+            Array.isArray(data.details) && data.details.length > 0 && typeof data.details[0]?.message === "string"
+              ? data.details[0].message
+              : null;
+          throw new Error(detailMessage || data.error || 'Error al agendar cita');
+        }
 
         slotHoldRef.current = null;
         setSlotHold(null);
@@ -800,14 +771,12 @@ function BookingFlowContent() {
       case "doctor": return selectedDoctorId !== null;
       case "date": return selectedDate !== undefined;
       case "time":
-        return (
-          selectedTime !== null &&
-          Boolean(
-            slotHold &&
-            slotHold.startTime === selectedTime &&
-            new Date(slotHold.expiresAt).getTime() > Date.now()
-          )
-        );
+        return isSlotHoldActive({
+          slotHold,
+          selectedTime,
+          selectedDoctorId,
+          now: Date.now(),
+        });
       case "type": return consultType !== null;
       case "info":
         return !!(hasCompletePatientData() && privacyConsentAccepted);
@@ -1095,7 +1064,11 @@ function BookingFlowContent() {
                     <h2 className="text-2xl font-semibold mb-2">Crear Cuenta</h2>
                     <p className="text-muted-foreground mb-6">Es gratis y solo toma un momento.</p>
                     <form onSubmit={handleRegister} className="space-y-4">
-                      <Input label="Nombre completo" placeholder="Tu nombre" value={registerForm.name} onChange={e => setRegisterForm({...registerForm, name: e.target.value})} required/>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <Input label="Nombre" placeholder="Tu nombre" value={registerForm.firstName} onChange={e => setRegisterForm({...registerForm, firstName: e.target.value})} required/>
+                        <Input label="Apellido paterno" placeholder="Pérez" value={registerForm.lastNamePaternal} onChange={e => setRegisterForm({...registerForm, lastNamePaternal: e.target.value})} required/>
+                        <Input label="Apellido materno" placeholder="López" value={registerForm.lastNameMaternal} onChange={e => setRegisterForm({...registerForm, lastNameMaternal: e.target.value})}/>
+                      </div>
                       <Input label="Correo electrónico" type="email" placeholder="tu@email.com" value={registerForm.email} onChange={e => setRegisterForm({...registerForm, email: e.target.value})} required/>
                       <div className="grid grid-cols-2 gap-3">
                         <Input label="Teléfono" type="tel" inputMode="numeric" placeholder="10 dígitos" value={registerForm.phone} onChange={e => setRegisterForm({...registerForm, phone: e.target.value})} required/>
@@ -1270,6 +1243,7 @@ function BookingFlowContent() {
                           return (
                             <button
                               key={i}
+                              data-testid={!isDisabled ? `booking-date-${dateStr}` : undefined}
                               onClick={() => {
                                 if (!isDisabled) {
                                   if (slotHoldRef.current) {
@@ -1341,6 +1315,7 @@ function BookingFlowContent() {
                           time={timeString}
                           available={!holdingSlot}
                           selected={selectedTime === slot.start}
+                          testId={`booking-time-${timeString}`}
                           onClick={() => {
                             void handleSelectTime(slot.start);
                           }}
@@ -1386,6 +1361,7 @@ function BookingFlowContent() {
                       placeholder="Selecciona..."
                       options={SEX_OPTIONS}
                       value={formData.sex}
+                      testId="booking-sex-select"
                       onValueChange={(value) => setFormData({ ...formData, sex: value })}
                     />
                     <Select
@@ -1393,6 +1369,7 @@ function BookingFlowContent() {
                       placeholder="Selecciona..."
                       options={GENDER_OPTIONS}
                       value={formData.gender}
+                      testId="booking-gender-select"
                       onValueChange={(value) => setFormData({ ...formData, gender: value })}
                     />
                   </div>
@@ -1417,6 +1394,7 @@ function BookingFlowContent() {
                         placeholder="Selecciona..."
                         options={RELATION_OPTIONS}
                         value={contactData.relation}
+                        testId="booking-relation-select"
                         onValueChange={(value) => setContactData({ ...contactData, relation: value })}
                       />
                     </div>
@@ -1436,11 +1414,9 @@ function BookingFlowContent() {
                   </div>
                 </section>
 
-                {/* Teléfono de contacto del paciente (legacy — requerido por la API) */}
                 <section className="max-w-2xl mt-10">
-                  <h3 className="text-lg font-semibold mb-4">Contacto del paciente</h3>
+                  <h3 className="text-lg font-semibold mb-4">Cuenta del paciente</h3>
                   <div className="grid sm:grid-cols-2 gap-4">
-                    <Input label="Teléfono*" type="tel" inputMode="numeric" placeholder="10 dígitos" value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} />
                     <Input
                       label={requiresLinkedEmail ? "Correo electrónico*" : "Correo electrónico"}
                       type="email"
@@ -1450,6 +1426,9 @@ function BookingFlowContent() {
                       required={requiresLinkedEmail}
                     />
                   </div>
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Si el paciente no tiene teléfono o correo propio, usaremos los datos del acompañante o contacto responsable para dar seguimiento a la cita.
+                  </p>
                 </section>
 
                 <label className="max-w-2xl mt-8 flex items-start gap-3 rounded-2xl border border-border bg-secondary/20 p-4">
@@ -1499,7 +1478,6 @@ function BookingFlowContent() {
                       {[formData.firstName, formData.lastNamePaternal, formData.lastNameMaternal].filter(Boolean).join(" ").trim()}
                     </div>
                     <div className="text-muted-foreground mt-1 flex flex-col gap-1">
-                      <span>📱 {formData.phone}</span>
                       <span>
                         🎂 {formData.dateOfBirth}
                         {calculatedAge !== null ? ` (${calculatedAge} años)` : ""}

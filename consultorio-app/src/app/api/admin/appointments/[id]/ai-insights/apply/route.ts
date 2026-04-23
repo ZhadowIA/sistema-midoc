@@ -16,7 +16,7 @@ export async function POST(
   props: { params: Promise<{ id: string }> },
 ) {
   try {
-    const access = await requireMedicalDoctorApiAccess();
+  const access = await requireMedicalDoctorApiAccess({ requiredFeature: "ai.insights" });
     if (access.response) return access.response;
 
     const params = await props.params;
@@ -65,4 +65,3 @@ export async function POST(
     );
   }
 }
-

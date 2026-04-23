@@ -5,6 +5,14 @@ import {
   parseAvailabilityMonthQuery,
   parsePublicAppointmentPayload,
 } from '../../lib/publicApiContracts.ts'
+import {
+  GENDER_OPTIONS,
+  PATIENT_GENDER_VALUES,
+  PATIENT_RELATION_VALUES,
+  PATIENT_SEX_VALUES,
+  RELATION_OPTIONS,
+  SEX_OPTIONS,
+} from '../../lib/bookingOptions.ts'
 import { runSuite } from '../testHarness.ts'
 
 const validDoctorId = 'cma1234567890123456789012'
@@ -52,6 +60,23 @@ export async function runPublicContractsIntegrationTests() {
             }),
           (error: unknown) =>
             error instanceof ContractValidationError && error.message.includes('Rango inválido')
+        )
+      },
+    },
+    {
+      name: 'shared booking enums keep frontend options aligned with public contract values',
+      run: () => {
+        assert.deepEqual(
+          SEX_OPTIONS.map((option) => option.value),
+          [...PATIENT_SEX_VALUES]
+        )
+        assert.deepEqual(
+          GENDER_OPTIONS.map((option) => option.value),
+          [...PATIENT_GENDER_VALUES]
+        )
+        assert.deepEqual(
+          RELATION_OPTIONS.map((option) => option.value),
+          [...PATIENT_RELATION_VALUES]
         )
       },
     },
@@ -105,6 +130,30 @@ export async function runPublicContractsIntegrationTests() {
         assert.equal(payload.sex, 'FEMALE')
         assert.equal(payload.gender, 'FEMININE')
         assert.equal(payload.contact?.relation, 'SELF')
+        assert.equal(payload.contact?.phone, '6141234567')
+      },
+    },
+    {
+      name: 'appointments contract allows missing patient phone when responsible contact has phone',
+      run: () => {
+        const payload = parsePublicAppointmentPayload({
+          firstName: 'Ana',
+          lastNamePaternal: 'López',
+          dateOfBirth: '1995-07-10',
+          phone: '',
+          appointmentType: 'NORMAL',
+          startTime: '2026-05-01T10:00:00.000-07:00',
+          doctorId: validDoctorId,
+          privacyConsentAccepted: true,
+          contact: {
+            relation: 'CAREGIVER',
+            firstName: 'Laura',
+            lastNamePaternal: 'Pérez',
+            phone: '6141234567',
+          },
+        })
+
+        assert.equal(payload.phone, '')
         assert.equal(payload.contact?.phone, '6141234567')
       },
     },

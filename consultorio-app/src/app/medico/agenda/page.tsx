@@ -13,6 +13,7 @@ import { Input } from "@/components/Input";
 import { Select } from "@/components/Select";
 import { toast } from "sonner";
 import { formatPatientName, parseFullName } from "@/lib/patientName";
+import { combineLocalDateAndTimeToIso, rangesOverlap } from "@/lib/dateTime";
 
 type AgendaAppointment = {
   id: string;
@@ -319,7 +320,18 @@ function DoctorAgendaContent() {
   };
 
   const getAppointmentsForTimeSlot = (time: string): AgendaAppointment[] => {
-    return appointments.filter(apt => apt.time === time && matchesStatusFilter(apt));
+    const slotStart = new Date(`${format(currentDate, "yyyy-MM-dd")}T${time}:00`);
+    const slotEnd = new Date(slotStart.getTime() + consultationDurationMin * 60_000);
+
+    return appointments.filter((apt) => {
+      if (!matchesStatusFilter(apt)) return false;
+      return rangesOverlap({
+        startA: new Date(apt.startTime),
+        endA: new Date(apt.endTime),
+        startB: slotStart,
+        endB: slotEnd,
+      });
+    });
   };
 
   const clearStatusFilter = () => {
@@ -342,7 +354,16 @@ function DoctorAgendaContent() {
   })();
 
   const getBlocksForTimeSlot = (time: string): AgendaBlock[] => {
-    return blocks.filter(block => block.time === time);
+    const slotStart = new Date(`${format(currentDate, "yyyy-MM-dd")}T${time}:00`);
+    const slotEnd = new Date(slotStart.getTime() + consultationDurationMin * 60_000);
+    return blocks.filter((block) =>
+      rangesOverlap({
+        startA: new Date(block.startTime),
+        endA: new Date(block.endTime),
+        startB: slotStart,
+        endB: slotEnd,
+      }),
+    );
   };
 
   const canModifyAppointment = (apt: AgendaAppointment): boolean => {
@@ -431,7 +452,7 @@ function DoctorAgendaContent() {
         if (!appointmentForm.manualTime) {
           throw new Error("Selecciona una hora manual para horario extraordinario.");
         }
-        startTime = new Date(`${appointmentForm.date}T${appointmentForm.manualTime}:00`).toISOString();
+        startTime = combineLocalDateAndTimeToIso(appointmentForm.date, appointmentForm.manualTime);
       } else {
         if (!appointmentForm.slotStart) {
           throw new Error("Selecciona un módulo disponible.");
@@ -506,8 +527,8 @@ function DoctorAgendaContent() {
         throw new Error("Selecciona hora de inicio y fin para el bloqueo.");
       }
 
-      const startTime = new Date(`${blockForm.date}T${blockForm.startTime}:00`).toISOString();
-      const endTime = new Date(`${blockForm.date}T${blockForm.endTime}:00`).toISOString();
+      const startTime = combineLocalDateAndTimeToIso(blockForm.date, blockForm.startTime);
+      const endTime = combineLocalDateAndTimeToIso(blockForm.date, blockForm.endTime);
 
       const res = await fetch("/api/agenda/admin/blocks", {
         method: "POST",
@@ -565,7 +586,7 @@ function DoctorAgendaContent() {
         if (!rescheduleForm.manualTime) {
           throw new Error("Selecciona una hora manual para reagendar.");
         }
-        newStartTime = new Date(`${rescheduleForm.date}T${rescheduleForm.manualTime}:00`).toISOString();
+        newStartTime = combineLocalDateAndTimeToIso(rescheduleForm.date, rescheduleForm.manualTime);
       } else {
         if (!rescheduleForm.slotStart) {
           throw new Error("Selecciona un módulo para reagendar.");

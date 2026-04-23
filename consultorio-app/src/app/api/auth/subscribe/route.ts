@@ -6,6 +6,9 @@ import { getDoctorSetupStatus } from "@/lib/setupStatus";
 import { attachSessionCookie, buildSessionToken } from "@/lib/session";
 import { getServerEnv } from "@/lib/env";
 import { captureError, logEvent } from "@/lib/observability";
+import { COMMERCIAL_BASE_PLANS, resolveCommercialPlan } from "@/lib/subscriptionCatalog";
+import { Prisma } from "@prisma/client";
+import { buildProductAccessFromFeatures } from "@/lib/productAccess";
 
 const MONTHLY_PLAN_AMOUNT = 899;
 
@@ -21,6 +24,7 @@ export async function POST() {
 
     const env = getServerEnv();
     const now = new Date();
+    const selectedPlan = resolveCommercialPlan({ basePlan: COMMERCIAL_BASE_PLANS.INTEGRAL });
     const existing = await prisma.doctorSubscription.findUnique({
       where: { doctorId: authUser.id },
       select: { currentPeriodEnd: true, status: true },
@@ -38,7 +42,7 @@ export async function POST() {
         doctorId: authUser.id,
         status: "ACTIVE",
         provider: env.PAYMENTS_PROVIDER,
-        planName: "Plan Mensual MiDoc",
+        planName: selectedPlan.legacyPlanName,
         amount: MONTHLY_PLAN_AMOUNT,
         currency: "MXN",
         customerId: existing ? null : `mock_cus_${authUser.id.slice(0, 8)}`,
@@ -50,11 +54,12 @@ export async function POST() {
         lastPaymentAt: now,
         currentPeriodStart: startAt,
         currentPeriodEnd: endAt,
+        features: selectedPlan.features as Prisma.InputJsonValue,
       },
       update: {
         status: "ACTIVE",
         provider: env.PAYMENTS_PROVIDER,
-        planName: "Plan Mensual MiDoc",
+        planName: selectedPlan.legacyPlanName,
         amount: MONTHLY_PLAN_AMOUNT,
         currency: "MXN",
         externalPriceId: "mock_price_mensual_mx",
@@ -64,6 +69,7 @@ export async function POST() {
         lastPaymentAt: now,
         currentPeriodStart: startAt,
         currentPeriodEnd: endAt,
+        features: selectedPlan.features as Prisma.InputJsonValue,
       },
     });
 
@@ -74,11 +80,15 @@ export async function POST() {
     });
 
     const setup = await getDoctorSetupStatus(authUser.id, authUser.role);
+    const access = buildProductAccessFromFeatures(selectedPlan.features)
     const token = await buildSessionToken({
       sub: authUser.id,
       role: authUser.role,
       hasActiveSubscription: setup.hasActiveSubscription,
       onboardingCompleted: setup.onboardingCompleted,
+      productPlan: access.plan,
+      enabledModules: access.enabledModules,
+      features: selectedPlan.features,
     });
 
     const response = NextResponse.json({
@@ -87,6 +97,7 @@ export async function POST() {
       subscription: {
         status: "ACTIVE",
         provider: env.PAYMENTS_PROVIDER,
+        planName: selectedPlan.displayName,
         currentPeriodStart: startAt,
         currentPeriodEnd: endAt,
         amount: MONTHLY_PLAN_AMOUNT,

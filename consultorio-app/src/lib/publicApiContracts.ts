@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { parseDateOnlyLocal } from './dateTime.ts'
 import { buildFullName } from './patientName.ts'
+import { PATIENT_GENDER_VALUES, PATIENT_RELATION_VALUES, PATIENT_SEX_VALUES } from './bookingOptions.ts'
 
 export class ContractValidationError extends Error {
   public readonly status: number
@@ -27,34 +28,19 @@ const availabilityMonthQuerySchema = z.object({
   doctorId: z.string().cuid(),
 })
 
-const PATIENT_SEX_VALUES = ['MALE', 'FEMALE', 'INTERSEX'] as const
-const PATIENT_GENDER_VALUES = [
-  'NOT_SPECIFIED',
-  'MASCULINE',
-  'FEMININE',
-  'TRANSGENDER',
-  'TRANSSEXUAL',
-  'TRAVESTI',
-  'INTERSEX',
-  'OTHER',
-] as const
-const PATIENT_RELATION_VALUES = [
-  'SELF',
-  'SPOUSE',
-  'PARENT',
-  'CHILD',
-  'SIBLING',
-  'FRIEND',
-  'CAREGIVER',
-  'OTHER',
-] as const
-
 const phoneSchema = z
   .string()
   .min(7, 'El teléfono es requerido')
   .max(30, 'El teléfono es inválido')
   .transform((value) => value.replace(/\D+/g, ''))
   .refine((value) => /^\d{10,15}$/.test(value), 'El teléfono debe tener entre 10 y 15 dígitos')
+
+const optionalPhoneSchema = z
+  .string()
+  .optional()
+  .default('')
+  .transform((value) => (typeof value === 'string' ? value.replace(/\D+/g, '') : ''))
+  .refine((value) => value === '' || /^\d{10,15}$/.test(value), 'El teléfono debe tener entre 10 y 15 dígitos')
 
 const emailSchema = z
   .union([z.string().trim().email('Correo inválido'), z.literal('')])
@@ -91,7 +77,7 @@ const publicAppointmentSchema = z.object({
   gender: z.enum(PATIENT_GENDER_VALUES).optional().nullable(),
 
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha de nacimiento inválida'),
-  phone: phoneSchema,
+  phone: optionalPhoneSchema,
   email: emailSchema,
   bookAsGuest: z.boolean().optional().default(false),
   appointmentType: z.enum(['NORMAL', 'EXTENDED']),
@@ -100,7 +86,11 @@ const publicAppointmentSchema = z.object({
   holdToken: z.string().uuid().optional(),
 
   contact: contactSchema.optional().nullable(),
-  recaptchaToken: z.string().min(1).optional().nullable(),
+  recaptchaToken: z
+    .union([z.string().min(1), z.literal('')])
+    .optional()
+    .nullable()
+    .transform((value) => (typeof value === 'string' && value.trim().length === 0 ? null : value)),
 
   privacyConsentAccepted: z
     .boolean()

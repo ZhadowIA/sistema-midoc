@@ -52,3 +52,21 @@ export function alignToSlotGrid(
   const steps = Math.ceil(deltaMs / slotMs)
   return new Date(gridStart.getTime() + steps * slotMs)
 }
+
+export function combineLocalDateAndTimeToIso(date: string, time: string): string {
+  const localDateTime = new Date(`${date}T${time}:00`)
+  if (Number.isNaN(localDateTime.getTime())) {
+    throw new Error('Fecha u hora inválida.')
+  }
+  return localDateTime.toISOString()
+}
+
+export function rangesOverlap(params: {
+  startA: Date
+  endA: Date
+  startB: Date
+  endB: Date
+}): boolean {
+  const { startA, endA, startB, endB } = params
+  return startA < endB && endA > startB
+}

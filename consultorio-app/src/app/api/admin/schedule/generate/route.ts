@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
 import { addDays, format } from 'date-fns'
 import { z } from 'zod'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { requireAgendaDoctorApiAccess } from '@/lib/medicalApi'
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/
 const DEFAULT_HORIZON_DAYS = 365
@@ -71,14 +71,14 @@ function applyTime(baseDate: Date, time: string): Date {
 
 export async function POST(request: Request) {
   try {
+    const access = await requireAgendaDoctorApiAccess()
+    if (access.response) return access.response
+
     const payload = requestSchema.parse(await request.json())
     const schedule = payload.schedule
     const horizonDays = payload.horizonDays ?? DEFAULT_HORIZON_DAYS
 
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-    }
+    const doctorId = access.context.doctorId
 
     const today = new Date()
     today.setHours(0, 0, 0, 0)

@@ -2,19 +2,16 @@ import prisma from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/http'
 import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 import {
-  isAiAvailableOnServer,
-  isClinicalHistoryEnabled,
+  getEnabledFeatures,
 } from '@/lib/featureFlags'
 import {
   resolveConsultationSession,
   shouldSkipSessionQueries,
 } from '@/lib/consultationWorkspace'
 import { EncounterHistoryService } from '@/services/EncounterHistoryService'
+import { resolveCapabilities } from '@/lib/capabilities'
 
 export async function GET(_request: Request, props: { params: Promise<{ id: string }> }) {
-  if (!isClinicalHistoryEnabled()) {
-    return jsonNoStore({ error: 'Modo consulta unificado no habilitado' }, { status: 404 })
-  }
   const params = await props.params
   try {
     const access = await requireMedicalDoctorApiAccess()
@@ -69,6 +66,25 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
           where: { doctorId },
           select: { preferredConsultationMode: true },
         })
+    const features = await getEnabledFeatures(doctorId)
+    const capabilities = resolveCapabilities({
+      features,
+      hasAppointmentContext: true,
+    })
+    if (!capabilities.clinicalUnified.enabled) {
+      console.info('clinical.context.disabled', {
+        doctorId,
+        appointmentId: params.id,
+        reasonCode: capabilities.clinicalUnified.reasonCode,
+      })
+      return jsonNoStore(
+        {
+          error: 'Modo consulta unificado no habilitado',
+          capabilities,
+        },
+        { status: 404 },
+      )
+    }
     const session = resolveConsultationSession({
       isReadOnly,
       existing,
@@ -82,7 +98,9 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
       encounter,
       session,
       capabilities: {
-        aiAvailable: isAiAvailableOnServer(),
+        aiAvailable: capabilities.aiConsultation.enabled,
+        ai: capabilities.aiConsultation,
+        clinicalUnified: capabilities.clinicalUnified,
       },
     })
   } catch (error: unknown) {

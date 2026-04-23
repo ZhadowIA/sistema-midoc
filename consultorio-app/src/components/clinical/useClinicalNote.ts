@@ -37,7 +37,7 @@ const EMPTY: NoteData = {
 
 const AUTOSAVE_MS = 2_500;
 
-export function useClinicalNote(appointmentId: string) {
+export function useClinicalNote(encounterId: string) {
   const [note, setNote] = useState<NoteData>(EMPTY);
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -48,7 +48,7 @@ export function useClinicalNote(appointmentId: string) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/clinical/admin/appointments/${appointmentId}/note`, {
+    fetch(`/api/clinical/admin/encounters/${encounterId}/note`, {
       credentials: "include",
     })
       .then((r) => r.json())
@@ -72,13 +72,13 @@ export function useClinicalNote(appointmentId: string) {
     return () => {
       cancelled = true;
     };
-  }, [appointmentId]);
+  }, [encounterId]);
 
   const save = useCallback(
     async (next: NoteData) => {
       setSaveState("saving");
       const res = await fetch(
-        `/api/clinical/admin/appointments/${appointmentId}/note`,
+        `/api/clinical/admin/encounters/${encounterId}/note`,
         {
           method: "POST",
           credentials: "include",
@@ -94,13 +94,13 @@ export function useClinicalNote(appointmentId: string) {
       }
       setSaveState("saved");
     },
-    [appointmentId],
+    [encounterId],
   );
 
   const sign = useCallback(async (): Promise<SignResult> => {
     setSaveState("saving");
     const res = await fetch(
-      `/api/clinical/admin/appointments/${appointmentId}/note`,
+      `/api/clinical/admin/encounters/${encounterId}/note`,
       {
         method: "POST",
         credentials: "include",
@@ -121,7 +121,7 @@ export function useClinicalNote(appointmentId: string) {
     setSignedAt(body?.signedAt ?? new Date().toISOString());
     setSignatureHash(body?.signatureHash ?? null);
     return { ok: true };
-  }, [appointmentId, note]);
+  }, [encounterId, note]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -131,7 +131,6 @@ export function useClinicalNote(appointmentId: string) {
       return;
     }
     if (timerRef.current) clearTimeout(timerRef.current);
-    setSaveState("idle");
     timerRef.current = setTimeout(() => {
       save(note);
     }, AUTOSAVE_MS);

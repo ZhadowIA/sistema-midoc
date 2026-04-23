@@ -52,6 +52,7 @@ export async function GET() {
       logoImage: branding.logoImage,
       productPlan: productAccess.plan,
       enabledModules: productAccess.enabledModules,
+      features: productAccess.features,
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'

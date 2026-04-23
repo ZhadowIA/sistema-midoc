@@ -12,6 +12,7 @@ import { getServerEnv } from '@/lib/env'
 import { captureError, logEvent } from '@/lib/observability'
 import { WhatsAppMessageLogService } from '@/services/WhatsAppMessageLogService'
 import { AppointmentAuditService } from '@/services/AppointmentAuditService'
+import { WaitlistService } from '@/services/WaitlistService'
 
 const incomingMessageSchema = z.object({
   doctorId: z.string().min(1),
@@ -351,6 +352,17 @@ export async function POST(request: Request) {
         await prisma.appointment.update({
           where: { id: matchedAppointment.id },
           data: { status: AppointmentStatus.CANCELLED },
+        })
+
+        await WaitlistService.processVacancy({
+          doctorId,
+          clinicId: matchedAppointment.clinicId,
+          sourceAppointmentId: matchedAppointment.id,
+          slotStartTime: matchedAppointment.startTime,
+          slotEndTime: matchedAppointment.endTime,
+          actorType: 'BOT',
+          source: 'WHATSAPP_BOT',
+          trigger: 'CANCELLATION',
         })
 
         await AppointmentAuditService.safeLog({

@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -36,7 +37,9 @@ model User {
   doctorConfig          DoctorConfig?
   subscription          DoctorSubscription?
   onboarding            DoctorOnboarding?
-  legalAcceptance       LegalAcceptance?
+  legalAcceptances      LegalAcceptance[]
+  securityIncidents     SecurityIncident[] @relation("IncidentReporter")
+  assignedIncidents     SecurityIncident[] @relation("IncidentAssignee")
   blocks                AvailabilityBlock[]
   schedules             ScheduleBlock[]
   appointments          Appointment[]
@@ -53,6 +56,15 @@ model User {
   billingReceipts       BillingReceipt[]
   clinic               Clinic?                @relation(fields: [clinicId], references: [id], onDelete: SetNull)
   ownedClinic          Clinic?                @relation("ClinicOwner")
+  waitlistEntries      WaitlistEntry[]
+  waitlistOffers       WaitlistOffer[]
+  patientPreCheckins   PatientPreCheckin[]
+  patientDocuments     PatientDocument[]
+  digitalConsentLogs   DigitalConsent[]
+  arcoRequests         ArcoRequest[]          @relation("ArcoRequestedBy")
+  resolvedArcoRequests ArcoRequest[]          @relation("ArcoResolvedBy")
+  deletionLogs         DataDeletionLog[]      @relation("DataDeletionPerformedBy")
+  clinicalEncounters   ClinicalEncounter[]    @relation("EncounterDoctor")
 
   @@index([bossId])
   @@index([clinicId])
@@ -98,15 +110,20 @@ model DoctorOnboarding {
 
 model LegalAcceptance {
   id                String   @id @default(cuid())
-  userId            String   @unique
+  userId            String
   termsVersion      String
   privacyVersion    String
   termsAcceptedAt   DateTime
   privacyAcceptedAt DateTime
+  ipAddress         String?
+  userAgent         String?
+  context           String   @default("REGISTER")
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model PaymentWebhookEvent {
@@ -142,6 +159,12 @@ model DoctorConfig {
   whatsappReminderConfirmedTemplate String?
   normalConsultationPrice           Decimal?         @db.Decimal(10, 2)
   extendedConsultationPrice         Decimal?         @db.Decimal(10, 2)
+  depositEnabled                    Boolean          @default(false)
+  depositAmount                     Decimal?         @db.Decimal(10, 2)
+  depositExpiresInMinutes           Int              @default(30)
+  cancellationWindowHours           Int              @default(24)
+  cancellationRefundMode            DepositRefundMode @default(FULL)
+  cancellationPartialRefundPct      Int              @default(50)
   receiptSeries                     String?
   issuerLegalName                   String?
   issuerTaxId                       String?
@@ -185,6 +208,14 @@ model Patient {
   consentCaptures      ConsentCapture[]
   contacts             PatientContact[]
   clinic               Clinic?                @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  waitlistEntries      WaitlistEntry[]
+  waitlistOffers       WaitlistOffer[]
+  preCheckins          PatientPreCheckin[]
+  uploadedDocuments    PatientDocument[]
+  digitalConsents      DigitalConsent[]
+  arcoRequests         ArcoRequest[]
+  deletionLogs         DataDeletionLog[]
+  clinicalEncounters   ClinicalEncounter[]
 
   @@index([ownerDoctorId])
   @@index([ownerDoctorId, lastNamePaternal, firstName])
@@ -254,6 +285,12 @@ model Appointment {
   status                AppointmentStatus @default(PENDING)
   notes                 String?
   questionnaireAnswered Boolean           @default(false)
+  paymentStatus         AppointmentPaymentStatus @default(NOT_REQUIRED)
+  depositRequiredAmount Decimal?          @db.Decimal(10, 2)
+  depositPaidAmount     Decimal?          @db.Decimal(10, 2)
+  depositDueAt          DateTime?
+  depositPaidAt         DateTime?
+  cancellationPolicySnapshot Json?
   createdAt             DateTime          @default(now())
   updatedAt             DateTime          @updatedAt
 
@@ -272,8 +309,18 @@ model Appointment {
   aiProcessingJobs AIProcessingJob[]
   billingReceipt   BillingReceipt?
   clinic           Clinic?                 @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  waitlistOffers   WaitlistOffer[]         @relation("SourceAppointmentWaitlistOffers")
+  preCheckins      PatientPreCheckin[]
+  documents        PatientDocument[]
+  digitalConsents  DigitalConsent[]
+  deletionLogs     DataDeletionLog[]
+  clinicalEncounters ClinicalEncounter[]
 
   @@index([clinicId])
+  @@index([doctorId, date])
+  @@index([doctorId, startTime])
+  @@index([patientId, date])
+  @@index([status, date])
 }
 
 model BillingReceipt {
@@ -306,6 +353,66 @@ model Clinic {
   users        User[]
   patients     Patient[]
   appointments Appointment[]
+  waitlistEntries WaitlistEntry[]
+  waitlistOffers  WaitlistOffer[]
+  arcoRequests    ArcoRequest[]
+  retentionPolicies DataRetentionPolicy[]
+}
+
+model WaitlistEntry {
+  id                    String              @id @default(cuid())
+  doctorId              String
+  clinicId              String?
+  patientId             String
+  appointmentType       AppointmentType?
+  preferredWeekdays     Json?
+  preferredStartMinute  Int?
+  preferredEndMinute    Int?
+  priority              Int                 @default(100)
+  status                WaitlistEntryStatus @default(ACTIVE)
+  notes                 String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  clinic Clinic? @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  offers WaitlistOffer[]
+
+  @@index([doctorId, status, priority, createdAt])
+  @@index([clinicId, status, priority, createdAt])
+  @@index([patientId, status])
+}
+
+model WaitlistOffer {
+  id                  String              @id @default(cuid())
+  waitlistEntryId     String
+  doctorId            String
+  clinicId            String?
+  patientId           String
+  sourceAppointmentId String?
+  slotStartTime       DateTime
+  slotEndTime         DateTime
+  expiresAt           DateTime
+  status              WaitlistOfferStatus @default(SENT)
+  acceptedAt          DateTime?
+  rejectedAt          DateTime?
+  expiredAt           DateTime?
+  notifiedChannels    Json?
+  metadata            Json?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  waitlistEntry WaitlistEntry @relation(fields: [waitlistEntryId], references: [id], onDelete: Cascade)
+  doctor User @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  clinic Clinic? @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  sourceAppointment Appointment? @relation("SourceAppointmentWaitlistOffers", fields: [sourceAppointmentId], references: [id], onDelete: SetNull)
+
+  @@index([doctorId, status, expiresAt])
+  @@index([waitlistEntryId, createdAt])
+  @@index([patientId, status, createdAt])
+  @@index([slotStartTime, slotEndTime, status])
 }
 
 model AppointmentAuditLog {
@@ -378,6 +485,9 @@ model Notification {
   createdAt     DateTime            @default(now())
 
   appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([appointmentId])
 }
 
 model WhatsAppMessageLog {
@@ -450,6 +560,7 @@ model ClinicalHistoryVersion {
 model EncounterHistory {
   id                         String            @id @default(cuid())
   appointmentId              String            @unique
+  clinicalEncounterId        String?           @unique
   patientId                  String
   doctorId                   String
   payload                    Json
@@ -464,10 +575,35 @@ model EncounterHistory {
   updatedAt                  DateTime          @updatedAt
 
   appointment Appointment               @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  clinicalEncounter ClinicalEncounter?  @relation(fields: [clinicalEncounterId], references: [id], onDelete: SetNull)
   versions    EncounterHistoryVersion[]
 
   @@index([doctorId])
   @@index([patientId])
+}
+
+model ClinicalEncounter {
+  id            String                 @id @default(cuid())
+  doctorId      String
+  patientId     String
+  clinicId      String?
+  appointmentId String?
+  source        ClinicalEncounterSource @default(STANDALONE)
+  status        ClinicalEncounterStatus @default(OPEN)
+  openedAt      DateTime               @default(now())
+  closedAt      DateTime?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  doctor          User             @relation("EncounterDoctor", fields: [doctorId], references: [id], onDelete: Cascade)
+  patient         Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment     Appointment?     @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  encounterHistory EncounterHistory?
+  clinicalNote    ClinicalNote?
+
+  @@index([doctorId, status, createdAt])
+  @@index([patientId, status, createdAt])
+  @@index([appointmentId])
 }
 
 model EncounterHistoryVersion {
@@ -490,7 +626,8 @@ model EncounterHistoryVersion {
 
 model ClinicalNote {
   id            String @id @default(cuid())
-  appointmentId String @unique
+  appointmentId String? @unique
+  clinicalEncounterId String? @unique
   doctorId      String
   patientId     String
 
@@ -510,7 +647,8 @@ model ClinicalNote {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  appointment   Appointment    @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  appointment   Appointment?   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  clinicalEncounter ClinicalEncounter? @relation(fields: [clinicalEncounterId], references: [id], onDelete: SetNull)
   doctor        User           @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   patient       Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
   signedBy      User?          @relation("SignedClinicalNotes", fields: [signedByUserId], references: [id], onDelete: SetNull)
@@ -577,6 +715,20 @@ enum AppointmentStatus {
   COMPLETED
 }
 
+enum AppointmentPaymentStatus {
+  NOT_REQUIRED
+  PAYMENT_PENDING
+  DEPOSIT_PAID
+  PAYMENT_FAILED
+}
+
+enum DepositRefundMode {
+  FULL
+  PARTIAL
+  CREDIT
+  FORFEIT
+}
+
 enum NotificationChannel {
   WHATSAPP
   SMS
@@ -634,6 +786,25 @@ enum AuditAction {
   AI_NOTE_GENERATION_COMPLETED
   AI_NOTE_GENERATION_FAILED
   CONSENT_CAPTURED
+  WAITLIST_OFFER_SENT
+  WAITLIST_OFFER_ACCEPTED
+  WAITLIST_OFFER_REJECTED
+  WAITLIST_OFFER_EXPIRED
+  WAITLIST_SLOT_REASSIGNED
+}
+
+enum WaitlistEntryStatus {
+  ACTIVE
+  PAUSED
+  BOOKED
+  REMOVED
+}
+
+enum WaitlistOfferStatus {
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
 }
 
 enum WhatsAppMessageDirection {
@@ -670,6 +841,18 @@ enum ClinicalDocStatus {
   IN_REVIEW
   FINAL
   SIGNED
+}
+
+enum ClinicalEncounterSource {
+  APPOINTMENT
+  STANDALONE
+  MIGRATION
+}
+
+enum ClinicalEncounterStatus {
+  OPEN
+  CLOSED
+  ARCHIVED
 }
 
 enum ConsultationMode {
@@ -761,4 +944,246 @@ model AIProcessingJob {
   @@index([appointmentId, kind, createdAt])
   @@index([doctorId, createdAt])
   @@index([status, createdAt])
+}
+
+model SecurityIncident {
+  id                  String                  @id @default(cuid())
+  reportedByUserId    String
+  assignedToUserId    String?
+  severity            IncidentSeverity
+  category            IncidentCategory
+  status              IncidentStatus          @default(OPEN)
+  title               String
+  summary             String
+  detectedAt          DateTime
+  containedAt         DateTime?
+  resolvedAt          DateTime?
+  affectedScope       Json?
+  correctiveActions   String?
+  rootCause           String?
+  notificationRequired Boolean                @default(false)
+  notifiedAt          DateTime?
+  evidenceExportRef   String?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  reportedBy User  @relation("IncidentReporter", fields: [reportedByUserId], references: [id], onDelete: Cascade)
+  assignedTo User? @relation("IncidentAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, detectedAt])
+  @@index([severity, status])
+  @@index([reportedByUserId, createdAt])
+}
+
+model PatientPreCheckin {
+  id                        String   @id @default(cuid())
+  patientId                 String
+  appointmentId             String?
+  doctorId                  String
+  attendanceConfirmed       Boolean  @default(false)
+  demographicsConfirmed     Boolean  @default(false)
+  pendingPaymentsAcknowledged Boolean @default(false)
+  checklist                 Json?
+  notes                     String?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  doctor      User         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@index([appointmentId, createdAt])
+  @@index([doctorId, createdAt])
+}
+
+model PatientDocument {
+  id            String                @id @default(cuid())
+  patientId     String
+  appointmentId String?
+  doctorId      String
+  category      PatientDocumentCategory
+  fileName      String
+  fileUrl       String
+  mimeType      String?
+  sizeBytes     Int?
+  status        PatientDocumentStatus @default(ACTIVE)
+  uploadedAt    DateTime              @default(now())
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  doctor      User         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, uploadedAt])
+  @@index([appointmentId, uploadedAt])
+  @@index([doctorId, uploadedAt])
+}
+
+model DigitalConsent {
+  id            String            @id @default(cuid())
+  patientId     String
+  appointmentId String?
+  doctorId      String
+  consentType   DigitalConsentType
+  version       String
+  acceptedAt    DateTime
+  actorType     ConsentActorType  @default(PATIENT)
+  source        AuditSource       @default(PATIENT_PORTAL)
+  ipAddress     String?
+  userAgent     String?
+  metadata      Json?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  doctor      User         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, consentType, acceptedAt])
+  @@index([appointmentId, consentType, acceptedAt])
+}
+
+model ArcoRequest {
+  id               String            @id @default(cuid())
+  patientId        String
+  clinicId         String?
+  requestedByUserId String?
+  resolvedByUserId String?
+  type             ArcoRequestType
+  status           ArcoRequestStatus @default(OPEN)
+  requestText      String
+  resolutionText   String?
+  evidenceRef      String?
+  requestedAt      DateTime          @default(now())
+  resolvedAt       DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  clinic      Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  requestedBy User?    @relation("ArcoRequestedBy", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  resolvedBy  User?    @relation("ArcoResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, status, requestedAt])
+  @@index([clinicId, status, requestedAt])
+}
+
+model DataRetentionPolicy {
+  id              String              @id @default(cuid())
+  clinicId        String?
+  scope           RetentionScope      @default(GLOBAL)
+  dataCategory    RetentionDataCategory
+  retentionDays   Int
+  hardDelete      Boolean             @default(false)
+  active          Boolean             @default(true)
+  notes           String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  clinic Clinic? @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+
+  @@index([scope, dataCategory, active])
+  @@index([clinicId, dataCategory, active])
+}
+
+model DataDeletionLog {
+  id                String           @id @default(cuid())
+  patientId         String
+  appointmentId     String?
+  performedByUserId String?
+  mode              DeletionMode
+  reason            String
+  metadata          Json?
+  createdAt         DateTime         @default(now())
+
+  patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  performedBy User?        @relation("DataDeletionPerformedBy", fields: [performedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, createdAt])
+  @@index([appointmentId, createdAt])
+}
+
+enum IncidentSeverity {
+  P0
+  P1
+  P2
+  P3
+}
+
+enum IncidentCategory {
+  SECURITY_BREACH
+  DATA_LEAK
+  UNAUTHORIZED_ACCESS
+  SERVICE_OUTAGE
+  DATA_INTEGRITY
+  VENDOR_INCIDENT
+  OTHER
+}
+
+enum IncidentStatus {
+  OPEN
+  INVESTIGATING
+  CONTAINED
+  RESOLVED
+  POST_MORTEM
+  CLOSED
+}
+
+enum PatientDocumentCategory {
+  STUDY
+  IDENTIFICATION
+  INSURANCE
+  OTHER
+}
+
+enum PatientDocumentStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum DigitalConsentType {
+  SENSITIVE_DATA_PROCESSING
+  PORTAL_USAGE
+  TELECONSULTATION
+}
+
+enum ConsentActorType {
+  PATIENT
+  DOCTOR
+  SYSTEM
+}
+
+enum ArcoRequestType {
+  ACCESS
+  RECTIFICATION
+  CANCELLATION
+  OPPOSITION
+}
+
+enum ArcoRequestStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  REJECTED
+}
+
+enum RetentionScope {
+  GLOBAL
+  CLINIC
+}
+
+enum RetentionDataCategory {
+  APPOINTMENTS
+  CLINICAL_NOTES
+  CONSENTS
+  AUDIT_LOGS
+  PATIENT_DOCUMENTS
+}
+
+enum DeletionMode {
+  SOFT
+  HARD
 }

@@ -1,0 +1,1 @@
+const fs = require('fs'); let data = fs.readFileSync('src/app/medico/configuracion/page.tsx', 'utf8'); data = data.replace(/type="number"/g, 'type="text" inputMode="numeric"'); fs.writeFileSync('src/app/medico/configuracion/page.tsx', data);

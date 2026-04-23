@@ -22,7 +22,7 @@ export async function GET(
   request: Request,
   props: { params: Promise<{ id: string }> }
 ) {
-  const access = await requireMedicalDoctorApiAccess();
+  const access = await requireMedicalDoctorApiAccess({ requiredFeature: "ai.dictation" });
   if (access.response) return access.response;
 
   const params = await props.params;

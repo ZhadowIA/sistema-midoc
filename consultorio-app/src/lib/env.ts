@@ -5,6 +5,7 @@ const serverEnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL es requerida"),
   NEXTAUTH_SECRET: z.string().min(1, "NEXTAUTH_SECRET es requerida"),
   APP_BASE_URL: z.string().url("APP_BASE_URL debe ser una URL válida"),
+  APP_TIMEZONE: z.string().min(1).default("America/Chihuahua"),
   QUESTIONNAIRE_TOKEN_SECRET: z.string().min(1, "QUESTIONNAIRE_TOKEN_SECRET es requerida"),
   NOTIFICATION_CRON_SECRET: z.string().min(8).optional(),
   WHATSAPP_WEBHOOK_SECRET: z.string().min(8).optional(),
@@ -22,6 +23,9 @@ const serverEnvSchema = z.object({
   NOTIFICATION_PENDING_AUTO_CLOSE_HOURS: z.string().optional(),
   PAYMENTS_PROVIDER: z.enum(["MOCK", "STRIPE", "CONEKTA", "OPENPAY"]).default("MOCK"),
   PAYMENTS_WEBHOOK_SECRET: z.string().min(8).optional(),
+  STRIPE_SECRET_KEY: z.string().min(20).optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().min(20).optional(),
+  STRIPE_PRICE_ID: z.string().min(3).optional(),
   TERMS_VERSION: z.string().min(1).default("v1"),
   PRIVACY_VERSION: z.string().min(1).default("v1"),
   CLINICAL_HISTORY_ENABLED: z

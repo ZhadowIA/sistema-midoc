@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
-import { parseFullName } from '@/lib/patientName'
+import { buildFullName } from '@/lib/patientName'
 
 const registerPatientSchema = z.object({
-  name: z.string().min(2, 'El nombre es requerido'),
+  firstName: z.string().min(2, 'El nombre es requerido'),
+  lastNamePaternal: z.string().min(2, 'El apellido paterno es requerido'),
+  lastNameMaternal: z.string().optional().nullable(),
   email: z.string().email('Correo inválido'),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
   phone: z.string().min(10, 'El teléfono debe tener al menos 10 dígitos'),
@@ -17,7 +19,10 @@ const registerPatientSchema = z.object({
 export async function POST(request: Request) {
   try {
     const parsed = registerPatientSchema.parse(await request.json())
-    const name = parsed.name.trim()
+    const firstName = parsed.firstName.trim()
+    const lastNamePaternal = parsed.lastNamePaternal.trim()
+    const lastNameMaternal = parsed.lastNameMaternal?.trim() || null
+    const name = buildFullName({ firstName, lastNamePaternal, lastNameMaternal })
     const email = parsed.email.trim().toLowerCase()
     const password = parsed.password
     const phone = parsed.phone.trim()
@@ -50,16 +55,12 @@ export async function POST(request: Request) {
         },
       })
 
-      const parsedName = parseFullName(name)
-      if (!parsedName.firstName || !parsedName.lastNamePaternal) {
-        throw new Error('El nombre debe incluir al menos nombre y apellido paterno.')
-      }
       await tx.patient.create({
         data: {
           userId: user.id,
-          firstName: parsedName.firstName,
-          lastNamePaternal: parsedName.lastNamePaternal,
-          lastNameMaternal: parsedName.lastNameMaternal,
+          firstName,
+          lastNamePaternal,
+          lastNameMaternal,
           email,
           phone,
           dateOfBirth,

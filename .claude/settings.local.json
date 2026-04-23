@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.\\(ts|js|json|md\\)$|tsconfig|next|eslint\")",
+      "Bash(npx tsc *)",
+      "Bash(npx prisma *)",
+      "Bash(npm run *)",
+      "Bash(mkdir -p \"C:/Sistema MiDoc/sistema-midoc/consultorio-app/prisma/migrations/20260418000000_baseline\")",
+      "Bash(echo \"EXIT=$?\")",
+      "mcp__plugin_engram_engram__mem_search"
+    ]
+  }
+}

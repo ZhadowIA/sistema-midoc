@@ -5,17 +5,26 @@ import { z } from 'zod'
 import { toLocalDateKey } from '@/lib/dateTime'
 import { attachSessionCookie, buildSessionToken } from '@/lib/session'
 import { captureError, logEvent } from '@/lib/observability'
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit'
 
 const loginPatientSchema = z.object({
   email: z.string().email('Correo inválido'),
   password: z.string().min(1, 'Contraseña requerida'),
 })
 
+const PATIENT_LOGIN_RATE_LIMIT = { key: 'auth:patient:login', limit: 5, windowMs: 15 * 60 * 1000 }
+
 export async function POST(request: Request) {
   try {
     const parsed = loginPatientSchema.parse(await request.json())
     const email = parsed.email.trim().toLowerCase()
     const password = parsed.password
+
+    const limit = checkRateLimit(request, { ...PATIENT_LOGIN_RATE_LIMIT, identifier: email })
+    if (!limit.ok) {
+      logEvent('warn', 'auth.patient.login.rate_limited', { email })
+      return rateLimitExceededResponse(limit)
+    }
 
     const user = await prisma.user.findUnique({
       where: { email },
@@ -30,11 +39,13 @@ export async function POST(request: Request) {
     })
 
     if (!user || !user.active || user.role !== 'PATIENT') {
+      logEvent('warn', 'auth.patient.login.failed', { email, reason: 'unknown_user' })
       return NextResponse.json({ error: 'Credenciales inválidas' }, { status: 401 })
     }
 
     const validPassword = await bcrypt.compare(password, user.passwordHash)
     if (!validPassword) {
+      logEvent('warn', 'auth.patient.login.failed', { userId: user.id, reason: 'bad_password' })
       return NextResponse.json({ error: 'Credenciales inválidas' }, { status: 401 })
     }
 

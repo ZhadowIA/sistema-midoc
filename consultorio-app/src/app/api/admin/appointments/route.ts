@@ -3,12 +3,12 @@ import { addMinutes } from 'date-fns'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedUser } from '@/lib/auth'
 import { parseDateOnlyLocal } from '@/lib/dateTime'
 import { NotificationService } from '@/services/NotificationService'
 import { QuestionnaireService } from '@/services/QuestionnaireService'
 import { AppointmentAuditService } from '@/services/AppointmentAuditService'
 import { getServerEnv } from '@/lib/env'
+import { requireAgendaDoctorApiAccess } from '@/lib/medicalApi'
 
 const env = getServerEnv()
 
@@ -71,8 +71,9 @@ function resolveStructuredPatientName(input: z.infer<typeof createPatientSchema>
 
 export async function POST(request: Request) {
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireAgendaDoctorApiAccess({ allowSecretary: false })
+    if (access.response) return access.response
+    const authUser = access.context.user
     if (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN') {
       return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
     }

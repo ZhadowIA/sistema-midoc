@@ -14,6 +14,7 @@ export type SessionClaims = {
   onboardingCompleted?: boolean;
   productPlan?: "AGENDA" | "CLINICAL_RECORDS" | "COMBINED";
   enabledModules?: Array<"AGENDA" | "CLINICAL_RECORDS">;
+  features?: Record<string, unknown>;
 };
 
 export async function buildSessionToken(claims: SessionClaims): Promise<string> {

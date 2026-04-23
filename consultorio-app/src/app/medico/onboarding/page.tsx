@@ -24,10 +24,10 @@ export default function DoctorOnboardingPage() {
     specialty: "",
     professionalLicense: "",
     clinicAddress: "",
-    baseDuration: 30,
+    baseDuration: 30 as number | string,
     extendedEnabled: true,
-    priceNormal: 500,
-    priceExtended: 900,
+    priceNormal: 500 as number | string,
+    priceExtended: 900 as number | string,
   });
 
   useEffect(() => {
@@ -103,10 +103,10 @@ export default function DoctorOnboardingPage() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          baseDuration: form.baseDuration,
+          baseDuration: Number(form.baseDuration) || 30,
           extendedEnabled: form.extendedEnabled,
-          priceNormal: form.priceNormal,
-          priceExtended: form.extendedEnabled ? form.priceExtended : undefined,
+          priceNormal: Number(form.priceNormal) || 0,
+          priceExtended: form.extendedEnabled ? (Number(form.priceExtended) || 0) : undefined,
         }),
       });
       if (!configRes.ok) {
@@ -197,29 +197,29 @@ export default function DoctorOnboardingPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Input
               label="Duración base (min)"
-              type="number"
+              type="text" inputMode="numeric"
               min={15}
               max={120}
-              value={String(form.baseDuration)}
-              onChange={(e) => setForm({ ...form, baseDuration: Number(e.target.value) || 30 })}
+              value={form.baseDuration}
+              onChange={(e) => setForm({ ...form, baseDuration: e.target.value.replace(/^0+(?=\d)/, "") })}
               required
             />
             <Input
               label="Precio consulta normal"
-              type="number"
+              type="text" inputMode="numeric"
               min={0}
               step="0.01"
-              value={String(form.priceNormal)}
-              onChange={(e) => setForm({ ...form, priceNormal: Number(e.target.value) || 0 })}
+              value={form.priceNormal}
+              onChange={(e) => setForm({ ...form, priceNormal: e.target.value.replace(/^0+(?=\d)/, "") })}
               required
             />
             <Input
               label="Precio consulta extendida"
-              type="number"
+              type="text" inputMode="numeric"
               min={0}
               step="0.01"
-              value={String(form.priceExtended)}
-              onChange={(e) => setForm({ ...form, priceExtended: Number(e.target.value) || 0 })}
+              value={form.priceExtended}
+              onChange={(e) => setForm({ ...form, priceExtended: e.target.value.replace(/^0+(?=\d)/, "") })}
               disabled={!form.extendedEnabled}
               required={form.extendedEnabled}
             />

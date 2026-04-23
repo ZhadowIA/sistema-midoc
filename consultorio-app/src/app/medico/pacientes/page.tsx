@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { DoctorLayout } from "@/components/DoctorLayout";
-import { Search, User, Plus } from "lucide-react";
+import { Search, User, Plus, FileText } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/Button";
 import { Modal } from "@/components/Modal";
@@ -60,6 +60,7 @@ export default function PatientsDirectoryPage() {
     email: "",
     dateOfBirth: "",
   });
+  const [creatingEncounterPatientId, setCreatingEncounterPatientId] = useState<string | null>(null);
 
   const loadPatients = async () => {
     const res = await fetch("/api/clinical/admin/patients");
@@ -110,6 +111,31 @@ export default function PatientsDirectoryPage() {
       toast.error(message);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleCreateStandaloneEncounter = async (patientId: string) => {
+    setCreatingEncounterPatientId(patientId);
+    try {
+      const res = await fetch("/api/clinical/admin/encounters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId,
+          source: "STANDALONE",
+        }),
+      });
+      const data = await res.json() as { error?: string; encounter?: { id: string } };
+      if (!res.ok || !data.encounter?.id) {
+        throw new Error(data.error || "No se pudo abrir el expediente standalone");
+      }
+
+      router.push(`/medico/expedientes/encounters/${data.encounter.id}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Error inesperado";
+      toast.error(message);
+    } finally {
+      setCreatingEncounterPatientId(null);
     }
   };
 
@@ -192,6 +218,21 @@ export default function PatientsDirectoryPage() {
                       <span className="text-muted-foreground">Última cita</span>
                       <span className="text-foreground">{last}</span>
                     </div>
+                  </div>
+
+                  <div className="mt-5 pt-4 border-t border-border flex gap-2">
+                    <Button
+                      variant="secondary"
+                      className="flex-1"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleCreateStandaloneEncounter(patient.id);
+                      }}
+                      disabled={creatingEncounterPatientId === patient.id}
+                    >
+                      <FileText className="w-4 h-4 mr-2" />
+                      {creatingEncounterPatientId === patient.id ? "Abriendo..." : "Abrir expediente"}
+                    </Button>
                   </div>
                 </div>
               );

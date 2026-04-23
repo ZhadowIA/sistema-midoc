@@ -19,6 +19,11 @@ export async function GET() {
       select: {
         id: true,
         status: true,
+        paymentStatus: true,
+        depositRequiredAmount: true,
+        depositPaidAmount: true,
+        depositDueAt: true,
+        depositPaidAt: true,
         source: true,
         appointmentType: true,
         durationMin: true,
@@ -31,6 +36,12 @@ export async function GET() {
             specialty: true,
             slug: true,
             profileImage: true,
+            doctorConfig: {
+              select: {
+                normalConsultationPrice: true,
+                extendedConsultationPrice: true,
+              },
+            },
           },
         },
         patient: {
@@ -39,6 +50,11 @@ export async function GET() {
             firstName: true,
             lastNamePaternal: true,
             lastNameMaternal: true,
+          },
+        },
+        billingReceipt: {
+          select: {
+            id: true,
           },
         },
       },
@@ -55,9 +71,46 @@ export async function GET() {
       cancelled: appointments.filter((item) => item.status === 'CANCELLED').length,
     }
 
+    const pendingPayments = appointments
+      .filter(
+        (item) =>
+          (
+            item.paymentStatus === 'PAYMENT_PENDING' ||
+            (
+              (item.status === 'PENDING' || item.status === 'CONFIRMED' || item.status === 'RESCHEDULED') &&
+              !item.billingReceipt
+            )
+          ) &&
+          new Date(item.startTime).getTime() > Date.now()
+      )
+      .map((item) => {
+        const config = item.doctor.doctorConfig
+        const estimatedAmount =
+          item.depositRequiredAmount ??
+          (item.appointmentType === 'EXTENDED'
+            ? config?.extendedConsultationPrice
+            : config?.normalConsultationPrice)
+        return {
+          appointmentId: item.id,
+          estimatedAmount: estimatedAmount ? Number(estimatedAmount) : null,
+          currency: 'MXN',
+          dueAt: item.startTime,
+          paymentStatus: item.paymentStatus,
+          depositDueAt: item.depositDueAt,
+          depositPaidAt: item.depositPaidAt,
+        }
+      })
+
+    const pendingTotal = pendingPayments.reduce((acc, item) => acc + (item.estimatedAmount ?? 0), 0)
+
     return NextResponse.json({
       appointments,
       summary,
+      billing: {
+        pendingCount: pendingPayments.length,
+        pendingTotal,
+        pendingItems: pendingPayments,
+      },
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno'

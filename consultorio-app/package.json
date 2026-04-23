@@ -15,7 +15,11 @@
     "db:migrate:status": "npx prisma migrate status",
     "test": "node --import tsx src/tests/run-all.ts",
     "test:unit": "node --import tsx src/tests/run-unit.ts",
-    "test:integration": "node --env-file-if-exists=.env --import tsx src/tests/run-integration.ts"
+    "test:integration": "node --env-file-if-exists=.env --import tsx src/tests/run-integration.ts",
+    "smoke": "node scripts/smoke-tests.mjs",
+    "test:e2e": "npx playwright test",
+    "test:e2e:ui": "npx playwright test --ui",
+    "test:e2e:headed": "npx playwright test --headed"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -38,7 +42,7 @@
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "date-fns": "^4.1.0",
+    "date-fns": "^3.6.0",
     "jose": "^6.2.2",
     "lucide-react": "^1.8.0",
     "motion": "^12.38.0",
@@ -46,14 +50,16 @@
     "openai": "^6.34.0",
     "prisma": "^6.0.0",
     "react": "19.2.4",
-    "react-day-picker": "^8.10.1",
+    "react-day-picker": "^9.14.0",
     "react-dom": "19.2.4",
     "react-hook-form": "^7.72.1",
     "sonner": "^2.0.7",
+    "stripe": "^22.0.2",
     "tailwind-merge": "^3.5.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",

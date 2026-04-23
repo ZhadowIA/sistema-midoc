@@ -4,7 +4,7 @@ Documento vivo. Se actualiza con cada avance para permitir handoff entre agentes
 
 **Convención de estados:** ✅ completada · 🟡 en progreso · ⬜ pendiente · ⏸ pausada · ❌ descartada
 
-**Última actualización:** 2026-04-20
+**Última actualización:** 2026-04-21 (Fase 13 iniciada)
 **Responsable humano:** spampa@outlook.com
 **Target inicial:** médico solo con arquitectura lista para multi-doctor.
 
@@ -158,6 +158,387 @@ Activar el `clinicId` que ya quedó en schema y habilitar flujos multi-usuario.
 
 ---
 
+---
+
+## Fase 5 — Monetización real y control de no-show
+
+Cerrar el bloque de cobro real para que MiDoc deje de operar en modo pruebas y pueda monetizar de forma estable, con reglas de anticipo, cancelación y evidencia contractual mínima.
+
+- 🟡 **5.1 Pasarela real y suscripción productiva** — EN PROGRESO: proveedor definido (`STRIPE`)
+  - ✅ Checkout real Stripe implementado en `POST /api/payments/checkout` (session de suscripción)
+  - ✅ Webhook Stripe con validación de firma + idempotencia implementado en `POST /api/payments/webhook`
+  - ✅ Cancelación al fin de periodo sincronizada con Stripe desde `PATCH /api/admin/subscription`
+  - ⬜ Pendiente: validación E2E de alta/renovación/fallo/cancelación/reactivación contra cuenta Stripe real
+  - Integrar proveedor real (`STRIPE`, `CONEKTA` u `OPENPAY`)
+  - Reemplazar checkout placeholder por checkout real
+  - Cubrir flujo completo:
+    - alta de suscripción
+    - renovación
+    - fallo de cobro
+    - cancelación
+    - reactivación
+  - Webhooks productivos con validación de firma e idempotencia
+
+- 🟡 **5.2 Anticipo por cita y política de no-show**
+  - ✅ 5.2.a Ciclo de pago separado del ciclo clínico: nuevo `Appointment.paymentStatus` (`NOT_REQUIRED`, `PAYMENT_PENDING`, `DEPOSIT_PAID`, `PAYMENT_FAILED`) evita contaminar `AppointmentStatus`
+  - ✅ 5.2.b Configuración base por médico: `DoctorConfig` ahora soporta `depositEnabled`, `depositAmount`, `depositExpiresInMinutes`, `cancellationWindowHours`, `cancellationRefundMode` y `cancellationPartialRefundPct`
+  - ✅ 5.2.c Reserva condicionada a anticipo en booking público: `AppointmentService.createPublicAppointment` calcula `depositRequiredAmount`, `depositDueAt` y snapshot de política al crear la cita
+  - ✅ 5.2.d Expiración operativa de apartados sin pago: nuevo `POST /api/internal/payments/process` cancela citas vencidas con `paymentStatus=PAYMENT_FAILED` y libera el hueco hacia waitlist
+  - ✅ 5.2.e Portal paciente ya distingue pagos pendientes reales: `GET /api/auth/patient/history` prioriza `paymentStatus/depositDueAt`; cancelación devuelve `billingOutcome` según snapshot de política
+  - ⬜ Pendiente: conectar cobro real del anticipo con Stripe para mover `PAYMENT_PENDING` → `DEPOSIT_PAID`
+  - ⬜ Pendiente: exponer UI médica para configurar política de anticipo/no-show
+  - ⬜ Pendiente: aplicar anticipo también en flujos admin/waitlist cuando se confirme dependencia con 5.1
+
+- ⬜ **5.3 Historial de cobro y autoservicio**
+  - Pantalla “Mi suscripción”
+  - Método de pago
+  - Historial de cobros
+  - Estado actual
+  - Próxima renovación
+  - Grace period por impago
+
+- ⬜ **5.4 Minimización de riesgo PCI**
+  - Usar tokenización / hosted checkout
+  - No almacenar PAN/CVV en MiDoc
+  - Documentar el flujo técnico de pago y su superficie de cumplimiento
+
+- ✅ **5.5 Evidencia contractual mínima**
+  - ✅ 5.5.a `LegalAcceptance` convertido en historial append-only: removido `@unique userId`, agregados `ipAddress`, `userAgent`, `context` y `@@index([userId, createdAt])` (migración `20260420120000_fase55_legal_acceptance_history`)
+  - ✅ 5.5.b Helper `src/lib/legalAcceptance.ts` con `recordLegalAcceptance` (captura IP/UA desde `Request` vía `requestContext`) y `getLegalStatusForUser` (versiones vigentes vs. aceptadas, flag `upToDate`)
+  - ✅ 5.5.c `POST /api/auth/register` ahora persiste IP/UA del alta con `context=REGISTER`
+  - ✅ 5.5.d Endpoints nuevos: `GET /api/auth/legal/status` (verificación de versiones) y `POST /api/auth/legal/accept` (re-aceptación append con `context=REACCEPT` y evidencia IP/UA)
+
+---
+
+## Fase 6 — Lista de espera y llenado automático de huecos
+
+Recuperar cancelaciones y convertir huecos muertos en citas reales, aprovechando la infraestructura actual de agenda, estados, auditoría y WhatsApp.
+
+- ✅ **6.1 Lista de espera estructurada**
+  - ✅ Modelos `WaitlistEntry` y `WaitlistOffer` con alcance por médico/clínica/paciente
+  - ✅ Preferencias por día (`preferredWeekdays`), rango horario (`preferredStartMinute`/`preferredEndMinute`) y tipo de consulta (`appointmentType`)
+  - ✅ Prioridad configurable (`priority`) con estado operativo (`ACTIVE/PAUSED/BOOKED/REMOVED`)
+  - ✅ Endpoints admin: `GET/POST /api/admin/waitlist` y `PATCH /api/admin/waitlist/[id]`
+
+- ✅ **6.2 Reoferta automática de slots**
+  - ✅ Detección de huecos liberados por cancelación desde admin, portal paciente y WhatsApp bot
+  - ✅ Oferta escalonada con `WaitlistService.processVacancy` y selección por prioridad + preferencias
+  - ✅ TTL por oferta (`expiresAt`, 15 min) y endpoint operativo `POST /api/admin/waitlist/process` para expirar/promover
+  - ✅ Escalamiento al siguiente paciente cuando la oferta se rechaza o expira
+
+- ✅ **6.3 Confirmación y cobro de huecos**
+  - ✅ Confirmación/rechazo rápido desde portal paciente (`POST /api/auth/patient/waitlist/offers/[id]`)
+  - ✅ Bloqueo temporal del slot con `ScheduleBlock` tipo `PRIVATE_RESERVED` durante la oferta
+  - 🟡 Regla opcional de anticipo marcada como dependencia de Fase 5.2 (cobro real)
+
+- ✅ **6.4 Trazabilidad operativa**
+  - ✅ Nuevas acciones de auditoría: `WAITLIST_OFFER_SENT`, `WAITLIST_OFFER_ACCEPTED`, `WAITLIST_OFFER_REJECTED`, `WAITLIST_OFFER_EXPIRED`, `WAITLIST_SLOT_REASSIGNED`
+  - ✅ Auditoría completa de envío, aceptación, rechazo, expiración y reasignación final
+
+---
+
+## Fase 7 — Portal paciente v2 y pre-check-in
+
+Reducir fricción antes de la consulta, reforzar la percepción de valor del producto y capturar evidencia operativa/legal útil desde el portal.
+
+- ✅ **7.1 Portal paciente ampliado**
+  - ✅ Historial y consultas enlazan flujo de pre-check-in
+  - ✅ Centro de pagos pendientes en API/UI de historial (`billing.pendingCount/pendingTotal`)
+  - ✅ Descargables existentes conservados en portal y resumidos en historial
+  - ✅ Resumen previo visible para médico en detalle de cita (pre-check-in + documentos recientes)
+
+- ✅ **7.2 Carga documental y pre-check-in**
+  - ✅ Modelo `PatientDocument` + endpoint `GET/POST /api/auth/patient/documents`
+  - ✅ Modelo `PatientPreCheckin` + endpoint `GET/POST /api/auth/patient/precheckin`
+  - ✅ Pantalla portal `/paciente/pre-checkin` con checklist (asistencia, demográficos, pagos)
+  - ✅ Consulta médica de resumen previo: `GET /api/admin/patients/[id]/precheckin-summary` y espejo `/api/clinical/...`
+
+- ✅ **7.3 Consentimientos digitales básicos**
+  - ✅ Modelo `DigitalConsent` con `consentType`, `version`, `acceptedAt`, `actorType`, `source`
+  - ✅ Endpoint `GET/POST /api/auth/patient/consents`
+  - ✅ Registro de IP/UA en aceptación desde portal paciente
+
+- ✅ **7.4 ARCO básico**
+  - ✅ Modelo `ArcoRequest` con tipos ACCESS/RECTIFICATION/CANCELLATION/OPPOSITION y estatus OPEN/IN_REVIEW/RESOLVED/REJECTED
+  - ✅ Endpoint paciente `GET/POST /api/auth/patient/arco`
+  - ✅ Endpoint administrativo `PATCH /api/admin/arco/[id]` para estatus/evidencia/resolución
+
+- ✅ **7.5 Retención y eliminación**
+  - ✅ Modelo `DataRetentionPolicy` + endpoint `GET/POST /api/admin/retention-policies`
+  - ✅ Modelo `DataDeletionLog`
+  - ✅ Endpoint `POST /api/admin/patients/[id]/deletion` con `mode=SOFT|HARD` y bitácora
+
+---
+
+## Fase 8 — Captación omnicanal y analítica de conversión
+
+Hacer que MiDoc ayude a conseguir más citas, no solo a administrarlas, midiendo mejor conversión y manteniendo claims comerciales alineados al alcance real del producto.
+
+- ⬜ **8.1 Omnicanal**
+  - Widget embebible para sitio web
+  - Links específicos para:
+    - Instagram
+    - WhatsApp
+    - Google Business
+    - campañas
+  - Landing pública por médico/clínica optimizada para conversión
+
+- ⬜ **8.2 Funnel y recuperación**
+  - Tracking de fuente de adquisición
+  - Embudo:
+    - visita
+    - inicio de reserva
+    - reserva confirmada
+    - cita completada
+  - Recuperación de agendado abandonado
+
+- ⬜ **8.3 Métricas comerciales**
+  - Conversión por canal
+  - Ocupación por fuente
+  - Recuperación de abandono
+  - Relación canal → pago → cita completada
+
+- ⬜ **8.4 Claims comerciales controlados**
+  - Documento interno de claims permitidos/prohibidos
+  - Posicionar IA como:
+    - copiloto clínico
+    - apoyo documental
+  - Evitar promesas de diagnóstico autónomo mientras no exista estrategia regulatoria formal
+
+---
+
+## Fase 9 — Teleconsulta y seguimiento postconsulta
+
+Abrir un segundo modo de atención y aumentar seguimiento, con consentimiento específico, cobro previo y trazabilidad de eventos clave.
+
+- ⬜ **9.1 Cita virtual**
+  - Tipo de cita virtual
+  - Enlace automático de videollamada
+  - Instrucciones previas
+
+- ⬜ **9.2 Consentimiento específico de teleconsulta**
+  - Consentimiento versionado por cita
+  - Registro de aceptación con metadata
+  - Vínculo con la cita/consulta
+
+- ⬜ **9.3 Pago previo para consulta virtual**
+  - Reutilizar anticipo o cobro completo previo
+  - Confirmación automática según pago
+
+- ⬜ **9.4 Postconsulta y seguimiento**
+  - Entrega postconsulta de resumen/indicaciones
+  - Seguimiento automatizado a:
+    - 24 h
+    - 72 h
+    - 7 días
+  - Registro de respuesta/evolución
+
+- ⬜ **9.5 Trazabilidad de eventos**
+  - Conexión
+  - inasistencia
+  - reprogramación
+  - aceptación de resumen/indicaciones
+
+---
+
+## Fase 10 — Seguridad, continuidad y cumplimiento pre-go-live
+
+Cerrar los pendientes P0 que separan un MVP avanzado de un SaaS comercializable y confiable.
+
+- 🟡 **10.1 Hardening de plataforma**
+  - ✅ 10.1.a Cookies seguras: `med_token` ya es `httpOnly` + `secure` en prod + `sameSite=strict` + `path=/` + `maxAge=15min` (`src/lib/session.ts`, `src/lib/sessionConfig.ts`)
+  - ✅ 10.1.b Expiración/control de sesión: cookie 15 min + `SESSION_REFRESH_INTERVAL_MS` 4 min + `INACTIVITY_TIMEOUT_MS` 15 min + `/api/auth/session/refresh` ya operativos
+  - ✅ 10.1.c Hardening de login: rate limit IP+email (5 intentos / 15 min) en `/api/auth/login` y `/api/auth/patient/login`; logs estructurados `auth.login.failed` / `auth.login.rate_limited` para detección de brute-force
+  - ✅ 10.1.d Runbook de rotación de secretos: inventario, procedimiento estándar y playbook de compromiso en `docs/security/secret-rotation.md`
+  - ⏸ 10.1.e Recuperación de cuenta — **PAUSADA por falta de proveedor de email definido**. Requiere decidir canal (Resend / SendGrid / Postmark / AWS SES), dominio emisor y plantillas antes de implementar password reset con token de un solo uso, expiración corta y auditoría. Reactivar cuando se defina proveedor.
+
+- ✅ **10.2 Base de datos y continuidad**
+  - ✅ 10.2.a Playbook de migraciones staging/producción: `docs/ops/migrations-playbook.md` (flujo dev→staging→prod con `migrate deploy`, reglas destructivas, patrón expand/contract y checklist pre-deploy)
+  - ✅ 10.2.b Runbook de backup/restore: `docs/ops/backup-restore.md` (política diaria + simulacro mensual, `pg_dump` custom, RTO < 60 min, RPO < 24 h, playbook de pérdida de datos)
+  - ✅ 10.2.c Índices para carga real: `Appointment` ahora tiene `(doctorId, date)`, `(doctorId, startTime)`, `(patientId, date)`, `(status, date)`; `Notification` tiene `(status, createdAt)` y `(appointmentId)` — migración `20260420130000_fase102_hot_path_indexes` (cierra full-scan en agenda del médico y cola de notificaciones)
+  - ✅ 10.2.d Plan de continuidad operativa: `docs/ops/continuity-plan.md` con matriz de degradación graceful (OpenAI/Deepgram/WhatsApp/reCAPTCHA/Stripe/DB), RPO/RTO y simulacros
+
+- ✅ **10.3 Observabilidad**
+  - ✅ 10.3.a Health checks: `GET /api/health` (liveness) y `GET /api/health/ready` (readiness con ping SQL y reporte `dbLatencyMs`; 503 cuando DB no responde)
+  - ✅ 10.3.b Queue-health: nuevo `GET /api/internal/ops/queue-health` (auth `x-notification-secret`) reporta `pending`, `failed`, `oldestPendingAgeMin` y `PaymentWebhookEvent` con error; emite `ops.queue_health.*` con severidad warn/critical según umbrales
+  - ✅ 10.3.c Alertas log-based documentadas: `docs/ops/observability.md` con tabla de eventos (auth abuse, integraciones, infra), umbrales y polling recomendado
+  - ✅ 10.3.d Cobertura de rutas críticas: 5xx ya pasan por `captureError` en auth/notifications; umbrales de alerta definidos en observability.md
+
+- 🟡 **10.4 QA go-live**
+  - ✅ 10.4.a Smoke tests post-deploy: `scripts/smoke-tests.mjs` (sin deps, fetch nativo) valida `/api/health`, `/api/health/ready`, login + `setup-status` + logout; exit code 0/1 para integración en pipeline; variables `SMOKE_BASE_URL/EMAIL/PASSWORD/TIMEOUT_MS`. Script npm `npm run smoke`. Documentación en `docs/ops/smoke-tests.md`
+  - ✅ 10.4.b Suite E2E mínima de flujos críticos: Playwright + Chromium con 4 specs (auth/dashboard, directorio de pacientes, agenda/citas, nota SOAP). Helpers reutilizables de auth y seed data. Scripts: `test:e2e`, `test:e2e:ui`, `test:e2e:headed`. Tests resilientes con skip automático si no hay datos de seed.
+  - ⬜ 10.4.c Regresión de pagos y notificaciones — se habilita al cerrar Fase 5.1 (Stripe real)
+
+- ✅ **10.5 Privacidad y lifecycle de datos**
+  - ✅ 10.5.a Inventario de datos tratados: `docs/privacy/data-inventory.md` con categorías, campos sensibles, base legal y lista de campos con IP/UA
+  - ✅ 10.5.b Política de retención y eliminación: `docs/privacy/retention-policy.md` (matriz por modelo, plazos, soft vs hard delete, protocolo ARCO provisional hasta Fase 7.4)
+  - ✅ 10.5.c Registro de terceros/subencargados: `docs/privacy/data-subprocessors.md` (DB, Accelerate, OpenAI, Deepgram, reCAPTCHA, WhatsApp, Stripe/email pendientes) con checklist DPA
+  - ✅ 10.5.d Evidencia exportable de auditoría: nuevo `GET /api/admin/audit/export?from&to` (ventana máx 180 días) devuelve `AppointmentAuditLog` + `AuditLog` + `LegalAcceptance` + `ConsentCapture` del médico; emite `privacy.audit.export` para trazabilidad del acceso
+
+- ✅ **10.6 Matriz de cumplimiento NOM**
+  - ✅ 10.6.a Matriz NOM-004 punto por punto (12 requisitos): integridad, identificación, receta, consentimiento, conservación; referencia a `ClinicalHistory`, `ClinicalNote`, `Prescription`, `ConsentCapture` y políticas de retención
+  - ✅ 10.6.b Matriz NOM-024 punto por punto (13 requisitos): autenticación, bitácora, integridad/no-repudio, interoperabilidad, confidencialidad, respaldo, incidentes, retención, subencargados, ARCO
+  - ✅ 10.6.c Brechas priorizadas documentadas (consentimiento obligatorio, CIE-10, job de purga, DPAs firmados, FHIR, UI ARCO, FIEL) con owner implícito por fase
+  - ✅ 10.6.d `docs/compliance/nom-matrix.md` marcado como entregable vivo con regla de actualización al cerrar cada fase
+
+- ✅ **10.7 Incidentes y evidencia**
+  - ✅ 10.7.a Modelo `SecurityIncident` con enums `IncidentSeverity` (P0–P3), `IncidentCategory` (7 tipos) y `IncidentStatus` (6 estados); campos de timeline, alcance, acciones correctivas, notificación y `evidenceExportRef`; migración `20260420140000_fase107_security_incidents`
+  - ✅ 10.7.b Endpoints: `GET/POST /api/admin/security/incidents` (listado y alta con log `security.incident.opened`) y `GET/PATCH /api/admin/security/incidents/[id]` (detalle y actualización controlada por reporter/asignado)
+  - ✅ 10.7.c Fix relacional: `User.legalAcceptances` ahora es 1:N tras 5.5 (antes `LegalAcceptance?` 1:1, inconsistente con el historial append-only)
+  - ✅ 10.7.d Playbook completo: `docs/security/incident-response.md` con severidades/tiempos, flujo OPEN→CLOSED, criterios de notificación obligatoria, métricas (MTTD/MTTC) y cruce con export forense de 10.5
+
+---
+
+## Fase 11 — Copiloto clínico útil y gobernado
+
+Pasar de “IA que genera cosas” a IA que ahorra tiempo clínico real, con trazabilidad, métricas y límites de uso claros.
+
+- ⬜ **11.1 Productividad clínica**
+  - Plantillas por especialidad
+  - Resumen longitudinal entre consultas
+  - Indicaciones para paciente en lenguaje simple
+  - Seguimiento automatizado inteligente por WhatsApp
+
+- ⬜ **11.2 Detección de huecos clínicos**
+  - Alergias faltantes
+  - Datos incompletos
+  - Contradicciones
+  - Alertas de revisión clínica
+
+- ⬜ **11.3 Gobernanza IA**
+  - Trazabilidad de prompts/modelos/versiones
+  - Métricas de uso y costo por módulo IA
+  - Registro de aceptación/rechazo de sugerencias por el médico
+
+- ⬜ **11.4 Límites regulatorios visibles**
+  - Disclaimers en módulos IA
+  - Diferenciar “sugerencia” vs “decisión médica”
+  - Consentimiento para funciones IA si aplica por flujo
+  - Dictamen externo de postura comercial/regulatoria
+
+---
+
+## Fase 12 — Operación de clínica y recepción avanzada
+
+Escalar de “médico solo” a “equipo clínico operando diario” y dejar a MiDoc listo para venta a clínicas más exigentes.
+
+- ⬜ **12.1 Workflow de recepción**
+  - Llegada
+  - Sala de espera
+  - Cobro
+  - Documentos faltantes
+  - Check-in
+
+- ⬜ **12.2 Agenda por recursos**
+  - Consultorio
+  - Sala
+  - Equipo
+  - Conflictos de recurso
+
+- ⬜ **12.3 Caja y productividad**
+  - Caja/cierre diario por clínica
+  - Productividad por médico y secretaria
+  - Tablero de operación
+
+- ⬜ **12.4 Permisos finos por rol**
+  - Médico
+  - secretaria
+  - clinic admin
+  - visibilidad/acceso granular
+
+- ⬜ **12.5 Readiness comercial enterprise-light**
+  - Data room básico:
+    - arquitectura
+    - seguridad
+    - privacidad
+    - backups
+    - incident response
+    - roadmap de certificación
+  - One-pager comercial de seguridad/compliance
+  - Registro claro de terceros/subprocesadores por entorno
+
+---
+
+## Fase 13 — Catálogo modular de planes y control de capacidades
+
+Convertir MiDoc en un producto modular, donde Agenda, Sistema Médico y IA puedan contratarse como bundles independientes o combinados, con gating consistente en UI, API y suscripción.
+
+- 🟡 **13.1 Esquema canónico de capacidades por suscripción**
+  - `DoctorSubscription.features` se consolida como source of truth de capacidades activas
+  - Capacidades mínimas propuestas:
+    - `agenda.enabled`
+    - `clinical.enabled`
+    - `ai.enabled`
+    - `agenda.reminders.whatsapp`
+    - `agenda.waitlist`
+    - `clinical.history`
+    - `clinical.notes`
+    - `clinical.prescriptions`
+    - `clinical.signoff`
+    - `clinical.encounters.standalone`
+    - `ai.dictation`
+    - `ai.insights`
+  - Bundles permitidos:
+    - Solo Agenda
+    - Solo Clínico
+    - Agenda + Clínico
+    - Agenda + Clínico + IA
+  - ✅ Inicio: `featureFlags.ts` y `productAccess.ts` ya priorizan capacidades canónicas (`agenda.enabled`, `clinical.enabled`, `ai.enabled`) sobre `planName` legacy cuando existen en `DoctorSubscription.features`
+  - ✅ Inicio: `/api/admin/profile` ya expone `features` además de `productPlan/enabledModules` para transición controlada
+  - ⬜ Pendiente: migrar login/session/proxy para que el token y layout usen `features` como fuente primaria y dejen `productPlan/enabledModules` solo como compatibilidad temporal
+
+- 🔴 **13.2 Gating uniforme por módulo**
+  - Helpers canónicos `canUseAgenda`, `canUseClinical`, `canUseAi`
+  - Guards de API por módulo: agenda, clínico, IA
+  - UI condicional por capacidad, no por nombre de plan
+  - Reglas de error consistentes:
+    - 401 no autenticado
+    - 403 sin capacidad
+    - 404 ruta no expuesta por plan
+
+- 🔴 **13.3 Catálogo comercial y pricing**
+  - Definir bundles comerciales con precio base y add-ons
+  - IA como add-on premium para elevar ARPU sin obligar adopción
+  - Separar pricing de permisos:
+    - `basePlan`
+    - `addOns`
+    - `features`
+  - Documentar matriz comercial:
+    - qué incluye cada bundle
+    - qué excluye
+    - qué add-ons se pueden combinar
+
+## Prioridad ejecutiva
+
+### Lo que haría primero
+
+**Sprint 1–2**
+- Fase 13
+- Fase 5
+- Fase 10 en paralelo
+
+**Sprint 3**
+- Fase 13
+- Fase 6
+
+**Sprint 4**
+- Fase 13
+- Fase 7
+
+**Sprint 5**
+- Fase 13
+- Fase 8
+
+**Sprint 6**
+- Fase 13
+- Fase 9
+
+**Después**
+- Fase 11
+- Fase 12
+
+---
+
 ## Decisiones clave (D1–D6) registradas
 
 - **D1:** migrar a campos estructurados; segundo apellido opcional
@@ -166,9 +547,24 @@ Activar el `clinicId` que ya quedó en schema y habilitar flujos multi-usuario.
 - **D4:** reCAPTCHA v3 implementado ya (no diferir)
 - **D5:** "Usar mismo nombre" copia datos y setea relación=`SELF`
 - **D6:** Fase 0 antes que Fase 1.1; commits incrementales
+- **D7:** compliance se integra dentro del roadmap de producto, no como checklist separado
+- **D8:** consentimiento, auditoría, retención y ARCO forman parte del sistema
+- **D9:** pagos deben minimizar alcance PCI usando tokenización / hosted checkout
+- **D10:** CFDI se diseña como arquitectura `CFDI-ready`, aunque el timbrado real pueda cerrarse después
+- **D11:** teleconsulta requiere consentimiento y evidencia separados
+- **D12:** la IA se comercializa como copiloto clínico / apoyo documental hasta definir estrategia regulatoria más profunda
+- **D13:** la matriz NOM-004 / NOM-024 se trabaja como entregable vivo de producto + compliance
+- **D14:** venta a clínicas más exigentes requiere data room y one-pager de seguridad/compliance
+- **D15:** MiDoc se comercializa como bundles modulares: Agenda, Clínico y IA deben poder contratarse por separado o combinados, con `DoctorSubscription.features` como fuente de verdad de capacidades
 
 ## Notas operativas
 
 - El entorno local usa Prisma con `--no-engine` (Accelerate-ready). Scripts que requieran conexión directa (p.ej. backfill) deben correr con `npx prisma generate` temporal, luego restaurar con `npm run db:generate:no-engine`.
 - Los integration tests fallan en `setupTestDb.ts` por este mismo motivo (URL `prisma://`). No bloqueante para lógica pura — las pruebas de contrato pasan porque no tocan Prisma.
 - Seed local: `tsx prisma/seed.ts` · credenciales admin: `admin@consultorio.com` / `admin123`.
+- Todo entregable con componente legal/fiscal/regulatorio debe generar:
+  - ticket técnico
+  - ticket documental/legal
+  - owner humano responsable
+- Todo entregable con dependencia externa debe marcarse como `EXTERNAL_DEPENDENCY`
+- No declarar cumplimiento comercial fuerte de expediente electrónico, privacidad avanzada o postura regulatoria de IA hasta cerrar evidencia mínima correspondiente
