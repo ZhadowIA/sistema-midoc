@@ -35,3 +35,7 @@ whatsapp-bot/.wwebjs_cache/
 **/*.log
 **/tmp/
 **/temp/
+
+# Local agent workspace artifacts
+.claude/
+.atl/
