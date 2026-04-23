@@ -9,14 +9,15 @@ interface SelectOption {
 
 interface SelectProps {
   label?: string;
-  options: SelectOption[];
+  options: readonly SelectOption[];
   value?: string;
   onValueChange?: (value: string) => void;
   placeholder?: string;
   error?: string;
+  testId?: string;
 }
 
-export const Select = ({ label, options, value, onValueChange, placeholder, error }: SelectProps) => {
+export const Select = ({ label, options, value, onValueChange, placeholder, error, testId }: SelectProps) => {
   return (
     <div className="w-full">
       {label && (
@@ -26,6 +27,7 @@ export const Select = ({ label, options, value, onValueChange, placeholder, erro
       )}
       <RadixSelect.Root value={value} onValueChange={onValueChange}>
         <RadixSelect.Trigger
+          data-testid={testId}
           className={`w-full flex items-center justify-between px-4 py-3 bg-input-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
             error ? "border-destructive focus:ring-destructive" : ""
           }`}

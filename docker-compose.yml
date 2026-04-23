@@ -1,0 +1,61 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: consultorio
+      POSTGRES_USER: dbuser
+      POSTGRES_PASSWORD: dbpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbuser -d consultorio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  consultorio:
+    build:
+      context: ./consultorio-app
+      args:
+        DATABASE_URL: postgresql://dbuser:dbpassword@db:5432/consultorio
+        NEXTAUTH_SECRET: local-secret-change-in-prod
+        APP_BASE_URL: http://localhost:3000
+        QUESTIONNAIRE_TOKEN_SECRET: local-questionnaire-secret
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./consultorio-app/.env
+    environment:
+      TZ: America/Chihuahua
+      CLINICAL_HISTORY_ENABLED: "true"
+      DATABASE_URL: postgresql://dbuser:dbpassword@db:5432/consultorio
+      NEXTAUTH_SECRET: local-secret-change-in-prod
+      APP_BASE_URL: http://localhost:3000
+      WHATSAPP_API_URL: http://whatsapp-bot:3001
+      WHATSAPP_WEBHOOK_SECRET: local-webhook-secret
+      NOTIFICATION_CRON_SECRET: local-cron-secret
+      QUESTIONNAIRE_TOKEN_SECRET: local-questionnaire-secret
+      TERMS_VERSION: "1.0"
+      PRIVACY_VERSION: "1.0"
+      PAYMENTS_PROVIDER: MOCK
+      PAYMENTS_WEBHOOK_SECRET: local-payments-secret
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && node server.js"
+
+  whatsapp-bot:
+    build:
+      context: ./whatsapp-bot
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      APP_WEBHOOK_URL: http://consultorio:3000/api/internal/whatsapp/incoming
+      APP_WEBHOOK_SECRET: local-webhook-secret
+
+volumes:
+  postgres_data:

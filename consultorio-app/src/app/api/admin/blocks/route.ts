@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedUser } from '@/lib/auth'
+import { requireAgendaDoctorApiAccess } from '@/lib/medicalApi'
 
 const createBlockSchema = z.object({
   doctorId: z.string().min(1).optional(),
@@ -13,8 +13,9 @@ const createBlockSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireAgendaDoctorApiAccess({ allowSecretary: false })
+    if (access.response) return access.response
+    const authUser = access.context.user
     if (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN') {
       return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
     }

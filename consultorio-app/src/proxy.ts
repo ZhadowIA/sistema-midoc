@@ -2,31 +2,43 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { jwtVerify } from 'jose'
 import {
+  buildProductAccessFromFeatures,
   getDefaultLandingPath,
+  getPlanModules,
   hasModuleAccess,
   moduleFromPath,
   PRODUCT_MODULES,
+  PRODUCT_PLANS,
   type ProductAccess,
+  type ProductPlan,
 } from '@/lib/productAccess'
 
+function resolveLegacyPlan(payload: Record<string, unknown>): ProductPlan {
+  return payload.productPlan === 'AGENDA' ||
+    payload.productPlan === 'CLINICAL_RECORDS' ||
+    payload.productPlan === 'COMBINED'
+    ? payload.productPlan
+    : PRODUCT_PLANS.COMBINED
+}
+
 function resolveAccessFromPayload(payload: Record<string, unknown>): ProductAccess {
+  if (payload.features && typeof payload.features === 'object' && !Array.isArray(payload.features)) {
+    return buildProductAccessFromFeatures(payload.features, resolveLegacyPlan(payload))
+  }
+
   const enabledModules = Array.isArray(payload.enabledModules)
     ? payload.enabledModules.filter(
         (item): item is 'AGENDA' | 'CLINICAL_RECORDS' =>
           item === PRODUCT_MODULES.AGENDA || item === PRODUCT_MODULES.CLINICAL_RECORDS
       )
-    : [PRODUCT_MODULES.AGENDA, PRODUCT_MODULES.CLINICAL_RECORDS]
+    : getPlanModules(resolveLegacyPlan(payload))
 
-  const plan =
-    payload.productPlan === 'AGENDA' ||
-    payload.productPlan === 'CLINICAL_RECORDS' ||
-    payload.productPlan === 'COMBINED'
-      ? payload.productPlan
-      : 'COMBINED'
+  const plan = resolveLegacyPlan(payload)
 
   return {
     plan,
     enabledModules: enabledModules.length > 0 ? enabledModules : [PRODUCT_MODULES.AGENDA],
+    features: {},
   }
 }
 
@@ -36,7 +48,8 @@ export async function proxy(request: NextRequest) {
   const isPacienteArea = pathname.startsWith('/paciente')
   const isAgendaApi = pathname.startsWith('/api/agenda')
   const isClinicalApi = pathname.startsWith('/api/clinical')
-  const isProductApi = isAgendaApi || isClinicalApi
+  const isPublicAgendaApi = pathname.startsWith('/api/agenda/public')
+  const isProductApi = (isAgendaApi || isClinicalApi) && !isPublicAgendaApi
   const isPublicMedicoAuthPath =
     pathname.startsWith('/medico/login') || pathname.startsWith('/medico/registro')
 
@@ -70,8 +83,9 @@ export async function proxy(request: NextRequest) {
         return NextResponse.next()
       }
 
+      const access = resolveAccessFromPayload(payload as Record<string, unknown>)
+
       if (isProductApi) {
-        const access = resolveAccessFromPayload(payload as Record<string, unknown>)
         const requiredModule = isAgendaApi ? PRODUCT_MODULES.AGENDA : PRODUCT_MODULES.CLINICAL_RECORDS
         if (!hasModuleAccess(access, requiredModule)) {
           return NextResponse.json({ error: 'Módulo no incluido en tu plan' }, { status: 403 })
@@ -80,7 +94,6 @@ export async function proxy(request: NextRequest) {
       }
 
       if (role === 'SECRETARY') {
-        const access = resolveAccessFromPayload(payload as Record<string, unknown>)
         const requiredModule = moduleFromPath(pathname)
         if (requiredModule && !hasModuleAccess(access, requiredModule)) {
           return NextResponse.redirect(new URL(getDefaultLandingPath(access), request.url))
@@ -88,7 +101,6 @@ export async function proxy(request: NextRequest) {
         return NextResponse.next()
       }
 
-      const access = resolveAccessFromPayload(payload as Record<string, unknown>)
       const requiredModule = moduleFromPath(pathname)
       if (requiredModule && !hasModuleAccess(access, requiredModule)) {
         return NextResponse.redirect(new URL(getDefaultLandingPath(access), request.url))

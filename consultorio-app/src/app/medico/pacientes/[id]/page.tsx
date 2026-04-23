@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use, useCallback } from "react";
 import { DoctorLayout } from "@/components/DoctorLayout";
-import { ArrowLeft, User, HeartPulse, Activity, AlertTriangle, FileText, Save, Clock, Link2, UserCheck, Copy } from "lucide-react";
+import { ArrowLeft, User, HeartPulse, Activity, AlertTriangle, FileText, Save, Clock, Link2, UserCheck, Copy, Stethoscope } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/Card";
@@ -133,6 +133,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
   const [linkEmail, setLinkEmail] = useState("");
   const [linkingAccount, setLinkingAccount] = useState(false);
   const [copyingInvite, setCopyingInvite] = useState(false);
+  const [creatingStandaloneEncounter, setCreatingStandaloneEncounter] = useState(false);
   
   // Merge state
   const [mergeModalOpen, setMergeModalOpen] = useState(false);
@@ -240,6 +241,31 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
     }
   };
 
+  const handleOpenStandaloneEncounter = async () => {
+    setCreatingStandaloneEncounter(true);
+    try {
+      const res = await fetch("/api/clinical/admin/encounters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId: params.id,
+          source: "STANDALONE",
+        }),
+      });
+      const data = await res.json() as { error?: string; encounter?: { id: string } };
+      if (!res.ok || !data.encounter?.id) {
+        throw new Error(data.error || "No se pudo abrir el expediente standalone");
+      }
+
+      router.push(`/medico/expedientes/encounters/${data.encounter.id}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Error inesperado al abrir expediente";
+      toast.error(message);
+    } finally {
+      setCreatingStandaloneEncounter(false);
+    }
+  };
+
   useEffect(() => {
      if (mergeSearch.length > 2) {
        fetch("/api/clinical/admin/patients")
@@ -332,7 +358,16 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
                 </div>
               </div>
               
-              <div className="flex flex-wrap gap-2 md:justify-end items-center">
+                <div className="flex flex-wrap gap-2 md:justify-end items-center">
+                <Button
+                  size="sm"
+                  className="bg-white/20 hover:bg-white/30 text-white border-none mt-2 md:mt-0"
+                  onClick={handleOpenStandaloneEncounter}
+                  disabled={creatingStandaloneEncounter}
+                >
+                  <Stethoscope className="w-4 h-4 mr-2" />
+                  {creatingStandaloneEncounter ? "Abriendo..." : "Nuevo encounter"}
+                </Button>
                 <Dialog open={mergeModalOpen} onOpenChange={setMergeModalOpen}>
                   <DialogTrigger asChild>
                     <Button variant="secondary" size="sm" className="bg-white/20 hover:bg-white/30 text-white border-none mt-2 md:mt-0">

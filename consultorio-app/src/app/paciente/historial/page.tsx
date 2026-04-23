@@ -41,6 +41,10 @@ type HistoryResponse = {
     upcoming: number;
     cancelled: number;
   };
+  billing?: {
+    pendingCount: number;
+    pendingTotal: number;
+  };
   error?: string;
 };
 
@@ -72,6 +76,7 @@ export default function PatientHistoryPage() {
   const [error, setError] = useState("");
   const [appointments, setAppointments] = useState<HistoryAppointment[]>([]);
   const [summary, setSummary] = useState({ total: 0, completed: 0, upcoming: 0, cancelled: 0 });
+  const [billing, setBilling] = useState({ pendingCount: 0, pendingTotal: 0 });
   const [actingAppointmentId, setActingAppointmentId] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<HistoryAppointment | null>(null);
 
@@ -88,6 +93,7 @@ export default function PatientHistoryPage() {
     if (!res.ok) throw new Error(data.error || "No se pudo cargar tu historial");
     setAppointments(data.appointments || []);
     setSummary(data.summary || { total: 0, completed: 0, upcoming: 0, cancelled: 0 });
+    setBilling(data.billing || { pendingCount: 0, pendingTotal: 0 });
   }, []);
 
   useEffect(() => {
@@ -247,6 +253,18 @@ export default function PatientHistoryPage() {
             <p className="text-xs text-muted-foreground">Canceladas</p>
             <p className="text-2xl font-semibold">{summary.cancelled}</p>
           </div>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <p className="text-xs text-muted-foreground">Centro de pagos pendientes</p>
+            <p className="text-sm">
+              {billing.pendingCount} cita(s) · Total estimado{" "}
+              <strong>${billing.pendingTotal.toFixed(2)} MXN</strong>
+            </p>
+          </div>
+          <Button size="sm" variant="secondary" onClick={() => router.push("/paciente/pre-checkin")}>
+            Ir a pre-check-in
+          </Button>
         </div>
 
         {loading ? (

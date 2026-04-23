@@ -4,6 +4,8 @@ import { z } from 'zod'
 import prisma from '@/lib/prisma'
 import { getAuthenticatedUser } from '@/lib/auth'
 import { AvailabilityService } from '@/services/AvailabilityService'
+import { WaitlistService } from '@/services/WaitlistService'
+import { resolveDepositCancellationOutcome } from '@/lib/depositPolicy'
 
 const payloadSchema = z.object({
   action: z.enum(['CONFIRM', 'CANCEL', 'RESCHEDULE']),
@@ -79,9 +81,56 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       const updated = await prisma.appointment.update({
         where: { id: appointment.id },
         data: { status: 'CANCELLED' },
-        select: { id: true, status: true, startTime: true, endTime: true },
+        select: {
+          id: true,
+          status: true,
+          startTime: true,
+          endTime: true,
+          clinicId: true,
+          doctorId: true,
+          depositPaidAmount: true,
+          cancellationPolicySnapshot: true,
+        },
       })
-      return NextResponse.json({ success: true, appointment: updated })
+
+      const billingOutcome = resolveDepositCancellationOutcome({
+        appointmentStart: appointment.startTime,
+        cancelledAt: now,
+        depositPaidAmount: updated.depositPaidAmount ? Number(updated.depositPaidAmount) : 0,
+        policySnapshot:
+          updated.cancellationPolicySnapshot &&
+          typeof updated.cancellationPolicySnapshot === 'object' &&
+          !Array.isArray(updated.cancellationPolicySnapshot)
+            ? {
+                windowHours:
+                  'windowHours' in updated.cancellationPolicySnapshot
+                    ? Number(updated.cancellationPolicySnapshot.windowHours)
+                    : null,
+                refundMode:
+                  'refundMode' in updated.cancellationPolicySnapshot &&
+                  typeof updated.cancellationPolicySnapshot.refundMode === 'string'
+                    ? updated.cancellationPolicySnapshot.refundMode as 'FULL' | 'PARTIAL' | 'CREDIT' | 'FORFEIT'
+                    : null,
+                partialRefundPct:
+                  'partialRefundPct' in updated.cancellationPolicySnapshot
+                    ? Number(updated.cancellationPolicySnapshot.partialRefundPct)
+                    : null,
+              }
+            : null,
+      })
+
+      await WaitlistService.processVacancy({
+        doctorId: updated.doctorId,
+        clinicId: updated.clinicId,
+        sourceAppointmentId: updated.id,
+        slotStartTime: appointment.startTime,
+        slotEndTime: appointment.endTime,
+        actorType: 'PATIENT',
+        actorUserId: authUser.id,
+        source: 'PATIENT_PORTAL',
+        trigger: 'CANCELLATION',
+      })
+      return NextResponse.json({ success: true, appointment: updated, billingOutcome })
     }
 
     const newStartTimeRaw = parsed.data.newStartTime

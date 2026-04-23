@@ -31,6 +31,7 @@ const requiredKeys = [
   "DATABASE_URL",
   "NEXTAUTH_SECRET",
   "APP_BASE_URL",
+  "APP_TIMEZONE",
   "QUESTIONNAIRE_TOKEN_SECRET",
   "TERMS_VERSION",
   "PRIVACY_VERSION",
@@ -51,6 +52,24 @@ const weakSecrets = ["NEXTAUTH_SECRET", "QUESTIONNAIRE_TOKEN_SECRET"].filter((ke
 if (weakSecrets.length > 0) {
   console.error(`❌ Secretos débiles detectados: ${weakSecrets.join(", ")}`);
   process.exit(1);
+}
+
+const hasOpenAi = Boolean(envValues.OPENAI_API_KEY && String(envValues.OPENAI_API_KEY).trim());
+const missingForAiDictation = ["DEEPGRAM_API_KEY", "DEEPGRAM_PROJECT_ID"].filter(
+  (key) => !envValues[key] || !String(envValues[key]).trim(),
+);
+if (hasOpenAi && missingForAiDictation.length > 0) {
+  console.warn(
+    `⚠️ OPENAI_API_KEY está configurada pero faltan variables para dictado IA en tiempo real: ${missingForAiDictation.join(
+      ", ",
+    )}`,
+  );
+}
+
+if (envValues.RECAPTCHA_V3_SECRET && !envValues.NEXT_PUBLIC_RECAPTCHA_V3_SITE_KEY) {
+  console.warn(
+    "⚠️ RECAPTCHA_V3_SECRET está configurado pero falta NEXT_PUBLIC_RECAPTCHA_V3_SITE_KEY (captcha v3 quedará incompleto en frontend).",
+  );
 }
 
 console.info("✅ Variables de entorno mínimas válidas para despliegue.");

@@ -3,6 +3,9 @@ import prisma from "@/lib/prisma";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { captureError, logEvent } from "@/lib/observability";
 import { getClinicSeatSummary } from "@/lib/clinicSeats";
+import { getServerEnv } from "@/lib/env";
+import { getStripeClient } from "@/lib/stripe";
+import { getCommercialCatalog, resolveCommercialPlanFromSubscription } from "@/lib/subscriptionCatalog";
 
 type SubscriptionScope = {
   mode: "DOCTOR" | "CLINIC";
@@ -56,8 +59,14 @@ export async function GET() {
       where: { doctorId: scope.billingDoctorId },
     });
     const seats = await buildSeatSummary(scope);
+    const commercialPlan = subscription
+      ? resolveCommercialPlanFromSubscription({
+          planName: subscription.planName,
+          features: subscription.features,
+        })
+      : null;
 
-    return NextResponse.json({ subscription, scope, seats });
+    return NextResponse.json({ subscription, scope, seats, commercialPlan, catalog: getCommercialCatalog() });
   } catch (error: unknown) {
     captureError("billing.subscription.get.error", error);
     const message = error instanceof Error ? error.message : "Error interno";
@@ -93,6 +102,16 @@ export async function PATCH(request: Request) {
         canceledAt: cancelAtPeriodEnd ? new Date() : null,
       },
     });
+
+    const env = getServerEnv();
+    if (
+      env.PAYMENTS_PROVIDER === "STRIPE" &&
+      updated.provider === "STRIPE" &&
+      updated.externalSubscriptionId
+    ) {
+      const stripe = getStripeClient();
+      await stripe.subscriptions.update(updated.externalSubscriptionId, { cancel_at_period_end: cancelAtPeriodEnd });
+    }
 
     logEvent("info", "billing.subscription.cancel_at_period_end.updated", {
       userId: authUser.id,

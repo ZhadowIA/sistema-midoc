@@ -9,6 +9,12 @@ import { runAiNoteGenerationServiceUnitTests } from './unit/aiNoteGenerationServ
 import { runAiInsightsUnitTests } from './unit/aiInsights.test.ts'
 import { runPharmacovigilanceDedupeUnitTests } from './unit/pharmacovigilanceDedupe.test.ts'
 import { runFeatureFlagsUnitTests } from './unit/featureFlags.test.ts'
+import { runDepositPolicyUnitTests } from './unit/depositPolicy.test.ts'
+import { runClinicalEncounterContractsUnitTests } from './unit/clinicalEncounterContracts.test.ts'
+import { runProductAccessFeaturesUnitTests } from './unit/productAccessFeatures.test.ts'
+import { runSubscriptionCatalogUnitTests } from './unit/subscriptionCatalog.test.ts'
+import { runBookingFlowUnitTests } from './unit/bookingFlow.test.ts'
+import { runCapabilitiesUnitTests } from './unit/capabilities.test.ts'
 
 async function main() {
   await runDateTimeUnitTests()
@@ -22,6 +28,12 @@ async function main() {
   await runAiInsightsUnitTests()
   await runPharmacovigilanceDedupeUnitTests()
   await runFeatureFlagsUnitTests()
+  await runDepositPolicyUnitTests()
+  await runClinicalEncounterContractsUnitTests()
+  await runProductAccessFeaturesUnitTests()
+  await runSubscriptionCatalogUnitTests()
+  await runBookingFlowUnitTests()
+  await runCapabilitiesUnitTests()
   console.log('\nUnit tests completed successfully.')
 }
 

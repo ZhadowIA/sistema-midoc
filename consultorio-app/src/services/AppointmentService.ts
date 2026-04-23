@@ -28,6 +28,7 @@ import { getServerEnv } from '@/lib/env'
 import { buildSlotHoldReason, getSlotHoldActiveCutoff, SLOT_HOLD_REASON_PREFIX } from '@/lib/slotHold'
 import { ConsentCaptureService } from './ConsentCaptureService'
 import { AuditLogService } from './AuditLogService'
+import { resolveDepositRequirement } from '@/lib/depositPolicy'
 
 type ContactInput = {
   relation: PatientRelation
@@ -46,7 +47,7 @@ type CreatePublicAppointmentInput = {
   gender?: PatientGender | null
   dateOfBirth: string
   userId?: string
-  phone: string
+  phone?: string
   email?: string
   appointmentType: AppointmentType
   startTime: string
@@ -124,6 +125,11 @@ export class AppointmentService {
       throw new Error('Fecha de nacimiento inválida.')
     }
 
+    const normalizedPatientPhone = data.phone?.trim() || data.contact?.phone.trim() || ''
+    if (!normalizedPatientPhone) {
+      throw new Error('Se requiere un teléfono de contacto para completar la cita.')
+    }
+
     const baseDuration = config.consultationDurationMin
     if (baseDuration < 15 || baseDuration > 120) {
       throw new Error('Configuración de duración base inválida.')
@@ -133,6 +139,22 @@ export class AppointmentService {
     const endTimeDate = addMinutes(startTimeDate, slotDuration)
     const startOfAptDay = new Date(startTimeDate)
     startOfAptDay.setHours(0, 0, 0, 0)
+    const depositRequirement = resolveDepositRequirement(
+      {
+        depositEnabled: config.depositEnabled,
+        depositAmount: config.depositAmount ? Number(config.depositAmount) : null,
+        normalConsultationPrice: config.normalConsultationPrice ? Number(config.normalConsultationPrice) : null,
+        extendedConsultationPrice: config.extendedConsultationPrice ? Number(config.extendedConsultationPrice) : null,
+        depositExpiresInMinutes: config.depositExpiresInMinutes,
+        cancellationWindowHours: config.cancellationWindowHours,
+        cancellationRefundMode: config.cancellationRefundMode,
+        cancellationPartialRefundPct: config.cancellationPartialRefundPct,
+      },
+      data.appointmentType,
+      {
+        appointmentStart: startTimeDate,
+      }
+    )
 
     let createdAppointmentId = ''
     let createdAppointmentStatus = ''
@@ -241,7 +263,7 @@ export class AppointmentService {
                 where: {
                   firstName,
                   lastNamePaternal,
-                  phone: data.phone,
+                  phone: normalizedPatientPhone,
                   ownerDoctorId: null,
                   appointments: {
                     some: { doctorId },
@@ -260,7 +282,7 @@ export class AppointmentService {
                   sex: data.sex ?? null,
                   gender: data.gender ?? null,
                   dateOfBirth,
-                  phone: data.phone.trim(),
+                  phone: normalizedPatientPhone,
                   email: data.email?.trim().toLowerCase() || undefined,
                 },
               })
@@ -324,6 +346,10 @@ export class AppointmentService {
                 durationMin: slotDuration,
                 source: 'PATIENT',
                 status: 'PENDING',
+                paymentStatus: depositRequirement.paymentStatus,
+                depositRequiredAmount: depositRequirement.depositRequiredAmount,
+                depositDueAt: depositRequirement.depositDueAt,
+                cancellationPolicySnapshot: depositRequirement.cancellationPolicySnapshot ?? undefined,
               },
             })
 
@@ -343,6 +369,9 @@ export class AppointmentService {
                   source: 'PATIENT',
                   holdTokenUsed: Boolean(data.holdToken),
                   privacyConsentAccepted: true,
+                  paymentStatus: depositRequirement.paymentStatus,
+                  depositRequiredAmount: depositRequirement.depositRequiredAmount,
+                  depositDueAt: depositRequirement.depositDueAt?.toISOString() ?? null,
                 },
                 ipAddress: data.ipAddress,
                 userAgent: data.userAgent,

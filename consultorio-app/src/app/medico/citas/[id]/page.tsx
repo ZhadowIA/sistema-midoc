@@ -130,6 +130,23 @@ type NoteGenerationEvent = {
   errorMessage?: string | null;
 };
 
+type PrecheckinSummary = {
+  precheckin?: {
+    attendanceConfirmed?: boolean
+    demographicsConfirmed?: boolean
+    pendingPaymentsAcknowledged?: boolean
+    notes?: string | null
+    createdAt?: string
+  } | null
+  documents?: Array<{
+    id: string
+    category: string
+    fileName: string
+    fileUrl: string
+    uploadedAt: string
+  }>
+}
+
 export default function AppointmentDetailPage(props: { params: Promise<{ id: string }> }) {
   const params = use(props.params);
   const router = useRouter();
@@ -152,6 +169,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
   const [assigningPatient, setAssigningPatient] = useState(false);
   const [creatingAndAssigningPatient, setCreatingAndAssigningPatient] = useState(false);
   const [clinicalTab, setClinicalTab] = useState<"soap" | "questionnaire" | "ai">("soap");
+  const [precheckinSummary, setPrecheckinSummary] = useState<PrecheckinSummary | null>(null);
 
   // Notas Médicas (SOAP)
   const [noteData, setNoteData] = useState({
@@ -241,6 +259,14 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
       })
       .catch(console.error);
   }, [params.id]);
+
+  useEffect(() => {
+    if (!appointment?.patient?.id) return
+    fetch(`/api/agenda/admin/patients/${appointment.patient.id}/precheckin-summary`)
+      .then((res) => res.json())
+      .then((data) => setPrecheckinSummary(data))
+      .catch(() => setPrecheckinSummary(null))
+  }, [appointment?.patient?.id])
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -957,6 +983,24 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   <div className="text-xs text-muted-foreground">Expediente</div>
                   <div className="font-semibold">
                     {appointment.patient.ownerDoctorId ? "Vinculado al directorio" : "Cita de invitado (sin vincular)"}
+                  </div>
+                </div>
+                <div className="p-3 bg-secondary/30 rounded-xl space-y-2">
+                  <div className="text-xs text-muted-foreground">Resumen previo (portal paciente)</div>
+                  {precheckinSummary?.precheckin ? (
+                    <div className="text-sm space-y-1">
+                      <div>Asistencia: <strong>{precheckinSummary.precheckin.attendanceConfirmed ? "Confirmada" : "Sin confirmar"}</strong></div>
+                      <div>Datos demográficos: <strong>{precheckinSummary.precheckin.demographicsConfirmed ? "Confirmados" : "Pendientes"}</strong></div>
+                      <div>Pagos pendientes: <strong>{precheckinSummary.precheckin.pendingPaymentsAcknowledged ? "Reconocidos" : "Sin confirmar"}</strong></div>
+                      {precheckinSummary.precheckin.notes ? (
+                        <div className="text-muted-foreground">Notas: {precheckinSummary.precheckin.notes}</div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">El paciente aún no completa pre-check-in.</div>
+                  )}
+                  <div className="text-xs text-muted-foreground">
+                    Documentos recientes: <strong>{precheckinSummary?.documents?.length ?? 0}</strong>
                   </div>
                 </div>
               </CardContent>

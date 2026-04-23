@@ -3,8 +3,11 @@ import prisma from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { Prisma } from '@prisma/client'
 import { attachSessionCookie, buildSessionToken } from '@/lib/session'
-import { getServerEnv } from '@/lib/env'
 import { captureError, logEvent } from '@/lib/observability'
+import { recordLegalAcceptance } from '@/lib/legalAcceptance'
+import { COMMERCIAL_BASE_PLANS, resolveCommercialPlan } from '@/lib/subscriptionCatalog'
+import { addDays } from 'date-fns'
+import { buildProductAccessFromFeatures } from '@/lib/productAccess'
 
 function asNonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -20,12 +23,66 @@ function buildSlugFromName(fullName: string): string {
   return `${base}-${Date.now().toString().slice(-6)}`
 }
 
+function buildDoctorDisplayName(firstName: string, lastNamePaternal: string, lastNameMaternal?: string) {
+  return [firstName, lastNamePaternal, lastNameMaternal].filter(Boolean).join(' ').trim()
+}
+
+function buildDefaultAvailabilityBlocks(doctorId: string) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const blocks: Array<{
+    doctorId: string
+    date: Date
+    startTime: Date
+    endTime: Date
+    isPublic: true
+    active: true
+  }> = []
+
+  for (let i = 0; i < 30; i += 1) {
+    const date = addDays(today, i)
+    const day = date.getDay()
+    if (day === 0 || day === 6) continue
+
+    const morningStart = new Date(date)
+    morningStart.setHours(9, 0, 0, 0)
+    const morningEnd = new Date(date)
+    morningEnd.setHours(14, 0, 0, 0)
+
+    const afternoonStart = new Date(date)
+    afternoonStart.setHours(15, 0, 0, 0)
+    const afternoonEnd = new Date(date)
+    afternoonEnd.setHours(17, 0, 0, 0)
+
+    blocks.push(
+      {
+        doctorId,
+        date,
+        startTime: morningStart,
+        endTime: morningEnd,
+        isPublic: true,
+        active: true,
+      },
+      {
+        doctorId,
+        date,
+        startTime: afternoonStart,
+        endTime: afternoonEnd,
+        isPublic: true,
+        active: true,
+      }
+    )
+  }
+
+  return blocks
+}
+
 export async function POST(request: Request) {
   try {
-    const env = getServerEnv()
     const body = await request.json()
     const firstName = asNonEmptyString(body.firstName)
-    const lastName = asNonEmptyString(body.lastName)
+    const lastNamePaternal = asNonEmptyString(body.lastNamePaternal)
+    const lastNameMaternal = asNonEmptyString(body.lastNameMaternal)
     const rawName = asNonEmptyString(body.name)
     const phone = asNonEmptyString(body.phone)
     const email = asNonEmptyString(body.email).toLowerCase()
@@ -33,10 +90,11 @@ export async function POST(request: Request) {
     const acceptTerms = body.acceptTerms === true
     const acceptPrivacy = body.acceptPrivacy === true
 
-    const name = rawName || [firstName, lastName].filter(Boolean).join(' ').trim()
+    const name =
+      rawName || buildDoctorDisplayName(firstName, lastNamePaternal, lastNameMaternal || undefined)
 
     if (!name || !email || !password || !phone) {
-      return NextResponse.json({ error: 'Nombre, apellidos, correo, teléfono y contraseña son requeridos' }, { status: 400 })
+      return NextResponse.json({ error: 'Nombre, apellido paterno, correo, teléfono y contraseña son requeridos' }, { status: 400 })
     }
 
     if (password.length < 8) {
@@ -57,6 +115,8 @@ export async function POST(request: Request) {
     const passwordHash = await bcrypt.hash(password, 10)
     
     // Create base user and their initial config simultaneously
+    const starterPlan = resolveCommercialPlan({ basePlan: COMMERCIAL_BASE_PLANS.INTEGRAL })
+
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const user = await tx.user.create({
         data: {
@@ -83,9 +143,10 @@ export async function POST(request: Request) {
         data: {
           doctorId: user.id,
           status: 'PENDING',
-          planName: 'Plan Mensual MiDoc',
+          planName: starterPlan.legacyPlanName,
           amount: 899,
           currency: 'MXN',
+          features: starterPlan.features as Prisma.InputJsonValue,
         },
       })
 
@@ -96,24 +157,29 @@ export async function POST(request: Request) {
         },
       })
 
-      await tx.legalAcceptance.create({
-        data: {
-          userId: user.id,
-          termsVersion: env.TERMS_VERSION,
-          privacyVersion: env.PRIVACY_VERSION,
-          termsAcceptedAt: new Date(),
-          privacyAcceptedAt: new Date(),
-        },
+      await tx.availabilityBlock.createMany({
+        data: buildDefaultAvailabilityBlocks(user.id),
+      })
+
+      await recordLegalAcceptance({
+        userId: user.id,
+        request,
+        context: 'REGISTER',
+        tx,
       })
 
       return user
     })
 
+    const access = buildProductAccessFromFeatures(starterPlan.features)
     const token = await buildSessionToken({
       sub: result.id,
       role: result.role,
       hasActiveSubscription: false,
       onboardingCompleted: false,
+      productPlan: access.plan,
+      enabledModules: access.enabledModules,
+      features: starterPlan.features,
     })
 
     const response = NextResponse.json({

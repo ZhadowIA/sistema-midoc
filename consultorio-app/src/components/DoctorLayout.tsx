@@ -7,8 +7,25 @@ import { Calendar, Settings, LayoutDashboard, LogOut, Menu, X, Users, Moon, Cred
 import { motion, AnimatePresence } from "motion/react";
 import { useTheme } from "@/components/ThemeProvider";
 
+type ProductFeatureRecord = Record<string, unknown>;
+type ProductModule = "AGENDA" | "CLINICAL_RECORDS";
+
 interface DoctorLayoutProps {
   children: ReactNode;
+}
+
+function deriveModulesFromFeatures(features: ProductFeatureRecord): ProductModule[] {
+  const modules: ProductModule[] = [];
+
+  if (features["agenda.enabled"] === true) {
+    modules.push("AGENDA");
+  }
+
+  if (features["clinical.enabled"] === true || features["clinical.history"] === true) {
+    modules.push("CLINICAL_RECORDS");
+  }
+
+  return modules;
 }
 
 export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
@@ -20,7 +37,7 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
   const [doctorImage, setDoctorImage] = useState("");
   const [waConnected, setWaConnected] = useState(false);
   const [userRole, setUserRole] = useState<string>("DOCTOR");
-  const [enabledModules, setEnabledModules] = useState<Array<"AGENDA" | "CLINICAL_RECORDS">>([
+  const [enabledModules, setEnabledModules] = useState<ProductModule[]>([
     "AGENDA",
     "CLINICAL_RECORDS",
   ]);
@@ -42,9 +59,23 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
         );
         setDoctorImage(typeof data.profileImage === "string" ? data.profileImage : "");
         setUserRole(data.role || "DOCTOR");
+
+        const features =
+          data.features && typeof data.features === "object" && !Array.isArray(data.features)
+            ? (data.features as ProductFeatureRecord)
+            : null;
+
+        if (features) {
+          const modulesFromFeatures = deriveModulesFromFeatures(features);
+          if (modulesFromFeatures.length > 0) {
+            setEnabledModules(modulesFromFeatures);
+            return;
+          }
+        }
+
         if (Array.isArray(data.enabledModules)) {
           const modules = data.enabledModules.filter(
-            (item: unknown): item is "AGENDA" | "CLINICAL_RECORDS" =>
+            (item: unknown): item is ProductModule =>
               item === "AGENDA" || item === "CLINICAL_RECORDS"
           );
           if (modules.length > 0) {

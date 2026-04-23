@@ -32,7 +32,7 @@ export async function POST(
     if (!rateLimit.ok) return rateLimitExceededResponse(rateLimit);
 
     const params = await props.params;
-    const access = await requireMedicalDoctorApiAccess();
+    const access = await requireMedicalDoctorApiAccess({ requiredFeature: "ai.insights" });
     if (access.response) return access.response;
     const doctorId = access.context.doctorId;
 

@@ -2,11 +2,12 @@ import prisma from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/http'
 import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 import {
-  isClinicalHistoryEnabled,
+  getEnabledFeatures,
 } from '@/lib/featureFlags'
 import { EncounterHistoryService } from '@/services/EncounterHistoryService'
 import { z } from 'zod'
 import { ConsultationMode, AiConsentState } from '@prisma/client'
+import { resolveCapabilities } from '@/lib/capabilities'
 
 const bodySchema = z.object({
   consultationMode: z.nativeEnum(ConsultationMode).optional(),
@@ -14,15 +15,26 @@ const bodySchema = z.object({
 })
 
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
-  if (!isClinicalHistoryEnabled()) {
-    return jsonNoStore({ error: 'Modo consulta unificado no habilitado' }, { status: 404 })
-  }
   const params = await props.params
   try {
     const access = await requireMedicalDoctorApiAccess()
     if (access.response) return access.response
     const doctorId = access.context.doctorId
     const actorUserId = access.context.user.id
+    const features = await getEnabledFeatures(doctorId)
+    const capabilities = resolveCapabilities({
+      features,
+      hasAppointmentContext: true,
+    })
+    if (!capabilities.clinicalUnified.enabled) {
+      return jsonNoStore(
+        {
+          error: 'Modo consulta unificado no habilitado',
+          capabilities,
+        },
+        { status: 404 },
+      )
+    }
 
     const appointment = await prisma.appointment.findFirst({
       where: { id: params.id, doctorId },

@@ -6,20 +6,39 @@ import { getDoctorSetupStatus } from '@/lib/setupStatus'
 import { attachSessionCookie, buildSessionToken } from '@/lib/session'
 import { captureError, logEvent } from '@/lib/observability'
 import { getDoctorProductAccess } from '@/lib/productAccess'
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit'
+
+const LOGIN_RATE_LIMIT = { key: 'auth:login', limit: 5, windowMs: 15 * 60 * 1000 }
+const E2E_LOGIN_RATE_LIMIT = { key: 'auth:login:e2e', limit: 200, windowMs: 60 * 1000 }
 
 export async function POST(request: Request) {
   try {
     const { email, password } = await request.json()
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : ''
+    const loginRateLimit = process.env.E2E_TEST_MODE === '1' ? E2E_LOGIN_RATE_LIMIT : LOGIN_RATE_LIMIT
+
+    const limit = checkRateLimit(request, {
+      ...loginRateLimit,
+      identifier: normalizedEmail || 'anon',
+    })
+    if (!limit.ok) {
+      logEvent('warn', 'auth.login.rate_limited', { email: normalizedEmail })
+      return rateLimitExceededResponse(limit)
+    }
 
     // 1. Validate email
-    const user = await prisma.user.findUnique({ where: { email } })
+    const user = normalizedEmail
+      ? await prisma.user.findUnique({ where: { email: normalizedEmail } })
+      : null
     if (!user || !user.active) {
+      logEvent('warn', 'auth.login.failed', { email: normalizedEmail, reason: 'unknown_user' })
       return NextResponse.json({ error: 'Credenciales inválidas' }, { status: 401 })
     }
 
     // 2. Verify password
     const valid = await bcrypt.compare(password, user.passwordHash)
     if (!valid) {
+      logEvent('warn', 'auth.login.failed', { userId: user.id, reason: 'bad_password' })
       return NextResponse.json({ error: 'Credenciales inválidas' }, { status: 401 })
     }
 
@@ -30,6 +49,10 @@ export async function POST(request: Request) {
       : {
           plan: 'COMBINED' as const,
           enabledModules: ['AGENDA', 'CLINICAL_RECORDS'] as const,
+          features: {
+            'agenda.enabled': true,
+            'clinical.enabled': true,
+          },
         }
 
     // 3. Generate token
@@ -41,6 +64,7 @@ export async function POST(request: Request) {
       onboardingCompleted: setup.onboardingCompleted,
       productPlan: productAccess.plan,
       enabledModules: [...productAccess.enabledModules],
+      features: productAccess.features,
     })
 
     // 4. Set cookie
@@ -57,6 +81,7 @@ export async function POST(request: Request) {
         onboardingCompleted: setup.onboardingCompleted,
         productPlan: productAccess.plan,
         enabledModules: productAccess.enabledModules,
+        features: productAccess.features,
       },
     })
     attachSessionCookie(response, token)

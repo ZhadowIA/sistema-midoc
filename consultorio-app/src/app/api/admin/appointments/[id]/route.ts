@@ -7,6 +7,7 @@ import { jsonNoStore } from '@/lib/http'
 import { getAuthenticatedUser } from '@/lib/auth'
 import { getRequestIp, getUserAgent } from '@/lib/requestContext'
 import { formatPatientName } from '@/lib/patientName'
+import { WaitlistService } from '@/services/WaitlistService'
 
 const ALLOWED_STATUS = new Set(['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED'])
 
@@ -469,6 +470,20 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
           console.error('Error WA Admin:', err)
         }
       }
+    }
+
+    if (existing.status !== 'CANCELLED' && updated.status === 'CANCELLED') {
+      await WaitlistService.processVacancy({
+        doctorId,
+        clinicId: updated.clinicId,
+        sourceAppointmentId: updated.id,
+        slotStartTime: existing.startTime,
+        slotEndTime: existing.endTime,
+        actorType: 'DOCTOR',
+        actorUserId,
+        source: 'ADMIN_PANEL',
+        trigger: 'CANCELLATION',
+      })
     }
 
     return jsonNoStore(updated)

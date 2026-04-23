@@ -27,6 +27,14 @@ type SubscriptionRecord = {
   paymentMethodLast4?: string | null;
 };
 
+type CommercialPlanRecord = {
+  basePlan: "AGENDA" | "CLINICAL" | "INTEGRAL";
+  addOns: string[];
+  displayName: string;
+  monthlyPriceMx: number | null;
+  features: Record<string, unknown>;
+};
+
 type SubscriptionResponse = {
   subscription: SubscriptionRecord | null;
   scope?: {
@@ -40,6 +48,21 @@ type SubscriptionResponse = {
     available: number;
     overLimit: boolean;
   } | null;
+  commercialPlan?: CommercialPlanRecord | null;
+  catalog?: {
+    basePlans: Array<{
+      code: string;
+      displayName: string;
+      monthlyPriceMx: number | null;
+      description: string;
+    }>;
+    addOns: Array<{
+      code: string;
+      displayName: string;
+      monthlyPriceMx: number | null;
+      description: string;
+    }>;
+  };
 };
 
 export default function DoctorSubscriptionPage() {
@@ -51,6 +74,8 @@ export default function DoctorSubscriptionPage() {
   const [error, setError] = useState("");
   const [subscriptionScope, setSubscriptionScope] = useState<SubscriptionResponse["scope"] | null>(null);
   const [seats, setSeats] = useState<SubscriptionResponse["seats"]>(null);
+  const [commercialPlan, setCommercialPlan] = useState<CommercialPlanRecord | null>(null);
+  const [catalog, setCatalog] = useState<SubscriptionResponse["catalog"] | null>(null);
 
   const loadSubscriptionContext = useCallback(async () => {
     const [setupResponse, subscriptionResponse] = await Promise.all([
@@ -67,6 +92,8 @@ export default function DoctorSubscriptionPage() {
     setSubscription(subscriptionResponse.subscription || null);
     setSubscriptionScope(subscriptionResponse.scope || null);
     setSeats(subscriptionResponse.seats || null);
+    setCommercialPlan(subscriptionResponse.commercialPlan || null);
+    setCatalog(subscriptionResponse.catalog || null);
   }, [router]);
 
   useEffect(() => {
@@ -152,13 +179,15 @@ export default function DoctorSubscriptionPage() {
           <p className="text-sm text-muted-foreground mt-1">
             {setup.hasActiveSubscription
               ? "Gestiona tu plan mensual y estado de renovación."
-              : "Para continuar, activa tu plan mensual y habilita tu panel médico."}
+              : "Para continuar, activa tu plan comercial y habilita tu panel médico."}
           </p>
         </div>
 
         {setup.hasActiveSubscription && subscription ? (
           <div className="rounded-2xl border border-border bg-secondary/20 p-5 space-y-3">
-            <p className="text-lg font-semibold text-foreground">{subscription.planName || "Plan Mensual MiDoc"}</p>
+            <p className="text-lg font-semibold text-foreground">
+              {commercialPlan?.displayName || subscription.planName || "Plan Integral MiDoc"}
+            </p>
             <div className="flex flex-wrap gap-2">
               <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-success/10 text-success">
                 <ShieldCheck className="w-3.5 h-3.5 mr-1" />
@@ -179,6 +208,14 @@ export default function DoctorSubscriptionPage() {
             <p className="text-sm text-muted-foreground">
               Método: {subscription.paymentMethodLast4 ? `**** ${subscription.paymentMethodLast4}` : "No disponible"}
             </p>
+            {commercialPlan && (
+              <div className="rounded-lg border border-border p-3 bg-background/70">
+                <p className="text-sm text-foreground font-medium">Plan base: {commercialPlan.basePlan}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Add-ons: {commercialPlan.addOns.length > 0 ? commercialPlan.addOns.join(", ") : "Ninguno"}
+                </p>
+              </div>
+            )}
             {subscriptionScope?.mode === "CLINIC" && seats && (
               <div className="rounded-lg border border-border p-3 bg-background/70">
                 <p className="text-sm text-foreground font-medium">Seats de clínica</p>
@@ -200,13 +237,32 @@ export default function DoctorSubscriptionPage() {
           </div>
         ) : (
           <div className="rounded-2xl border border-border bg-secondary/20 p-5 space-y-3">
-            <p className="text-lg font-semibold text-foreground">Plan Mensual MiDoc</p>
+            <p className="text-lg font-semibold text-foreground">Plan Integral MiDoc</p>
             <p className="text-3xl font-bold text-foreground">$899 <span className="text-base font-medium text-muted-foreground">MXN / mes</span></p>
             <ul className="space-y-2 text-sm text-foreground">
-              <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> Agenda médica y gestión de pacientes</li>
-              <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> Cuestionarios pre-consulta y notas SOAP</li>
-              <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> Recordatorios y flujo administrativo</li>
+              <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> Agenda en línea, recordatorios y lista de espera</li>
+              <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> Expediente clínico, historia médica, notas, recetas y firma</li>
+              <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> La IA se maneja como add-on premium independiente</li>
             </ul>
+            {catalog && (
+              <div className="rounded-lg border border-border p-3 bg-background/70">
+                <p className="text-sm font-medium text-foreground">Catálogo modular</p>
+                <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  {catalog.basePlans.map((plan) => (
+                    <li key={plan.code}>
+                      <span className="font-medium text-foreground">{plan.displayName}:</span>{" "}
+                      {plan.monthlyPriceMx ? `$${plan.monthlyPriceMx} MXN/mes` : "precio por configurar"}
+                    </li>
+                  ))}
+                  {catalog.addOns.map((addOn) => (
+                    <li key={addOn.code}>
+                      <span className="font-medium text-foreground">{addOn.displayName}:</span>{" "}
+                      {addOn.monthlyPriceMx ? `$${addOn.monthlyPriceMx} MXN/mes` : "precio por configurar"}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
 

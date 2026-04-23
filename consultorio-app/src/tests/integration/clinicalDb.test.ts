@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { Prisma } from '@prisma/client'
 import { runSuite } from '../testHarness.ts'
 import {
   TEST_DB_ENABLED,
@@ -188,7 +189,7 @@ export async function runClinicalDbIntegrationTests() {
             signatureHash,
             signedAt: new Date(),
             signedByUserId: doctor.id,
-            signedSnapshot: snapshot,
+            signedSnapshot: snapshot as Prisma.InputJsonValue,
           },
         })
         assert.match(

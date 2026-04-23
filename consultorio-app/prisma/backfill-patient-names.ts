@@ -12,10 +12,11 @@ import { parseFullName } from '../src/lib/patientName.ts'
 const prisma = new PrismaClient()
 
 async function main() {
-  const pending = await prisma.patient.findMany({
-    where: { firstName: null },
-    select: { id: true, fullName: true },
-  })
+  const pending = await prisma.$queryRaw<Array<{ id: string; fullName: string | null }>>`
+    SELECT "id", "fullName"
+    FROM "Patient"
+    WHERE "firstName" IS NULL
+  `
 
   console.log(`Pacientes a procesar: ${pending.length}`)
 
@@ -26,7 +27,7 @@ async function main() {
     const parsed = parseFullName(patient.fullName ?? '')
 
     if (!parsed.firstName) {
-      ambiguous.push({ id: patient.id, fullName: patient.fullName })
+      ambiguous.push({ id: patient.id, fullName: patient.fullName ?? '' })
       continue
     }
 

@@ -95,6 +95,9 @@ export default function PatientConsultasPage() {
             <p className="text-2xl font-semibold">{upcoming.length}</p>
           </div>
           <div className="flex flex-col sm:flex-row gap-2">
+            <Button variant="secondary" onClick={() => router.push("/paciente/pre-checkin")}>
+              Pre-check-in
+            </Button>
             <Button variant="secondary" onClick={() => router.push("/paciente/historial")}>
               Ver historial completo
             </Button>

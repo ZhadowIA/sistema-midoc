@@ -28,6 +28,7 @@ export async function POST() {
     onboardingCompleted: doctorSetup?.onboardingCompleted,
     productPlan: productAccess?.plan,
     enabledModules: productAccess ? [...productAccess.enabledModules] : undefined,
+    features: productAccess?.features,
   });
 
   const response = NextResponse.json({ success: true });

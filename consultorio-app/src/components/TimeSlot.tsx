@@ -6,9 +6,10 @@ interface TimeSlotProps {
   available?: boolean;
   selected?: boolean;
   onClick?: () => void;
+  testId?: string;
 }
 
-export const TimeSlot = ({ time, available = true, selected = false, onClick }: TimeSlotProps) => {
+export const TimeSlot = ({ time, available = true, selected = false, onClick, testId }: TimeSlotProps) => {
   const getClasses = () => {
     if (!available) {
       return "bg-muted text-muted-foreground cursor-not-allowed opacity-50";
@@ -21,6 +22,7 @@ export const TimeSlot = ({ time, available = true, selected = false, onClick }: 
 
   return (
     <motion.button
+      data-testid={testId}
       whileHover={available && !selected ? { scale: 1.05 } : {}}
       whileTap={available && !selected ? { scale: 0.95 } : {}}
       onClick={available ? onClick : undefined}

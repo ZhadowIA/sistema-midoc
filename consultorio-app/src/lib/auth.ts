@@ -13,6 +13,12 @@ export type AuthenticatedUser = {
   bossId?: string | null
   productPlan?: 'AGENDA' | 'CLINICAL_RECORDS' | 'COMBINED'
   enabledModules?: Array<'AGENDA' | 'CLINICAL_RECORDS'>
+  features?: Record<string, unknown>
+}
+
+function coerceFeatures(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  return value as Record<string, unknown>
 }
 
 export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> {
@@ -55,6 +61,7 @@ export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> 
               item === 'AGENDA' || item === 'CLINICAL_RECORDS'
           )
         : undefined,
+      features: coerceFeatures(payload.features),
     }
   } catch {
     return null

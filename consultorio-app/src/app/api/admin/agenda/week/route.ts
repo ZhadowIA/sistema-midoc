@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { addDays, format, startOfWeek } from 'date-fns'
-import { getAuthenticatedUser } from '@/lib/auth'
 import { getDayRangeLocal } from '@/lib/dateTime'
-import { formatPatientName } from '@/lib/patientName'
+import { requireAgendaDoctorApiAccess } from '@/lib/medicalApi'
+import { toAgendaAppointmentDto, toAgendaBlockDto } from '@/lib/agendaDto'
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -12,16 +12,16 @@ export async function GET(request: Request) {
   const requestedDoctorId = searchParams.get('doctorId')
 
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireAgendaDoctorApiAccess({ allowSecretary: true })
+    if (access.response) return access.response
 
     const actorUser = await prisma.user.findUnique({
-      where: { id: authUser.id },
+      where: { id: access.context.user.id },
       select: { id: true, role: true, clinicId: true },
     })
     if (!actorUser) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    let doctorId = actorUser.id
+    let doctorId = access.context.doctorId
     let clinicDoctors: Array<{ id: string; name: string }> = []
     const canViewClinicAgenda = actorUser.role === 'CLINIC_ADMIN' && Boolean(actorUser.clinicId)
 
@@ -72,33 +72,8 @@ export async function GET(request: Request) {
       orderBy: { startTime: 'asc' },
     })
 
-    const transformedAppointments = appointments.map((apt) => ({
-      id: apt.id,
-      doctorId: apt.doctorId,
-      doctorName: apt.doctor.name,
-      patientId: apt.patient.id,
-      patientName: formatPatientName(apt.patient),
-      patientPhone: apt.patient.phone,
-      date: apt.date,
-      dateLocal: format(apt.startTime, 'yyyy-MM-dd'),
-      time: format(apt.startTime, 'HH:mm'),
-      startTime: apt.startTime,
-      endTime: apt.endTime,
-      consultType: apt.appointmentType.toLowerCase(),
-      status: apt.status.toLowerCase(),
-      hasQuestionnaire: apt.questionnaireAnswered,
-      origin: apt.source.toLowerCase(),
-    }))
-
-    const transformedBlocks = blocks.map((block) => ({
-      id: block.id,
-      type: block.type.toLowerCase(),
-      reason: block.reason,
-      dateLocal: format(block.startTime, 'yyyy-MM-dd'),
-      startTime: block.startTime,
-      endTime: block.endTime,
-      time: format(block.startTime, 'HH:mm'),
-    }))
+    const transformedAppointments = appointments.map(toAgendaAppointmentDto)
+    const transformedBlocks = blocks.map(toAgendaBlockDto)
 
     const days = Array.from({ length: 7 }, (_, index) => {
       const date = addDays(weekStart, index)

@@ -585,12 +585,12 @@ function DoctorConfigurationContent() {
 
   // Params
   const [formData, setFormData] = useState({
-    baseDuration: 30,
-    priceNormal: 800,
-    priceExtended: 1200,
+    baseDuration: 30 as number | string,
+    priceNormal: 800 as number | string,
+    priceExtended: 1200 as number | string,
     extendedEnabled: true,
     reminderLeadHours: "24,3,1",
-    reminderWindowMinutes: 15,
+    reminderWindowMinutes: 15 as number | string,
     whatsappAutoReplyEnabled: true,
     whatsappAutoConfirmEnabled: true,
     whatsappAutoCancelEnabled: true,
@@ -823,7 +823,13 @@ function DoctorConfigurationContent() {
       const res = await fetch("/api/admin/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          ...formData,
+          baseDuration: Number(formData.baseDuration) || 30,
+          priceNormal: Number(formData.priceNormal) || 0,
+          priceExtended: Number(formData.priceExtended) || 0,
+          reminderWindowMinutes: Number(formData.reminderWindowMinutes) || 15
+        })
       });
       if (!res.ok) throw new Error((await res.json()).error);
       setParamsMsg("Parámetros guardados correctamente.");
@@ -1007,7 +1013,7 @@ function DoctorConfigurationContent() {
     try {
       const payload = {
         reminderLeadHours: formData.reminderLeadHours,
-        reminderWindowMinutes: formData.reminderWindowMinutes,
+        reminderWindowMinutes: Number(formData.reminderWindowMinutes) || 15,
         whatsappAutoReplyEnabled: formData.whatsappAutoReplyEnabled,
         whatsappAutoConfirmEnabled: formData.whatsappAutoConfirmEnabled,
         whatsappAutoCancelEnabled: formData.whatsappAutoCancelEnabled,
@@ -1297,19 +1303,19 @@ function DoctorConfigurationContent() {
                   <div>
                     <label className="text-sm font-medium text-primary mb-1.5 block">Duración (minutos)</label>
                     <input
-                      type="number"
+                      type="text" inputMode="numeric"
                       className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                       value={formData.baseDuration}
-                      onChange={e => setFormData({ ...formData, baseDuration: Number(e.target.value) })}
+                      onChange={e => setFormData({ ...formData, baseDuration: e.target.value.replace(/^0+(?=\d)/, "") })}
                     />
                   </div>
                   <div>
                     <label className="text-sm font-medium text-primary mb-1.5 block">Precio</label>
                     <input
-                      type="number"
+                      type="text" inputMode="numeric"
                       className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                       value={formData.priceNormal}
-                      onChange={e => setFormData({ ...formData, priceNormal: Number(e.target.value) })}
+                      onChange={e => setFormData({ ...formData, priceNormal: e.target.value.replace(/^0+(?=\d)/, "") })}
                     />
                   </div>
                 </div>
@@ -1328,21 +1334,21 @@ function DoctorConfigurationContent() {
                   <div>
                     <label className="text-sm font-medium text-primary mb-1.5 block">Duración (minutos)</label>
                     <input
-                      type="number"
+                      type="text" inputMode="numeric"
                       disabled={!formData.extendedEnabled}
                       className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-foreground focus:outline-none disabled:opacity-50"
-                      value={formData.baseDuration * 2}
+                      value={formData.baseDuration === '' ? '' : Number(formData.baseDuration) * 2}
                       readOnly
                     />
                   </div>
                   <div>
                     <label className="text-sm font-medium text-primary mb-1.5 block">Precio</label>
                     <input
-                      type="number"
+                      type="text" inputMode="numeric"
                       disabled={!formData.extendedEnabled}
                       className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
                       value={formData.priceExtended}
-                      onChange={e => setFormData({ ...formData, priceExtended: Number(e.target.value) })}
+                      onChange={e => setFormData({ ...formData, priceExtended: e.target.value.replace(/^0+(?=\d)/, "") })}
                     />
                   </div>
                 </div>
@@ -1570,7 +1576,7 @@ function DoctorConfigurationContent() {
                       Ventana de envío (minutos)
                     </label>
                     <input
-                      type="number"
+                      type="text" inputMode="numeric"
                       min={1}
                       max={240}
                       className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -1578,7 +1584,7 @@ function DoctorConfigurationContent() {
                       onChange={(e) =>
                         setFormData((prev) => ({
                           ...prev,
-                          reminderWindowMinutes: Number(e.target.value) || 15,
+                          reminderWindowMinutes: e.target.value.replace(/^0+(?=\d)/, ""),
                         }))
                       }
                     />

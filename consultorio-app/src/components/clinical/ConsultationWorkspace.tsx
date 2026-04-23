@@ -48,10 +48,24 @@ import { formatPatientName } from "@/lib/patientName";
 import type { EncounterHistoryPayload } from "@/lib/encounterHistorySchema";
 
 type ConsentState = "PENDING" | "GRANTED" | "DENIED";
+type CapabilityReasonCode =
+  | "ENABLED"
+  | "CLINICAL_DISABLED_GLOBAL_FLAG"
+  | "CLINICAL_DISABLED_PLAN"
+  | "AI_DISABLED_NO_API_KEY"
+  | "AI_DISABLED_PLAN"
+  | "AI_DISABLED_NO_APPOINTMENT"
+  | "AI_DISABLED_CLINICAL_NOT_ENABLED";
 
 type ContextResponse = {
-  appointment: {
+  encounter: {
     id: string;
+    source: "APPOINTMENT" | "STANDALONE" | "MIGRATION";
+    status: "OPEN" | "CLOSED" | "ARCHIVED";
+    appointmentId: string | null;
+  };
+  appointment: {
+    id: string | null;
     patientId: string;
     patient: {
       id: string;
@@ -62,10 +76,11 @@ type ContextResponse = {
     };
     questionnaireAnswered: boolean;
   };
-  encounter: {
+  encounterHistory: {
     record: {
       id: string | null;
-      appointmentId: string;
+      appointmentId: string | null;
+      clinicalEncounterId?: string | null;
       payload: EncounterHistoryPayload;
       completionPct: number;
       prefilledFromQuestionnaire: boolean;
@@ -77,10 +92,14 @@ type ContextResponse = {
     aiConsent: ConsentState;
     aiConsentDecidedAt: string | null;
   };
-  capabilities: { aiAvailable: boolean };
-};
+    capabilities: {
+      aiAvailable: boolean;
+      ai?: { enabled: boolean; reasonCode: CapabilityReasonCode };
+      clinicalUnified?: { enabled: boolean; reasonCode: CapabilityReasonCode };
+    };
+  };
 
-type Props = { appointmentId: string };
+type Props = { encounterId: string };
 
 const SECTIONS: Array<{
   key: EncounterSectionKey;
@@ -100,7 +119,7 @@ const SECTIONS: Array<{
 
 const AUTOSAVE_DELAY_MS = 2_500;
 
-export function ConsultationWorkspace({ appointmentId }: Props) {
+export function ConsultationWorkspace({ encounterId }: Props) {
   const [ctx, setCtx] = useState<ContextResponse | null>(null);
   const [payload, setPayload] = useState<EncounterHistoryPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,7 +131,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const savedOnceRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clinicalNote = useClinicalNote(appointmentId);
+  const clinicalNote = useClinicalNote(encounterId);
   const [closing, setClosing] = useState(false);
   const router = useRouter();
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>(() => {
@@ -127,13 +146,13 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/admin/appointments/${appointmentId}/consultation-context`,
+        `/api/clinical/admin/encounters/${encounterId}/context`,
         { credentials: "include" },
       );
       if (!res.ok) throw new Error((await res.json()).error ?? "Error al cargar");
       const body = (await res.json()) as ContextResponse;
       setCtx(body);
-      setPayload(body.encounter.record.payload);
+      setPayload(body.encounterHistory.record.payload);
       setMode(body.session.consultationMode);
       setConsent(body.session.aiConsent);
       savedOnceRef.current = false;
@@ -142,7 +161,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [appointmentId]);
+  }, [encounterId]);
 
   useEffect(() => {
     load();
@@ -152,7 +171,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     async (next: EncounterHistoryPayload) => {
       setSaveState("saving");
       const res = await fetch(
-        `/api/admin/appointments/${appointmentId}/encounter-history`,
+        `/api/clinical/admin/encounters/${encounterId}/encounter-history`,
         {
           method: "PATCH",
           credentials: "include",
@@ -168,7 +187,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
       }
       setSaveState("saved");
     },
-    [appointmentId],
+    [encounterId],
   );
 
   useEffect(() => {
@@ -274,7 +293,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     async (patch: { consultationMode?: ConsultationMode; aiConsent?: ConsentState }) => {
       if (clinicalNote.isSigned) return;
       const res = await fetch(
-        `/api/admin/appointments/${appointmentId}/consultation-session`,
+        `/api/clinical/admin/encounters/${encounterId}/consultation-session`,
         {
           method: "PATCH",
           credentials: "include",
@@ -287,7 +306,7 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
         toast.error(body.error ?? "No se pudo guardar la preferencia");
       }
     },
-    [appointmentId, clinicalNote.isSigned],
+    [encounterId, clinicalNote.isSigned],
   );
 
   const handleModeChange = (next: ConsultationMode) => {
@@ -346,18 +365,22 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
         toast.error(`${result.error}.${missingMsg}`);
         return;
       }
-      const res = await fetch(`/api/clinical/admin/appointments/${appointmentId}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "COMPLETED" }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        toast.error(body.error ?? body.message ?? "No se pudo cerrar la consulta");
-        return;
+      if (ctx?.encounter.appointmentId) {
+        const res = await fetch(`/api/clinical/admin/appointments/${ctx.encounter.appointmentId}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "COMPLETED" }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          toast.error(body.error ?? body.message ?? "No se pudo cerrar la consulta");
+          return;
+        }
+        toast.success("Consulta firmada y cerrada");
+      } else {
+        toast.success("Encounter firmado");
       }
-      toast.success("Consulta firmada y cerrada");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } finally {
       setClosing(false);
@@ -367,8 +390,12 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
   const handlePrefill = async () => {
     setPrefilling(true);
     try {
+      if (!ctx?.encounter.appointmentId) {
+        toast.error("El prefill desde cuestionario solo aplica a encounters vinculados a cita.");
+        return;
+      }
       const res = await fetch(
-        `/api/admin/appointments/${appointmentId}/encounter-history/prefill`,
+        `/api/admin/appointments/${ctx.encounter.appointmentId}/encounter-history/prefill`,
         { method: "POST", credentials: "include" },
       );
       const body = await res.json().catch(() => ({}));
@@ -475,6 +502,22 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
     }
   }, [combinedSaveState, clinicalNote.isSigned]);
 
+  const aiUnavailableReasonText = useMemo(() => {
+    const reasonCode = ctx?.capabilities.ai?.reasonCode;
+    switch (reasonCode) {
+      case "AI_DISABLED_NO_API_KEY":
+        return "Los modos con IA no están disponibles: falta configurar OPENAI_API_KEY en el entorno.";
+      case "AI_DISABLED_PLAN":
+        return "Los modos con IA no están incluidos en el plan actual del doctor.";
+      case "AI_DISABLED_NO_APPOINTMENT":
+        return "Los modos con IA requieren una consulta vinculada a cita (no aplica para encounter standalone).";
+      case "AI_DISABLED_CLINICAL_NOT_ENABLED":
+        return "Los modos con IA no están disponibles porque el módulo clínico no está habilitado.";
+      default:
+        return "Los modos con IA no están disponibles en este plan o entorno. El modo Manual cubre toda la funcionalidad clínica.";
+    }
+  }, [ctx?.capabilities.ai?.reasonCode]);
+
   return (
     <div className="space-y-4">
       <AiConsentModal
@@ -567,15 +610,14 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
               />
               {!ctx.capabilities.aiAvailable && (
                 <p className="text-xs text-muted-foreground">
-                  Los modos con IA no están disponibles en este plan o entorno.
-                  El modo Manual cubre toda la funcionalidad clínica.
+                  {aiUnavailableReasonText}
                 </p>
               )}
-              {mode !== "MANUAL" && consent === "GRANTED" && ctx.capabilities.aiAvailable && (
+              {mode !== "MANUAL" && consent === "GRANTED" && ctx.capabilities.aiAvailable && ctx.encounter.appointmentId && (
                 <>
                   <NarrationScript />
                   <DictationPanel
-                    appointmentId={appointmentId}
+                    appointmentId={ctx.encounter.appointmentId}
                     disabled={clinicalNote.isSigned}
                     onSoapGenerated={clinicalNote.applySoapPartial}
                     onEncounterGenerated={mergeEncounterFromAi}
@@ -650,10 +692,10 @@ export function ConsultationWorkspace({ appointmentId }: Props) {
             )}
           </SectionAccordion>
 
-          {ctx.capabilities.aiAvailable && consent === "GRANTED" && (
+          {ctx.capabilities.aiAvailable && consent === "GRANTED" && ctx.encounter.appointmentId && (
             <SectionAccordion title="Sugerencias IA">
               <AiInsightsPanel
-                appointmentId={appointmentId}
+                appointmentId={ctx.encounter.appointmentId}
                 soap={{
                   subjective: clinicalNote.note.subjective,
                   objective: clinicalNote.note.objective,
