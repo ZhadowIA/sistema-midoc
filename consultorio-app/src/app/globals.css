@@ -5,137 +5,146 @@
 :root {
   --font-size: 16px;
 
-  /* Premium Medical Color System */
-  --background: #FDFCFA;
-  --foreground: #2C2A27;
+  /* Clinical Trust Color System — Blue + Clean Neutrals */
+  --background: #FAFAF8;
+  --foreground: #1F2937;
   --card: #FFFFFF;
-  --card-foreground: #2C2A27;
+  --card-foreground: #1F2937;
   --popover: #FFFFFF;
-  --popover-foreground: #2C2A27;
+  --popover-foreground: #1F2937;
 
-  /* Golden accent as primary */
-  --primary: #C9A55A;
+  /* Medical blue as primary — trust, clarity, authority */
+  --primary: #2563EB;
   --primary-foreground: #FFFFFF;
-  --primary-hover: #B89349;
+  --primary-hover: #1D4ED8;
 
-  /* Warm beige secondary */
-  --secondary: #F5F1EB;
-  --secondary-foreground: #2C2A27;
+  /* Clean secondary */
+  --secondary: #F3F4F6;
+  --secondary-foreground: #1F2937;
 
-  /* Muted warm tones */
-  --muted: #E8E4DD;
-  --muted-foreground: #6B6862;
+  /* Slate for muted content */
+  --muted: #E5E7EB;
+  --muted-foreground: #6B7280;
 
-  /* Accent remains golden */
-  --accent: #C9A55A;
+  /* Blue accent */
+  --accent: #3B82F6;
   --accent-foreground: #FFFFFF;
 
-  /* Status colors */
-  --destructive: #C94A4A;
+  /* Clinical status colors with clear intent */
+  --destructive: #DC2626;
   --destructive-foreground: #FFFFFF;
-  --success: #5B9279;
+  --success: #16A34A;
   --success-foreground: #FFFFFF;
-  --warning: #D4A055;
+  --warning: #F59E0B;
   --warning-foreground: #FFFFFF;
+  --pending: #EAB308;
+  --pending-foreground: #1F2937;
 
   /* Borders and inputs */
-  --border: #E0DCD3;
+  --border: #D1D5DB;
   --input: transparent;
-  --input-background: #F9F7F4;
-  --switch-background: #D4CFC5;
+  --input-background: #F9FAFB;
+  --switch-background: #D1D5DB;
 
   /* Agenda-specific colors */
-  --available: #F5F1EB;
-  --occupied: #C9A55A;
-  --blocked: #6B6862;
-  --private: #E8E4DD;
+  --available: #ECFDF5;
+  --occupied: #3B82F6;
+  --blocked: #9CA3AF;
+  --private: #F3F4F6;
 
   --font-weight-medium: 500;
   --font-weight-normal: 400;
   --font-weight-semibold: 600;
-  --ring: #C9A55A;
+  --font-weight-bold: 700;
+  --ring: #3B82F6;
 
-  --chart-1: #C9A55A;
-  --chart-2: #5B9279;
-  --chart-3: #D4A055;
-  --chart-4: #8B7B6F;
-  --chart-5: #C94A4A;
+  --chart-1: #3B82F6;
+  --chart-2: #16A34A;
+  --chart-3: #F59E0B;
+  --chart-4: #6B7280;
+  --chart-5: #DC2626;
 
-  --radius: 0.75rem;
+  --radius: 0.375rem;
 
-  --sidebar: #FDFCFA;
-  --sidebar-foreground: #2C2A27;
-  --sidebar-primary: #C9A55A;
+  --sidebar: #111827;
+  --sidebar-foreground: #F9FAFB;
+  --sidebar-primary: #3B82F6;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #F5F1EB;
-  --sidebar-accent-foreground: #2C2A27;
-  --sidebar-border: #E0DCD3;
-  --sidebar-ring: #C9A55A;
+  --sidebar-accent: #1F2937;
+  --sidebar-accent-foreground: #F9FAFB;
+  --sidebar-border: #1F2937;
+  --sidebar-ring: #3B82F6;
+  --sidebar-muted: #6B7280;
+  --sidebar-muted-foreground: #9CA3AF;
 }
 
 .dark {
-  /* Dark background — deep neutral */
-  --background: #0F0E13;
-  --foreground: #F0EEF5;
-  --card: #1A1825;
-  --card-foreground: #F0EEF5;
-  --popover: #1A1825;
-  --popover-foreground: #F0EEF5;
+  /* Dark background — deep charcoal, not warm */
+  --background: #0F172A;
+  --foreground: #F1F5F9;
+  --card: #1E293B;
+  --card-foreground: #F1F5F9;
+  --popover: #1E293B;
+  --popover-foreground: #F1F5F9;
 
-  /* Purple primary */
-  --primary: #9B72E8;
-  --primary-foreground: #FFFFFF;
-  --primary-hover: #8560D4;
+  /* Same blue primary for consistency */
+  --primary: #60A5FA;
+  --primary-foreground: #0F172A;
+  --primary-hover: #93C5FD;
 
   /* Dark secondary */
-  --secondary: #252235;
-  --secondary-foreground: #F0EEF5;
+  --secondary: #334155;
+  --secondary-foreground: #F1F5F9;
 
-  /* Muted dark tones */
-  --muted: #2E2B40;
-  --muted-foreground: #9490A8;
+  /* Muted slate tones */
+  --muted: #475569;
+  --muted-foreground: #CBD5E1;
 
-  /* Accent purple */
-  --accent: #9B72E8;
-  --accent-foreground: #FFFFFF;
+  /* Blue accent */
+  --accent: #60A5FA;
+  --accent-foreground: #0F172A;
 
-  /* Status colors (slightly brighter for dark) */
-  --destructive: #E05A5A;
+  /* Status colors — brighter for dark mode */
+  --destructive: #EF4444;
   --destructive-foreground: #FFFFFF;
-  --success: #5BBF8A;
-  --success-foreground: #FFFFFF;
-  --warning: #D4A055;
-  --warning-foreground: #FFFFFF;
+  --success: #4ADE80;
+  --success-foreground: #0F172A;
+  --warning: #FBBF24;
+  --warning-foreground: #0F172A;
+  --pending: #FACC15;
+  --pending-foreground: #0F172A;
 
   /* Borders and inputs */
-  --border: #2E2B40;
+  --border: #334155;
   --input: transparent;
-  --input-background: #252235;
-  --switch-background: #3A3650;
+  --input-background: #1E293B;
+  --switch-background: #475569;
 
   /* Agenda colors */
-  --available: #252235;
-  --occupied: #9B72E8;
-  --blocked: #3A3650;
-  --private: #2E2B40;
+  --available: #1E293B;
+  --occupied: #60A5FA;
+  --blocked: #64748B;
+  --private: #334155;
 
-  --ring: #9B72E8;
+  --ring: #60A5FA;
 
-  --chart-1: #9B72E8;
-  --chart-2: #5BBF8A;
-  --chart-3: #D4A055;
-  --chart-4: #8B7B6F;
-  --chart-5: #E05A5A;
+  --chart-1: #60A5FA;
+  --chart-2: #4ADE80;
+  --chart-3: #FBBF24;
+  --chart-4: #94A3B8;
+  --chart-5: #EF4444;
 
   /* Sidebar dark */
-  --sidebar: #13111E;
-  --sidebar-foreground: #F0EEF5;
-  --sidebar-primary: #9B72E8;
-  --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #252235;
-  --sidebar-accent-foreground: #F0EEF5;
-  --sidebar-border: #2E2B40;
-  --sidebar-ring: #9B72E8;
+  --sidebar: #0F172A;
+  --sidebar-foreground: #F1F5F9;
+  --sidebar-primary: #60A5FA;
+  --sidebar-primary-foreground: #0F172A;
+  --sidebar-accent: #1E293B;
+  --sidebar-accent-foreground: #F1F5F9;
+  --sidebar-border: #1E293B;
+  --sidebar-ring: #60A5FA;
+  --sidebar-muted: #475569;
+  --sidebar-muted-foreground: #94A3B8;
 }
 
 @theme inline {
@@ -186,6 +195,8 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
 }
 
 @layer base {
@@ -205,45 +216,53 @@
   }
 
   h1 {
-    font-size: var(--text-2xl);
-    font-weight: var(--font-weight-medium);
-    line-height: 1.5;
+    font-size: 2.25rem;
+    font-weight: var(--font-weight-bold);
+    line-height: 1.3;
+    letter-spacing: -0.02em;
   }
 
   h2 {
-    font-size: var(--text-xl);
-    font-weight: var(--font-weight-medium);
-    line-height: 1.5;
+    font-size: 1.875rem;
+    font-weight: var(--font-weight-bold);
+    line-height: 1.35;
+    letter-spacing: -0.01em;
   }
 
   h3 {
-    font-size: var(--text-lg);
-    font-weight: var(--font-weight-medium);
-    line-height: 1.5;
+    font-size: 1.375rem;
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.4;
   }
 
   h4 {
-    font-size: var(--text-base);
-    font-weight: var(--font-weight-medium);
-    line-height: 1.5;
+    font-size: 1.125rem;
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.4;
   }
 
   label {
-    font-size: var(--text-base);
-    font-weight: var(--font-weight-medium);
+    font-size: 0.875rem;
+    font-weight: var(--font-weight-semibold);
     line-height: 1.5;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
   }
 
   button {
-    font-size: var(--text-base);
-    font-weight: var(--font-weight-medium);
+    font-size: 1rem;
+    font-weight: var(--font-weight-semibold);
     line-height: 1.5;
   }
 
   input {
-    font-size: var(--text-base);
+    font-size: 1rem;
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
+  }
+
+  p {
+    max-width: 70ch;
   }
 
   /* Keep native select dropdown options readable across themes/OS browsers */
@@ -256,4 +275,20 @@
     color: #111827;
     background-color: #ffffff;
   }
+}
+
+/* Sidebar scrollbar — always dark to match sidebar bg */
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #44403C transparent;
+}
+.sidebar-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background-color: #44403C;
+  border-radius: 99px;
 }

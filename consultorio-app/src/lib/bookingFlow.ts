@@ -38,6 +38,11 @@ type BuildPublicBookingPayloadInput = {
   holdToken: string
   privacyConsentAccepted: boolean
   recaptchaToken: string
+  utmSource?: string | null
+  utmMedium?: string | null
+  utmCampaign?: string | null
+  utmContent?: string | null
+  referrerChannel?: string | null
 }
 
 export function normalizePhone(value: string) {
@@ -83,6 +88,11 @@ export function buildPublicBookingPayload(input: BuildPublicBookingPayloadInput)
     holdToken,
     privacyConsentAccepted,
     recaptchaToken,
+    utmSource,
+    utmMedium,
+    utmCampaign,
+    utmContent,
+    referrerChannel,
   } = input
 
   return {
@@ -109,10 +119,19 @@ export function buildPublicBookingPayload(input: BuildPublicBookingPayloadInput)
     holdToken,
     privacyConsentAccepted,
     recaptchaToken: recaptchaToken.trim() || undefined,
+    utmSource: utmSource ?? undefined,
+    utmMedium: utmMedium ?? undefined,
+    utmCampaign: utmCampaign ?? undefined,
+    utmContent: utmContent ?? undefined,
+    referrerChannel: referrerChannel ?? undefined,
   }
 }
 
-export function getBookingStepOrder(hasPreselectedDoctor: boolean): BookingStep[] {
+export function getBookingStepOrder(hasPreselectedDoctor: boolean, hasPreselectedSlot = false): BookingStep[] {
+  if (hasPreselectedSlot) {
+    // doctor + date + time + type all pre-selected: go straight to auth → info
+    return ['auth', 'info', 'confirm']
+  }
   return hasPreselectedDoctor
     ? ['auth', 'type', 'date', 'time', 'info', 'confirm']
     : ['auth', 'doctor', 'type', 'date', 'time', 'info', 'confirm']
@@ -122,9 +141,10 @@ export function getNextBookingStep(params: {
   currentStep: BookingStep
   hasPreselectedDoctor: boolean
   hasCompletePatientData: boolean
+  hasPreselectedSlot?: boolean
 }): BookingStep | null {
-  const { currentStep, hasPreselectedDoctor, hasCompletePatientData } = params
-  const stepOrder = getBookingStepOrder(hasPreselectedDoctor)
+  const { currentStep, hasPreselectedDoctor, hasCompletePatientData, hasPreselectedSlot = false } = params
+  const stepOrder = getBookingStepOrder(hasPreselectedDoctor, hasPreselectedSlot)
   const nextIndex = stepOrder.indexOf(currentStep) + 1
   if (nextIndex >= stepOrder.length) return null
 
@@ -140,9 +160,10 @@ export function getPreviousBookingStep(params: {
   currentStep: BookingStep
   hasPreselectedDoctor: boolean
   hasCompletePatientData: boolean
+  hasPreselectedSlot?: boolean
 }): BookingStep | null {
-  const { currentStep, hasPreselectedDoctor, hasCompletePatientData } = params
-  const stepOrder = getBookingStepOrder(hasPreselectedDoctor)
+  const { currentStep, hasPreselectedDoctor, hasCompletePatientData, hasPreselectedSlot = false } = params
+  const stepOrder = getBookingStepOrder(hasPreselectedDoctor, hasPreselectedSlot)
   const prevIndex = stepOrder.indexOf(currentStep) - 1
   if (prevIndex < 0) return null
 

@@ -10,10 +10,10 @@ export function CompletionMeter({ pct, label, className = "" }: Props) {
   const clamped = Math.max(0, Math.min(100, Math.round(pct)));
   const color =
     clamped >= 80
-      ? "bg-emerald-500"
+      ? "bg-success"
       : clamped >= 40
-      ? "bg-amber-500"
-      : "bg-red-500";
+      ? "bg-warning"
+      : "bg-destructive";
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       {label && <span className="text-sm text-muted-foreground">{label}</span>}

@@ -85,11 +85,11 @@ export default function PatientAccountPage() {
         {loading ? (
           <div className="text-center text-muted-foreground py-12">Cargando cuenta...</div>
         ) : error ? (
-          <div className="rounded-xl border border-red-500 text-red-400 p-4">{error}</div>
+          <div className="rounded-md border border-red-500 text-red-400 p-4">{error}</div>
         ) : (
           <>
-            <div className="rounded-2xl border border-border bg-card p-6 flex items-start gap-4">
-              <div className="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center">
+            <div className="rounded-lg border border-border bg-card p-6 flex items-start gap-4">
+              <div className="w-12 h-12 rounded-md bg-secondary flex items-center justify-center">
                 <UserCircle2 className="w-6 h-6 text-muted-foreground" />
               </div>
               <div className="flex-1">
@@ -109,7 +109,7 @@ export default function PatientAccountPage() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-border bg-card p-6">
+            <div className="rounded-lg border border-border bg-card p-6">
               <p className="text-sm text-muted-foreground mb-4">Acciones</p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <Button variant="secondary" onClick={() => router.push("/paciente/consultas")} className="sm:w-auto">

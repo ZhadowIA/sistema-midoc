@@ -5,8 +5,9 @@ import { getEnabledFeatures } from '@/lib/featureFlags'
 import { resolveConsultationSession } from '@/lib/consultationWorkspace'
 import { EncounterHistoryService } from '@/services/EncounterHistoryService'
 import { resolveCapabilities } from '@/lib/capabilities'
+import { safeLogClinicalAccess } from '@/lib/clinicalAudit'
 
-export async function GET(_request: Request, props: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   try {
     const access = await requireMedicalDoctorApiAccess()
@@ -45,6 +46,19 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
       return jsonNoStore({ error: 'Encounter no encontrado' }, { status: 404 })
     }
 
+    await safeLogClinicalAccess({
+      request,
+      action: 'CLINICAL_ENCOUNTER_CONTEXT_VIEWED',
+      doctorId,
+      actorUserId: access.context.user.id,
+      patientId: encounter.patientId,
+      appointmentId: encounter.appointmentId ?? null,
+      metadata: {
+        route: '/api/clinical/admin/encounters/[id]/context',
+        clinicalEncounterId: encounter.id,
+      },
+    })
+
     const history = await EncounterHistoryService.getOrBuildForClinicalEncounter({
       clinicalEncounterId: encounter.id,
       appointmentId: encounter.appointmentId,
@@ -61,17 +75,18 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
       where: { doctorId },
       select: { preferredConsultationMode: true },
     })
+    
+    const user = await prisma.user.findUnique({
+      where: { id: doctorId },
+      select: { specialty: true },
+    })
+    
     const features = await getEnabledFeatures(doctorId)
     const capabilities = resolveCapabilities({
       features,
       hasAppointmentContext: Boolean(encounter.appointmentId),
     })
     if (!capabilities.clinicalUnified.enabled) {
-      console.info('clinical.context.disabled', {
-        doctorId,
-        encounterId: params.id,
-        reasonCode: capabilities.clinicalUnified.reasonCode,
-      })
       return jsonNoStore(
         {
           error: 'Modo consulta unificado no habilitado',
@@ -110,6 +125,9 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
         aiAvailable: capabilities.aiConsultation.enabled,
         ai: capabilities.aiConsultation,
         clinicalUnified: capabilities.clinicalUnified,
+      },
+      doctor: {
+        specialty: user?.specialty ?? null,
       },
     })
   } catch (error: unknown) {

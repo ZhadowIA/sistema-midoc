@@ -1,3 +1,5 @@
+import { getSecurityStateStore } from "@/lib/securityStateStore";
+
 export type RateLimitOptions = {
   key: string
   limit: number
@@ -5,7 +7,7 @@ export type RateLimitOptions = {
   identifier?: string
 }
 
-type Bucket = {
+export type RateLimitBucket = {
   count: number
   resetAt: number
 }
@@ -14,30 +16,6 @@ export type RateLimitResult = {
   ok: boolean
   remaining: number
   retryAfterSec: number
-}
-
-const GLOBAL_BUCKET_KEY = '__midocRateLimitBuckets'
-const MAX_BUCKETS = 10_000
-
-function getBuckets(): Map<string, Bucket> {
-  const globalScope = globalThis as typeof globalThis & {
-    [GLOBAL_BUCKET_KEY]?: Map<string, Bucket>
-  }
-
-  if (!globalScope[GLOBAL_BUCKET_KEY]) {
-    globalScope[GLOBAL_BUCKET_KEY] = new Map<string, Bucket>()
-  }
-
-  return globalScope[GLOBAL_BUCKET_KEY]
-}
-
-function pruneExpiredBuckets(buckets: Map<string, Bucket>, now: number) {
-  if (buckets.size < MAX_BUCKETS) return
-  for (const [bucketKey, bucket] of buckets.entries()) {
-    if (bucket.resetAt <= now) {
-      buckets.delete(bucketKey)
-    }
-  }
 }
 
 function getClientIp(request: Request): string {
@@ -53,37 +31,45 @@ function getClientIp(request: Request): string {
   return 'unknown'
 }
 
-export function checkRateLimit(request: Request, options: RateLimitOptions): RateLimitResult {
+export async function checkRateLimit(request: Request, options: RateLimitOptions): Promise<RateLimitResult> {
   const now = Date.now()
-  const buckets = getBuckets()
-  pruneExpiredBuckets(buckets, now)
+  const store = getSecurityStateStore()
 
   const ip = getClientIp(request)
   const identity = options.identifier ? `${ip}:${options.identifier}` : ip
   const bucketKey = `${options.key}:${identity}`
-  const current = buckets.get(bucketKey)
+  const updated = await store.update<RateLimitBucket>(bucketKey, now, (current) => {
+    const bucket = current?.value;
+    if (!bucket || bucket.resetAt <= now) {
+      return {
+        kind: "set",
+        value: { count: 1, resetAt: now + options.windowMs },
+        expiresAt: now + options.windowMs,
+      };
+    }
 
-  if (!current || current.resetAt <= now) {
-    buckets.set(bucketKey, {
-      count: 1,
-      resetAt: now + options.windowMs,
-    })
+    return {
+      kind: "set",
+      value: { ...bucket, count: bucket.count + 1 },
+      expiresAt: bucket.resetAt,
+    };
+  });
+
+  const current = updated?.value;
+  if (!current) {
     return {
       ok: true,
       remaining: Math.max(options.limit - 1, 0),
       retryAfterSec: Math.ceil(options.windowMs / 1000),
-    }
+    };
   }
-
-  current.count += 1
-  buckets.set(bucketKey, current)
 
   if (current.count > options.limit) {
     return {
       ok: false,
       remaining: 0,
       retryAfterSec: Math.max(Math.ceil((current.resetAt - now) / 1000), 1),
-    }
+    };
   }
 
   return {

@@ -13,6 +13,20 @@ const serverEnvSchema = z.object({
   OPENAI_API_KEY: z.string().min(20).optional(),
   DEEPGRAM_API_KEY: z.string().min(20).optional(),
   DEEPGRAM_PROJECT_ID: z.string().min(8).optional(),
+  DEEPGRAM_EPHEMERAL_KEY_TTL_SECONDS: z
+    .string()
+    .optional()
+    .default("900")
+    .transform((value) => {
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isFinite(parsed) || String(parsed) !== value.trim()) {
+        throw new Error("DEEPGRAM_EPHEMERAL_KEY_TTL_SECONDS debe ser un entero en segundos");
+      }
+      if (parsed < 300 || parsed > 3600) {
+        throw new Error("DEEPGRAM_EPHEMERAL_KEY_TTL_SECONDS debe estar entre 300 y 3600 segundos");
+      }
+      return parsed;
+    }),
   NOTIFICATION_REMINDER_LEAD_MINUTES: z.string().optional(),
   NOTIFICATION_REMINDER_LEAD_HOURS: z.string().optional(),
   NOTIFICATION_REMINDER_WINDOW_MINUTES: z.string().optional(),
@@ -22,10 +36,25 @@ const serverEnvSchema = z.object({
   NOTIFICATION_PENDING_OVERDUE_MINUTES: z.string().optional(),
   NOTIFICATION_PENDING_AUTO_CLOSE_HOURS: z.string().optional(),
   PAYMENTS_PROVIDER: z.enum(["MOCK", "STRIPE", "CONEKTA", "OPENPAY"]).default("MOCK"),
+  AZURE_STORAGE_ACCOUNT: z.string().min(3).max(24).optional(),
+  AZURE_STORAGE_CONTAINER: z.string().min(3).max(63).optional(),
+  TWILIO_ACCOUNT_SID: z.string().min(34).max(34).optional(),
+  TWILIO_AUTH_TOKEN: z.string().min(32).optional(),
+  TWILIO_FROM_NUMBER: z.string().min(10).optional(),
+  RESEND_API_KEY: z.string().min(10).optional(),
+  EMAIL_FROM_ADDRESS: z.string().email().optional(),
+  SECURITY_STATE_BACKEND: z.enum(["MEMORY", "DATABASE"]).optional(),
   PAYMENTS_WEBHOOK_SECRET: z.string().min(8).optional(),
   STRIPE_SECRET_KEY: z.string().min(20).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().min(20).optional(),
   STRIPE_PRICE_ID: z.string().min(3).optional(),
+  STRIPE_PRICE_AGENDA_MONTHLY: z.string().min(3).optional(),
+  STRIPE_PRICE_CLINICAL_MONTHLY: z.string().min(3).optional(),
+  STRIPE_PRICE_INTEGRAL_MONTHLY: z.string().min(3).optional(),
+  STRIPE_PRICE_AI_30_MONTHLY: z.string().min(3).optional(),
+  STRIPE_PRICE_AI_60_MONTHLY: z.string().min(3).optional(),
+  STRIPE_PRICE_AI_100_MONTHLY: z.string().min(3).optional(),
+  STRIPE_DEPOSIT_PRODUCT_ID: z.string().min(3).optional(),
   TERMS_VERSION: z.string().min(1).default("v1"),
   PRIVACY_VERSION: z.string().min(1).default("v1"),
   CLINICAL_HISTORY_ENABLED: z

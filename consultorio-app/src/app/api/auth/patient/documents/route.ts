@@ -3,6 +3,7 @@ import { z } from 'zod'
 import prisma from '@/lib/prisma'
 import { getAuthenticatedUser } from '@/lib/auth'
 import { getPatientContextByUser } from '@/lib/patientPortalContext'
+import { ALLOWED_MIME_TYPES, MAX_UPLOAD_BYTES } from '@/lib/appointmentUploads'
 
 const schema = z.object({
   appointmentId: z.string().min(1).optional(),
@@ -56,11 +57,24 @@ export async function POST(request: Request) {
     if (parsed.data.appointmentId) {
       const ownsAppointment = await prisma.appointment.findFirst({
         where: { id: parsed.data.appointmentId, patientId: context.patientId },
-        select: { id: true },
+        select: { id: true, uploadsEnabled: true, uploadsExpiresAt: true },
       })
       if (!ownsAppointment) {
         return NextResponse.json({ error: 'La cita no pertenece al paciente autenticado' }, { status: 403 })
       }
+      if (!ownsAppointment.uploadsEnabled) {
+        return NextResponse.json({ error: 'El médico no ha habilitado la carga para esta cita' }, { status: 403 })
+      }
+      if (ownsAppointment.uploadsExpiresAt && ownsAppointment.uploadsExpiresAt < new Date()) {
+        return NextResponse.json({ error: 'La ventana de carga para esta cita ya expiró' }, { status: 403 })
+      }
+    }
+
+    if (parsed.data.mimeType && !ALLOWED_MIME_TYPES.includes(parsed.data.mimeType)) {
+      return NextResponse.json({ error: 'Tipo de archivo no permitido' }, { status: 400 })
+    }
+    if (parsed.data.sizeBytes && parsed.data.sizeBytes > MAX_UPLOAD_BYTES) {
+      return NextResponse.json({ error: 'Archivo demasiado grande' }, { status: 400 })
     }
 
     const document = await prisma.patientDocument.create({
@@ -73,6 +87,7 @@ export async function POST(request: Request) {
         fileUrl: parsed.data.fileUrl,
         mimeType: parsed.data.mimeType,
         sizeBytes: parsed.data.sizeBytes,
+        uploadSource: 'PATIENT_ACCOUNT',
       },
     })
 

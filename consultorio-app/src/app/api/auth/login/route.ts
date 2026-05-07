@@ -2,11 +2,18 @@ import { NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
-import { getDoctorSetupStatus } from '@/lib/setupStatus'
 import { attachSessionCookie, buildSessionToken } from '@/lib/session'
 import { captureError, logEvent } from '@/lib/observability'
-import { getDoctorProductAccess } from '@/lib/productAccess'
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit'
+import {
+  authLockedResponseBody,
+  clearAuthFailures,
+  getAuthLockoutStatus,
+  recordAuthFailure,
+} from '@/lib/authLockout'
+import { createTwoFactorChallengeToken, roleSupportsTwoFactor } from '@/lib/twoFactor'
+import { buildMedicalSessionClaims } from '@/server/auth/medicalSession'
+import { getTwoFactorCredential } from '@/server/security/twoFactorCredentialStore'
 
 const LOGIN_RATE_LIMIT = { key: 'auth:login', limit: 5, windowMs: 15 * 60 * 1000 }
 const E2E_LOGIN_RATE_LIMIT = { key: 'auth:login:e2e', limit: 200, windowMs: 60 * 1000 }
@@ -17,7 +24,7 @@ export async function POST(request: Request) {
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : ''
     const loginRateLimit = process.env.E2E_TEST_MODE === '1' ? E2E_LOGIN_RATE_LIMIT : LOGIN_RATE_LIMIT
 
-    const limit = checkRateLimit(request, {
+    const limit = await checkRateLimit(request, {
       ...loginRateLimit,
       identifier: normalizedEmail || 'anon',
     })
@@ -26,12 +33,22 @@ export async function POST(request: Request) {
       return rateLimitExceededResponse(limit)
     }
 
+    const lockout = await getAuthLockoutStatus('doctor-login', normalizedEmail || 'anon')
+    if (lockout.locked) {
+      logEvent('warn', 'auth.login.locked', { email: normalizedEmail, failedAttempts: lockout.failedAttempts })
+      return NextResponse.json(authLockedResponseBody(lockout), {
+        status: 423,
+        headers: { 'Retry-After': String(Math.ceil(lockout.remainingMs / 1000)) },
+      })
+    }
+
     // 1. Validate email
     const user = normalizedEmail
       ? await prisma.user.findUnique({ where: { email: normalizedEmail } })
       : null
     if (!user || !user.active) {
       logEvent('warn', 'auth.login.failed', { email: normalizedEmail, reason: 'unknown_user' })
+      await recordAuthFailure('doctor-login', normalizedEmail || 'anon')
       return NextResponse.json({ error: 'Credenciales inválidas' }, { status: 401 })
     }
 
@@ -39,56 +56,60 @@ export async function POST(request: Request) {
     const valid = await bcrypt.compare(password, user.passwordHash)
     if (!valid) {
       logEvent('warn', 'auth.login.failed', { userId: user.id, reason: 'bad_password' })
+      await recordAuthFailure('doctor-login', normalizedEmail || user.id)
       return NextResponse.json({ error: 'Credenciales inválidas' }, { status: 401 })
     }
 
-    const setup = await getDoctorSetupStatus(user.id, user.role)
-    const doctorIdForPlan = user.role === 'SECRETARY' ? user.bossId : user.id
-    const productAccess = doctorIdForPlan
-      ? await getDoctorProductAccess(doctorIdForPlan, user.role)
-      : {
-          plan: 'COMBINED' as const,
-          enabledModules: ['AGENDA', 'CLINICAL_RECORDS'] as const,
-          features: {
-            'agenda.enabled': true,
-            'clinical.enabled': true,
-          },
-        }
+    await clearAuthFailures('doctor-login', normalizedEmail || user.id)
+    const twoFactorCredential = roleSupportsTwoFactor(user.role)
+      ? await getTwoFactorCredential(user.id)
+      : null
+
+    if (roleSupportsTwoFactor(user.role) && twoFactorCredential?.enabled) {
+      const challengeToken = await createTwoFactorChallengeToken({ userId: user.id, role: user.role })
+      logEvent('info', 'auth.login.2fa_required', { userId: user.id, role: user.role })
+      return NextResponse.json({
+        requiresTwoFactor: true,
+        challengeToken,
+        user: {
+          id: user.id,
+          role: user.role,
+          email: user.email,
+        },
+      })
+    }
+
+    const claims = await buildMedicalSessionClaims(user, {
+      twoFactorVerified: roleSupportsTwoFactor(user.role) ? false : undefined,
+      twoFactorSetupRequired: roleSupportsTwoFactor(user.role) && !twoFactorCredential?.enabled,
+    })
 
     // 3. Generate token
-    const token = await buildSessionToken({
-      sub: user.id,
-      role: user.role,
-      bossId: user.bossId ?? null,
-      hasActiveSubscription: setup.hasActiveSubscription,
-      onboardingCompleted: setup.onboardingCompleted,
-      productPlan: productAccess.plan,
-      enabledModules: [...productAccess.enabledModules],
-      features: productAccess.features,
-    })
+    const token = await buildSessionToken(claims)
 
     // 4. Set cookie
     const response = NextResponse.json({
       success: true,
       message: 'Autenticado',
-      nextStep: setup.nextStep,
+      nextStep: claims.hasActiveSubscription === false ? "SUBSCRIPTION" : claims.onboardingCompleted === false ? "ONBOARDING" : "DASHBOARD",
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
-        hasActiveSubscription: setup.hasActiveSubscription,
-        onboardingCompleted: setup.onboardingCompleted,
-        productPlan: productAccess.plan,
-        enabledModules: productAccess.enabledModules,
-        features: productAccess.features,
+        hasActiveSubscription: claims.hasActiveSubscription,
+        onboardingCompleted: claims.onboardingCompleted,
+        productPlan: claims.productPlan,
+        enabledModules: claims.enabledModules,
+        features: claims.features,
+        twoFactorSetupRequired: claims.twoFactorSetupRequired,
       },
     })
     attachSessionCookie(response, token)
     logEvent('info', 'auth.login.success', {
       userId: user.id,
       role: user.role,
-      nextStep: setup.nextStep,
+      nextStep: claims.hasActiveSubscription === false ? "SUBSCRIPTION" : claims.onboardingCompleted === false ? "ONBOARDING" : "DASHBOARD",
     })
 
     return response

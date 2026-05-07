@@ -13,6 +13,7 @@ import { Input } from "@/components/Input";
 import { Select } from "@/components/Select";
 import { toast } from "sonner";
 import { formatPatientName, parseFullName } from "@/lib/patientName";
+import { CobrarModal } from "@/components/agenda/CobrarModal";
 import { combineLocalDateAndTimeToIso, rangesOverlap } from "@/lib/dateTime";
 
 type AgendaAppointment = {
@@ -120,6 +121,7 @@ function DoctorAgendaContent() {
   const [cancelingIds, setCancelingIds] = useState<string[]>([]);
   const [updatingStatusIds, setUpdatingStatusIds] = useState<string[]>([]);
   const [cancelConfirmAppointment, setCancelConfirmAppointment] = useState<AgendaAppointment | null>(null);
+  const [checkoutApt, setCheckoutApt] = useState<AgendaAppointment | null>(null);
 
   const [appointmentForm, setAppointmentForm] = useState({
     patientMode: "new",
@@ -134,7 +136,11 @@ function DoctorAgendaContent() {
     manualTime: "",
     allowOutsidePublic: false,
     notes: "",
+    resourceId: "",
   });
+
+  const [resources, setResources] = useState<{ id: string; name: string; type: string }[]>([]);
+  const [loadingResources, setLoadingResources] = useState(false);
 
   const [blockForm, setBlockForm] = useState({
     date: format(new Date(), "yyyy-MM-dd"),
@@ -208,7 +214,7 @@ function DoctorAgendaContent() {
             setWeekDays([]);
           }
         })
-        .catch(console.error);
+        .catch(() => toast.error("No se pudo cargar la agenda. Intenta de nuevo."));
       return;
     }
 
@@ -233,7 +239,7 @@ function DoctorAgendaContent() {
           setWeekDays([]);
         }
       })
-      .catch(console.error);
+      .catch(() => toast.error("No se pudo cargar la agenda. Intenta de nuevo."));
   }, [buildAgendaUrl, currentDate, showCancelled, viewMode, selectedDoctorId]);
 
   useEffect(() => {
@@ -378,6 +384,10 @@ function DoctorAgendaContent() {
     return apt.status === "pending" || apt.status === "confirmed" || apt.status === "rescheduled";
   };
 
+  const canCheckout = (apt: AgendaAppointment): boolean => {
+    return ["checkout_pending", "in_consultation", "arrived", "waiting"].includes(apt.status);
+  };
+
   const goToPreviousDay = () => setCurrentDate(addDays(currentDate, viewMode === "day" ? -1 : -7));
   const goToNextDay = () => setCurrentDate(addDays(currentDate, viewMode === "day" ? 1 : 7));
   const goToToday = () => setCurrentDate(new Date());
@@ -396,7 +406,7 @@ function DoctorAgendaContent() {
             if (parsed.scope) setAgendaScope(parsed.scope);
           }
         })
-        .catch(console.error);
+        .catch(() => toast.error("No se pudo cargar la agenda. Intenta de nuevo."));
       return;
     }
 
@@ -414,7 +424,7 @@ function DoctorAgendaContent() {
           if (parsed.scope) setAgendaScope(parsed.scope);
         }
       })
-      .catch(console.error);
+      .catch(() => toast.error("No se pudo cargar la agenda. Intenta de nuevo."));
   };
 
   const openNewAppointmentModal = () => {
@@ -436,8 +446,19 @@ function DoctorAgendaContent() {
       manualTime: "",
       allowOutsidePublic: false,
       notes: "",
+      resourceId: "",
     }));
     setNewAppointmentOpen(true);
+    if (resources.length === 0) {
+      setLoadingResources(true);
+      fetch("/api/admin/resources")
+        .then(r => r.json())
+        .then((d: { resources?: { id: string; name: string; type: string }[] }) => {
+          if (d.resources) setResources(d.resources);
+        })
+        .catch(() => toast.error("No se pudieron cargar los recursos disponibles."))
+        .finally(() => setLoadingResources(false));
+    }
   };
 
   const handleCreateManualAppointment = async () => {
@@ -483,6 +504,7 @@ function DoctorAgendaContent() {
         startTime,
         notes: appointmentForm.notes || undefined,
         allowOutsidePublic: appointmentForm.allowOutsidePublic,
+        resourceId: appointmentForm.resourceId || undefined,
       };
 
       const res = await fetch("/api/agenda/admin/appointments", {
@@ -490,8 +512,13 @@ function DoctorAgendaContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "No se pudo crear la cita");
+      const data = await res.json() as { error?: string; resourceConflict?: boolean };
+      if (!res.ok) throw new Error(data.error ?? "No se pudo crear la cita");
+      if (data.resourceConflict) {
+        toast.warning("Cita creada, pero el recurso seleccionado ya está ocupado en ese horario. Se guardó sin recurso.");
+      } else {
+        toast.success("Cita creada correctamente.");
+      }
 
       setNewAppointmentOpen(false);
       setAppointmentForm(prev => ({
@@ -507,7 +534,6 @@ function DoctorAgendaContent() {
         notes: "",
       }));
       reloadAgenda();
-      toast.success("Cita creada correctamente.");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Error inesperado";
       toast.error(message);
@@ -775,7 +801,7 @@ function DoctorAgendaContent() {
         {/* Calendar Grid */}
         <div className="flex-1 overflow-auto p-4 sm:p-6">
           {viewMode === "day" ? (
-            <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="bg-card border border-border rounded-lg overflow-hidden">
               {timeSlots.map((time: string) => {
                 const apts = getAppointmentsForTimeSlot(time);
                 const slotBlocks = getBlocksForTimeSlot(time);
@@ -788,7 +814,7 @@ function DoctorAgendaContent() {
                       {slotBlocks.length > 0 ? (
                         <div className="space-y-2">
                           {slotBlocks.map((block) => (
-                            <div key={block.id} className="p-4 rounded-xl border-l-4 border-destructive bg-destructive/10">
+                            <div key={block.id} className="p-4 rounded-md border border-destructive/30 bg-destructive/10">
                               <div className="flex items-start justify-between">
                                 <div>
                                   <div className="font-semibold text-foreground">Horario bloqueado</div>
@@ -806,7 +832,7 @@ function DoctorAgendaContent() {
                       ) : apts.length > 0 ? (
                         <div className="space-y-2">
                           {apts.map((apt) => (
-                            <div key={apt.id} onClick={() => router.push(`/medico/citas/${apt.id}`)} className={`p-4 rounded-xl border-l-4 cursor-pointer hover:shadow-md transition-all ${apt.consultType === "extended" ? "bg-primary/10 border-primary" : "bg-success/10 border-success"}`}>
+                            <div key={apt.id} onClick={() => router.push(`/medico/citas/${apt.id}`)} className={`p-4 rounded-md border cursor-pointer hover:shadow-md transition-shadow ${apt.consultType === "extended" ? "bg-primary/10 border-primary/25" : "bg-success/10 border-success/25"}`}>
                               <div className="flex items-start justify-between">
                                 <div>
                                   <div className="font-semibold text-foreground">{apt.patientName}</div>
@@ -846,6 +872,19 @@ function DoctorAgendaContent() {
                                           className="text-xs px-2 py-1 rounded-md border border-success/40 text-success hover:bg-success/10 disabled:opacity-60"
                                         >
                                           {updatingStatusIds.includes(apt.id) ? "..." : "Realizada"}
+                                        </button>
+                                      )}
+                                      {canCheckout(apt) && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setCheckoutApt(apt);
+                                          }}
+                                          disabled={updatingStatusIds.includes(apt.id)}
+                                          className="text-xs px-2 py-1 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 disabled:opacity-60 font-medium"
+                                        >
+                                          Cobrar
                                         </button>
                                       )}
                                       <button
@@ -888,7 +927,7 @@ function DoctorAgendaContent() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-3">
               {weekDays.map((day) => (
-                <div key={day.dateLocal} className="bg-card border border-border rounded-2xl p-4 min-h-[360px] flex flex-col">
+                <div key={day.dateLocal} className="bg-card border border-border rounded-lg p-4 min-h-[360px] flex flex-col">
                   <button
                     type="button"
                     onClick={() => {
@@ -917,8 +956,8 @@ function DoctorAgendaContent() {
                       <div
                         key={apt.id}
                         onClick={() => router.push(`/medico/citas/${apt.id}`)}
-                        className={`p-2 rounded-lg border-l-4 cursor-pointer hover:shadow-sm transition-all ${
-                          apt.consultType === "extended" ? "bg-primary/10 border-primary" : "bg-success/10 border-success"
+                        className={`p-2 rounded-lg border cursor-pointer hover:shadow-sm transition-shadow ${
+                          apt.consultType === "extended" ? "bg-primary/10 border-primary/25" : "bg-success/10 border-success/25"
                         }`}
                       >
                         <div className="text-xs font-semibold text-foreground">
@@ -954,6 +993,19 @@ function DoctorAgendaContent() {
                                 className="text-[10px] px-2 py-1 rounded border border-success/40 text-success hover:bg-success/10 disabled:opacity-60"
                               >
                                 {updatingStatusIds.includes(apt.id) ? "..." : "Done"}
+                              </button>
+                            )}
+                            {canCheckout(apt) && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCheckoutApt(apt);
+                                }}
+                                disabled={updatingStatusIds.includes(apt.id)}
+                                className="text-[10px] px-2 py-1 rounded border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 disabled:opacity-60 font-medium"
+                              >
+                                $
                               </button>
                             )}
                             <button
@@ -1126,25 +1178,44 @@ function DoctorAgendaContent() {
             </div>
           )}
 
+          {/* Selector de recurso */}
+          {loadingResources ? (
+            <p className="text-xs text-muted-foreground">Cargando recursos...</p>
+          ) : resources.length > 0 && (
+            <Select
+              label="Recurso (opcional)"
+              value={appointmentForm.resourceId || "none"}
+              onValueChange={(v) => setAppointmentForm(prev => ({ ...prev, resourceId: v === "none" ? "" : v }))}
+              placeholder="Sin recurso asignado"
+              options={[
+                { value: "none", label: "Sin recurso" },
+                ...resources.map(r => ({ value: r.id, label: `${r.name} (${r.type === "ROOM" ? "Consultorio" : r.type === "EQUIPMENT" ? "Equipo" : "Unidad"})` })),
+              ]}
+            />
+          )}
+
           <Input
             label="Notas (opcional)"
             value={appointmentForm.notes}
             onChange={(e) => setAppointmentForm(prev => ({ ...prev, notes: e.target.value }))}
           />
 
-          <Button
-            fullWidth
-            onClick={handleCreateManualAppointment}
+          <button
+            type="button"
+            onClick={() => {
+              if (!submittingAppointment) void handleCreateManualAppointment();
+            }}
             disabled={
               submittingAppointment ||
               (appointmentForm.patientMode === "existing"
                 ? !appointmentForm.patientId
                 : !appointmentForm.newPatientName || !appointmentForm.newPatientPhone)
             }
+            className="w-full min-h-[48px] px-6 py-3 text-base inline-flex items-center justify-center gap-2 rounded-md transition-all duration-200 font-medium touch-manipulation bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
           >
             <CalendarClock className="w-4 h-4 mr-2" />
             {submittingAppointment ? "Creando..." : "Crear cita manual"}
-          </Button>
+          </button>
         </div>
       </Modal>
 
@@ -1349,6 +1420,29 @@ function DoctorAgendaContent() {
           </div>
         </div>
       </Modal>
+
+      {checkoutApt && (
+        <CobrarModal
+          open={!!checkoutApt}
+          onOpenChange={(open) => { if (!open) setCheckoutApt(null); }}
+          appointmentId={checkoutApt.id}
+          defaultConcept={`Consulta — ${checkoutApt.patientName}`}
+          onSuccess={() => {
+            setAppointments(prev =>
+              prev.map(a => a.id === checkoutApt.id ? { ...a, status: "completed" } : a)
+            );
+            setWeekDays(prev =>
+              prev.map(d => ({
+                ...d,
+                appointments: d.appointments.map(a =>
+                  a.id === checkoutApt.id ? { ...a, status: "completed" } : a
+                ),
+              }))
+            );
+            setCheckoutApt(null);
+          }}
+        />
+      )}
     </DoctorLayout>
   );
 }
@@ -1359,7 +1453,7 @@ export default function DoctorAgenda() {
       fallback={
         <DoctorLayout>
           <div className="p-6 lg:p-8 w-full">
-            <div className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">
+            <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
               Cargando agenda...
             </div>
           </div>

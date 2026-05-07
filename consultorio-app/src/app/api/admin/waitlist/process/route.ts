@@ -1,11 +1,19 @@
 import { NextResponse } from 'next/server'
-import { getAuthenticatedUser } from '@/lib/auth'
+import { requireAgendaAccess } from '@/lib/medicalApi'
 import { WaitlistService } from '@/services/WaitlistService'
+import { can, PERMISSIONS } from '@/lib/permissions'
+import { SUBSCRIPTION_FEATURES } from '@/lib/subscriptionFeatures'
 
 export async function POST() {
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser || (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN')) {
+    const access = await requireAgendaAccess({
+      allowSecretary: false,
+      requiredFeature: SUBSCRIPTION_FEATURES.AGENDA_WAITLIST,
+      featureForbiddenMessage: 'La lista de espera no está incluida en tu plan.',
+    })
+    if (access.response) return access.response
+    const authUser = access.context.user
+    if (!can(authUser, PERMISSIONS.APPOINTMENT_UPDATE)) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 

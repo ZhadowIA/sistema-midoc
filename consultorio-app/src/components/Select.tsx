@@ -28,7 +28,7 @@ export const Select = ({ label, options, value, onValueChange, placeholder, erro
       <RadixSelect.Root value={value} onValueChange={onValueChange}>
         <RadixSelect.Trigger
           data-testid={testId}
-          className={`w-full flex items-center justify-between px-4 py-3 bg-input-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+          className={`w-full flex items-center justify-between px-4 py-3 bg-input-background border border-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
             error ? "border-destructive focus:ring-destructive" : ""
           }`}
         >
@@ -39,7 +39,7 @@ export const Select = ({ label, options, value, onValueChange, placeholder, erro
         </RadixSelect.Trigger>
 
         <RadixSelect.Portal>
-          <RadixSelect.Content className="bg-popover border border-border rounded-xl shadow-lg overflow-hidden z-50">
+          <RadixSelect.Content className="bg-popover border border-border rounded-md shadow-lg overflow-hidden z-50">
             <RadixSelect.Viewport className="p-1">
               {options.map((option) => (
                 <RadixSelect.Item

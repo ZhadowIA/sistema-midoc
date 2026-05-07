@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedUser } from '@/lib/auth'
+import { requireClinicalAccess } from '@/lib/medicalApi'
+import { can, PERMISSIONS } from '@/lib/permissions'
+import { getPatientPrecheckinSummary } from '@/server/clinical'
 
 export async function GET(_request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
 
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser || (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN')) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-    }
+    const access = await requireClinicalAccess()
+    if (access.response) return access.response
+    const authUser = access.context.user
 
     const patient = await prisma.patient.findUnique({
       where: { id: params.id },
@@ -23,33 +24,17 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
 
     if (authUser.role === 'CLINIC_ADMIN') {
       const actor = await prisma.user.findUnique({ where: { id: authUser.id }, select: { clinicId: true } })
-      if (!actor?.clinicId || actor.clinicId !== patient.clinicId) {
+      if (
+        !actor?.clinicId ||
+        !can(authUser, PERMISSIONS.CLINIC_MANAGE_DOCTORS, {
+          sameClinic: actor.clinicId === patient.clinicId,
+        })
+      ) {
         return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
       }
     }
 
-    const precheckin = await prisma.patientPreCheckin.findFirst({
-      where: { patientId: patient.id },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        appointment: {
-          select: { id: true, startTime: true, status: true },
-        },
-      },
-    })
-
-    const documents = await prisma.patientDocument.findMany({
-      where: { patientId: patient.id, status: 'ACTIVE' },
-      orderBy: { uploadedAt: 'desc' },
-      take: 5,
-      select: {
-        id: true,
-        category: true,
-        fileName: true,
-        fileUrl: true,
-        uploadedAt: true,
-      },
-    })
+    const { precheckin, documents } = await getPatientPrecheckinSummary(patient.id)
 
     return NextResponse.json({ precheckin, documents })
   } catch (error: unknown) {

@@ -150,7 +150,7 @@ export default function ClinicalHistoryPage(props: { params: Promise<{ id: strin
                 : null;
               const summary = summarizeVersion(selectedVersionPayload ?? data.record.payload);
               return (
-                <div className="rounded-2xl border border-border bg-card p-4">
+                <div className="rounded-lg border border-border bg-card p-4">
                   <div className="flex items-center justify-between gap-3">
                     <h2 className="text-sm font-semibold text-foreground">
                       Resumen clínico {selected ? "de versión seleccionada" : "actual"}
@@ -197,7 +197,7 @@ export default function ClinicalHistoryPage(props: { params: Promise<{ id: strin
               );
             })()}
 
-            <div className="rounded-2xl border border-border bg-card p-4">
+            <div className="rounded-lg border border-border bg-card p-4">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold text-foreground">Versionado clínico</h2>
                 <span className="text-xs text-muted-foreground">
@@ -246,9 +246,9 @@ export default function ClinicalHistoryPage(props: { params: Promise<{ id: strin
             </div>
 
             {selectedVersionId && (
-              <div className="rounded-2xl border border-border bg-card p-4">
+              <div className="rounded-lg border border-border bg-card p-4">
                 <h3 className="text-sm font-semibold text-foreground">Versión histórica (solo lectura)</h3>
-                <pre className="mt-3 max-h-72 overflow-auto rounded-xl bg-secondary/40 p-3 text-xs text-foreground">
+                <pre className="mt-3 max-h-72 overflow-auto rounded-md bg-secondary/40 p-3 text-xs text-foreground">
                   {JSON.stringify(
                     selectedVersionPayload ?? {},
                     null,

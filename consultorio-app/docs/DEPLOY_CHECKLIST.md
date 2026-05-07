@@ -3,6 +3,10 @@
 Estado: Vigente  
 Ultima actualizacion: 2026-04-15  
 Referencia principal: `docs/SISTEMA_ACTUAL.md`
+Complementos:
+- `docs/ops/go-live-p0-evidence-checklist.md`
+- `docs/ops/minimum-alerts-matrix.md`
+- `docs/ops/runbook-rollback.md`
 
 ## 1) Pre-despliegue (obligatorio)
 - Confirmar commit/tag exacto a desplegar.
@@ -62,7 +66,7 @@ npm run build
 ## 4) Post-despliegue (smoke tests minimos)
 1. `GET /api/public/doctors` responde `200`.
 2. `POST /api/auth/login` responde `200` y emite cookie `med_token`.
-3. `GET /api/admin/dashboard/summary` con cookie responde `200`.
+3. `GET /api/agenda/admin/dashboard/summary` con cookie responde `200`.
 4. `GET /api/admin/agenda/day?date=YYYY-MM-DD` con cookie responde `200`.
 5. `GET /api/admin/notifications/status` con cookie responde `200`.
 6. Crear cita publica de prueba responde `201`.
@@ -94,3 +98,4 @@ curl -X POST "https://TU_DOMINIO/api/internal/notifications/process?retryFailed=
 - Smoke tests en verde.
 - Procesamiento de notificaciones sin errores criticos.
 - Operacion clinica validada por el equipo.
+

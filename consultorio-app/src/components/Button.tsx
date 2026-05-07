@@ -14,19 +14,19 @@ interface ButtonProps extends MotionButtonProps {
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ variant = "primary", size = "md", fullWidth = false, loading = false, className = "", children, disabled, ...props }: ButtonProps, ref) => {
-    const baseClasses = "inline-flex items-center justify-center gap-2 rounded-xl transition-all duration-200 font-medium touch-manipulation";
+    const baseClasses = "inline-flex items-center justify-center gap-2 rounded-md transition-colors duration-150 font-semibold touch-manipulation";
 
     const sizeClasses: Record<string, string> = {
-      sm: "min-h-[44px] px-4 py-2 text-sm",
-      md: "min-h-[48px] px-6 py-3 text-base",
-      lg: "min-h-[56px] px-8 py-4 text-lg"
+      sm: "min-h-[40px] px-3 py-1.5 text-sm",
+      md: "min-h-[44px] px-4 py-2 text-base",
+      lg: "min-h-[48px] px-6 py-3 text-base"
     };
 
     const variantClasses: Record<string, string> = {
-      primary: "bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm",
+      primary: "bg-primary text-primary-foreground hover:bg-primary-hover",
       secondary: "bg-secondary text-secondary-foreground hover:bg-muted border border-border",
       tertiary: "text-foreground hover:bg-secondary border border-transparent hover:border-border",
-      destructive: "bg-destructive text-destructive-foreground hover:opacity-90 shadow-sm"
+      destructive: "bg-destructive text-destructive-foreground hover:opacity-90"
     };
 
     const isInteractionDisabled = disabled || loading;

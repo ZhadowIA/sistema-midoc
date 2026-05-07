@@ -1,72 +1,26 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { getAuthenticatedUser } from "@/lib/auth";
+import { requireStaffApiAccess } from "@/lib/medicalApi";
 import { captureError, logEvent } from "@/lib/observability";
-import { getClinicSeatSummary } from "@/lib/clinicSeats";
-import { getServerEnv } from "@/lib/env";
-import { getStripeClient } from "@/lib/stripe";
-import { getCommercialCatalog, resolveCommercialPlanFromSubscription } from "@/lib/subscriptionCatalog";
-
-type SubscriptionScope = {
-  mode: "DOCTOR" | "CLINIC";
-  clinicId: string | null;
-  billingDoctorId: string;
-};
-
-async function resolveSubscriptionScope(userId: string): Promise<SubscriptionScope | null> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, role: true, clinicId: true },
-  });
-  if (!user) return null;
-
-  if (user.clinicId && user.role === "CLINIC_ADMIN") {
-    const clinic = await prisma.clinic.findUnique({
-      where: { id: user.clinicId },
-      select: { id: true, ownerId: true },
-    });
-    return {
-      mode: "CLINIC",
-      clinicId: clinic?.id ?? user.clinicId,
-      billingDoctorId: clinic?.ownerId ?? user.id,
-    };
-  }
-
-  return {
-    mode: "DOCTOR",
-    clinicId: user.clinicId ?? null,
-    billingDoctorId: user.id,
-  };
-}
-
-async function buildSeatSummary(scope: SubscriptionScope) {
-  if (scope.mode !== "CLINIC" || !scope.clinicId) return null;
-  return getClinicSeatSummary(scope.clinicId);
-}
+import { can, PERMISSIONS } from "@/lib/permissions";
+import { getSubscriptionOverview, updateCancelAtPeriodEnd } from "@/server/subscription";
+import { getRequestIp, getUserAgent } from "@/lib/requestContext";
 
 export async function GET() {
   try {
-    const authUser = await getAuthenticatedUser();
-    if (!authUser) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-    if (authUser.role !== "DOCTOR" && authUser.role !== "ADMIN" && authUser.role !== "CLINIC_ADMIN") {
+    const access = await requireStaffApiAccess({
+      allowedRoles: ["DOCTOR", "ADMIN", "CLINIC_ADMIN"],
+    });
+    if (access.response) return access.response;
+    const authUser = access.user;
+
+    if (!can(authUser, PERMISSIONS.BILLING_READ)) {
       return NextResponse.json({ error: "No autorizado" }, { status: 403 });
     }
 
-    const scope = await resolveSubscriptionScope(authUser.id);
-    if (!scope) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    const overview = await getSubscriptionOverview(authUser.id);
+    if (!overview) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
-    const subscription = await prisma.doctorSubscription.findUnique({
-      where: { doctorId: scope.billingDoctorId },
-    });
-    const seats = await buildSeatSummary(scope);
-    const commercialPlan = subscription
-      ? resolveCommercialPlanFromSubscription({
-          planName: subscription.planName,
-          features: subscription.features,
-        })
-      : null;
-
-    return NextResponse.json({ subscription, scope, seats, commercialPlan, catalog: getCommercialCatalog() });
+    return NextResponse.json(overview);
   } catch (error: unknown) {
     captureError("billing.subscription.get.error", error);
     const message = error instanceof Error ? error.message : "Error interno";
@@ -76,51 +30,37 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   try {
-    const authUser = await getAuthenticatedUser();
-    if (!authUser) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-    if (authUser.role !== "DOCTOR" && authUser.role !== "ADMIN" && authUser.role !== "CLINIC_ADMIN") {
+    const access = await requireStaffApiAccess({
+      allowedRoles: ["DOCTOR", "ADMIN", "CLINIC_ADMIN"],
+    });
+    if (access.response) return access.response;
+    const authUser = access.user;
+
+    if (!can(authUser, PERMISSIONS.BILLING_MANAGE)) {
       return NextResponse.json({ error: "No autorizado" }, { status: 403 });
     }
-    const scope = await resolveSubscriptionScope(authUser.id);
-    if (!scope) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
     const body = await request.json();
     const cancelAtPeriodEnd = body.cancelAtPeriodEnd === true;
 
-    const subscription = await prisma.doctorSubscription.findUnique({
-      where: { doctorId: scope.billingDoctorId },
+    const result = await updateCancelAtPeriodEnd(authUser.id, cancelAtPeriodEnd, {
+      actorUserId: authUser.id,
+      ipAddress: getRequestIp(request),
+      userAgent: getUserAgent(request),
     });
-
-    if (!subscription) {
+    if (!result) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    if (!result.subscription) {
       return NextResponse.json({ error: "Suscripción no encontrada" }, { status: 404 });
-    }
-
-    const updated = await prisma.doctorSubscription.update({
-      where: { doctorId: scope.billingDoctorId },
-      data: {
-        cancelAtPeriodEnd,
-        canceledAt: cancelAtPeriodEnd ? new Date() : null,
-      },
-    });
-
-    const env = getServerEnv();
-    if (
-      env.PAYMENTS_PROVIDER === "STRIPE" &&
-      updated.provider === "STRIPE" &&
-      updated.externalSubscriptionId
-    ) {
-      const stripe = getStripeClient();
-      await stripe.subscriptions.update(updated.externalSubscriptionId, { cancel_at_period_end: cancelAtPeriodEnd });
     }
 
     logEvent("info", "billing.subscription.cancel_at_period_end.updated", {
       userId: authUser.id,
-      billingDoctorId: scope.billingDoctorId,
-      mode: scope.mode,
+      billingDoctorId: result.scope.billingDoctorId,
+      mode: result.scope.mode,
       cancelAtPeriodEnd,
     });
 
-    return NextResponse.json({ success: true, subscription: updated });
+    return NextResponse.json({ success: true, subscription: result.subscription });
   } catch (error: unknown) {
     captureError("billing.subscription.patch.error", error);
     const message = error instanceof Error ? error.message : "Error interno";

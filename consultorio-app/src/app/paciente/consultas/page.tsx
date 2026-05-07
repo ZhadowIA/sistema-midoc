@@ -89,7 +89,7 @@ export default function PatientConsultasPage() {
       </div>
 
       <div className="max-w-5xl mx-auto px-4 py-8">
-        <div className="rounded-2xl border border-border bg-card p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <div className="rounded-lg border border-border bg-card p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div>
             <p className="text-sm text-muted-foreground">Próximas consultas</p>
             <p className="text-2xl font-semibold">{upcoming.length}</p>
@@ -110,15 +110,15 @@ export default function PatientConsultasPage() {
         {loading ? (
           <div className="text-center text-muted-foreground py-12">Cargando consultas...</div>
         ) : error ? (
-          <div className="rounded-xl border border-red-500 text-red-400 p-4">{error}</div>
+          <div className="rounded-md border border-red-500 text-red-400 p-4">{error}</div>
         ) : upcoming.length === 0 ? (
-          <div className="rounded-2xl border border-border bg-card p-8 text-center text-muted-foreground">
+          <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground">
             No tienes consultas próximas.
           </div>
         ) : (
           <div className="space-y-4">
             {upcoming.map((apt) => (
-              <div key={apt.id} className="rounded-2xl border border-border bg-card p-5">
+              <div key={apt.id} className="rounded-lg border border-border bg-card p-5">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <div>
                     <p className="text-sm text-muted-foreground">Médico</p>
@@ -153,7 +153,7 @@ export default function PatientConsultasPage() {
                     size="sm"
                     variant="tertiary"
                     onClick={() =>
-                      router.push(`/agendar${apt.doctor.slug ? `?doctor=${apt.doctor.slug}` : ""}`)
+                      router.push(apt.doctor.slug ? `/doctor/${apt.doctor.slug}` : "/paciente")
                     }
                   >
                     Ver disponibilidad
@@ -167,4 +167,3 @@ export default function PatientConsultasPage() {
     </div>
   );
 }
-

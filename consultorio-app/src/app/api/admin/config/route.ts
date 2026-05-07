@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { requireAgendaDoctorApiAccess } from '@/lib/medicalApi'
 import { z } from 'zod'
 
 function asNullableString(value: unknown): string | null {
@@ -29,16 +29,17 @@ const configSchema = z.object({
   whatsappAutoReplyEnabled: z.boolean().optional(),
   whatsappAutoConfirmEnabled: z.boolean().optional(),
   whatsappAutoCancelEnabled: z.boolean().optional(),
-  whatsappBookingMessageTemplate: z.string().max(2000).optional(),
-  whatsappQuestionnaireTemplate: z.string().max(2000).optional(),
-  whatsappReminderPendingTemplate: z.string().max(2000).optional(),
-  whatsappReminderConfirmedTemplate: z.string().max(2000).optional(),
+  bookingMessageTemplate: z.string().max(2000).optional(),
+  questionnaireTemplate: z.string().max(2000).optional(),
+  reminderPendingTemplate: z.string().max(2000).optional(),
+  reminderConfirmedTemplate: z.string().max(2000).optional(),
 })
 
 export async function GET() {
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: "Sin médico" }, { status: 400 })
+    const access = await requireAgendaDoctorApiAccess({ allowSecretary: true })
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     const config = await prisma.doctorConfig.findUnique({
       where: { doctorId }
@@ -88,8 +89,9 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'Datos inválidos', details: parsedData.error.issues }, { status: 400 })
     }
 
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: "Sin médico" }, { status: 400 })
+    const access = await requireAgendaDoctorApiAccess({ allowSecretary: true })
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     const current = await prisma.doctorConfig.findUnique({
       where: { doctorId },
@@ -120,22 +122,22 @@ export async function PUT(request: Request) {
       parsedData.data.whatsappAutoConfirmEnabled ?? current?.whatsappAutoConfirmEnabled ?? true
     const whatsappAutoCancelEnabled =
       parsedData.data.whatsappAutoCancelEnabled ?? current?.whatsappAutoCancelEnabled ?? true
-    const whatsappBookingMessageTemplate =
-      parsedData.data.whatsappBookingMessageTemplate !== undefined
-        ? asNullableString(parsedData.data.whatsappBookingMessageTemplate)
-        : current?.whatsappBookingMessageTemplate ?? null
-    const whatsappQuestionnaireTemplate =
-      parsedData.data.whatsappQuestionnaireTemplate !== undefined
-        ? asNullableString(parsedData.data.whatsappQuestionnaireTemplate)
-        : current?.whatsappQuestionnaireTemplate ?? null
-    const whatsappReminderPendingTemplate =
-      parsedData.data.whatsappReminderPendingTemplate !== undefined
-        ? asNullableString(parsedData.data.whatsappReminderPendingTemplate)
-        : current?.whatsappReminderPendingTemplate ?? null
-    const whatsappReminderConfirmedTemplate =
-      parsedData.data.whatsappReminderConfirmedTemplate !== undefined
-        ? asNullableString(parsedData.data.whatsappReminderConfirmedTemplate)
-        : current?.whatsappReminderConfirmedTemplate ?? null
+    const bookingMessageTemplate =
+      parsedData.data.bookingMessageTemplate !== undefined
+        ? asNullableString(parsedData.data.bookingMessageTemplate)
+        : current?.bookingMessageTemplate ?? null
+    const questionnaireTemplate =
+      parsedData.data.questionnaireTemplate !== undefined
+        ? asNullableString(parsedData.data.questionnaireTemplate)
+        : current?.questionnaireTemplate ?? null
+    const reminderPendingTemplate =
+      parsedData.data.reminderPendingTemplate !== undefined
+        ? asNullableString(parsedData.data.reminderPendingTemplate)
+        : current?.reminderPendingTemplate ?? null
+    const reminderConfirmedTemplate =
+      parsedData.data.reminderConfirmedTemplate !== undefined
+        ? asNullableString(parsedData.data.reminderConfirmedTemplate)
+        : current?.reminderConfirmedTemplate ?? null
 
     const updatedConfig = await prisma.doctorConfig.upsert({
       where: { doctorId },
@@ -156,10 +158,10 @@ export async function PUT(request: Request) {
         whatsappAutoReplyEnabled,
         whatsappAutoConfirmEnabled,
         whatsappAutoCancelEnabled,
-        whatsappBookingMessageTemplate,
-        whatsappQuestionnaireTemplate,
-        whatsappReminderPendingTemplate,
-        whatsappReminderConfirmedTemplate,
+        bookingMessageTemplate,
+        questionnaireTemplate,
+        reminderPendingTemplate,
+        reminderConfirmedTemplate,
       },
       create: {
         doctorId,
@@ -179,10 +181,10 @@ export async function PUT(request: Request) {
         whatsappAutoReplyEnabled,
         whatsappAutoConfirmEnabled,
         whatsappAutoCancelEnabled,
-        whatsappBookingMessageTemplate,
-        whatsappQuestionnaireTemplate,
-        whatsappReminderPendingTemplate,
-        whatsappReminderConfirmedTemplate,
+        bookingMessageTemplate,
+        questionnaireTemplate,
+        reminderPendingTemplate,
+        reminderConfirmedTemplate,
       }
     })
 

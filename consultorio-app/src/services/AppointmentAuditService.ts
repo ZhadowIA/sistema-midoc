@@ -64,4 +64,28 @@ export class AppointmentAuditService {
       })
     }
   }
+
+  static async safeBatchLog(inputs: LogAuditInput[]) {
+    if (inputs.length === 0) return
+    try {
+      await prisma.appointmentAuditLog.createMany({
+        data: inputs.map((input) => ({
+          doctorId: input.doctorId,
+          appointmentId: normalizeOptional(input.appointmentId),
+          patientId: normalizeOptional(input.patientId),
+          actorType: input.actorType,
+          actorUserId: normalizeOptional(input.actorUserId),
+          source: input.source,
+          action: input.action,
+          fromStatus: input.fromStatus ?? null,
+          toStatus: input.toStatus ?? null,
+          ipAddress: normalizeOptional(input.ipAddress),
+          userAgent: normalizeOptional(input.userAgent),
+          metadata: input.metadata === null ? Prisma.JsonNull : (input.metadata ?? Prisma.DbNull),
+        })),
+      })
+    } catch (error) {
+      console.error('[AppointmentAuditService] No se pudo registrar batch de auditoría', { count: inputs.length, error })
+    }
+  }
 }

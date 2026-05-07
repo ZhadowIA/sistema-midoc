@@ -1,4 +1,10 @@
 import { getServerEnv } from '@/lib/env'
+import {
+  hasAiCapability,
+  hasClinicalCapability,
+  isFeatureEnabled,
+  SUBSCRIPTION_FEATURES,
+} from '@/lib/subscriptionFeatures'
 
 export type CapabilityReasonCode =
   | 'ENABLED'
@@ -25,18 +31,15 @@ type ResolveCapabilitiesInput = {
 }
 
 function hasClinicalFeature(features: Record<string, unknown>) {
-  return features['clinical.enabled'] === true || features['clinical.history'] === true
+  return hasClinicalCapability(features)
 }
 
 function hasAiFeature(features: Record<string, unknown>) {
-  return (
-    features['ai.enabled'] === true &&
-    (features['ai.dictation'] === true || features['ai.insights'] === true)
-  )
+  return hasAiCapability(features)
 }
 
 function hasStandaloneClinicalFeature(features: Record<string, unknown>) {
-  return features['clinical.encounters.standalone'] === true
+  return isFeatureEnabled(features, SUBSCRIPTION_FEATURES.CLINICAL_ENCOUNTERS_STANDALONE)
 }
 
 export function resolveCapabilities(input: ResolveCapabilitiesInput): ResolvedCapabilities {

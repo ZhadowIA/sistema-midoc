@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedUser } from '@/lib/auth'
+import { requireAgendaAccess } from '@/lib/medicalApi'
+import { can, PERMISSIONS } from '@/lib/permissions'
+import { SUBSCRIPTION_FEATURES } from '@/lib/subscriptionFeatures'
 
 const patchSchema = z.object({
   status: z.enum(['ACTIVE', 'PAUSED', 'BOOKED', 'REMOVED']).optional(),
@@ -13,17 +15,19 @@ const patchSchema = z.object({
   notes: z.string().max(500).nullable().optional(),
 })
 
-function canManageRole(role: string) {
-  return role === 'DOCTOR' || role === 'ADMIN' || role === 'CLINIC_ADMIN'
-}
-
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
 
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser || !canManageRole(authUser.role)) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireAgendaAccess({
+      allowSecretary: false,
+      requiredFeature: SUBSCRIPTION_FEATURES.AGENDA_WAITLIST,
+      featureForbiddenMessage: 'La lista de espera no está incluida en tu plan.',
+    })
+    if (access.response) return access.response
+    const authUser = access.context.user
+    if (!can(authUser, PERMISSIONS.APPOINTMENT_UPDATE)) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
     }
 
     const parsed = patchSchema.safeParse(await request.json())
@@ -43,7 +47,12 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
 
     if (authUser.role === 'CLINIC_ADMIN' && entry.doctorId !== authUser.id) {
       const actor = await prisma.user.findUnique({ where: { id: authUser.id }, select: { clinicId: true } })
-      if (!actor?.clinicId || actor.clinicId !== entry.clinicId) {
+      if (
+        !actor?.clinicId ||
+        !can(authUser, PERMISSIONS.CLINIC_MANAGE_DOCTORS, {
+          sameClinic: actor.clinicId === entry.clinicId,
+        })
+      ) {
         return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
       }
     }

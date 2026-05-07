@@ -98,6 +98,12 @@ const publicAppointmentSchema = z.object({
       (value) => value === true,
       'Debes aceptar el aviso de privacidad y el uso operativo de tus datos para agendar.'
     ),
+
+  utmSource: z.string().max(100).nullable().optional(),
+  utmMedium: z.string().max(100).nullable().optional(),
+  utmCampaign: z.string().max(100).nullable().optional(),
+  utmContent: z.string().max(100).nullable().optional(),
+  referrerChannel: z.string().max(50).nullable().optional(),
 })
 
 type RawPublicAppointmentPayload = z.infer<typeof publicAppointmentSchema>

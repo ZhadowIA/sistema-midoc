@@ -1,1 +1,0 @@
-const fs = require('fs'); let data = fs.readFileSync('src/app/medico/configuracion/page.tsx', 'utf8'); data = data.replace(/reminderWindowMinutes: e\.target\.value === '' \? '' : String\(Number\(e\.target\.value\)\)/g, 'reminderWindowMinutes: e.target.value.replace(/^0+(?=\\d)/, "")'); fs.writeFileSync('src/app/medico/configuracion/page.tsx', data);

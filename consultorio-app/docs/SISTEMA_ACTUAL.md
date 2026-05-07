@@ -173,9 +173,9 @@ Comportamiento:
 
 ### Admin medico
 - Agenda: `GET /api/admin/agenda/day`, `GET /api/admin/agenda/week`
-- Dashboard: `GET /api/admin/dashboard/summary`
+- Dashboard: `GET /api/agenda/admin/dashboard/summary`
 - Disponibilidad: `GET/POST /api/admin/availability`, `PATCH/DELETE /api/admin/availability/[id]`, `GET /api/admin/availability/slots`
-- Bloqueos: `POST /api/admin/blocks`, `POST /api/admin/schedule/generate`
+- Bloqueos: `POST /api/admin/blocks`, `POST /api/agenda/admin/schedule/generate`
 - Citas: `POST /api/admin/appointments`, `GET/PATCH /api/admin/appointments/[id]`
 - SOAP/IA: `GET/POST /api/admin/appointments/[id]/note`, `POST /api/admin/appointments/[id]/note/generate`, `GET/POST /api/admin/appointments/[id]/ai-insights`, `POST /api/admin/appointments/[id]/ai-validate`
 - Pacientes: `GET/POST /api/admin/patients`, `GET/PATCH /api/admin/patients/[id]`, `POST /api/admin/patients/[id]/link-account`, `POST /api/admin/patients/merge`
@@ -188,6 +188,7 @@ Comportamiento:
 ### Internos y pagos
 - `POST /api/internal/notifications/process`
 - `POST /api/internal/whatsapp/incoming`
+- `POST /api/internal/payments/reconcile`
 - `POST /api/payments/checkout`
 - `POST /api/payments/webhook`
 
@@ -244,3 +245,4 @@ Ver referencia en `.env.example`.
 - El sistema soporta tanto pacientes invitados como pacientes con cuenta.
 - El expediente medico del directorio y la informacion puntual de citas pueden coexistir y vincularse.
 - Existe trazabilidad de eventos criticos de cita en auditoria.
+

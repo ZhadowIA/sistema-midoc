@@ -111,6 +111,12 @@ const encounterPartialSchema = z
 export type AIEncounterPartial = z.infer<typeof encounterPartialSchema>
 export type AIDictationResult = { soap: AIStructuredSOAP; encounter: AIEncounterPartial }
 export type PrescriptionAlert = z.infer<typeof prescriptionAlertSchema>
+export type LLMUsageSnapshot = {
+  model: string
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
 export type IdentifierContext = {
   patientName?: string | null
   doctorName?: string | null
@@ -495,6 +501,18 @@ export function deterministicPrescriptionAlerts(params: {
   return dedupeAlerts(alerts)
 }
 
+function toUsageSnapshot(response: { model?: string | null; usage?: { prompt_tokens?: number | null; completion_tokens?: number | null; total_tokens?: number | null } | null }): LLMUsageSnapshot {
+  const promptTokens = Number(response.usage?.prompt_tokens ?? 0)
+  const completionTokens = Number(response.usage?.completion_tokens ?? 0)
+  const totalTokens = Number(response.usage?.total_tokens ?? promptTokens + completionTokens)
+  return {
+    model: response.model ?? 'unknown',
+    promptTokens: Number.isFinite(promptTokens) ? promptTokens : 0,
+    completionTokens: Number.isFinite(completionTokens) ? completionTokens : 0,
+    totalTokens: Number.isFinite(totalTokens) ? totalTokens : 0,
+  }
+}
+
 export async function transcribeAudio(params: {
   audioBuffer: Buffer
   mimeType: string
@@ -579,8 +597,23 @@ export async function generateDictationFromTranscript(
     clinicalHistory?: unknown
     encounterHistory?: unknown
     questionnaire?: unknown
+    specialty?: string | null
   }
 ): Promise<AIDictationResult> {
+  const result = await generateDictationFromTranscriptWithTelemetry(transcript, identifiers, clinicalContext)
+  return { soap: result.soap, encounter: result.encounter }
+}
+
+export async function generateDictationFromTranscriptWithTelemetry(
+  transcript: string,
+  identifiers?: IdentifierContext,
+  clinicalContext?: {
+    clinicalHistory?: unknown
+    encounterHistory?: unknown
+    questionnaire?: unknown
+    specialty?: string | null
+  }
+): Promise<AIDictationResult & { usage: LLMUsageSnapshot }> {
   const openai = getOpenAIClient()
   const normalizedTranscript = truncateText(
     pseudonymizeClinicalText(transcript.trim(), identifiers),
@@ -590,8 +623,10 @@ export async function generateDictationFromTranscript(
     throw new Error('La transcripción está vacía.')
   }
 
-  const safeContext = clinicalContext
-    ? pseudonymizeStructuredData(clinicalContext, identifiers)
+  const specialty = clinicalContext?.specialty ?? null
+  const { specialty: _specialty, ...contextWithoutSpecialty } = clinicalContext ?? {}
+  const safeContext = Object.keys(contextWithoutSpecialty).length > 0
+    ? pseudonymizeStructuredData(contextWithoutSpecialty, identifiers)
     : null
   const contextBlock = safeContext
     ? `\n\nContexto clínico estructurado (referencia, no inventes datos fuera de esto ni del audio):\n${serializeContextForPrompt(
@@ -599,16 +634,20 @@ export async function generateDictationFromTranscript(
         INSIGHTS_CONTEXT_MAX_CHARS
       )}`
     : ''
+  const specialtyHintSoap = specialty
+    ? `El médico es especialista en ${specialty}; adapta la terminología, las secciones de revisión por sistemas y el plan a esa especialidad. `
+    : ''
 
   const response = await runOpenAIRequest('generación de dictado clínico', () =>
     openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-4o-mini',
       temperature: 0.2,
       messages: [
         {
           role: 'system',
           content:
             'Eres un asistente clínico que estructura la consulta médica a partir del audio transcrito. ' +
+            specialtyHintSoap +
             'La transcripción puede incluir diarización con etiquetas [Doctor]: y [Paciente]: al inicio de cada intervención. ' +
             'Usa esas etiquetas para atribuir correctamente: lo que dice el paciente va a subjective; lo que el doctor observa/examina va a objective; ' +
             'órdenes, planes y recomendaciones del doctor van a plan. Ignora las etiquetas en el texto final; no las copies. ' +
@@ -646,26 +685,43 @@ export async function generateDictationFromTranscript(
   const encounterParsed = encounterPartialSchema.safeParse(raw?.encounter ?? {})
   const encounter = encounterParsed.success ? encounterParsed.data : {}
 
-  return { soap, encounter }
+  return { soap, encounter, usage: toUsageSnapshot(response) }
 }
 
 export async function generateComprehensiveInsights(context: {
   soap?: Partial<AIStructuredSOAP>
   questionnaire?: unknown
   medicalRecord?: unknown
+  specialty?: string | null
 }, identifiers?: IdentifierContext): Promise<AIInsights> {
+  const result = await generateComprehensiveInsightsWithTelemetry(context, identifiers)
+  return result.insights
+}
+
+export async function generateComprehensiveInsightsWithTelemetry(context: {
+  soap?: Partial<AIStructuredSOAP>
+  questionnaire?: unknown
+  medicalRecord?: unknown
+  specialty?: string | null
+}, identifiers?: IdentifierContext): Promise<{ insights: AIInsights; usage: LLMUsageSnapshot }> {
   const openai = getOpenAIClient()
-  const safeContext = aiContextSchema.parse(pseudonymizeStructuredData(context, identifiers))
+  const { specialty: insightsSpecialty, ...contextForSchema } = context
+  const safeContext = aiContextSchema.parse(pseudonymizeStructuredData(contextForSchema, identifiers))
+  const specialtyHintInsights = insightsSpecialty
+    ? `El médico es especialista en ${insightsSpecialty}. Ajusta las sugerencias diagnósticas y terapéuticas a esa especialidad. `
+    : ''
 
   const response = await runOpenAIRequest('generación de insights clínicos', () =>
     openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-4o-mini',
       temperature: 0.2,
       messages: [
         {
           role: 'system',
           content:
-            'Eres un consultor clínico de apoyo. Debes devolver SOLO JSON con llaves: diagnoses, treatments, allowedFoods, forbiddenFoods. ' +
+            'Eres un consultor clínico de apoyo. ' +
+            specialtyHintInsights +
+            'Debes devolver SOLO JSON con llaves: diagnoses, treatments, allowedFoods, forbiddenFoods. ' +
             'diagnoses: [{diagnosis, reasoning}] máximo 8. treatments: [{treatment, instructions}] máximo 10. ' +
             'No inventes certezas; expresa sugerencias para validación médica.',
         },
@@ -679,7 +735,10 @@ export async function generateComprehensiveInsights(context: {
   )
 
   const raw = extractResponseJsonText(response.choices?.[0]?.message?.content, 'insights')
-  return sanitizeInsights(insightsSchema.parse(raw))
+  return {
+    insights: sanitizeInsights(insightsSchema.parse(raw)),
+    usage: toUsageSnapshot(response),
+  }
 }
 
 export async function validatePrescription(params: {
@@ -687,6 +746,15 @@ export async function validatePrescription(params: {
   medicalRecord: unknown
   questionnaire: unknown
 }, identifiers?: IdentifierContext): Promise<PrescriptionAlert[]> {
+  const result = await validatePrescriptionWithTelemetry(params, identifiers)
+  return result.alerts
+}
+
+export async function validatePrescriptionWithTelemetry(params: {
+  prescriptions: unknown[]
+  medicalRecord: unknown
+  questionnaire: unknown
+}, identifiers?: IdentifierContext): Promise<{ alerts: PrescriptionAlert[]; usage: LLMUsageSnapshot }> {
   const openai = getOpenAIClient()
   const parsedPrescriptions = z.array(prescriptionInputSchema).max(50).parse(params.prescriptions)
   const medicalRecord = pseudonymizeStructuredData(params.medicalRecord, identifiers)
@@ -723,13 +791,22 @@ export async function validatePrescription(params: {
     questionnaire,
   })
 
-  return dedupeAlerts([...deterministicAlerts, ...llmAlerts])
+  return {
+    alerts: dedupeAlerts([...deterministicAlerts, ...llmAlerts]),
+    usage: toUsageSnapshot(llmResponse),
+  }
 }
 
 export async function generateQuestionnaireFollowUp(params: {
   transcript: string
   history: Array<{ role: 'user' | 'assistant'; content: string }>
-}): Promise<{ question?: string; isFinished: boolean; summary?: string }> {
+}): Promise<{
+  question?: string
+  isFinished: boolean
+  summary?: string
+  possibleConditions?: string[]
+  physicalExamChecklist?: string[]
+}> {
   const openai = getOpenAIClient()
   const historyContext = params.history
     .map((h) => `${h.role === 'user' ? 'Paciente' : 'IA'}: ${h.content}`)
@@ -737,20 +814,28 @@ export async function generateQuestionnaireFollowUp(params: {
 
   const response = await runOpenAIRequest('seguimiento de cuestionario', () =>
     openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-4o-mini',
       temperature: 0.3,
       messages: [
         {
           role: 'system',
           content:
-            'Eres un asistente médico recolectando síntomas de un paciente. ' +
-            'Tu objetivo es entender el motivo de consulta para ayudar al doctor. ' +
-            'REGLAS:\n' +
+            'Eres un asistente médico recolectando síntomas de un paciente antes de su consulta. ' +
+            'Tu objetivo es obtener la información clínica MÍNIMA necesaria para que el doctor llegue preparado. ' +
+            'REGLAS OBLIGATORIAS:\n' +
             '1. Haz UNA sola pregunta clara y empática a la vez.\n' +
-            '2. Máximo 5 preguntas en total (considera el historial).\n' +
-            '3. Si ya tienes suficiente información clínica (motivo, duración, síntomas asociados), termina.\n' +
-            '4. Al terminar, devuelve un resumen estructurado útil para el médico.\n' +
-            '5. Formato de respuesta: JSON con llaves: question (string), isFinished (boolean), summary (string, solo si isFinished es true).',
+            '2. EVALÚA si el motivo ya es autoexplicativo y no requiere más información:\n' +
+            '   - Motivos rutinarios/procedimentales (revisión de brackets, limpieza dental, chequeo de rutina, cita de seguimiento, retiro de puntos, renovación de receta, vacuna) → termina INMEDIATAMENTE después de la primera respuesta del paciente confirmando el motivo.\n' +
+            '   - Motivos con síntomas activos (dolor, fiebre, mareo, dificultad para respirar) → profundiza con hasta 3 preguntas adicionales sobre duración, intensidad y síntomas asociados.\n' +
+            '   - Motivos crónicos ya conocidos (control de diabetes, seguimiento de hipertensión) → 1 pregunta sobre el estado actual es suficiente.\n' +
+            '3. NUNCA hagas más de 4 preguntas en total (incluyendo la primera). Si ya tienes suficiente contexto, termina aunque no hayas llegado a 4.\n' +
+            '4. Evita repetir preguntas ya respondidas en el historial.\n' +
+            '5. Al terminar, devuelve un resumen estructurado útil para el médico. Para motivos simples el resumen puede ser breve.\n' +
+            '6. Formato de respuesta JSON con llaves: ' +
+            'question (string, vacío si isFinished es true), isFinished (boolean), summary (string opcional), ' +
+            'possibleConditions (string[] opcional, máximo 5, OMITIR para motivos rutinarios), ' +
+            'physicalExamChecklist (string[] opcional, máximo 8, OMITIR para motivos rutinarios). ' +
+            'possibleConditions son orientativas, no diagnósticos definitivos.',
         },
         {
           role: 'user',
@@ -765,11 +850,96 @@ export async function generateQuestionnaireFollowUp(params: {
     question?: string
     isFinished: boolean
     summary?: string
+    possibleConditions?: unknown
+    physicalExamChecklist?: unknown
   }
+
+  const possibleConditions = Array.isArray(raw.possibleConditions)
+    ? raw.possibleConditions
+        .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        .slice(0, 5)
+    : undefined
+
+  const physicalExamChecklist = Array.isArray(raw.physicalExamChecklist)
+    ? raw.physicalExamChecklist
+        .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        .slice(0, 8)
+    : undefined
 
   return {
     question: raw.question,
     isFinished: Boolean(raw.isFinished),
     summary: raw.summary,
+    possibleConditions,
+    physicalExamChecklist,
   }
+}
+
+const patientInstructionsSchema = z.object({
+  generalInstructions: z.string().trim().min(1).max(3_000),
+  medicationReminders: z.array(z.string().trim().min(1).max(400)).max(20).default([]),
+  activityRestrictions: z.array(z.string().trim().min(1).max(400)).max(10).default([]),
+  dietaryGuidance: z.array(z.string().trim().min(1).max(400)).max(10).default([]),
+  warningSignsToReturn: z.array(z.string().trim().min(1).max(400)).max(10).default([]),
+  followUpSuggestion: z.string().trim().max(400).optional(),
+})
+
+export type PatientInstructions = z.infer<typeof patientInstructionsSchema>
+
+export async function generatePatientInstructions(params: {
+  chiefComplaint: string
+  assessment: string
+  plan: string
+  specialty?: string | null
+}): Promise<{ instructions: PatientInstructions; usage: LLMUsageSnapshot }> {
+  const openai = getOpenAIClient()
+
+  const specialtyHint = params.specialty
+    ? `El médico es especialista en: ${params.specialty}.`
+    : ''
+
+  const response = await runOpenAIRequest('indicaciones para paciente', () =>
+    openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.3,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Eres un asistente médico que traduce notas clínicas a indicaciones claras para el paciente. ' +
+            'Usa lenguaje simple, directo y empático — evita tecnicismos. ' +
+            specialtyHint +
+            '\nDevuelve SOLO JSON con las llaves:\n' +
+            '- generalInstructions: párrafo principal de resumen (qué tiene y qué hacer)\n' +
+            '- medicationReminders: lista de recordatorios de medicamentos (cuándo, cuánto, cómo)\n' +
+            '- activityRestrictions: lista de restricciones de actividad\n' +
+            '- dietaryGuidance: lista de recomendaciones dietéticas (vacío si no aplica)\n' +
+            '- warningSignsToReturn: lista de señales de alarma para regresar urgente\n' +
+            '- followUpSuggestion: cuándo y por qué regresar (string corto, opcional)',
+        },
+        {
+          role: 'user',
+          content:
+            `Motivo de consulta: ${params.chiefComplaint}\n` +
+            `Evaluación clínica: ${params.assessment}\n` +
+            `Plan de tratamiento: ${params.plan}`,
+        },
+      ],
+      response_format: { type: 'json_object' },
+    })
+  )
+
+  const raw = extractResponseJsonText(
+    response.choices?.[0]?.message?.content,
+    'patientInstructions',
+  )
+
+  const parsed = patientInstructionsSchema.safeParse(raw)
+  if (!parsed.success) {
+    throw new Error(
+      `Respuesta IA de indicaciones para paciente inválida: ${parsed.error.message}`,
+    )
+  }
+
+  return { instructions: parsed.data, usage: toUsageSnapshot(response) }
 }

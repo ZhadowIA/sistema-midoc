@@ -244,6 +244,15 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
   const handleOpenStandaloneEncounter = async () => {
     setCreatingStandaloneEncounter(true);
     try {
+      // Reuse existing open standalone encounter if one exists
+      const existing = await fetch(`/api/clinical/admin/encounters?patientId=${params.id}&status=OPEN`);
+      const existingData = await existing.json() as { encounters?: { id: string; source: string }[] };
+      const openStandalone = existingData.encounters?.find(e => e.source === "STANDALONE");
+      if (openStandalone) {
+        router.push(`/medico/expedientes/encounters/${openStandalone.id}`);
+        return;
+      }
+
       const res = await fetch("/api/clinical/admin/encounters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -345,7 +354,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
             <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
             <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
               <div className="flex items-center gap-5">
-                <div className="w-20 h-20 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm border border-white/30 shrink-0">
+                <div className="w-20 h-20 bg-white/20 rounded-lg flex items-center justify-center backdrop-blur-sm border border-white/30 shrink-0">
                   <User className="w-10 h-10 text-white" />
                 </div>
                 <div>
@@ -383,7 +392,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
                       <input 
                         type="text" 
                         placeholder="Buscar paciente por nombre..." 
-                        className="w-full px-4 py-2 bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+                        className="w-full px-4 py-2 bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
                         value={mergeSearch}
                         onChange={(e) => setMergeSearch(e.target.value)}
                       />
@@ -486,7 +495,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
               </CardHeader>
               <CardContent className="space-y-4">
                 {patient.linkedAccount ? (
-                  <div className="rounded-xl border border-border bg-secondary/20 p-4">
+                  <div className="rounded-md border border-border bg-secondary/20 p-4">
                     <p className="text-sm text-muted-foreground mb-1">Cuenta vinculada</p>
                     <p className="font-semibold text-foreground flex items-center gap-2">
                       <UserCheck className="w-4 h-4 text-success" />
@@ -669,7 +678,7 @@ export default function PatientProfilePage(props: { params: Promise<{ id: string
                 })}
               </div>
             ) : (
-              <div className="bg-card border border-border border-dashed rounded-2xl p-8 text-center text-muted-foreground">
+              <div className="bg-card border border-border border-dashed rounded-lg p-8 text-center text-muted-foreground">
                 El paciente no tiene consultas finalizadas reportadas en el historial.
               </div>
             )}

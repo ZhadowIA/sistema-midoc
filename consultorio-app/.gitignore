@@ -48,3 +48,10 @@ next-env.d.ts
 /scratch/
 /.claude/
 /prisma/migrations_backup/
+
+# Dev server output logs
+*.out
+
+# Temporary files
+/tmp_*.js
+/tmp_*.txt

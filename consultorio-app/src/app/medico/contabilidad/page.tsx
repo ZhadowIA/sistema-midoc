@@ -143,7 +143,7 @@ export default function ContabilidadPage() {
           <p className="text-sm text-muted-foreground text-center py-6 animate-pulse">Cargando datos contables...</p>
         ) : analytics ? (
           <>
-          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
+          <div className="bg-card border border-border rounded-lg shadow-sm mb-6">
             <div className="px-6 py-4 border-b border-border">
               <h2 className="font-semibold text-foreground">Analítica mensual</h2>
               <p className="text-xs text-muted-foreground mt-1">
@@ -152,21 +152,21 @@ export default function ContabilidadPage() {
             </div>
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                <div className="rounded-md border border-border bg-secondary/20 p-3">
                   <p className="text-xs text-muted-foreground">Citas del mes</p>
                   <p className="text-xl font-semibold text-foreground">{analytics.currentMonth.totalAppointments}</p>
                 </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                <div className="rounded-md border border-border bg-secondary/20 p-3">
                   <p className="text-xs text-muted-foreground">Completadas</p>
                   <p className="text-xl font-semibold text-foreground">{analytics.currentMonth.completedAppointments}</p>
                 </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                <div className="rounded-md border border-border bg-secondary/20 p-3">
                   <p className="text-xs text-muted-foreground">Ingreso estimado (realizado)</p>
                   <p className="text-xl font-semibold text-foreground">
                     {currencyFormatter.format(analytics.currentMonth.estimatedRevenueCompleted)}
                   </p>
                 </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                <div className="rounded-md border border-border bg-secondary/20 p-3">
                   <p className="text-xs text-muted-foreground">Ingreso estimado (programado)</p>
                   <p className="text-xl font-semibold text-foreground">
                     {currencyFormatter.format(analytics.currentMonth.estimatedRevenueScheduled)}
@@ -175,21 +175,21 @@ export default function ContabilidadPage() {
               </div>
 
               <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                <div className="rounded-md border border-border bg-secondary/20 p-3">
                   <p className="text-xs text-muted-foreground">Pendientes</p>
                   <p className="text-lg font-semibold text-warning">{analytics.currentMonth.pendingAppointments}</p>
                 </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                <div className="rounded-md border border-border bg-secondary/20 p-3">
                   <p className="text-xs text-muted-foreground">Confirmadas/Reagendadas</p>
                   <p className="text-lg font-semibold text-success">{analytics.currentMonth.confirmedAppointments}</p>
                 </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                <div className="rounded-md border border-border bg-secondary/20 p-3">
                   <p className="text-xs text-muted-foreground">Canceladas</p>
                   <p className="text-lg font-semibold text-destructive">{analytics.currentMonth.cancelledAppointments}</p>
                 </div>
               </div>
 
-              <div className="rounded-xl border border-border bg-secondary/10 p-4">
+              <div className="rounded-md border border-border bg-secondary/10 p-4">
                 <p className="text-sm font-medium text-foreground mb-3">Tendencia últimos 6 meses</p>
                 {analytics.lastSixMonths.length === 0 ? (
                   <p className="text-xs text-muted-foreground">Aún no hay datos de tendencia.</p>
@@ -230,7 +230,7 @@ export default function ContabilidadPage() {
               </div>
             </div>
           </div>
-          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
+          <div className="bg-card border border-border rounded-lg shadow-sm mb-6">
             <div className="px-6 py-4 border-b border-border">
               <h2 className="font-semibold text-foreground">Recibos básicos</h2>
               <p className="text-xs text-muted-foreground mt-1">

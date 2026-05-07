@@ -53,7 +53,7 @@ export default function DoctorQuestionnaires() {
           className="mb-8"
         >
           <div className="flex items-center gap-3 mb-2">
-            <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center">
+            <div className="w-12 h-12 bg-primary/10 rounded-md flex items-center justify-center">
               <FileText className="w-6 h-6 text-primary" />
             </div>
             <div>
@@ -130,7 +130,7 @@ export default function DoctorQuestionnaires() {
                       >
                         <div className="px-5 pb-5 border-t border-border">
                           <div className="grid gap-5 pt-5">
-                            <div className={`rounded-xl p-4 ${entry.questionnaire.isAI ? "bg-primary/5 border border-primary/10" : "bg-secondary/30"}`}>
+                            <div className={`rounded-md p-4 ${entry.questionnaire.isAI ? "bg-primary/5 border border-primary/10" : "bg-secondary/30"}`}>
                               <div className="flex items-center gap-2 mb-2">
                                 {entry.questionnaire.isAI ? <Sparkles className="w-4 h-4 text-primary" /> : <AlertCircle className="w-4 h-4 text-primary" />}
                                 <span className="text-sm font-semibold text-foreground">
@@ -141,7 +141,7 @@ export default function DoctorQuestionnaires() {
                             </div>
 
                             <div className="grid sm:grid-cols-2 gap-4">
-                              <div className="bg-secondary/30 rounded-xl p-4">
+                              <div className="bg-secondary/30 rounded-md p-4">
                                 <div className="flex items-center gap-2 mb-2">
                                   <Clock className="w-4 h-4 text-warning" />
                                   <span className="text-sm font-semibold text-foreground">Duración de los síntomas</span>
@@ -149,7 +149,7 @@ export default function DoctorQuestionnaires() {
                                 <p className="text-foreground">{entry.questionnaire.symptomDuration}</p>
                               </div>
 
-                              <div className="bg-secondary/30 rounded-xl p-4">
+                              <div className="bg-secondary/30 rounded-md p-4">
                                 <div className="flex items-center gap-2 mb-2">
                                   <MapPin className="w-4 h-4 text-destructive" />
                                   <span className="text-sm font-semibold text-foreground">Ubicación del dolor</span>

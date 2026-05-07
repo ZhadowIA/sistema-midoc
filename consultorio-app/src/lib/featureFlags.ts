@@ -1,28 +1,16 @@
 import { getServerEnv } from './env'
 import prisma from './prisma'
+import {
+  coerceSubscriptionFeatures,
+  hasAiCapability,
+  hasClinicalCapability,
+  isFeatureEnabled,
+  SUBSCRIPTION_FEATURES,
+  type SubscriptionFeatureKey,
+  type SubscriptionFeaturesRecord,
+} from './subscriptionFeatures'
 
-export type SubscriptionFeatureKey =
-  | 'agenda.enabled'
-  | 'agenda.reminders.whatsapp'
-  | 'agenda.waitlist'
-  | 'clinical.enabled'
-  | 'clinical.history'
-  | 'clinical.notes'
-  | 'clinical.prescriptions'
-  | 'clinical.signoff'
-  | 'clinical.encounters.standalone'
-  | 'ai.enabled'
-  | 'ai.dictation'
-  | 'ai.insights'
-  | 'clinic.reports.aggregate'
-  | 'clinic.seats.enforced'
-
-export type SubscriptionFeaturesRecord = Record<string, unknown>
-
-function coerceFeatures(value: unknown): SubscriptionFeaturesRecord {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return value as SubscriptionFeaturesRecord
-}
+export { SUBSCRIPTION_FEATURES, type SubscriptionFeatureKey, type SubscriptionFeaturesRecord }
 
 async function loadSubscriptionFeatures(userId: string): Promise<SubscriptionFeaturesRecord> {
   const subscription = await prisma.doctorSubscription.findUnique({
@@ -30,7 +18,7 @@ async function loadSubscriptionFeatures(userId: string): Promise<SubscriptionFea
     select: { features: true },
   })
 
-  return coerceFeatures(subscription?.features)
+  return coerceSubscriptionFeatures(subscription?.features)
 }
 
 export async function getEnabledFeatures(userId: string): Promise<SubscriptionFeaturesRecord> {
@@ -39,24 +27,21 @@ export async function getEnabledFeatures(userId: string): Promise<SubscriptionFe
 
 export async function hasFeature(userId: string, flag: SubscriptionFeatureKey): Promise<boolean> {
   const features = await loadSubscriptionFeatures(userId)
-  return features[flag] === true
+  return isFeatureEnabled(features, flag)
 }
 
 export async function canUseAgenda(userId: string): Promise<boolean> {
-  return hasFeature(userId, 'agenda.enabled')
+  return hasFeature(userId, SUBSCRIPTION_FEATURES.AGENDA_ENABLED)
 }
 
 export async function canUseClinical(userId: string): Promise<boolean> {
   const features = await loadSubscriptionFeatures(userId)
-  return features['clinical.enabled'] === true || features['clinical.history'] === true
+  return hasClinicalCapability(features)
 }
 
 export async function canUseAi(userId: string): Promise<boolean> {
   const features = await loadSubscriptionFeatures(userId)
-  return (
-    features['ai.enabled'] === true &&
-    (features['ai.dictation'] === true || features['ai.insights'] === true)
-  )
+  return hasAiCapability(features)
 }
 
 export function isClinicalHistoryEnabled(): boolean {

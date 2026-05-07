@@ -101,7 +101,7 @@ export function NarrationScript() {
     setChecked((m) => ({ ...m, [id]: !m[id] }));
 
   return (
-    <div className="rounded-xl border border-border bg-secondary/5 p-3 space-y-2">
+    <div className="rounded-md border border-border bg-secondary/5 p-3 space-y-2">
       <button
         type="button"
         className="w-full flex items-center justify-between gap-2 text-left"

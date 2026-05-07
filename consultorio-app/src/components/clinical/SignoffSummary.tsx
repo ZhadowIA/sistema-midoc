@@ -33,16 +33,16 @@ export function SignoffSummary({
   const shortHash = signatureHash ? `${signatureHash.slice(0, 12)}…` : "—";
 
   return (
-    <Card className="border-emerald-200 bg-emerald-50/50 print:border-black print:bg-white">
+    <Card className="border-success/30 bg-success/10 print:border-black print:bg-white">
       <CardContent className="p-4 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-emerald-700" />
+            <ShieldCheck className="w-5 h-5 text-success" />
             <div>
-              <p className="font-semibold text-emerald-900">
+              <p className="font-semibold text-foreground">
                 Consulta firmada y cerrada
               </p>
-              <p className="text-xs text-emerald-800 flex items-center gap-1">
+              <p className="text-xs text-foreground/70 flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
                 {new Date(signedAt).toLocaleString()}
               </p>
@@ -51,7 +51,7 @@ export function SignoffSummary({
           <div className="text-right text-xs text-muted-foreground">
             <p>Hash de firma</p>
             <p
-              className="font-mono text-[11px] text-emerald-900"
+              className="font-mono text-[11px] text-foreground/80"
               title={signatureHash ?? undefined}
             >
               {shortHash}

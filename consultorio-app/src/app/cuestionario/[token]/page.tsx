@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef, Suspense, type FormEvent } from "react";
+import { useState, useEffect, Suspense, type FormEvent } from "react";
 import { use } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Send, CheckCircle2, Home, Activity, Thermometer,
   Stethoscope, Droplets, Brain, HeartPulse, ChevronRight, ChevronLeft,
-  Mic, Square, Bot, Sparkles
+  Bot, Sparkles, Mic
 } from "lucide-react";
+import { VoiceAiInterviewer } from "@/components/clinical/VoiceAiInterviewer";
 import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
 import { TextArea } from "@/components/TextArea";
@@ -30,7 +31,7 @@ const CHRONIC_CONDITIONS = [
 
 type DynamicAnswerValue = string | number | boolean;
 type DynamicAnswerMap = Record<string, DynamicAnswerValue>;
-const SELECT_FIELD_CLASSNAME = "w-full p-3 rounded-xl border border-border bg-input-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30";
+const SELECT_FIELD_CLASSNAME = "w-full p-3 rounded-md border border-border bg-input-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30";
 
 function getSymptomLabelById(symptomId: string): string {
   return SYMPTOM_CATALOG.find((item) => item.id === symptomId)?.label || symptomId;
@@ -39,6 +40,8 @@ function getSymptomLabelById(symptomId: string): string {
 function QuestionnaireWizard({ token }: { token: string }) {
   const router = useRouter();
   const [status, setStatus] = useState<"loading" | "form" | "success" | "error" | "already">("loading");
+  const [aiInterviewTextEnabled, setAiInterviewTextEnabled] = useState(false);
+  const [aiInterviewAudioEnabled, setAiInterviewAudioEnabled] = useState(false);
   const [step, setStep] = useState(1);
 
   // --- ESTADOS DEL FORMULARIO ---
@@ -103,15 +106,25 @@ function QuestionnaireWizard({ token }: { token: string }) {
 
   // --- ESTADOS DE ENTREVISTA IA ---
   const [aiMode, setAiMode] = useState(false);
+  const [voiceAiMode, setVoiceAiMode] = useState(false);
   const [interviewHistory, setInterviewHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   const [aiStep, setAiStep] = useState(0);
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const [aiSummary, setAiSummary] = useState("");
+  const [aiPossibleConditions, setAiPossibleConditions] = useState<string[]>([]);
+  const [aiPhysicalExamChecklist, setAiPhysicalExamChecklist] = useState<string[]>([]);
   const [currentAiQuestion, setCurrentAiQuestion] = useState("¡Hola! Soy tu asistente virtual. Cuéntame con tus propias palabras, ¿qué molestias te traen hoy a la consulta?");
 
   const startAiInterview = () => {
     setAiMode(true);
-    setStep(2); // Pasamos al paso 2 pero en modo IA
+    setVoiceAiMode(false);
+    setStep(2);
+  };
+
+  const startVoiceAiInterview = () => {
+    setAiMode(true);
+    setVoiceAiMode(true);
+    setStep(2);
   };
 
   useEffect(() => {
@@ -120,7 +133,11 @@ function QuestionnaireWizard({ token }: { token: string }) {
       .then(data => {
         if (data.error) setStatus("error");
         else if (data.status === "ANSWERED") setStatus("already");
-        else setStatus("form");
+        else {
+          setAiInterviewTextEnabled(data?.capabilities?.aiInterviewTextEnabled === true);
+          setAiInterviewAudioEnabled(data?.capabilities?.aiInterviewAudioEnabled === true);
+          setStatus("form");
+        }
       })
       .catch(() => setStatus("error"));
   }, [token]);
@@ -166,7 +183,9 @@ function QuestionnaireWizard({ token }: { token: string }) {
           allergies,
           aiInterview: aiMode ? {
             history: interviewHistory,
-            summary: aiSummary
+            summary: aiSummary,
+            possibleConditions: aiPossibleConditions,
+            physicalExamChecklist: aiPhysicalExamChecklist,
           } : undefined
         }
       };
@@ -331,94 +350,21 @@ function QuestionnaireWizard({ token }: { token: string }) {
     }
   };
 
-  // --- COMPONENTE DE ENTREVISTA POR VOZ ---
-  const VoiceInterviewer = () => {
-    const [isRecording, setIsRecording] = useState(false);
-    const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
-    const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // --- COMPONENTE DE ENTREVISTA POR TEXTO ---
+  const TextAiInterviewer = () => {
+    const [answer, setAnswer] = useState("");
 
-    const stopRecording = () => {
-      if (mediaRecorder && mediaRecorder.state !== "inactive") {
-        mediaRecorder.stop();
-        setIsRecording(false);
-      }
-      if (silenceTimeoutRef.current) {
-        clearTimeout(silenceTimeoutRef.current);
-        silenceTimeoutRef.current = null;
-      }
-    };
-
-    const startRecording = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const recorder = new MediaRecorder(stream);
-        const chunks: Blob[] = [];
-
-        // Detección de silencio básica
-        const audioContextCtor =
-          window.AudioContext ??
-          ((window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
-        if (!audioContextCtor) {
-          throw new Error("AudioContext no está disponible en este navegador.");
-        }
-        const audioContext = new audioContextCtor();
-        const source = audioContext.createMediaStreamSource(stream);
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-
-        const bufferLength = analyser.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength);
-
-        const checkSilence = () => {
-          if (recorder.state === "inactive") return;
-          analyser.getByteFrequencyData(dataArray);
-          const average = dataArray.reduce((a, b) => a + b) / bufferLength;
-
-          if (average < 10) { // Umbral de silencio
-            if (!silenceTimeoutRef.current) {
-              silenceTimeoutRef.current = setTimeout(() => {
-                console.log("Silencio detectado, deteniendo...");
-                stopRecording();
-              }, 2000);
-            }
-          } else {
-            if (silenceTimeoutRef.current) {
-              clearTimeout(silenceTimeoutRef.current);
-              silenceTimeoutRef.current = null;
-            }
-          }
-          requestAnimationFrame(checkSilence);
-        };
-
-        recorder.ondataavailable = (e) => chunks.push(e.data);
-        recorder.onstop = async () => {
-          const blob = new Blob(chunks, { type: 'audio/webm' });
-          stream.getTracks().forEach(t => t.stop());
-          audioContext.close();
-          handleProcessAudio(blob);
-        };
-
-        recorder.start();
-        setMediaRecorder(recorder);
-        setIsRecording(true);
-        checkSilence();
-      } catch (err) {
-        console.error("Error al acceder al micrófono:", err);
-        alert("No se pudo acceder al micrófono. Por favor verifica los permisos.");
-      }
-    };
-
-    const handleProcessAudio = async (blob: Blob) => {
+    const handleSendAnswer = async () => {
+      if (!answer.trim()) return;
       setIsAiProcessing(true);
       try {
-        const formData = new FormData();
-        formData.append('audio', blob);
-        formData.append('history', JSON.stringify(interviewHistory));
-
         const res = await fetch(`/api/clinical/public/questionnaire/${token}/ai-interview`, {
           method: 'POST',
-          body: formData
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            textAnswer: answer.trim(),
+            history: interviewHistory,
+          }),
         });
 
         const data = await res.json();
@@ -426,21 +372,25 @@ function QuestionnaireWizard({ token }: { token: string }) {
 
         const newHistory = [
           ...interviewHistory,
-          { role: 'user' as const, content: data.transcript },
+          { role: 'user' as const, content: answer.trim() },
           { role: 'assistant' as const, content: data.isFinished ? "¡Perfecto! He recolectado toda la información necesaria." : data.question }
         ];
 
         setInterviewHistory(newHistory);
+        setAnswer("");
         setAiStep(prev => prev + 1);
 
         if (data.isFinished) {
           setAiSummary(data.summary || "");
+          setAiPossibleConditions(Array.isArray(data.possibleConditions) ? data.possibleConditions : []);
+          setAiPhysicalExamChecklist(Array.isArray(data.physicalExamChecklist) ? data.physicalExamChecklist : []);
           setTimeout(() => setStep(3), 2500);
         } else {
           setCurrentAiQuestion(data.question);
         }
       } catch (err) {
-        console.error("Error procesando audio:", err);
+        console.error("Error procesando respuesta:", err);
+        alert(err instanceof Error ? err.message : "No se pudo procesar tu respuesta.");
       } finally {
         setIsAiProcessing(false);
       }
@@ -451,7 +401,7 @@ function QuestionnaireWizard({ token }: { token: string }) {
         <div className="text-center py-6 space-y-4">
           <div className="flex justify-center">
             <div className="bg-success/10 p-3 rounded-full">
-              <CheckCircle2 className="w-8 h-8 text-success animate-bounce" />
+              <CheckCircle2 className="w-8 h-8 text-success" />
             </div>
           </div>
           <p className="font-medium">Entrevista completada con éxito.</p>
@@ -462,7 +412,10 @@ function QuestionnaireWizard({ token }: { token: string }) {
 
     return (
       <div className="space-y-6">
-        <div className="bg-primary/5 border border-primary/10 rounded-2xl p-6 relative overflow-hidden">
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          La IA solo apoya la recopilación de antecedentes. No emite diagnóstico autónomo.
+        </div>
+        <div className="bg-primary/5 border border-primary/10 rounded-lg p-6 relative overflow-hidden">
           <div className="absolute top-0 right-0 p-3">
             <Bot className="w-5 h-5 text-primary/40" />
           </div>
@@ -480,32 +433,40 @@ function QuestionnaireWizard({ token }: { token: string }) {
         </div>
 
         <div className="flex flex-col items-center gap-4">
-          <button
-            onClick={isRecording ? stopRecording : startRecording}
-            disabled={isAiProcessing}
-            className={`group relative w-20 h-20 rounded-full flex items-center justify-center transition-all ${
-              isRecording 
-                ? 'bg-red-500 shadow-lg shadow-red-200 animate-pulse' 
-                : 'bg-primary shadow-lg shadow-primary/20 hover:scale-110 active:scale-95'
-            } ${isAiProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            {isAiProcessing ? (
-              <div className="w-8 h-8 border-4 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : isRecording ? (
-              <Square className="w-8 h-8 text-white fill-white" />
-            ) : (
-              <Mic className="w-8 h-8 text-white" />
-            )}
-          </button>
-          
-          <div className="text-sm font-medium h-5 text-center">
-            {isAiProcessing ? "IA procesando tu respuesta..." : isRecording ? "Te escucho... (Habla ahora)" : "Toca el micrófono para responder"}
-          </div>
+          <TextArea
+            label="Tu respuesta"
+            value={answer}
+            onChange={(e) => setAnswer(e.target.value)}
+            placeholder="Escribe aquí lo que sientes o cómo iniciaron tus síntomas..."
+            rows={4}
+          />
+          <Button onClick={handleSendAnswer} disabled={isAiProcessing || !answer.trim()} fullWidth>
+            {isAiProcessing ? "IA procesando..." : "Enviar respuesta"}
+          </Button>
 
           {aiStep > 0 && (
-            <div className="w-full flex justify-center gap-1">
-              {[1, 2, 3, 4, 5].map((s) => (
-                <div key={s} className={`h-1.5 w-8 rounded-full transition-colors ${s <= aiStep ? 'bg-primary' : 'bg-primary/10'}`} />
+            <div className="w-full flex items-center gap-2">
+              <div className="flex gap-1 flex-1">
+                {[1, 2, 3, 4].map((s) => (
+                  <div
+                    key={s}
+                    className={`h-1.5 flex-1 rounded-full transition-colors ${
+                      s <= aiStep ? 'bg-primary' : 'bg-primary/10'
+                    }`}
+                  />
+                ))}
+              </div>
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                {aiStep < 4 ? `Pregunta ${aiStep} de máx. 4` : 'Última pregunta'}
+              </span>
+            </div>
+          )}
+          {interviewHistory.length > 0 && (
+            <div className="w-full rounded-md border border-border bg-secondary/20 p-3 space-y-2 max-h-56 overflow-y-auto">
+              {interviewHistory.map((item, idx) => (
+                <div key={`${idx}-${item.role}`} className="text-sm">
+                  <span className="font-semibold">{item.role === "assistant" ? "IA" : "Paciente"}:</span> {item.content}
+                </div>
               ))}
             </div>
           )}
@@ -559,15 +520,28 @@ function QuestionnaireWizard({ token }: { token: string }) {
             </div>
 
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <label className="text-sm font-semibold text-muted-foreground">¿Cuál es el motivo PRINCIPAL de la consulta?</label>
-                <button
-                  onClick={startAiInterview}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-colors"
-                >
-                  <Sparkles className="w-3 h-3" />
-                  NARRAR POR VOZ (IA)
-                </button>
+                <div className="flex gap-2">
+                  {aiInterviewAudioEnabled && (
+                    <button
+                      onClick={startVoiceAiInterview}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-colors"
+                    >
+                      <Mic className="w-3 h-3" />
+                      ENTREVISTA IA (VOZ)
+                    </button>
+                  )}
+                  {aiInterviewTextEnabled && (
+                    <button
+                      onClick={startAiInterview}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-colors"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      ENTREVISTA IA (TEXTO)
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {SYMPTOM_CATALOG.map(item => {
@@ -584,7 +558,7 @@ function QuestionnaireWizard({ token }: { token: string }) {
                           setDynData({});
                         }
                       }}
-                      className={`flex items-center gap-3 p-4 rounded-xl border-2 transition-all text-left ${isSelected ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:border-primary/30 hover:bg-secondary/30'}`}
+                      className={`flex items-center gap-3 p-4 rounded-md border-2 transition-all text-left ${isSelected ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:border-primary/30 hover:bg-secondary/30'}`}
                     >
                       <div className={`p-2 rounded-lg ${item.bg}`}><Icon className={`w-5 h-5 ${item.color}`} /></div>
                       <span className="font-medium text-sm">{item.label}</span>
@@ -601,11 +575,23 @@ function QuestionnaireWizard({ token }: { token: string }) {
         {step === 2 && (
           <motion.div key="2" initial={{opacity:0, x:20}} animate={{opacity:1, x:0}} exit={{opacity:0, x:-20}} className="space-y-6">
             <h2 className="text-xl font-semibold text-center mb-6">
-              {aiMode ? "Entrevista Inteligente" : "Paso 2: Detalles del Síntoma"}
+              {aiMode && voiceAiMode ? "Entrevista por Voz" : aiMode ? "Entrevista Inteligente" : "Paso 2: Detalles del Síntoma"}
             </h2>
             
-            {aiMode ? (
-              <VoiceInterviewer />
+            {aiMode && voiceAiMode ? (
+              <VoiceAiInterviewer
+                token={token}
+                onAdvanceStep={() => setAiStep((s) => s + 1)}
+                onFinished={({ history, summary, possibleConditions, physicalExamChecklist }) => {
+                  setInterviewHistory(history);
+                  setAiSummary(summary);
+                  setAiPossibleConditions(possibleConditions);
+                  setAiPhysicalExamChecklist(physicalExamChecklist);
+                  setTimeout(() => setStep(3), 1800);
+                }}
+              />
+            ) : aiMode ? (
+              <TextAiInterviewer />
             ) : (
               <>
                 <div className="space-y-2">
@@ -636,7 +622,7 @@ function QuestionnaireWizard({ token }: { token: string }) {
 
                 <div className="space-y-4">
                   {selectedSymptomCategories.map((symptomId, index) => (
-                    <div key={symptomId} className="rounded-xl border border-border/70 bg-secondary/15 p-4 space-y-4">
+                    <div key={symptomId} className="rounded-md border border-border/70 bg-secondary/15 p-4 space-y-4">
                       <div className="text-sm font-semibold text-foreground">
                         {index === 0 ? "Categoría principal" : "Categoría adicional"}: {getSymptomLabelById(symptomId)}
                       </div>
@@ -652,6 +638,7 @@ function QuestionnaireWizard({ token }: { token: string }) {
                 setStep(1);
                 if (aiMode) {
                   setAiMode(false);
+                  setVoiceAiMode(false);
                   setInterviewHistory([]);
                   setAiStep(0);
                 }
@@ -688,6 +675,26 @@ function QuestionnaireWizard({ token }: { token: string }) {
 
             <TextArea label="Medicamentos actuales (Los que toma diario o frecuentemente)" placeholder="Opcional..." value={meds} onChange={e => setMeds(e.target.value)} rows={2} />
             <TextArea label="¿Es alérgico a algún medicamento o alimento?" placeholder="Mencionar alergias conocidas..." value={allergies} onChange={e => setAllergies(e.target.value)} rows={2} />
+            {aiMode && (aiPossibleConditions.length > 0 || aiPhysicalExamChecklist.length > 0) && (
+              <div className="rounded-md border border-border bg-secondary/10 p-4 space-y-3">
+                {aiPossibleConditions.length > 0 && (
+                  <div>
+                    <p className="text-sm font-semibold">Posibles padecimientos orientativos</p>
+                    <ul className="list-disc pl-5 text-sm text-muted-foreground">
+                      {aiPossibleConditions.map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {aiPhysicalExamChecklist.length > 0 && (
+                  <div>
+                    <p className="text-sm font-semibold">Checklist sugerido de exploración física</p>
+                    <ul className="list-disc pl-5 text-sm text-muted-foreground">
+                      {aiPhysicalExamChecklist.map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex gap-3 pt-4">
               <Button variant="secondary" onClick={() => setStep(2)}><ChevronLeft className="w-4 h-4 mr-1"/> Atrás</Button>
@@ -709,7 +716,7 @@ export default function QuestionnairePage(props: { params: Promise<{ token: stri
     <div className="min-h-screen bg-background py-12 px-4 sm:px-6">
       <div className="max-w-2xl mx-auto">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 bg-primary/10 rounded-lg flex items-center justify-center mx-auto mb-4">
             <Stethoscope className="w-8 h-8 text-primary" />
           </div>
           <h1 className="text-3xl font-semibold text-foreground mb-4">Pre-Consulta Médica</h1>
@@ -718,7 +725,7 @@ export default function QuestionnairePage(props: { params: Promise<{ token: stri
           </p>
         </div>
 
-        <div className="bg-card border border-border rounded-2xl p-6 sm:p-8 shadow-sm">
+        <div className="bg-card border border-border rounded-lg p-6 sm:p-8 shadow-sm">
           <Suspense fallback={<FeedbackState variant="loading" title="Cargando sistema" compact />}>
             <QuestionnaireWizard token={params.token} />
           </Suspense>

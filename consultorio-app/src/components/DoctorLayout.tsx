@@ -3,7 +3,7 @@
 import { ReactNode, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { Calendar, Settings, LayoutDashboard, LogOut, Menu, X, Users, Moon, CreditCard, PieChart } from "lucide-react";
+import { Calendar, Settings, LayoutDashboard, LogOut, Menu, X, Users, Moon, CreditCard, PieChart, Brain, ClipboardList, ConciergeBell, Shield } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useTheme } from "@/components/ThemeProvider";
 
@@ -155,22 +155,27 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
   const { toggle } = useTheme();
 
   const navItems = [
-    { icon: LayoutDashboard, label: "Dashboard", path: "/medico/dashboard", module: "AGENDA" as const },
-    { icon: Calendar, label: "Agenda", path: "/medico/agenda", module: "AGENDA" as const },
-    { icon: PieChart, label: "Contabilidad", path: "/medico/contabilidad", doctorOnly: true, module: "AGENDA" as const },
-    { icon: Users, label: "Pacientes", path: "/medico/pacientes", doctorOnly: true, module: "CLINICAL_RECORDS" as const },
-    { icon: CreditCard, label: "Suscripción", path: "/medico/suscripcion", doctorOnly: true },
-    { icon: Settings, label: "Configuración", path: "/medico/configuracion", doctorOnly: true },
+    { icon: LayoutDashboard, label: "Dashboard",    path: "/medico/dashboard",      module: "AGENDA" as const,           section: "principal" },
+    { icon: Calendar,        label: "Agenda",        path: "/medico/agenda",          module: "AGENDA" as const,           section: "principal" },
+    { icon: ConciergeBell,   label: "Recepción",     path: "/medico/recepcion",       module: "AGENDA" as const,           section: "principal" },
+    { icon: Users,           label: "Pacientes",     path: "/medico/pacientes",       doctorOnly: true, module: "CLINICAL_RECORDS" as const, section: "pacientes" },
+    { icon: ClipboardList,   label: "Cuestionarios", path: "/medico/cuestionarios",   doctorOnly: true, module: "CLINICAL_RECORDS" as const, section: "pacientes" },
+    { icon: Brain,           label: "Gobernanza IA", path: "/medico/ia-gobernanza",   doctorOnly: true, section: "gestion" },
+    { icon: PieChart,        label: "Contabilidad",  path: "/medico/contabilidad",    doctorOnly: true, module: "AGENDA" as const,           section: "gestion" },
+    { icon: Settings,        label: "Configuración", path: "/medico/configuracion",   doctorOnly: true, section: "gestion" },
+    { icon: Shield,          label: "Seguridad",     path: "/medico/seguridad",       roles: ["ADMIN", "CLINIC_ADMIN"], section: "gestion" },
+    { icon: CreditCard,      label: "Suscripción",   path: "/medico/suscripcion",     doctorOnly: true, section: "gestion" },
   ];
 
   const filteredNavItems = navItems.filter(item => {
     if (userRole === "SECRETARY" && item.doctorOnly) return false;
+    if (Array.isArray(item.roles) && !item.roles.includes(userRole)) return false;
     if (item.module && !enabledModules.includes(item.module)) return false;
     return true;
   });
-  const agendaItems = filteredNavItems.filter((item) => item.module === "AGENDA");
-  const clinicalItems = filteredNavItems.filter((item) => item.module === "CLINICAL_RECORDS");
-  const commonItems = filteredNavItems.filter((item) => !item.module);
+  const principalItems = filteredNavItems.filter((item) => item.section === "principal");
+  const pacientesItems = filteredNavItems.filter((item) => item.section === "pacientes");
+  const gestionItems = filteredNavItems.filter((item) => item.section === "gestion");
 
   const initials = doctorName
     .split(" ")
@@ -180,133 +185,69 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
     .join("")
     .toUpperCase();
 
+  const renderNavSection = (label: string, items: typeof filteredNavItems) => {
+    if (items.length === 0) return null;
+    return (
+      <div key={label}>
+        <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-wider text-sidebar-muted uppercase">{label}</p>
+        {items.map((item) => {
+          const isActive = pathname.startsWith(item.path);
+          return (
+            <Link
+              key={item.path}
+              href={item.path}
+              onClick={() => setMobileMenuOpen(false)}
+              className={`flex min-h-[40px] items-center gap-3 px-3 py-2 rounded-md transition-all duration-150 text-xs font-medium ${
+                isActive
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                  : "text-sidebar-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+              }`}
+            >
+              <item.icon className="w-4 h-4 shrink-0" />
+              <span>{item.label}</span>
+            </Link>
+          );
+        })}
+      </div>
+    );
+  };
+
   const sidebarContent = (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-sidebar">
       {/* Logo */}
-      <div className="px-5 py-5 border-b border-border">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            {/* Stethoscope icon via SVG */}
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
-              <path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3" />
-              <path d="M8 15v1a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6v-4" />
-              <circle cx="20" cy="10" r="2" />
-            </svg>
-          </div>
-          <div>
-            <p className="font-semibold text-foreground leading-none">MiDoc</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Panel Médico</p>
-          </div>
+      <div className="flex items-center gap-3 px-4 py-4 border-b border-sidebar-border shrink-0">
+        <div
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm font-bold shrink-0"
+          style={{ background: "linear-gradient(135deg, #C9A227, #A88420)" }}
+        >
+          M
+        </div>
+        <div>
+          <p className="font-bold text-sidebar-foreground text-base leading-none">MiDoc</p>
+          <p className="text-[10px] text-sidebar-muted-foreground mt-0.5">Panel Médico</p>
         </div>
       </div>
 
-      {/* Doctor profile */}
-      <div className="px-5 py-4 border-b border-border">
-        <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full overflow-hidden bg-secondary border border-border shrink-0">
-              {doctorImage ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={doctorImage} alt={doctorName} className="w-full h-full object-cover" />
-              ) : (
-              <div className="w-full h-full flex items-center justify-center text-sm font-semibold text-primary bg-primary/10">
-                {initials}
-              </div>
-            )}
-          </div>
-          <div className="min-w-0">
-            <p className="font-semibold text-foreground text-sm truncate">{doctorName}</p>
-            <p className="text-xs text-muted-foreground truncate">{doctorSpecialty || "Médico"}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-1">
-        {agendaItems.length > 0 && (
-          <p className="px-3 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground/80 uppercase">
-            Agenda
-          </p>
-        )}
-        {agendaItems.map((item) => {
-          const isActive = pathname.startsWith(item.path);
-          return (
-            <Link
-              key={item.path}
-              href={item.path}
-              onClick={() => setMobileMenuOpen(false)}
-              className={`flex min-h-[48px] items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${
-                isActive
-                  ? "bg-primary text-primary-foreground font-medium shadow-sm"
-                  : "text-foreground hover:bg-secondary"
-              }`}
-            >
-              <item.icon className="w-4.5 h-4.5 shrink-0" />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
-        {clinicalItems.length > 0 && (
-          <p className="px-3 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground/80 uppercase">
-            Expediente clínico
-          </p>
-        )}
-        {clinicalItems.map((item) => {
-          const isActive = pathname.startsWith(item.path);
-          return (
-            <Link
-              key={item.path}
-              href={item.path}
-              onClick={() => setMobileMenuOpen(false)}
-              className={`flex min-h-[48px] items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${
-                isActive
-                  ? "bg-primary text-primary-foreground font-medium shadow-sm"
-                  : "text-foreground hover:bg-secondary"
-              }`}
-            >
-              <item.icon className="w-4.5 h-4.5 shrink-0" />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
-        {commonItems.length > 0 && (
-          <p className="px-3 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground/80 uppercase">
-            Cuenta
-          </p>
-        )}
-        {commonItems.map((item) => {
-          const isActive = pathname.startsWith(item.path);
-          return (
-            <Link
-              key={item.path}
-              href={item.path}
-              onClick={() => setMobileMenuOpen(false)}
-              className={`flex min-h-[48px] items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${
-                isActive
-                  ? "bg-primary text-primary-foreground font-medium shadow-sm"
-                  : "text-foreground hover:bg-secondary"
-              }`}
-            >
-              <item.icon className="w-4.5 h-4.5 shrink-0" />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
+      {/* Nav — scrollable */}
+      <nav className="sidebar-scroll flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+        {renderNavSection("Principal", principalItems)}
+        {renderNavSection("Pacientes", pacientesItems)}
+        {renderNavSection("Gestión", gestionItems)}
       </nav>
 
       {/* Footer */}
-      <div className="px-3 pb-4 space-y-1">
+      <div className="p-2 border-t border-sidebar-border space-y-1 shrink-0">
         {/* WhatsApp status */}
-        <div className="mx-2 mb-2 px-3 py-2 bg-secondary rounded-xl flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full shrink-0 ${waConnected ? "bg-success" : "bg-muted-foreground"}`} />
-          <span className="text-xs text-foreground font-medium">
+        <div className="px-3 py-2 flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${waConnected ? "bg-green-500" : "bg-sidebar-muted"}`} />
+          <span className="text-[10px] text-sidebar-muted-foreground font-medium">
             WhatsApp {waConnected ? "conectado" : "desconectado"}
           </span>
         </div>
 
-        {/* Theme toggle */}
         <button
           onClick={toggle}
-          className="flex min-h-[48px] items-center gap-3 px-3 py-2.5 rounded-xl w-full text-muted-foreground hover:text-foreground hover:bg-secondary transition-all text-sm"
+          className="flex min-h-[36px] items-center gap-3 px-3 py-2 rounded-md w-full text-sidebar-muted hover:text-sidebar-foreground hover:bg-sidebar-accent transition-all text-xs"
         >
           <Moon className="w-4 h-4 shrink-0" />
           <span>Cambiar tema</span>
@@ -314,11 +255,29 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
 
         <button
           onClick={handleLogout}
-          className="flex min-h-[48px] items-center gap-3 px-3 py-2.5 rounded-xl w-full text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-all text-sm"
+          className="flex min-h-[36px] items-center gap-3 px-3 py-2 rounded-md w-full text-sidebar-muted hover:text-red-400 hover:bg-sidebar-accent transition-all text-xs"
         >
           <LogOut className="w-4 h-4 shrink-0" />
           <span>Cerrar sesión</span>
         </button>
+
+        {/* Doctor profile */}
+        <div className="flex items-center gap-2.5 px-3 py-2 mt-1">
+          <div className="w-8 h-8 rounded-full overflow-hidden bg-sidebar-primary/20 border border-sidebar-primary/30 shrink-0">
+            {doctorImage ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={doctorImage} alt={doctorName} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-xs font-semibold text-sidebar-primary">
+                {initials}
+              </div>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-sidebar-foreground truncate">{doctorName}</p>
+            <p className="text-[10px] text-sidebar-muted-foreground truncate">{doctorSpecialty || "Médico"} · Pro</p>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -326,22 +285,19 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
   return (
     <div className="h-screen bg-background flex overflow-hidden">
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex lg:sticky lg:top-0 h-screen overflow-y-auto flex-col w-72 bg-card border-r border-border shrink-0">
+      <aside className="hidden lg:flex lg:sticky lg:top-0 h-screen overflow-y-auto flex-col w-56 bg-sidebar shrink-0">
         {sidebarContent}
       </aside>
 
       {/* Mobile Header */}
-      <div className="lg:hidden fixed top-0 left-0 right-0 bg-card border-b border-border z-40 h-14">
+      <div className="lg:hidden fixed top-0 left-0 right-0 bg-sidebar border-b border-sidebar-border z-40 h-14">
         <div className="flex items-center justify-between h-full px-4">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
-                <path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3" />
-                <path d="M8 15v1a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6v-4" />
-                <circle cx="20" cy="10" r="2" />
-              </svg>
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold"
+              style={{ background: "linear-gradient(135deg, #C9A227, #A88420)" }}>
+              M
             </div>
-            <span className="font-semibold text-foreground">MiDoc</span>
+            <span className="font-semibold text-sidebar-foreground">MiDoc</span>
           </div>
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -360,7 +316,7 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="lg:hidden fixed inset-0 bg-black/30 z-40"
+              className="lg:hidden fixed inset-0 bg-foreground/30 backdrop-blur-sm z-40"
               onClick={() => setMobileMenuOpen(false)}
             />
             <motion.aside
@@ -368,7 +324,7 @@ export const DoctorLayout = ({ children }: DoctorLayoutProps) => {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", damping: 28, stiffness: 260 }}
-              className="lg:hidden fixed top-0 left-0 bottom-0 w-72 bg-card z-50 flex flex-col"
+              className="lg:hidden fixed top-0 left-0 bottom-0 w-56 bg-sidebar z-50 flex flex-col"
             >
               {sidebarContent}
             </motion.aside>

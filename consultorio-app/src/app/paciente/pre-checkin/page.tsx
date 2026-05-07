@@ -130,7 +130,7 @@ export default function PreCheckinPage() {
         <Button variant="secondary" onClick={() => router.push("/paciente/historial")}>Volver</Button>
       </div>
 
-      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
+      <section className="rounded-md border border-border bg-card p-4 space-y-3">
         <h2 className="font-semibold">Checklist previo a consulta</h2>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={attendanceConfirmed} onChange={(e) => setAttendanceConfirmed(e.target.checked)} /> Confirmo asistencia</label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={demographicsConfirmed} onChange={(e) => setDemographicsConfirmed(e.target.checked)} /> Confirmo mis datos demográficos</label>
@@ -147,20 +147,20 @@ export default function PreCheckinPage() {
         <Button onClick={savePrecheckin}>Guardar pre-check-in</Button>
       </section>
 
-      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
+      <section className="rounded-md border border-border bg-card p-4 space-y-3">
         <h2 className="font-semibold">Carga documental</h2>
         <Input label="Nombre del documento" value={docName} onChange={(e) => setDocName(e.target.value)} />
         <Input label="URL del documento" value={docUrl} onChange={(e) => setDocUrl(e.target.value)} />
         <Button onClick={uploadDocument}>Registrar documento</Button>
       </section>
 
-      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
+      <section className="rounded-md border border-border bg-card p-4 space-y-3">
         <h2 className="font-semibold">Consentimientos digitales</h2>
         <p className="text-sm text-muted-foreground">Acepta consentimiento para tratamiento de datos sensibles.</p>
         <Button onClick={acceptConsent}>Aceptar consentimiento</Button>
       </section>
 
-      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
+      <section className="rounded-md border border-border bg-card p-4 space-y-3">
         <h2 className="font-semibold">Solicitud ARCO</h2>
         <select className="w-full rounded-md border border-border bg-background p-2" value={arcoType} onChange={(e) => setArcoType(e.target.value)}>
           <option value="ACCESS">Acceso</option>

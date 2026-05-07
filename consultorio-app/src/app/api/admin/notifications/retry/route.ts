@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { requireAgendaAccess } from '@/lib/medicalApi'
 import { NotificationService } from '@/services/NotificationService'
+import { SUBSCRIPTION_FEATURES } from '@/lib/subscriptionFeatures'
 
 const bodySchema = z.object({
   notificationId: z.string().min(1).optional(),
@@ -10,8 +11,13 @@ const bodySchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireAgendaAccess({
+      allowSecretary: true,
+      requiredFeature: SUBSCRIPTION_FEATURES.AGENDA_REMINDERS_WHATSAPP,
+      featureForbiddenMessage: 'Los recordatorios de agenda no están incluidos en tu plan.',
+    })
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     const parsed = bodySchema.safeParse(await request.json().catch(() => ({})))
     if (!parsed.success) {

@@ -6,13 +6,51 @@ import { getDoctorSetupStatus } from "@/lib/setupStatus";
 import { attachSessionCookie, buildSessionToken } from "@/lib/session";
 import { getServerEnv } from "@/lib/env";
 import { captureError, logEvent } from "@/lib/observability";
-import { COMMERCIAL_BASE_PLANS, resolveCommercialPlan } from "@/lib/subscriptionCatalog";
+import {
+  COMMERCIAL_ADD_ONS,
+  COMMERCIAL_BASE_PLANS,
+  resolveCommercialPlan,
+  type CommercialAddOn,
+  type CommercialBasePlan,
+} from "@/lib/subscriptionCatalog";
 import { Prisma } from "@prisma/client";
 import { buildProductAccessFromFeatures } from "@/lib/productAccess";
 
-const MONTHLY_PLAN_AMOUNT = 899;
+const PLAN_PRICES: Record<CommercialBasePlan, number> = {
+  AGENDA: 299,
+  CLINICAL: 449,
+  INTEGRAL: 599,
+};
 
-export async function POST() {
+const ADD_ON_PRICES: Record<CommercialAddOn, number> = {
+  AI_30: 359,
+  AI_60: 669,
+  AI_100: 999,
+};
+
+function parsePlanFromBody(body: Record<string, unknown>) {
+  const validBasePlans = Object.values(COMMERCIAL_BASE_PLANS) as string[];
+  const validAddOns = Object.values(COMMERCIAL_ADD_ONS) as string[];
+
+  const basePlan =
+    typeof body.basePlan === "string" && validBasePlans.includes(body.basePlan)
+      ? (body.basePlan as CommercialBasePlan)
+      : COMMERCIAL_BASE_PLANS.INTEGRAL;
+
+  const rawAddOns = Array.isArray(body.addOns) ? body.addOns : [];
+  const addOns = rawAddOns.filter(
+    (item): item is CommercialAddOn =>
+      typeof item === "string" && validAddOns.includes(item),
+  );
+
+  const amount =
+    PLAN_PRICES[basePlan] +
+    addOns.reduce((sum, addOn) => sum + ADD_ON_PRICES[addOn], 0);
+
+  return { basePlan, addOns, amount };
+}
+
+export async function POST(request: Request) {
   try {
     const authUser = await getAuthenticatedUser();
     if (!authUser) {
@@ -22,9 +60,13 @@ export async function POST() {
       return NextResponse.json({ error: "Sin permisos" }, { status: 403 });
     }
 
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const { basePlan, addOns, amount: planAmount } = parsePlanFromBody(body);
+
     const env = getServerEnv();
     const now = new Date();
-    const selectedPlan = resolveCommercialPlan({ basePlan: COMMERCIAL_BASE_PLANS.INTEGRAL });
+    const selectedPlan = resolveCommercialPlan({ basePlan, addOns });
+    const MONTHLY_PLAN_AMOUNT = planAmount;
     const existing = await prisma.doctorSubscription.findUnique({
       where: { doctorId: authUser.id },
       select: { currentPeriodEnd: true, status: true },

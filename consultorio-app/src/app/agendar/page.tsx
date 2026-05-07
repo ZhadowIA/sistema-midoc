@@ -8,10 +8,11 @@ import { Button } from "@/components/Button";
 import { FeedbackState } from "@/components/FeedbackState";
 import { Input } from "@/components/Input";
 import { RadioGroup } from "@/components/RadioGroup";
+import { formatSpecialty } from "@/lib/specialtyTemplates";
 import { Select } from "@/components/Select";
 import { TimeSlot } from "@/components/TimeSlot";
 import { useSearchParams, useRouter } from "next/navigation";
-import { format, addDays, addMonths, startOfMonth, startOfToday } from "date-fns";
+import { format, addDays, addMonths, startOfMonth, startOfToday, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import { parseFullName } from "@/lib/patientName";
 import { GENDER_OPTIONS, RELATION_OPTIONS, SEX_OPTIONS } from "@/lib/bookingOptions";
@@ -23,6 +24,7 @@ import {
   hasValidPhone,
   isSlotHoldActive,
 } from "@/lib/bookingFlow";
+import { useFunnelTracking } from "@/hooks/useFunnelTracking";
 
 const RECAPTCHA_SITE_KEY = process.env.NEXT_PUBLIC_RECAPTCHA_V3_SITE_KEY || "";
 
@@ -91,15 +93,32 @@ function BookingFlowContent() {
   const slugParam = searchParams.get('doctor');
   const inviteEmailParam = searchParams.get("inviteEmail")?.trim().toLowerCase() || "";
   const inviteAuthParam = searchParams.get("auth");
+  const dateParam = searchParams.get("date");   // yyyy-MM-dd
+  const timeParam = searchParams.get("time");   // HH:mm
+  const typeParam = searchParams.get("type");   // "normal" | "extended"
+  const hasPreselectedSlot = Boolean(slugParam && dateParam && timeParam);
 
   const [currentStep, setCurrentStep] = useState<Step>("auth");
+  const { track, getUtmContext } = useFunnelTracking();
   const [doctors, setDoctors] = useState<PublicDoctor[]>([]);
   const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(null);
   const [loadingDoctors, setLoadingDoctors] = useState(true);
 
-  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
-  const [selectedTime, setSelectedTime] = useState<string | null>(null);
-  const [consultType, setConsultType] = useState<"normal" | "extended">("normal");
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(() => {
+    if (dateParam) { try { return parseISO(dateParam); } catch { return undefined; } }
+    return undefined;
+  });
+  const [selectedTime, setSelectedTime] = useState<string | null>(() => {
+    if (hasPreselectedSlot && dateParam && timeParam) {
+      // Reconstruct ISO startTime from date + time params
+      return `${dateParam}T${timeParam}:00.000Z`;
+    }
+    return null;
+  });
+  const [consultType, setConsultType] = useState<"normal" | "extended">(() => {
+    if (typeParam === "extended") return "extended";
+    return "normal";
+  });
   const [formData, setFormData] = useState({
     firstName: "",
     lastNamePaternal: "",
@@ -312,13 +331,50 @@ function BookingFlowContent() {
   ];
 
   useEffect(() => {
+    track('BOOKING_VISIT', { doctorId: slugParam ? undefined : undefined });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     if (slugParam) {
       fetch(`/api/agenda/public/doctors?slug=${slugParam}`)
         .then(res => res.json())
-        .then(data => {
+        .then(async (data) => {
           if (data && !data.error) {
             setSelectedDoctorId(data.id);
             setDoctors([data]);
+
+            // Auto-acquire hold when slot is pre-selected from profile page
+            if (hasPreselectedSlot && dateParam && timeParam) {
+              const appointmentType = typeParam === "extended" ? "EXTENDED" : "NORMAL";
+              // Build ISO from local date + time (treat as local time, not UTC)
+              const [h, m] = timeParam.split(":").map(Number);
+              const startLocal = new Date(`${dateParam}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`);
+              try {
+                const holdRes = await fetch("/api/agenda/public/availability/hold", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    doctorId: data.id,
+                    startTime: startLocal.toISOString(),
+                    appointmentType,
+                  }),
+                });
+                if (holdRes.ok) {
+                  const holdData = await holdRes.json();
+                  const holdState: SlotHoldState = {
+                    token: holdData.holdToken,
+                    doctorId: data.id,
+                    startTime: startLocal.toISOString(),
+                    appointmentType,
+                    expiresAt: holdData.expiresAt,
+                  };
+                  setSlotHold(holdState);
+                  slotHoldRef.current = holdState;
+                  setSelectedTime(startLocal.toISOString());
+                }
+              } catch { /* non-blocking — user can re-select */ }
+            }
           }
         })
         .finally(() => setLoadingDoctors(false));
@@ -330,7 +386,7 @@ function BookingFlowContent() {
         })
         .finally(() => setLoadingDoctors(false));
     }
-  }, [slugParam]);
+  }, [slugParam, dateParam, hasPreselectedSlot, timeParam, typeParam]);
 
   const applyPatientSession = (payload: PatientAuthPayload) => {
     if (!payload.user || payload.user.role !== "PATIENT") return;
@@ -559,11 +615,19 @@ function BookingFlowContent() {
     }
   }, [consultType, currentStep, releaseSlotHold, selectedDate, selectedDoctorId]);
 
+  useEffect(() => {
+    if (selectedDoctorId && currentStep === 'doctor') {
+      track('DOCTOR_SELECTED', { doctorId: selectedDoctorId });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDoctorId]);
+
   const handleSelectTime = async (slotStart: string) => {
     setApiError("");
     const holdOk = await requestSlotHold(slotStart);
     if (holdOk) {
       setSelectedTime(slotStart);
+      track('SLOT_SELECTED', { doctorId: selectedDoctorId ?? undefined });
     }
   };
 
@@ -581,8 +645,12 @@ function BookingFlowContent() {
       currentStep,
       hasPreselectedDoctor: Boolean(slugParam),
       hasCompletePatientData: hasCompletePatientData(),
+      hasPreselectedSlot,
     });
     if (!nextStep) return;
+    if (currentStep === 'auth') track('BOOKING_STARTED', { doctorId: selectedDoctorId ?? undefined });
+    if (nextStep === 'info') track('PATIENT_INFO_STARTED', { doctorId: selectedDoctorId ?? undefined });
+    if (nextStep === 'confirm') track('PATIENT_INFO_COMPLETED', { doctorId: selectedDoctorId ?? undefined });
     setCurrentStep(nextStep);
   };
 
@@ -591,6 +659,7 @@ function BookingFlowContent() {
       currentStep,
       hasPreselectedDoctor: Boolean(slugParam),
       hasCompletePatientData: hasCompletePatientData(),
+      hasPreselectedSlot,
     });
     if (!prevStep) {
       router.push("/");
@@ -699,6 +768,7 @@ function BookingFlowContent() {
 
       try {
         const recaptchaToken = await executeRecaptcha();
+        const utm = getUtmContext();
         const res = await fetch('/api/agenda/public/appointments', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -715,6 +785,11 @@ function BookingFlowContent() {
               holdToken: activeHold.token,
               privacyConsentAccepted,
               recaptchaToken,
+              utmSource: utm?.utmSource,
+              utmMedium: utm?.utmMedium,
+              utmCampaign: utm?.utmCampaign,
+              utmContent: utm?.utmContent,
+              referrerChannel: utm?.referrerChannel,
             })
           )
         });
@@ -732,6 +807,11 @@ function BookingFlowContent() {
         setSlotHold(null);
         setHoldSecondsLeft(null);
 
+        track('BOOKING_CONFIRMED', {
+          doctorId: selectedDoctorId ?? undefined,
+          appointmentId: data.appointmentId ?? undefined,
+        });
+
         try {
           if (data.appointment) {
             sessionStorage.setItem(
@@ -745,11 +825,25 @@ function BookingFlowContent() {
                 doctor: data.appointment.doctor,
                 patientName: [formData.firstName, formData.lastNamePaternal, formData.lastNameMaternal].filter(Boolean).join(" ").trim(),
                 questionnaireUrl: data.questionnaire?.url ?? null,
+                payment: data.payment ?? null,
               })
             );
           }
         } catch {
           // ignore storage errors
+        }
+
+        if (data.payment?.status === "PAYMENT_PENDING" && data.appointment?.id) {
+          const paymentRes = await fetch(
+            `/api/payments/appointments/${data.appointment.id}/deposit/checkout`,
+            { method: "POST" }
+          );
+          const paymentData = await paymentRes.json();
+          if (!paymentRes.ok || !paymentData.checkoutUrl) {
+            throw new Error(paymentData.error || "No se pudo iniciar el pago del anticipo");
+          }
+          window.location.href = paymentData.checkoutUrl;
+          return;
         }
 
         if (data.questionnaire && data.questionnaire.url) {
@@ -962,7 +1056,7 @@ function BookingFlowContent() {
             {currentStep === "auth" && (
               <motion.div key="auth" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, x: -20 }}>
                 {inviteEmailParam && !isLoggedIn && (
-                  <div className="mb-6 rounded-xl border border-primary/30 bg-primary/10 p-3 text-sm">
+                  <div className="mb-6 rounded-md border border-primary/30 bg-primary/10 p-3 text-sm">
                     Invitación detectada. Usa el correo <span className="font-semibold">{inviteEmailParam}</span>{" "}
                     para vincular tu cuenta con tu expediente.
                   </div>
@@ -1047,8 +1141,8 @@ function BookingFlowContent() {
                     <h2 className="text-2xl font-semibold mb-2">Iniciar Sesión</h2>
                     <p className="text-muted-foreground mb-6">Ingresa a tu cuenta de paciente.</p>
                     <form onSubmit={handleLogin} className="space-y-4">
-                      <Input label="Correo" type="email" value={loginForm.email} onChange={e => setLoginForm({...loginForm, email: e.target.value})} required/>
-                      <Input label="Contraseña" type="password" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} required/>
+                      <Input label="Correo" type="email" autoComplete="email" value={loginForm.email} onChange={e => setLoginForm({...loginForm, email: e.target.value})} required/>
+                      <Input label="Contraseña" type="password" autoComplete="current-password" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} required/>
                       <Button fullWidth type="submit" className="h-12 mt-4">Entrar</Button>
                       <p className="text-center text-sm text-muted-foreground pt-2">
                         ¿No tienes cuenta?{" "}
@@ -1065,17 +1159,17 @@ function BookingFlowContent() {
                     <p className="text-muted-foreground mb-6">Es gratis y solo toma un momento.</p>
                     <form onSubmit={handleRegister} className="space-y-4">
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <Input label="Nombre" placeholder="Tu nombre" value={registerForm.firstName} onChange={e => setRegisterForm({...registerForm, firstName: e.target.value})} required/>
-                        <Input label="Apellido paterno" placeholder="Pérez" value={registerForm.lastNamePaternal} onChange={e => setRegisterForm({...registerForm, lastNamePaternal: e.target.value})} required/>
+                        <Input label="Nombre" autoComplete="given-name" placeholder="Tu nombre" value={registerForm.firstName} onChange={e => setRegisterForm({...registerForm, firstName: e.target.value})} required/>
+                        <Input label="Apellido paterno" autoComplete="family-name" placeholder="Pérez" value={registerForm.lastNamePaternal} onChange={e => setRegisterForm({...registerForm, lastNamePaternal: e.target.value})} required/>
                         <Input label="Apellido materno" placeholder="López" value={registerForm.lastNameMaternal} onChange={e => setRegisterForm({...registerForm, lastNameMaternal: e.target.value})}/>
                       </div>
-                      <Input label="Correo electrónico" type="email" placeholder="tu@email.com" value={registerForm.email} onChange={e => setRegisterForm({...registerForm, email: e.target.value})} required/>
+                      <Input label="Correo electrónico" type="email" autoComplete="email" placeholder="tu@email.com" value={registerForm.email} onChange={e => setRegisterForm({...registerForm, email: e.target.value})} required/>
                       <div className="grid grid-cols-2 gap-3">
-                        <Input label="Teléfono" type="tel" inputMode="numeric" placeholder="10 dígitos" value={registerForm.phone} onChange={e => setRegisterForm({...registerForm, phone: e.target.value})} required/>
-                        <Input label="Nacimiento" type="date" value={registerForm.dateOfBirth} onChange={e => setRegisterForm({...registerForm, dateOfBirth: e.target.value})} required/>
+                        <Input label="Teléfono" type="tel" autoComplete="tel" inputMode="numeric" placeholder="10 dígitos" value={registerForm.phone} onChange={e => setRegisterForm({...registerForm, phone: e.target.value})} required/>
+                        <Input label="Nacimiento" type="date" autoComplete="bday" value={registerForm.dateOfBirth} onChange={e => setRegisterForm({...registerForm, dateOfBirth: e.target.value})} required/>
                       </div>
-                      <Input label="Contraseña" type="password" placeholder="Mínimo 6 caracteres" value={registerForm.password} onChange={e => setRegisterForm({...registerForm, password: e.target.value})} required/>
-                      <Input label="Confirmar contraseña" type="password" placeholder="Repite tu contraseña" value={registerForm.confirmPassword} onChange={e => setRegisterForm({...registerForm, confirmPassword: e.target.value})} required/>
+                      <Input label="Contraseña" type="password" autoComplete="new-password" placeholder="Mínimo 6 caracteres" value={registerForm.password} onChange={e => setRegisterForm({...registerForm, password: e.target.value})} required/>
+                      <Input label="Confirmar contraseña" type="password" autoComplete="new-password" placeholder="Repite tu contraseña" value={registerForm.confirmPassword} onChange={e => setRegisterForm({...registerForm, confirmPassword: e.target.value})} required/>
                       <Button fullWidth type="submit" className="h-12 mt-4">Crear cuenta y continuar</Button>
                       <p className="text-center text-sm text-muted-foreground pt-2">
                         ¿Ya tienes cuenta?{" "}
@@ -1110,7 +1204,7 @@ function BookingFlowContent() {
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                         onClick={() => setSelectedDoctorId(doc.id)}
-                        className={`p-4 rounded-xl border-2 transition-all flex gap-4 text-left ${selectedDoctorId === doc.id ? "border-primary bg-primary/5 shadow-md" : "border-border hover:border-primary/50"}`}
+                        className={`p-4 rounded-md border-2 transition-all flex gap-4 text-left ${selectedDoctorId === doc.id ? "border-primary bg-primary/5 shadow-md" : "border-border hover:border-primary/50"}`}
                       >
                         <div className="w-16 h-16 rounded-full overflow-hidden bg-secondary flex-shrink-0">
                           {doc.profileImage ? (
@@ -1122,7 +1216,7 @@ function BookingFlowContent() {
                         </div>
                         <div>
                           <div className="font-semibold text-foreground text-lg">{doc.name}</div>
-                          <div className="text-sm text-primary font-medium mb-1">{doc.specialty || "Médico Especialista"}</div>
+                          <div className="text-sm text-primary font-medium mb-1">{formatSpecialty(doc.specialty)}</div>
                         </div>
                       </motion.button>
                     ))}
@@ -1155,7 +1249,7 @@ function BookingFlowContent() {
                   <p className="text-muted-foreground">Solo se muestran días con horarios disponibles</p>
                 </div>
 
-                <div className="w-full max-w-4xl mx-auto bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
+                <div className="w-full max-w-4xl mx-auto bg-card border border-border rounded-lg shadow-sm overflow-hidden">
                   {/* Month Navigator */}
                   <div className="flex items-center justify-between px-6 py-5 border-b border-border">
                     <button
@@ -1215,7 +1309,7 @@ function BookingFlowContent() {
                           if (dayNum < 1) {
                             const prevDay = daysInPrevMonth + dayNum;
                             return (
-                              <div key={i} className="aspect-square w-full rounded-xl text-sm md:text-base flex items-center justify-center text-muted-foreground/25">
+                              <div key={i} className="aspect-square w-full rounded-md text-sm md:text-base flex items-center justify-center text-muted-foreground/25">
                                 {prevDay}
                               </div>
                             );
@@ -1223,7 +1317,7 @@ function BookingFlowContent() {
                           if (dayNum > daysInMonth) {
                             const nextDay = dayNum - daysInMonth;
                             return (
-                              <div key={i} className="aspect-square w-full rounded-xl text-sm md:text-base flex items-center justify-center text-muted-foreground/25">
+                              <div key={i} className="aspect-square w-full rounded-md text-sm md:text-base flex items-center justify-center text-muted-foreground/25">
                                 {nextDay}
                               </div>
                             );
@@ -1256,7 +1350,7 @@ function BookingFlowContent() {
                               }}
                               disabled={isDisabled}
                               className={`
-                                aspect-square w-full rounded-xl text-base md:text-lg font-medium transition-all flex items-center justify-center
+                                aspect-square w-full rounded-md text-base md:text-lg font-medium transition-all flex items-center justify-center
                                 ${isSelected
                                   ? "bg-primary text-primary-foreground shadow-md"
                                   : hasSlots && !isDisabled
@@ -1302,7 +1396,7 @@ function BookingFlowContent() {
 
                 {loadingSlots ? (
                   <div className="grid grid-cols-3 md:grid-cols-4 gap-3 animate-pulse">
-                    {[1,2,3,4,5].map(i => <div key={i} className="h-12 bg-secondary rounded-xl"></div>)}
+                    {[1,2,3,4,5].map(i => <div key={i} className="h-12 bg-secondary rounded-md"></div>)}
                   </div>
                 ) : timeSlots.length > 0 ? (
                   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
@@ -1324,7 +1418,7 @@ function BookingFlowContent() {
                     })}
                   </div>
                 ) : (
-                  <div className="p-8 text-center bg-secondary/30 rounded-2xl border border-border">
+                  <div className="p-8 text-center bg-secondary/30 rounded-lg border border-border">
                     <p className="text-muted-foreground">No quedan horarios disponibles este día.</p>
                     <Button variant="tertiary" className="mt-4" onClick={handleBack}>Probar otro día</Button>
                   </div>
@@ -1346,8 +1440,8 @@ function BookingFlowContent() {
                 <section className="max-w-2xl">
                   <h3 className="text-lg font-semibold mb-4">Datos del paciente</h3>
                   <div className="grid sm:grid-cols-2 gap-4">
-                    <Input label="Nombre(s)*" placeholder="Ej. María Fernanda" value={formData.firstName} onChange={e => setFormData({ ...formData, firstName: e.target.value })} />
-                    <Input label="Apellido Paterno*" placeholder="Ej. González" value={formData.lastNamePaternal} onChange={e => setFormData({ ...formData, lastNamePaternal: e.target.value })} />
+                    <Input label="Nombre(s)*" autoComplete="given-name" placeholder="Ej. María Fernanda" value={formData.firstName} onChange={e => setFormData({ ...formData, firstName: e.target.value })} />
+                    <Input label="Apellido Paterno*" autoComplete="family-name" placeholder="Ej. González" value={formData.lastNamePaternal} onChange={e => setFormData({ ...formData, lastNamePaternal: e.target.value })} />
                     <Input label="Apellido Materno" placeholder="Opcional" value={formData.lastNameMaternal} onChange={e => setFormData({ ...formData, lastNameMaternal: e.target.value })} />
                     <Input
                       label="Fecha de Nacimiento*"
@@ -1398,14 +1492,15 @@ function BookingFlowContent() {
                         onValueChange={(value) => setContactData({ ...contactData, relation: value })}
                       />
                     </div>
-                    <Input label="Nombre(s)*" value={contactData.firstName} onChange={e => setContactData({ ...contactData, firstName: e.target.value })} />
-                    <Input label="Apellido Paterno*" value={contactData.lastNamePaternal} onChange={e => setContactData({ ...contactData, lastNamePaternal: e.target.value })} />
+                    <Input label="Nombre(s)*" autoComplete="given-name" value={contactData.firstName} onChange={e => setContactData({ ...contactData, firstName: e.target.value })} />
+                    <Input label="Apellido Paterno*" autoComplete="family-name" value={contactData.lastNamePaternal} onChange={e => setContactData({ ...contactData, lastNamePaternal: e.target.value })} />
                     <Input label="Apellido Materno" placeholder="Opcional" value={contactData.lastNameMaternal} onChange={e => setContactData({ ...contactData, lastNameMaternal: e.target.value })} />
-                    <Input label="Celular*" type="tel" inputMode="numeric" placeholder="10 dígitos" value={contactData.phone} onChange={e => setContactData({ ...contactData, phone: e.target.value })} />
+                    <Input label="Celular*" type="tel" autoComplete="tel" inputMode="numeric" placeholder="10 dígitos" value={contactData.phone} onChange={e => setContactData({ ...contactData, phone: e.target.value })} />
                     <div className="sm:col-span-2">
                       <Input
                         label="Correo Electrónico"
                         type="email"
+                        autoComplete="email"
                         placeholder="Opcional"
                         value={contactData.email}
                         onChange={e => setContactData({ ...contactData, email: e.target.value })}
@@ -1420,6 +1515,7 @@ function BookingFlowContent() {
                     <Input
                       label={requiresLinkedEmail ? "Correo electrónico*" : "Correo electrónico"}
                       type="email"
+                      autoComplete="email"
                       placeholder={requiresLinkedEmail ? "Obligatorio con cuenta vinculada" : "Opcional"}
                       value={formData.email}
                       onChange={e => setFormData({ ...formData, email: e.target.value })}
@@ -1431,7 +1527,7 @@ function BookingFlowContent() {
                   </p>
                 </section>
 
-                <label className="max-w-2xl mt-8 flex items-start gap-3 rounded-2xl border border-border bg-secondary/20 p-4">
+                <label className="max-w-2xl mt-8 flex items-start gap-3 rounded-lg border border-border bg-secondary/20 p-4">
                   <input
                     type="checkbox"
                     checked={privacyConsentAccepted}
@@ -1461,7 +1557,7 @@ function BookingFlowContent() {
                   <h2 className="text-2xl font-semibold mb-2">Revisión de Reserva</h2>
                   <p className="text-muted-foreground">Verifica que tus datos sean correctos</p>
                 </div>
-                <div className="bg-card border border-border rounded-2xl p-6 md:p-8 space-y-6 max-w-xl mx-auto shadow-sm relative overflow-hidden">
+                <div className="bg-card border border-border rounded-lg p-6 md:p-8 space-y-6 max-w-xl mx-auto shadow-sm relative overflow-hidden">
                   <div className="absolute top-0 left-0 w-1 h-full bg-primary" />
                   <div>
                     <div className="text-sm text-muted-foreground mb-1">Fecha y hora</div>

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic, Square, Loader2, Radio } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/Button";
+import { AiClinicalDisclaimer } from "@/components/clinical/AiClinicalDisclaimer";
+import { isDeepgramCredentialExpired } from "@/lib/deepgramCredentials";
 
 type SoapPartial = {
   subjective?: string;
@@ -40,8 +42,14 @@ type TranscriptSegment = {
   text: string;
 };
 
+type DeepgramTokenResponse = {
+  apiKey?: string;
+  expiresAt?: string;
+  error?: string;
+};
+
 type Props = {
-  appointmentId: string;
+  encounterId: string;
   disabled?: boolean;
   onSoapGenerated: (soap: SoapPartial) => void;
   onEncounterGenerated?: (encounter: EncounterPartial) => void;
@@ -84,7 +92,7 @@ function renderTranscriptForAi(segments: TranscriptSegment[], firstSpeaker: numb
 }
 
 export function DictationPanel({
-  appointmentId,
+  encounterId,
   disabled,
   onSoapGenerated,
   onEncounterGenerated,
@@ -105,6 +113,7 @@ export function DictationPanel({
 
   const mediaRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const deepgramExpiresAtRef = useRef<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sseRef = useRef<EventSource | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -138,7 +147,7 @@ export function DictationPanel({
     (jobId: string) => {
       if (sseRef.current) sseRef.current.close();
       const src = new EventSource(
-        `/api/clinical/admin/appointments/${appointmentId}/note/generate/events?jobId=${jobId}`,
+        `/api/clinical/admin/encounters/${encounterId}/note/generate/events?jobId=${jobId}`,
       );
       sseRef.current = src;
       src.addEventListener("status", (event) => {
@@ -175,7 +184,7 @@ export function DictationPanel({
         sseRef.current = null;
       };
     },
-    [appointmentId, onSoapGenerated, onEncounterGenerated],
+    [encounterId, onSoapGenerated, onEncounterGenerated],
   );
 
   const sendTranscriptToAi = useCallback(async () => {
@@ -189,7 +198,7 @@ export function DictationPanel({
     setStatusMsg("Enviando transcripción a la IA...");
     try {
       const res = await fetch(
-        `/api/admin/appointments/${appointmentId}/note/generate-from-transcript`,
+        `/api/clinical/admin/encounters/${encounterId}/note/generate-from-transcript`,
         {
           method: "POST",
           credentials: "include",
@@ -210,7 +219,7 @@ export function DictationPanel({
       setLastError(message);
       toast.error(message);
     }
-  }, [appointmentId, subscribe]);
+  }, [encounterId, subscribe]);
 
   const retryGeneration = useCallback(() => {
     if (generating || retrying) return;
@@ -299,18 +308,23 @@ export function DictationPanel({
     }
     setConnecting(true);
     try {
-      await fetch(`/api/clinical/admin/appointments/${appointmentId}/consent`, {
+      await fetch(`/api/clinical/admin/encounters/${encounterId}/consent`, {
         method: "POST",
         credentials: "include",
       }).catch(() => undefined);
 
       const tokenRes = await fetch(
-        `/api/admin/appointments/${appointmentId}/transcription/token`,
+        `/api/clinical/admin/encounters/${encounterId}/transcription/token`,
         { method: "POST", credentials: "include" },
       );
       const tokenData = await tokenRes.json();
       if (!tokenRes.ok) throw new Error(tokenData.error ?? "No se pudo obtener credencial");
-      const apiKey: string = tokenData.apiKey;
+      const { apiKey, expiresAt, error } = tokenData as DeepgramTokenResponse;
+      if (!apiKey) throw new Error(error ?? "No se pudo obtener credencial");
+      if (isDeepgramCredentialExpired(expiresAt)) {
+        throw new Error("La credencial de transcripción expiró. Vuelve a iniciar la grabación.");
+      }
+      deepgramExpiresAtRef.current = expiresAt ?? null;
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
@@ -355,12 +369,18 @@ export function DictationPanel({
       };
 
       ws.onerror = () => {
-        toast.error("Conexión de transcripción interrumpida.");
+        const message = isDeepgramCredentialExpired(deepgramExpiresAtRef.current)
+          ? "La credencial de transcripción expiró. Vuelve a iniciar la grabación."
+          : "Conexión de transcripción interrumpida.";
+        toast.error(message);
       };
 
       ws.onclose = (e) => {
         if (e.code !== 1000 && recording) {
-          toast.warning("La transcripción se cerró. Detén y vuelve a iniciar si es necesario.");
+          const message = isDeepgramCredentialExpired(deepgramExpiresAtRef.current)
+            ? "La credencial de transcripción expiró. Vuelve a iniciar la grabación."
+            : "La transcripción se cerró. Detén y vuelve a iniciar si es necesario.";
+          toast.warning(message);
         }
       };
     } catch (e) {
@@ -368,7 +388,7 @@ export function DictationPanel({
       cleanupStream();
       toast.error(e instanceof Error ? e.message : "No se pudo iniciar la grabación.");
     }
-  }, [appointmentId, handleDeepgramMessage, startLevelMeter, cleanupStream, recording]);
+  }, [encounterId, handleDeepgramMessage, startLevelMeter, cleanupStream, recording]);
 
   const stop = useCallback(() => {
     if (!recording) return;
@@ -418,7 +438,7 @@ export function DictationPanel({
   });
 
   return (
-    <div className="rounded-xl border border-border bg-secondary/10 p-3 space-y-3">
+    <div className="rounded-md border border-border bg-secondary/10 p-3 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-medium flex items-center gap-2">
@@ -460,6 +480,7 @@ export function DictationPanel({
           </Button>
         )}
       </div>
+      <AiClinicalDisclaimer />
 
       {recording && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 space-y-2">
@@ -534,7 +555,7 @@ export function DictationPanel({
       {!generating && (lastGeneratedAt || lastFailedAt) && (
         <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs space-y-2">
           {lastGeneratedAt && (
-            <p className="text-emerald-700">
+            <p className="text-success">
               Última nota generada: {new Date(lastGeneratedAt).toLocaleTimeString()}
             </p>
           )}

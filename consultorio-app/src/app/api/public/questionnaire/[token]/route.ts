@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client'
 import { QuestionnaireService } from '@/services/QuestionnaireService'
 import { z } from 'zod'
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit'
+import { getDoctorProductAccess } from '@/lib/productAccess'
+import { SUBSCRIPTION_FEATURES } from '@/lib/subscriptionFeatures'
 
 const STANDARD_PRE_ENCOUNTER_KEYS = [
   'chiefComplaint',
@@ -144,7 +146,7 @@ export async function GET(request: Request, props: { params: Promise<{ token: st
       return NextResponse.json({ error: 'Token inválido' }, { status: 400 })
     }
 
-    const rateLimit = checkRateLimit(request, {
+    const rateLimit = await checkRateLimit(request, {
       key: 'public:questionnaire:get',
       limit: 45,
       windowMs: 5 * 60_000,
@@ -156,14 +158,24 @@ export async function GET(request: Request, props: { params: Promise<{ token: st
     const appointment = await QuestionnaireService.validateTokenContext(token)
     
     if (!appointment) return NextResponse.json({ error: 'Cita no encontrada' }, { status: 404 })
+    const access = await getDoctorProductAccess(appointment.doctorId, 'DOCTOR')
+    const aiEnabled = access.features[SUBSCRIPTION_FEATURES.AI_ENABLED] === true
+    const aiInterviewTextEnabled =
+      aiEnabled && access.features[SUBSCRIPTION_FEATURES.AI_QUESTIONNAIRE_TEXT] === true
+    const aiInterviewAudioEnabled =
+      aiEnabled && access.features[SUBSCRIPTION_FEATURES.AI_QUESTIONNAIRE_AUDIO] === true
 
     return NextResponse.json({
       status: appointment.questionnaireAnswered ? 'ANSWERED' : 'PENDING',
-      appointment: { 
+      appointment: {
         id: appointment.id,
         date: appointment.date,
         type: appointment.appointmentType
-      }
+      },
+      capabilities: {
+        aiInterviewTextEnabled,
+        aiInterviewAudioEnabled,
+      },
     })
   } catch {
     return NextResponse.json({ error: 'Token inválido' }, { status: 400 })
@@ -178,7 +190,7 @@ export async function POST(request: Request, props: { params: Promise<{ token: s
       return NextResponse.json({ error: 'Token inválido' }, { status: 400 })
     }
 
-    const rateLimit = checkRateLimit(request, {
+    const rateLimit = await checkRateLimit(request, {
       key: 'public:questionnaire:post',
       limit: 6,
       windowMs: 15 * 60_000,

@@ -27,7 +27,7 @@ export const TimeSlot = ({ time, available = true, selected = false, onClick, te
       whileTap={available && !selected ? { scale: 0.95 } : {}}
       onClick={available ? onClick : undefined}
       disabled={!available}
-      className={`px-4 py-3 rounded-xl border-2 transition-all font-medium text-sm ${getClasses()}`}
+      className={`px-4 py-3 rounded-md border-2 transition-all font-medium text-sm ${getClasses()}`}
     >
       {time}
     </motion.button>

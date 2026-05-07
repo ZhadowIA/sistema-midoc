@@ -4,11 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import { Sparkles, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/Button";
+import { AiClinicalDisclaimer } from "@/components/clinical/AiClinicalDisclaimer";
 import {
   buildInsightApplicationKey,
+  getInsightAction,
   isInsightApplied,
-  markInsightApplied,
+  markInsightAction,
 } from "@/lib/aiInsights";
+import type { AIInsightAction } from "@/lib/aiInsightsTypes";
 
 type Diagnosis = { diagnosis: string; reasoning?: string };
 type Treatment = { treatment: string; instructions?: string };
@@ -47,8 +50,8 @@ export function AiInsightsPanel({
   // haría que disparar IA marcara "Guardando..." en el header.
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<Insights | null>(null);
-  const [appliedDiagnoses, setAppliedDiagnoses] = useState<Record<string, boolean>>({});
-  const [appliedTreatments, setAppliedTreatments] = useState<Record<string, boolean>>({});
+  const [diagnosisActions, setDiagnosisActions] = useState<Record<string, AIInsightAction>>({});
+  const [treatmentActions, setTreatmentActions] = useState<Record<string, AIInsightAction>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -81,8 +84,8 @@ export function AiInsightsPanel({
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Error generando sugerencias");
       setData(body as Insights);
-      setAppliedDiagnoses({});
-      setAppliedTreatments({});
+      setDiagnosisActions({});
+      setTreatmentActions({});
       toast.success("Sugerencias generadas.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Error generando sugerencias");
@@ -98,45 +101,123 @@ export function AiInsightsPanel({
       (data.allowedFoods?.length ?? 0) > 0 ||
       (data.forbiddenFoods?.length ?? 0) > 0);
 
-  const trackApply = useCallback(
-    async (kind: "DIAGNOSIS" | "TREATMENT", text: string) => {
+  const trackAction = useCallback(
+    async (
+      kind: "DIAGNOSIS" | "TREATMENT",
+      text: string,
+      action: AIInsightAction,
+      editedText?: string,
+    ) => {
       await fetch(`/api/clinical/admin/appointments/${appointmentId}/ai-insights/apply`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, text }),
+        body: JSON.stringify({ kind, text, action, editedText }),
       }).catch(() => undefined);
     },
     [appointmentId],
   );
 
   const applyDiagnosis = useCallback(
-    (diagnosis: string) => {
+    (diagnosis: string, action: AIInsightAction = "APPLIED", editedText?: string) => {
+      const targetText = editedText?.trim() || diagnosis;
       const key = buildInsightApplicationKey(diagnosis);
-      if (!key || appliedDiagnoses[key]) return;
-      onApplyDiagnosis(diagnosis);
-      setAppliedDiagnoses((prev) => markInsightApplied(prev, diagnosis));
-      void trackApply("DIAGNOSIS", diagnosis);
-      toast.success("Diagnóstico aplicado en Assessment.");
+      if (!key) return;
+      if (action === "APPLIED" || action === "EDITED") {
+        onApplyDiagnosis(targetText);
+      }
+      setDiagnosisActions((prev) => markInsightAction(prev, diagnosis, action));
+      void trackAction("DIAGNOSIS", diagnosis, action, editedText);
+      if (action === "APPLIED") {
+        toast.success("Diagnóstico aplicado en Assessment.");
+      } else if (action === "EDITED") {
+        toast.success("Diagnóstico editado y aplicado.");
+      } else if (action === "REJECTED") {
+        toast.success("Diagnóstico rechazado.");
+      } else {
+        toast.success("Diagnóstico ignorado.");
+      }
     },
-    [appliedDiagnoses, onApplyDiagnosis, trackApply],
+    [onApplyDiagnosis, trackAction],
   );
 
   const applyTreatment = useCallback(
+    (treatment: string, instructions?: string, action: AIInsightAction = "APPLIED", editedText?: string) => {
+      const payload = instructions ? `${treatment} — ${instructions}` : treatment;
+      const key = buildInsightApplicationKey(payload);
+      if (!key) return;
+      const targetText = editedText?.trim() || payload;
+      if (action === "APPLIED" || action === "EDITED") {
+        onApplyTreatment(targetText);
+      }
+      setTreatmentActions((prev) => markInsightAction(prev, payload, action));
+      void trackAction("TREATMENT", payload, action, editedText);
+      if (action === "APPLIED") {
+        toast.success("Tratamiento aplicado en Plan.");
+      } else if (action === "EDITED") {
+        toast.success("Tratamiento editado y aplicado.");
+      } else if (action === "REJECTED") {
+        toast.success("Tratamiento rechazado.");
+      } else {
+        toast.success("Tratamiento ignorado.");
+      }
+    },
+    [onApplyTreatment, trackAction],
+  );
+
+  const editDiagnosis = useCallback(
+    (diagnosis: string) => {
+      const edited = window.prompt("Edita el diagnóstico antes de aplicarlo:", diagnosis);
+      if (!edited || !edited.trim()) return;
+      applyDiagnosis(diagnosis, "EDITED", edited.trim());
+    },
+    [applyDiagnosis],
+  );
+
+  const editTreatment = useCallback(
+    (treatment: string, instructions?: string) => {
+      const payload = instructions ? `${treatment} — ${instructions}` : treatment;
+      const edited = window.prompt("Edita el tratamiento antes de aplicarlo:", payload);
+      if (!edited || !edited.trim()) return;
+      applyTreatment(treatment, instructions, "EDITED", edited.trim());
+    },
+    [applyTreatment],
+  );
+
+  const resolveActionLabel = (action: AIInsightAction | undefined) => {
+    if (action === "EDITED") return "Editado";
+    if (action === "REJECTED") return "Rechazado";
+    if (action === "IGNORED") return "Ignorado";
+    if (action === "APPLIED") return "Aplicado";
+    return null;
+  };
+
+  const applyDiagnosisDeprecated = useCallback(
+    (diagnosis: string) => {
+      const key = buildInsightApplicationKey(diagnosis);
+      if (!key || diagnosisActions[key]) return;
+      onApplyDiagnosis(diagnosis);
+      setDiagnosisActions((prev) => markInsightAction(prev, diagnosis, "APPLIED"));
+      void trackAction("DIAGNOSIS", diagnosis, "APPLIED");
+    },
+    [diagnosisActions, onApplyDiagnosis, trackAction],
+  );
+
+  const applyTreatmentDeprecated = useCallback(
     (treatment: string, instructions?: string) => {
       const payload = instructions ? `${treatment} — ${instructions}` : treatment;
       const key = buildInsightApplicationKey(payload);
-      if (!key || appliedTreatments[key]) return;
+      if (!key || treatmentActions[key]) return;
       onApplyTreatment(payload);
-      setAppliedTreatments((prev) => markInsightApplied(prev, payload));
-      void trackApply("TREATMENT", payload);
-      toast.success("Tratamiento aplicado en Plan.");
+      setTreatmentActions((prev) => markInsightAction(prev, payload, "APPLIED"));
+      void trackAction("TREATMENT", payload, "APPLIED");
     },
-    [appliedTreatments, onApplyTreatment, trackApply],
+    [treatmentActions, onApplyTreatment, trackAction],
   );
 
   return (
     <div className="space-y-3">
+      <AiClinicalDisclaimer />
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
           La IA sugiere diagnósticos, tratamientos y recomendaciones a partir del SOAP actual.
@@ -154,30 +235,47 @@ export function AiInsightsPanel({
 
       {data?.diagnoses && data.diagnoses.length > 0 && (
         <div>
-          <p className="text-sm font-medium mb-1">Diagnósticos sugeridos</p>
-          <ul className="space-y-1">
+          <p className="text-sm font-medium mb-2">Diagnósticos sugeridos</p>
+          <ul className="space-y-2">
             {data.diagnoses.map((d, i) => (
               (() => {
-                const alreadyApplied = isInsightApplied(appliedDiagnoses, d.diagnosis);
+                const currentAction = getInsightAction(diagnosisActions, d.diagnosis);
+                const alreadyApplied = isInsightApplied(diagnosisActions, d.diagnosis);
+                const actionLabel = resolveActionLabel(currentAction);
                 return (
               <li
                 key={i}
-                className="flex items-start justify-between gap-2 rounded-lg border border-border bg-secondary/10 p-2"
+                className="rounded-md border border-border bg-secondary/20 p-3 space-y-2"
               >
-                <div>
-                  <p className="text-sm font-medium">{d.diagnosis}</p>
-                  {d.reasoning && (
-                    <p className="text-xs text-muted-foreground">{d.reasoning}</p>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{d.diagnosis}</p>
+                    {d.reasoning && (
+                      <p className="text-xs text-muted-foreground mt-1">{d.reasoning}</p>
+                    )}
+                  </div>
+                  {actionLabel && (
+                    <span className="text-[11px] font-medium text-primary">{actionLabel}</span>
                   )}
                 </div>
-                <Button
-                  size="sm"
-                  variant="tertiary"
-                  onClick={() => applyDiagnosis(d.diagnosis)}
-                  disabled={disabled || alreadyApplied}
-                >
-                  <Plus className="w-4 h-4" /> {alreadyApplied ? "Aplicado" : "Assessment"}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => applyDiagnosisDeprecated(d.diagnosis)}
+                    disabled={disabled || alreadyApplied}
+                  >
+                    <Plus className="w-4 h-4" /> {alreadyApplied ? "Aplicado" : "Assessment"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="tertiary"
+                    onClick={() => applyDiagnosis(d.diagnosis, "REJECTED")}
+                    disabled={disabled || currentAction === "REJECTED"}
+                  >
+                    Rechazar
+                  </Button>
+                </div>
               </li>
                 );
               })()
@@ -188,31 +286,48 @@ export function AiInsightsPanel({
 
       {data?.treatments && data.treatments.length > 0 && (
         <div>
-          <p className="text-sm font-medium mb-1">Tratamientos sugeridos</p>
-          <ul className="space-y-1">
+          <p className="text-sm font-medium mb-2">Tratamientos sugeridos</p>
+          <ul className="space-y-2">
             {data.treatments.map((t, i) => (
               (() => {
                 const payload = t.instructions ? `${t.treatment} — ${t.instructions}` : t.treatment;
-                const alreadyApplied = isInsightApplied(appliedTreatments, payload);
+                const currentAction = getInsightAction(treatmentActions, payload);
+                const alreadyApplied = isInsightApplied(treatmentActions, payload);
+                const actionLabel = resolveActionLabel(currentAction);
                 return (
               <li
                 key={i}
-                className="flex items-start justify-between gap-2 rounded-lg border border-border bg-secondary/10 p-2"
+                className="rounded-md border border-border bg-secondary/20 p-3 space-y-2"
               >
-                <div>
-                  <p className="text-sm font-medium">{t.treatment}</p>
-                  {t.instructions && (
-                    <p className="text-xs text-muted-foreground">{t.instructions}</p>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{t.treatment}</p>
+                    {t.instructions && (
+                      <p className="text-xs text-muted-foreground mt-1">{t.instructions}</p>
+                    )}
+                  </div>
+                  {actionLabel && (
+                    <span className="text-[11px] font-medium text-primary">{actionLabel}</span>
                   )}
                 </div>
-                <Button
-                  size="sm"
-                  variant="tertiary"
-                  onClick={() => applyTreatment(t.treatment, t.instructions)}
-                  disabled={disabled || alreadyApplied}
-                >
-                  <Plus className="w-4 h-4" /> {alreadyApplied ? "Aplicado" : "Plan"}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => applyTreatmentDeprecated(t.treatment, t.instructions)}
+                    disabled={disabled || alreadyApplied}
+                  >
+                    <Plus className="w-4 h-4" /> {alreadyApplied ? "Aplicado" : "Plan"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="tertiary"
+                    onClick={() => applyTreatment(t.treatment, t.instructions, "REJECTED")}
+                    disabled={disabled || currentAction === "REJECTED"}
+                  >
+                    Rechazar
+                  </Button>
+                </div>
               </li>
                 );
               })()
@@ -224,15 +339,15 @@ export function AiInsightsPanel({
       {(data?.allowedFoods?.length || data?.forbiddenFoods?.length) ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {data?.allowedFoods && data.allowedFoods.length > 0 && (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2">
-              <p className="text-xs font-medium text-emerald-800 mb-1">Alimentos recomendados</p>
-              <p className="text-xs text-emerald-900">{data.allowedFoods.join(", ")}</p>
+            <div className="rounded-md border border-success/30 bg-success/10 p-3">
+              <p className="text-xs font-semibold text-success mb-1">Alimentos recomendados</p>
+              <p className="text-xs text-foreground/80">{data.allowedFoods.join(", ")}</p>
             </div>
           )}
           {data?.forbiddenFoods && data.forbiddenFoods.length > 0 && (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-2">
-              <p className="text-xs font-medium text-red-800 mb-1">Alimentos a evitar</p>
-              <p className="text-xs text-red-900">{data.forbiddenFoods.join(", ")}</p>
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3">
+              <p className="text-xs font-semibold text-destructive mb-1">Alimentos a evitar</p>
+              <p className="text-xs text-foreground/80">{data.forbiddenFoods.join(", ")}</p>
             </div>
           )}
         </div>

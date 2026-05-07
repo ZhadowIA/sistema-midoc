@@ -18,8 +18,8 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(
         )}
         <textarea
           ref={ref}
-          className={`w-full px-4 py-3 bg-input-background border border-border rounded-xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all resize-y min-h-[120px] ${
-            error ? "border-destructive focus:ring-destructive" : ""
+          className={`w-full px-4 py-2.5 bg-input-background border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all resize-y min-h-[120px] ${
+            error ? "border-destructive focus:ring-destructive/50" : ""
           } ${className}`}
           {...props}
         />

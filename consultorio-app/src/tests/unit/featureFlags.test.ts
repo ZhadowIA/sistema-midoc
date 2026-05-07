@@ -119,14 +119,14 @@ export async function runFeatureFlagsUnitTests() {
       },
     },
     {
-      name: 'canUseAi requires ai.enabled plus at least one AI capability',
+      name: 'canUseAi accepts questionnaire text as canonical AI capability',
       run: async () => {
         const original = prisma.doctorSubscription.findUnique
         try {
           ;(prisma.doctorSubscription.findUnique as unknown as (args: unknown) => Promise<unknown>) = async () => ({
             features: {
               'ai.enabled': true,
-              'ai.insights': true,
+              'ai.questionnaire.text': true,
             },
           })
           __resetFeatureFlagsCacheForTests()

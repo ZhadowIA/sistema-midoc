@@ -1,4 +1,9 @@
-import { getAuthenticatedMedicalContext, getAuthenticatedUser } from "@/lib/auth";
+import {
+  getAuthenticatedMedicalContext,
+  getAuthenticatedUser,
+  type AuthenticatedRole,
+  type AuthenticatedUser,
+} from "@/lib/auth";
 import { jsonNoStore } from "@/lib/http";
 import {
   getDoctorProductAccess,
@@ -7,6 +12,7 @@ import {
   type ProductAccess,
   type ProductModule,
 } from "@/lib/productAccess";
+import { SUBSCRIPTION_FEATURES, type SubscriptionFeatureKey } from "@/lib/subscriptionFeatures";
 
 type AccessContext = Awaited<ReturnType<typeof getAuthenticatedMedicalContext>>;
 
@@ -20,10 +26,18 @@ type ProductApiAccessResult = {
   response: null;
 };
 
+type StaffApiAccessResult = {
+  user: null;
+  response: Response;
+} | {
+  user: AuthenticatedUser;
+  response: null;
+};
+
 type RequireProductApiAccessOptions = {
   allowSecretary?: boolean;
   requiredModule: ProductModule;
-  requiredFeature?: "ai.dictation" | "ai.insights";
+  requiredFeature?: SubscriptionFeatureKey;
   roleForbiddenMessage: string;
   moduleForbiddenMessage: string;
   featureForbiddenMessage?: string;
@@ -34,7 +48,15 @@ function hasRequiredFeature(
   feature: NonNullable<RequireProductApiAccessOptions["requiredFeature"]>,
 ) {
   const features = access.features;
-  return features["ai.enabled"] === true && features[feature] === true;
+  if (feature === SUBSCRIPTION_FEATURES.AI_ENABLED) {
+    return features[feature] === true;
+  }
+
+  if (feature.startsWith("ai.") && features[SUBSCRIPTION_FEATURES.AI_ENABLED] !== true) {
+    return false;
+  }
+
+  return features[feature] === true;
 }
 
 async function requireProductApiAccess(
@@ -88,7 +110,7 @@ async function requireProductApiAccess(
 }
 
 export async function requireMedicalDoctorApiAccess(options?: {
-  requiredFeature?: "ai.dictation" | "ai.insights";
+  requiredFeature?: SubscriptionFeatureKey;
 }) {
   return requireProductApiAccess({
     allowSecretary: false,
@@ -105,7 +127,108 @@ export async function requireAgendaDoctorApiAccess(options?: { allowSecretary?: 
   return requireProductApiAccess({
     allowSecretary: options?.allowSecretary ?? true,
     requiredModule: PRODUCT_MODULES.AGENDA,
+    requiredFeature: undefined,
     roleForbiddenMessage: "No autorizado para acceder a la agenda.",
     moduleForbiddenMessage: "El módulo de agenda no está incluido en tu plan.",
   });
+}
+
+export async function requireAgendaAccess(options?: {
+  allowSecretary?: boolean;
+  requiredFeature?: SubscriptionFeatureKey;
+  featureForbiddenMessage?: string;
+}) {
+  return requireProductApiAccess({
+    allowSecretary: options?.allowSecretary ?? true,
+    requiredModule: PRODUCT_MODULES.AGENDA,
+    requiredFeature: options?.requiredFeature,
+    roleForbiddenMessage: "No autorizado para acceder a la agenda.",
+    moduleForbiddenMessage: "El módulo de agenda no está incluido en tu plan.",
+    featureForbiddenMessage:
+      options?.featureForbiddenMessage ??
+      "La función solicitada de agenda no está incluida en tu plan.",
+  });
+}
+
+export async function requireClinicalAccess(options?: {
+  requiredFeature?: SubscriptionFeatureKey;
+  featureForbiddenMessage?: string;
+}) {
+  return requireProductApiAccess({
+    allowSecretary: false,
+    requiredModule: PRODUCT_MODULES.CLINICAL_RECORDS,
+    requiredFeature: options?.requiredFeature,
+    roleForbiddenMessage:
+      "Acceso denegado. El rol Asistente no puede consultar expedientes médicos.",
+    moduleForbiddenMessage: "El módulo de expediente clínico no está incluido en tu plan.",
+    featureForbiddenMessage:
+      options?.featureForbiddenMessage ??
+      "La función solicitada del expediente clínico no está incluida en tu plan.",
+  });
+}
+
+export async function requireAiAccess(options: {
+  allowSecretary?: boolean;
+  requiredFeature?: SubscriptionFeatureKey;
+}) {
+  const requiredFeature = options.requiredFeature ?? SUBSCRIPTION_FEATURES.AI_ENABLED;
+
+  return requireProductApiAccess({
+    allowSecretary: options.allowSecretary ?? false,
+    requiredModule: PRODUCT_MODULES.CLINICAL_RECORDS,
+    requiredFeature,
+    roleForbiddenMessage:
+      "Acceso denegado. El rol Asistente no puede consultar funcionalidades de IA clínica.",
+    moduleForbiddenMessage: "El módulo de expediente clínico no está incluido en tu plan.",
+    featureForbiddenMessage: "La función de IA clínica no está incluida en tu plan.",
+  });
+}
+
+export async function requireFeature(
+  feature: SubscriptionFeatureKey,
+  options?: {
+    allowSecretary?: boolean;
+    requiredModule?: ProductModule;
+    roleForbiddenMessage?: string;
+    moduleForbiddenMessage?: string;
+    featureForbiddenMessage?: string;
+  },
+) {
+  return requireProductApiAccess({
+    allowSecretary: options?.allowSecretary ?? false,
+    requiredModule: options?.requiredModule ?? PRODUCT_MODULES.CLINICAL_RECORDS,
+    requiredFeature: feature,
+    roleForbiddenMessage: options?.roleForbiddenMessage ?? "No autorizado",
+    moduleForbiddenMessage:
+      options?.moduleForbiddenMessage ??
+      "El módulo requerido no está incluido en tu plan.",
+    featureForbiddenMessage:
+      options?.featureForbiddenMessage ??
+      "La función solicitada no está incluida en tu plan.",
+  });
+}
+
+export async function requireStaffApiAccess(options: {
+  allowedRoles: AuthenticatedRole[];
+  roleForbiddenMessage?: string;
+}): Promise<StaffApiAccessResult> {
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    return {
+      user: null,
+      response: jsonNoStore({ error: "No autorizado" }, { status: 401 }),
+    };
+  }
+
+  if (!options.allowedRoles.includes(user.role)) {
+    return {
+      user: null,
+      response: jsonNoStore(
+        { error: options.roleForbiddenMessage ?? "No autorizado" },
+        { status: 403 },
+      ),
+    };
+  }
+
+  return { user, response: null };
 }

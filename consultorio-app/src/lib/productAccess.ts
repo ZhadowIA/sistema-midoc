@@ -3,6 +3,8 @@ import {
   coerceFeaturesForProductAccess,
   getModuleAccessFromFeatures,
 } from "@/lib/productAccessFeatures";
+import { SUBSCRIPTION_FEATURES } from "@/lib/subscriptionFeatures";
+import { getEffectiveSubscriptionFeatures, resolveCommercialAccess } from "@/server/subscription/commercialAccess";
 
 export const PRODUCT_MODULES = {
   AGENDA: "AGENDA",
@@ -139,27 +141,45 @@ export async function getDoctorProductAccess(doctorId: string, role: string): Pr
       plan: PRODUCT_PLANS.COMBINED,
       enabledModules: getPlanModules(PRODUCT_PLANS.COMBINED),
       features: {
-        "agenda.enabled": true,
-        "clinical.enabled": true,
-        "clinical.history": true,
-        "clinical.notes": true,
-        "clinical.prescriptions": true,
-        "clinical.signoff": true,
-        "clinical.encounters.standalone": true,
-        "ai.enabled": true,
-        "ai.dictation": true,
-        "ai.insights": true,
+        [SUBSCRIPTION_FEATURES.AGENDA_ENABLED]: true,
+        [SUBSCRIPTION_FEATURES.AGENDA_REMINDERS_WHATSAPP]: true,
+        [SUBSCRIPTION_FEATURES.AGENDA_WAITLIST]: true,
+        [SUBSCRIPTION_FEATURES.CLINICAL_ENABLED]: true,
+        [SUBSCRIPTION_FEATURES.CLINICAL_HISTORY]: true,
+        [SUBSCRIPTION_FEATURES.CLINICAL_NOTES]: true,
+        [SUBSCRIPTION_FEATURES.CLINICAL_PRESCRIPTIONS]: true,
+        [SUBSCRIPTION_FEATURES.CLINICAL_SIGNOFF]: true,
+        [SUBSCRIPTION_FEATURES.CLINICAL_ENCOUNTERS_STANDALONE]: true,
+        [SUBSCRIPTION_FEATURES.AI_ENABLED]: true,
+        [SUBSCRIPTION_FEATURES.AI_DICTATION]: true,
+        [SUBSCRIPTION_FEATURES.AI_INSIGHTS]: true,
+        [SUBSCRIPTION_FEATURES.AI_QUESTIONNAIRE_TEXT]: true,
+        [SUBSCRIPTION_FEATURES.AI_QUESTIONNAIRE_AUDIO]: true,
+        [SUBSCRIPTION_FEATURES.AI_CREDITS_ENABLED]: true,
+        [SUBSCRIPTION_FEATURES.SPECIALTY_CORE_ENABLED]: true,
+        [SUBSCRIPTION_FEATURES.AI_SPECIALTY_ENABLED]: true,
       },
     };
   }
 
   const subscription = await prisma.doctorSubscription.findUnique({
     where: { doctorId },
-    select: { planName: true, features: true },
+    select: { planName: true, features: true, status: true, currentPeriodEnd: true, cancelAtPeriodEnd: true },
   });
 
   const fallbackPlan = normalizePlanName(subscription?.planName)
-  const accessFromFeatures = buildProductAccessFromFeatures(subscription?.features, fallbackPlan)
+  const effectiveFeatures = subscription
+    ? getEffectiveSubscriptionFeatures(
+        subscription.features,
+        resolveCommercialAccess({
+          status: subscription.status,
+          currentPeriodEnd: subscription.currentPeriodEnd,
+          cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+          features: subscription.features,
+        }),
+      )
+    : undefined
+  const accessFromFeatures = buildProductAccessFromFeatures(effectiveFeatures, fallbackPlan)
 
   if (Object.keys(accessFromFeatures.features).length > 0) {
     return accessFromFeatures

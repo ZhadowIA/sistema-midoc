@@ -1,6 +1,8 @@
 import prisma from "@/lib/prisma";
-import { generateDictationFromTranscript, transcribeAudio } from "@/lib/aiNoteService";
+import { generateDictationFromTranscriptWithTelemetry, transcribeAudio } from "@/lib/aiNoteService";
+import { recordAiUsage, resolvePromptVersion } from "@/lib/aiTelemetry";
 import { AppointmentAuditService } from "./AppointmentAuditService";
+import { consumeAICredits } from "@/lib/aiCreditsMiddleware";
 
 const MIN_TRANSCRIPT_WORDS = 12;
 const MIN_TRANSCRIPT_CHARS = 60;
@@ -25,19 +27,28 @@ export function validateTranscriptQuality(transcript: string): TranscriptQuality
   return { ok: true, normalized, words, chars };
 }
 
-async function loadClinicalContext(appointmentId: string, patientId: string) {
-  const [clinicalHistory, encounterHistory, questionnaire] = await Promise.all([
+async function loadClinicalContext(
+  appointmentId: string | null | undefined,
+  patientId: string,
+  doctorId: string,
+  clinicalEncounterId?: string | null,
+) {
+  const [clinicalHistory, encounterHistory, questionnaire, doctor] = await Promise.all([
     prisma.clinicalHistory.findUnique({
       where: { patientId },
       select: { payload: true, completionPct: true, status: true },
     }),
-    prisma.encounterHistory.findUnique({
-      where: { appointmentId },
-      select: { payload: true, completionPct: true, status: true },
-    }),
-    prisma.questionnaire.findUnique({
-      where: { appointmentId },
-      select: { primarySymptom: true, responses: true },
+    appointmentId
+      ? prisma.encounterHistory.findUnique({ where: { appointmentId }, select: { payload: true, completionPct: true, status: true } })
+      : clinicalEncounterId
+        ? prisma.encounterHistory.findUnique({ where: { clinicalEncounterId }, select: { payload: true, completionPct: true, status: true } })
+        : Promise.resolve(null),
+    appointmentId
+      ? prisma.questionnaire.findUnique({ where: { appointmentId }, select: { primarySymptom: true, responses: true } })
+      : Promise.resolve(null),
+    prisma.user.findUnique({
+      where: { id: doctorId },
+      select: { specialty: true },
     }),
   ]);
 
@@ -45,23 +56,36 @@ async function loadClinicalContext(appointmentId: string, patientId: string) {
     clinicalHistory?: unknown;
     encounterHistory?: unknown;
     questionnaire?: unknown;
+    specialty?: string | null;
   } = {};
   if (clinicalHistory) context.clinicalHistory = clinicalHistory;
   if (encounterHistory) context.encounterHistory = encounterHistory;
   if (questionnaire) context.questionnaire = questionnaire;
+  if (doctor?.specialty) context.specialty = doctor.specialty;
   return Object.keys(context).length > 0 ? context : undefined;
 }
 
 type CreateJobInput = {
-  appointmentId: string;
+  appointmentId?: string | null;
+  clinicalEncounterId?: string | null;
   doctorId: string;
   patientId: string;
+  clinicId?: string | null;
   actorUserId: string;
   ipAddress?: string | null;
   userAgent?: string | null;
 };
 
-type ProcessJobInput = CreateJobInput & {
+// Audio upload always comes from an appointment context
+type ProcessJobInput = {
+  appointmentId: string;
+  clinicalEncounterId?: string | null;
+  doctorId: string;
+  patientId: string;
+  clinicId?: string | null;
+  actorUserId: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
   jobId: string;
   audioBuffer: Buffer;
   mimeType: string;
@@ -81,7 +105,8 @@ export class AINoteGenerationService {
   static async createJob(input: CreateJobInput) {
     const job = await prisma.aIProcessingJob.create({
       data: {
-        appointmentId: input.appointmentId,
+        appointmentId: input.appointmentId ?? null,
+        clinicalEncounterId: input.clinicalEncounterId ?? null,
         doctorId: input.doctorId,
         kind: "SOAP_NOTE_GENERATION",
         status: "QUEUED",
@@ -90,20 +115,20 @@ export class AINoteGenerationService {
       },
     });
 
-    await AppointmentAuditService.safeLog({
-      doctorId: input.doctorId,
-      appointmentId: input.appointmentId,
-      patientId: input.patientId,
-      actorType: "DOCTOR",
-      actorUserId: input.actorUserId,
-      source: "ADMIN_PANEL",
-      action: "AI_NOTE_GENERATION_REQUESTED",
-      ipAddress: input.ipAddress,
-      userAgent: input.userAgent,
-      metadata: {
-        jobId: job.id,
-      },
-    });
+    if (input.appointmentId) {
+      await AppointmentAuditService.safeLog({
+        doctorId: input.doctorId,
+        appointmentId: input.appointmentId,
+        patientId: input.patientId,
+        actorType: "DOCTOR",
+        actorUserId: input.actorUserId,
+        source: "ADMIN_PANEL",
+        action: "AI_NOTE_GENERATION_REQUESTED",
+        ipAddress: input.ipAddress,
+        userAgent: input.userAgent,
+        metadata: { jobId: job.id },
+      });
+    }
 
     return job;
   }
@@ -138,142 +163,9 @@ export class AINoteGenerationService {
         },
       });
 
-      const clinicalContext = await loadClinicalContext(input.appointmentId, input.patientId);
+      const clinicalContext = await loadClinicalContext(input.appointmentId, input.patientId, input.doctorId);
 
-      const { soap, encounter } = await generateDictationFromTranscript(
-        quality.normalized,
-        {
-          patientName: input.patientName,
-          doctorName: input.doctorName,
-        },
-        clinicalContext
-      );
-
-      await prisma.$transaction(async (tx) => {
-        await tx.clinicalNote.upsert({
-          where: { appointmentId: input.appointmentId },
-          update: {
-            subjective: soap.subjective,
-            objective: soap.objective,
-            assessment: soap.assessment,
-            plan: soap.plan,
-            soapPayload: soap,
-          },
-          create: {
-            appointmentId: input.appointmentId,
-            doctorId: input.doctorId,
-            patientId: input.patientId,
-            subjective: soap.subjective,
-            objective: soap.objective,
-            assessment: soap.assessment,
-            plan: soap.plan,
-            soapPayload: soap,
-          },
-        });
-
-        await tx.aIProcessingJob.update({
-          where: { id: input.jobId },
-          data: {
-            status: "COMPLETED",
-            progressPct: 100,
-            statusMessage: "Nota lista para revisión",
-            resultPayload: {
-              soap,
-              encounter,
-              meta: {
-                source: "audio_upload",
-                audioBytes: input.audioBuffer.byteLength,
-                mimeType: input.mimeType,
-                transcriptWords: quality.words,
-                transcriptChars: quality.chars,
-              },
-            },
-            finishedAt: new Date(),
-          },
-        });
-      });
-
-      await AppointmentAuditService.safeLog({
-        doctorId: input.doctorId,
-        appointmentId: input.appointmentId,
-        patientId: input.patientId,
-        actorType: "DOCTOR",
-        actorUserId: input.actorUserId,
-        source: "ADMIN_PANEL",
-        action: "AI_NOTE_GENERATION_COMPLETED",
-        ipAddress: input.ipAddress,
-        userAgent: input.userAgent,
-        metadata: {
-          jobId: input.jobId,
-          durationMs: Date.now() - startedAtMs,
-          mode: "audio_upload",
-          audioBytes: input.audioBuffer.byteLength,
-        },
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "No fue posible completar la generación automática de la nota.";
-
-      await prisma.aIProcessingJob.update({
-        where: { id: input.jobId },
-        data: {
-          status: "FAILED",
-          progressPct: 100,
-          statusMessage: "Falló la generación",
-          errorMessage: message,
-          resultPayload: {
-            meta: {
-              source: "audio_upload",
-              audioBytes: input.audioBuffer.byteLength,
-              mimeType: input.mimeType,
-            },
-          },
-          finishedAt: new Date(),
-        },
-      });
-
-      await AppointmentAuditService.safeLog({
-        doctorId: input.doctorId,
-        appointmentId: input.appointmentId,
-        patientId: input.patientId,
-        actorType: "DOCTOR",
-        actorUserId: input.actorUserId,
-        source: "ADMIN_PANEL",
-        action: "AI_NOTE_GENERATION_FAILED",
-        ipAddress: input.ipAddress,
-        userAgent: input.userAgent,
-        metadata: {
-          jobId: input.jobId,
-          error: message,
-          durationMs: Date.now() - startedAtMs,
-          mode: "audio_upload",
-          audioBytes: input.audioBuffer.byteLength,
-        },
-      });
-    }
-  }
-
-  static async processTranscriptJob(input: ProcessTranscriptJobInput) {
-    const startedAtMs = Date.now();
-    try {
-      await prisma.aIProcessingJob.update({
-        where: { id: input.jobId },
-        data: {
-          status: "PROCESSING",
-          progressPct: 60,
-          statusMessage: "Estructurando nota SOAP",
-        },
-      });
-
-      const clinicalContext = await loadClinicalContext(input.appointmentId, input.patientId);
-      const quality = validateTranscriptQuality(input.transcript);
-      if (!quality.ok) {
-        throw new Error(quality.reason);
-      }
-
-      const { soap, encounter } = await generateDictationFromTranscript(
+      const { soap, encounter, usage } = await generateDictationFromTranscriptWithTelemetry(
         quality.normalized,
         {
           patientName: input.patientName,
@@ -314,14 +206,43 @@ export class AINoteGenerationService {
               soap,
               encounter,
               meta: {
-                source: "deepgram_stream",
-                transcriptChars: quality.chars,
+                source: "audio_upload",
+                provider: "OPENAI",
+                model: usage.model,
+                audioBytes: input.audioBuffer.byteLength,
+                mimeType: input.mimeType,
                 transcriptWords: quality.words,
+                transcriptChars: quality.chars,
+                inputTokens: usage.promptTokens,
+                outputTokens: usage.completionTokens,
+                totalTokens: usage.totalTokens,
               },
             },
             finishedAt: new Date(),
           },
         });
+      });
+
+      await recordAiUsage({
+        doctorId: input.doctorId,
+        clinicId: input.clinicId ?? null,
+        appointmentId: input.appointmentId,
+        jobId: input.jobId,
+        sourceModule: "AI_NOTE_GENERATE_AUDIO",
+        provider: "OPENAI",
+        model: usage.model,
+        promptVersion: resolvePromptVersion("AI_NOTE_GENERATE_AUDIO"),
+        inputTokens: usage.promptTokens,
+        outputTokens: usage.completionTokens,
+        totalTokens: usage.totalTokens,
+        durationMs: Date.now() - startedAtMs,
+        status: "COMPLETED",
+        metadata: {
+          mode: "audio_upload",
+          transcriptWords: quality.words,
+          transcriptChars: quality.chars,
+          audioBytes: input.audioBuffer.byteLength,
+        },
       });
 
       await AppointmentAuditService.safeLog({
@@ -336,11 +257,17 @@ export class AINoteGenerationService {
         userAgent: input.userAgent,
         metadata: {
           jobId: input.jobId,
-          mode: "deepgram_stream",
-          transcriptChars: input.transcript.length,
           durationMs: Date.now() - startedAtMs,
+          mode: "audio_upload",
+          audioBytes: input.audioBuffer.byteLength,
         },
       });
+
+      // Consume clinical credits for transcription and dictation
+      await Promise.all([
+        consumeAICredits(input.actorUserId, "transcription", `Job ${input.jobId}: transcription`),
+        consumeAICredits(input.actorUserId, "dictation", `Job ${input.jobId}: dictation`),
+      ]);
     } catch (error) {
       const message =
         error instanceof Error
@@ -356,11 +283,34 @@ export class AINoteGenerationService {
           errorMessage: message,
           resultPayload: {
             meta: {
-              source: "deepgram_stream",
-              transcriptChars: input.transcript.length,
+              source: "audio_upload",
+              audioBytes: input.audioBuffer.byteLength,
+              mimeType: input.mimeType,
             },
           },
           finishedAt: new Date(),
+        },
+      });
+
+      await recordAiUsage({
+        doctorId: input.doctorId,
+        clinicId: input.clinicId ?? null,
+        appointmentId: input.appointmentId,
+        jobId: input.jobId,
+        sourceModule: "AI_NOTE_GENERATE_AUDIO",
+        provider: "OPENAI",
+        model: "gpt-4o",
+        promptVersion: resolvePromptVersion("AI_NOTE_GENERATE_AUDIO"),
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        durationMs: Date.now() - startedAtMs,
+        status: "FAILED",
+        errorCode: "AI_NOTE_GENERATION_FAILED",
+        metadata: {
+          mode: "audio_upload",
+          message,
+          audioBytes: input.audioBuffer.byteLength,
         },
       });
 
@@ -377,11 +327,166 @@ export class AINoteGenerationService {
         metadata: {
           jobId: input.jobId,
           error: message,
-          mode: "deepgram_stream",
-          transcriptChars: input.transcript.length,
           durationMs: Date.now() - startedAtMs,
+          mode: "audio_upload",
+          audioBytes: input.audioBuffer.byteLength,
         },
       });
+    }
+  }
+
+  static async processTranscriptJob(input: ProcessTranscriptJobInput) {
+    const startedAtMs = Date.now();
+    try {
+      await prisma.aIProcessingJob.update({
+        where: { id: input.jobId },
+        data: {
+          status: "PROCESSING",
+          progressPct: 60,
+          statusMessage: "Estructurando nota SOAP",
+        },
+      });
+
+      const clinicalContext = await loadClinicalContext(input.appointmentId, input.patientId, input.doctorId, input.clinicalEncounterId);
+      const quality = validateTranscriptQuality(input.transcript);
+      if (!quality.ok) {
+        throw new Error(quality.reason);
+      }
+
+      const { soap, encounter, usage } = await generateDictationFromTranscriptWithTelemetry(
+        quality.normalized,
+        {
+          patientName: input.patientName,
+          doctorName: input.doctorName,
+        },
+        clinicalContext,
+      );
+
+      await prisma.$transaction(async (tx) => {
+        if (input.appointmentId) {
+          await tx.clinicalNote.upsert({
+            where: { appointmentId: input.appointmentId },
+            update: { subjective: soap.subjective, objective: soap.objective, assessment: soap.assessment, plan: soap.plan, soapPayload: soap },
+            create: { appointmentId: input.appointmentId, doctorId: input.doctorId, patientId: input.patientId, subjective: soap.subjective, objective: soap.objective, assessment: soap.assessment, plan: soap.plan, soapPayload: soap },
+          });
+        } else if (input.clinicalEncounterId) {
+          await tx.clinicalNote.upsert({
+            where: { clinicalEncounterId: input.clinicalEncounterId },
+            update: { subjective: soap.subjective, objective: soap.objective, assessment: soap.assessment, plan: soap.plan, soapPayload: soap },
+            create: { clinicalEncounterId: input.clinicalEncounterId, doctorId: input.doctorId, patientId: input.patientId, subjective: soap.subjective, objective: soap.objective, assessment: soap.assessment, plan: soap.plan, soapPayload: soap },
+          });
+        }
+
+        await tx.aIProcessingJob.update({
+          where: { id: input.jobId },
+          data: {
+            status: "COMPLETED",
+            progressPct: 100,
+            statusMessage: "Nota lista para revisión",
+            resultPayload: {
+              soap,
+              encounter,
+              meta: {
+                source: "deepgram_stream",
+                provider: "OPENAI",
+                model: usage.model,
+                transcriptChars: quality.chars,
+                transcriptWords: quality.words,
+                inputTokens: usage.promptTokens,
+                outputTokens: usage.completionTokens,
+                totalTokens: usage.totalTokens,
+              },
+            },
+            finishedAt: new Date(),
+          },
+        });
+      });
+
+      await recordAiUsage({
+        doctorId: input.doctorId,
+        clinicId: input.clinicId ?? null,
+        appointmentId: input.appointmentId ?? null,
+        jobId: input.jobId,
+        sourceModule: "AI_NOTE_GENERATE_TRANSCRIPT",
+        provider: "OPENAI",
+        model: usage.model,
+        promptVersion: resolvePromptVersion("AI_NOTE_GENERATE_TRANSCRIPT"),
+        inputTokens: usage.promptTokens,
+        outputTokens: usage.completionTokens,
+        totalTokens: usage.totalTokens,
+        durationMs: Date.now() - startedAtMs,
+        status: "COMPLETED",
+        metadata: {
+          mode: "deepgram_stream",
+          transcriptWords: quality.words,
+          transcriptChars: quality.chars,
+        },
+      });
+
+      if (input.appointmentId) {
+        await AppointmentAuditService.safeLog({
+          doctorId: input.doctorId,
+          appointmentId: input.appointmentId,
+          patientId: input.patientId,
+          actorType: "DOCTOR",
+          actorUserId: input.actorUserId,
+          source: "ADMIN_PANEL",
+          action: "AI_NOTE_GENERATION_COMPLETED",
+          ipAddress: input.ipAddress,
+          userAgent: input.userAgent,
+          metadata: { jobId: input.jobId, mode: "deepgram_stream", transcriptChars: input.transcript.length, durationMs: Date.now() - startedAtMs },
+        });
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "No fue posible completar la generación automática de la nota.";
+
+      await prisma.aIProcessingJob.update({
+        where: { id: input.jobId },
+        data: {
+          status: "FAILED",
+          progressPct: 100,
+          statusMessage: "Falló la generación",
+          errorMessage: message,
+          resultPayload: { meta: { source: "deepgram_stream", transcriptChars: input.transcript.length } },
+          finishedAt: new Date(),
+        },
+      });
+
+      await recordAiUsage({
+        doctorId: input.doctorId,
+        clinicId: input.clinicId ?? null,
+        appointmentId: input.appointmentId ?? null,
+        jobId: input.jobId,
+        sourceModule: "AI_NOTE_GENERATE_TRANSCRIPT",
+        provider: "OPENAI",
+        model: "gpt-4o",
+        promptVersion: resolvePromptVersion("AI_NOTE_GENERATE_TRANSCRIPT"),
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        durationMs: Date.now() - startedAtMs,
+        status: "FAILED",
+        errorCode: "AI_NOTE_GENERATION_FAILED",
+        metadata: { mode: "deepgram_stream", transcriptChars: input.transcript.length, message },
+      });
+
+      if (input.appointmentId) {
+        await AppointmentAuditService.safeLog({
+          doctorId: input.doctorId,
+          appointmentId: input.appointmentId,
+          patientId: input.patientId,
+          actorType: "DOCTOR",
+          actorUserId: input.actorUserId,
+          source: "ADMIN_PANEL",
+          action: "AI_NOTE_GENERATION_FAILED",
+          ipAddress: input.ipAddress,
+          userAgent: input.userAgent,
+          metadata: { jobId: input.jobId, error: message, mode: "deepgram_stream", transcriptChars: input.transcript.length, durationMs: Date.now() - startedAtMs },
+        });
+      }
     }
   }
 }

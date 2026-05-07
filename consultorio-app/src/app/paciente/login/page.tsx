@@ -11,7 +11,11 @@ import Link from "next/link";
 function PatientLoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const returnTo = searchParams.get("returnTo") || "/paciente/historial";
+  const requestedReturnTo = searchParams.get("returnTo");
+  const returnTo =
+    requestedReturnTo && /^\/paciente(\/|$)/.test(requestedReturnTo)
+      ? requestedReturnTo
+      : "/paciente/historial";
   
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [loading, setLoading] = useState(false);
@@ -106,7 +110,7 @@ function PatientLoginContent() {
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="w-16 h-16 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center mb-8 border border-white/20"
+            className="w-16 h-16 bg-white/10 backdrop-blur-md rounded-lg flex items-center justify-center mb-8 border border-white/20"
           >
             <Shield className="w-8 h-8 text-white" />
           </motion.div>
@@ -156,7 +160,7 @@ function PatientLoginContent() {
             <motion.div 
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="mb-6 p-4 rounded-xl bg-destructive/10 border border-destructive/20 flex items-center gap-3 text-destructive text-sm"
+              className="mb-6 p-4 rounded-md bg-destructive/10 border border-destructive/20 flex items-center gap-3 text-destructive text-sm"
             >
               <AlertCircle className="w-5 h-5 shrink-0" />
               {error}
@@ -167,7 +171,7 @@ function PatientLoginContent() {
             <motion.div 
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="mb-6 p-4 rounded-xl bg-success/10 border border-success/20 flex items-center gap-3 text-success text-sm"
+              className="mb-6 p-4 rounded-md bg-success/10 border border-success/20 flex items-center gap-3 text-success text-sm"
             >
               <CheckCircle2 className="w-5 h-5 shrink-0" />
               {success}

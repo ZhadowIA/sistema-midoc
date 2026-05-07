@@ -301,7 +301,6 @@ az acr login --name $ACR_NAME
 cd consultorio-app
 
 docker build \
-  --build-arg DATABASE_URL="postgresql://midocadmin:<PASSWORD>@midoc-db-server.postgres.database.azure.com/consultorio?sslmode=require" \
   -t $ACR_NAME.azurecr.io/consultorio-app:latest \
   -t $ACR_NAME.azurecr.io/consultorio-app:v1.0.0 \
   .
@@ -458,7 +457,6 @@ jobs:
       - name: Build and push consultorio-app
         run: |
           docker build \
-            --build-arg DATABASE_URL="${{ secrets.DATABASE_URL }}" \
             -t $ACR_NAME.azurecr.io/consultorio-app:${{ github.sha }} \
             -t $ACR_NAME.azurecr.io/consultorio-app:latest \
             ./consultorio-app

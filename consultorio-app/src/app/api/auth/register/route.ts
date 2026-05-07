@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
-import { Prisma } from '@prisma/client'
+import { Prisma, MedicalSpecialty } from '@prisma/client'
 import { attachSessionCookie, buildSessionToken } from '@/lib/session'
 import { captureError, logEvent } from '@/lib/observability'
 import { recordLegalAcceptance } from '@/lib/legalAcceptance'
 import { COMMERCIAL_BASE_PLANS, resolveCommercialPlan } from '@/lib/subscriptionCatalog'
 import { addDays } from 'date-fns'
 import { buildProductAccessFromFeatures } from '@/lib/productAccess'
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit'
+import { validatePasswordPolicy } from '@/lib/passwordPolicy'
+
+const REGISTER_RATE_LIMIT = { key: 'auth:register', limit: 8, windowMs: 60 * 60 * 1000 }
 
 function asNonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -97,8 +101,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Nombre, apellido paterno, correo, teléfono y contraseña son requeridos' }, { status: 400 })
     }
 
-    if (password.length < 8) {
-      return NextResponse.json({ error: 'La contraseña debe tener al menos 8 caracteres' }, { status: 400 })
+    const limit = await checkRateLimit(request, { ...REGISTER_RATE_LIMIT, identifier: email || phone || 'anon' })
+    if (!limit.ok) {
+      logEvent('warn', 'auth.register.rate_limited', { email })
+      return rateLimitExceededResponse(limit)
+    }
+
+    const passwordPolicy = validatePasswordPolicy(password)
+    if (!passwordPolicy.ok) {
+      return NextResponse.json({ error: passwordPolicy.message }, { status: 400 })
     }
     if (!acceptTerms || !acceptPrivacy) {
       return NextResponse.json(
@@ -126,7 +137,7 @@ export async function POST(request: Request) {
           passwordHash,
           role: 'DOCTOR',
           slug: buildSlugFromName(name),
-          specialty: 'Médico Especialista'
+          specialty: MedicalSpecialty.FAMILY_MEDICINE
         }
       })
 
@@ -196,7 +207,6 @@ export async function POST(request: Request) {
     return response
   } catch (error: unknown) {
     captureError('auth.register.error', error)
-    const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: 'No fue posible completar el registro' }, { status: 500 })
   }
 }

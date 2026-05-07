@@ -5,7 +5,7 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit'
 import { ContractValidationError, parseAvailabilityMonthQuery } from '@/lib/publicApiContracts'
 
 export async function GET(request: Request) {
-  const rateLimit = checkRateLimit(request, {
+  const rateLimit = await checkRateLimit(request, {
     key: 'public:availability:month',
     limit: 90,
     windowMs: 60_000,

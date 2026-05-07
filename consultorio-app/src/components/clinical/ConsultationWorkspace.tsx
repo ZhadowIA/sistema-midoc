@@ -15,11 +15,15 @@ import { useClinicalNote } from "./useClinicalNote";
 import { DictationPanel } from "./DictationPanel";
 import { NarrationScript } from "./NarrationScript";
 import { AiInsightsPanel } from "./AiInsightsPanel";
+import { ClinicalGapsPanel } from "./ClinicalGapsPanel";
+import { LongitudinalSummaryPanel } from "./LongitudinalSummaryPanel";
+import { PatientInstructionsPanel } from "./PatientInstructionsPanel";
 import {
   ConsultationModeSelector,
   type ConsultationMode,
 } from "./ConsultationModeSelector";
 import { AiConsentModal } from "./AiConsentModal";
+import { CobrarModal } from "@/components/agenda/CobrarModal";
 import { SignoffSummary } from "./SignoffSummary";
 import {
   ChiefComplaintSection,
@@ -46,6 +50,49 @@ import {
 import { resolveWorkspaceShortcut } from "@/lib/consultationWorkspace";
 import { formatPatientName } from "@/lib/patientName";
 import type { EncounterHistoryPayload } from "@/lib/encounterHistorySchema";
+import { resolveSpecialtyTemplate, type SpecialtyTemplate } from "@/lib/specialtyTemplates";
+import type { MedicalSpecialty } from "@prisma/client";
+import dynamic from "next/dynamic";
+
+const DentalSpecialtySection = dynamic(
+  () => import("./dental/DentalSpecialtySection").then((m) => m.DentalSpecialtySection),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground animate-pulse py-4 text-center">Cargando módulo odontológico…</p> },
+);
+
+const FamilyMedicineSection = dynamic(
+  () => import("./specialty/FamilyMedicineSection").then((m) => m.FamilyMedicineSection),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground animate-pulse py-4 text-center">Cargando módulo medicina familiar…</p> },
+);
+
+const PediatricsSection = dynamic(
+  () => import("./specialty/PediatricsSection").then((m) => m.PediatricsSection),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground animate-pulse py-4 text-center">Cargando módulo pediatría…</p> },
+);
+
+const GynecologySection = dynamic(
+  () => import("./specialty/GynecologySection").then((m) => m.GynecologySection),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground animate-pulse py-4 text-center">Cargando módulo ginecología…</p> },
+);
+
+const CardiologySection = dynamic(
+  () => import("./specialty/CardiologySection").then((m) => m.CardiologySection),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground animate-pulse py-4 text-center">Cargando módulo cardiología…</p> },
+);
+
+const MentalHealthSection = dynamic(
+  () => import("./specialty/MentalHealthSection").then((m) => m.MentalHealthSection),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground animate-pulse py-4 text-center">Cargando módulo salud mental…</p> },
+);
+
+const OphthalmologySection = dynamic(
+  () => import("./specialty/OphthalmologySection").then((m) => m.OphthalmologySection),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground animate-pulse py-4 text-center">Cargando módulo oftalmología…</p> },
+);
+
+const DermatologySection = dynamic(
+  () => import("./specialty/DermatologySection").then((m) => m.DermatologySection),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground animate-pulse py-4 text-center">Cargando módulo dermatología…</p> },
+);
 
 type ConsentState = "PENDING" | "GRANTED" | "DENIED";
 type CapabilityReasonCode =
@@ -92,12 +139,15 @@ type ContextResponse = {
     aiConsent: ConsentState;
     aiConsentDecidedAt: string | null;
   };
-    capabilities: {
-      aiAvailable: boolean;
-      ai?: { enabled: boolean; reasonCode: CapabilityReasonCode };
-      clinicalUnified?: { enabled: boolean; reasonCode: CapabilityReasonCode };
-    };
+  capabilities: {
+    aiAvailable: boolean;
+    ai?: { enabled: boolean; reasonCode: CapabilityReasonCode };
+    clinicalUnified?: { enabled: boolean; reasonCode: CapabilityReasonCode };
   };
+  doctor: {
+    specialty: string | null;
+  };
+};
 
 type Props = { encounterId: string };
 
@@ -121,6 +171,7 @@ const AUTOSAVE_DELAY_MS = 2_500;
 
 export function ConsultationWorkspace({ encounterId }: Props) {
   const [ctx, setCtx] = useState<ContextResponse | null>(null);
+  const [template, setTemplate] = useState<SpecialtyTemplate | undefined>();
   const [payload, setPayload] = useState<EncounterHistoryPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -133,6 +184,7 @@ export function ConsultationWorkspace({ encounterId }: Props) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clinicalNote = useClinicalNote(encounterId);
   const [closing, setClosing] = useState(false);
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const router = useRouter();
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
@@ -155,6 +207,7 @@ export function ConsultationWorkspace({ encounterId }: Props) {
       setPayload(body.encounterHistory.record.payload);
       setMode(body.session.consultationMode);
       setConsent(body.session.aiConsent);
+      setTemplate(resolveSpecialtyTemplate(body.doctor.specialty as MedicalSpecialty | null));
       savedOnceRef.current = false;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -377,7 +430,8 @@ export function ConsultationWorkspace({ encounterId }: Props) {
           toast.error(body.error ?? body.message ?? "No se pudo cerrar la consulta");
           return;
         }
-        toast.success("Consulta firmada y cerrada");
+        toast.success("Consulta firmada — registra el cobro para cerrar");
+        setShowCheckoutModal(true);
       } else {
         toast.success("Encounter firmado");
       }
@@ -527,8 +581,22 @@ export function ConsultationWorkspace({ encounterId }: Props) {
         onDeny={() => handleConsent("DENIED")}
       />
 
+      {/* Modal de cobro — aparece después de firmar la consulta */}
+      {ctx?.encounter.appointmentId && (
+        <CobrarModal
+          open={showCheckoutModal}
+          onOpenChange={(open) => {
+            setShowCheckoutModal(open);
+            if (!open) toast.info("Puedes registrar el cobro desde Caja cuando quieras.");
+          }}
+          appointmentId={ctx.encounter.appointmentId}
+          defaultConcept={`Consulta — ${formatPatientName(ctx.appointment.patient)}`}
+          onSuccess={() => setShowCheckoutModal(false)}
+        />
+      )}
+
       {loading && <p className="text-muted-foreground">Cargando consulta...</p>}
-      {error && <p className="text-red-600">{error}</p>}
+      {error && <p className="text-destructive">{error}</p>}
 
       {ctx && payload && clinicalNote.isSigned && clinicalNote.signedAt && (
         <SignoffSummary
@@ -559,8 +627,14 @@ export function ConsultationWorkspace({ encounterId }: Props) {
                 <CompletionMeter pct={completionPct} className="min-w-[180px]" />
               </div>
               <PatientClinicalAlerts patientId={ctx.appointment.patientId} />
+              <div className="pt-1">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                  Historial de consultas previas
+                </p>
+                <LongitudinalSummaryPanel encounterId={encounterId} />
+              </div>
               {clinicalNote.isSigned && (
-                <p className="text-xs rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-2">
+                <p className="text-xs rounded-md bg-success/10 text-success border border-success/30 px-3 py-2">
                   Nota firmada el{" "}
                   {clinicalNote.signedAt
                     ? new Date(clinicalNote.signedAt).toLocaleString()
@@ -581,11 +655,11 @@ export function ConsultationWorkspace({ encounterId }: Props) {
                     className={[
                       "text-xs",
                       clinicalNote.isSigned
-                        ? "text-emerald-700"
+                        ? "text-success"
                         : combinedSaveState === "error"
-                          ? "text-red-600"
+                          ? "text-destructive"
                           : combinedSaveState === "saved"
-                            ? "text-emerald-600"
+                            ? "text-success"
                             : "text-muted-foreground",
                     ].join(" ")}
                   >
@@ -613,11 +687,11 @@ export function ConsultationWorkspace({ encounterId }: Props) {
                   {aiUnavailableReasonText}
                 </p>
               )}
-              {mode !== "MANUAL" && consent === "GRANTED" && ctx.capabilities.aiAvailable && ctx.encounter.appointmentId && (
+              {mode !== "MANUAL" && consent === "GRANTED" && ctx.capabilities.aiAvailable && (
                 <>
                   <NarrationScript />
                   <DictationPanel
-                    appointmentId={ctx.encounter.appointmentId}
+                    encounterId={ctx.encounter.id}
                     disabled={clinicalNote.isSigned}
                     onSoapGenerated={clinicalNote.applySoapPartial}
                     onEncounterGenerated={mergeEncounterFromAi}
@@ -625,7 +699,7 @@ export function ConsultationWorkspace({ encounterId }: Props) {
                 </>
               )}
               {consent === "DENIED" && (
-                <p className="text-xs text-amber-600">
+                <p className="text-xs text-warning">
                   El paciente no autorizó el uso de IA en esta consulta.
                 </p>
               )}
@@ -649,9 +723,9 @@ export function ConsultationWorkspace({ encounterId }: Props) {
                     className={[
                       "text-xs rounded-full px-2 py-0.5",
                       pct >= 100
-                        ? "bg-emerald-100 text-emerald-700"
+                        ? "bg-success/15 text-success"
                         : pct > 0
-                          ? "bg-amber-100 text-amber-700"
+                          ? "bg-warning/15 text-warning"
                           : "bg-secondary/50 text-muted-foreground",
                     ].join(" ")}
                   >
@@ -659,10 +733,88 @@ export function ConsultationWorkspace({ encounterId }: Props) {
                   </span>
                 }
               >
-                <Component payload={payload} update={update} />
+                <Component
+                  payload={payload}
+                  update={update}
+                  disabled={clinicalNote.isSigned || closing}
+                  template={template}
+                />
               </SectionAccordion>
             );
           })}
+
+          {/* ── Specialty-specific module ── */}
+          {ctx.doctor.specialty === "DENTISTRY" && (
+            <SectionAccordion title="Módulo odontológico" defaultOpen>
+              <DentalSpecialtySection
+                encounterId={ctx.encounter.id}
+                disabled={clinicalNote.isSigned || closing}
+              />
+            </SectionAccordion>
+          )}
+
+          {ctx.doctor.specialty === "FAMILY_MEDICINE" && (
+            <SectionAccordion title="Módulo medicina familiar" defaultOpen>
+              <FamilyMedicineSection
+                encounterId={ctx.encounter.id}
+                disabled={clinicalNote.isSigned || closing}
+              />
+            </SectionAccordion>
+          )}
+
+          {ctx.doctor.specialty === "PEDIATRICS" && (
+            <SectionAccordion title="Módulo pediatría" defaultOpen>
+              <PediatricsSection
+                encounterId={ctx.encounter.id}
+                disabled={clinicalNote.isSigned || closing}
+              />
+            </SectionAccordion>
+          )}
+
+          {ctx.doctor.specialty === "GYNECOLOGY_OBSTETRICS" && (
+            <SectionAccordion title="Módulo ginecología y obstetricia" defaultOpen>
+              <GynecologySection
+                encounterId={ctx.encounter.id}
+                disabled={clinicalNote.isSigned || closing}
+              />
+            </SectionAccordion>
+          )}
+
+          {ctx.doctor.specialty === "CARDIOLOGY" && (
+            <SectionAccordion title="Módulo cardiología" defaultOpen>
+              <CardiologySection
+                encounterId={ctx.encounter.id}
+                disabled={clinicalNote.isSigned || closing}
+              />
+            </SectionAccordion>
+          )}
+
+          {ctx.doctor.specialty === "MENTAL_HEALTH" && (
+            <SectionAccordion title="Módulo salud mental" defaultOpen>
+              <MentalHealthSection
+                encounterId={ctx.encounter.id}
+                disabled={clinicalNote.isSigned || closing}
+              />
+            </SectionAccordion>
+          )}
+
+          {ctx.doctor.specialty === "OPHTHALMOLOGY" && (
+            <SectionAccordion title="Módulo oftalmología" defaultOpen>
+              <OphthalmologySection
+                encounterId={ctx.encounter.id}
+                disabled={clinicalNote.isSigned || closing}
+              />
+            </SectionAccordion>
+          )}
+
+          {ctx.doctor.specialty === "DERMATOLOGY" && (
+            <SectionAccordion title="Módulo dermatología" defaultOpen>
+              <DermatologySection
+                encounterId={ctx.encounter.id}
+                disabled={clinicalNote.isSigned || closing}
+              />
+            </SectionAccordion>
+          )}
 
           <SectionAccordion
             title="Nota SOAP"
@@ -671,9 +823,9 @@ export function ConsultationWorkspace({ encounterId }: Props) {
                 className={[
                   "text-xs rounded-full px-2 py-0.5",
                   clinicalNote.soapCompletion >= 100
-                    ? "bg-emerald-100 text-emerald-700"
+                    ? "bg-success/15 text-success"
                     : clinicalNote.soapCompletion > 0
-                      ? "bg-amber-100 text-amber-700"
+                      ? "bg-warning/15 text-warning"
                       : "bg-secondary/50 text-muted-foreground",
                 ].join(" ")}
               >
@@ -709,6 +861,27 @@ export function ConsultationWorkspace({ encounterId }: Props) {
             </SectionAccordion>
           )}
 
+          {ctx.capabilities.aiAvailable && consent === "GRANTED" && (
+            <SectionAccordion title="Indicaciones para el paciente">
+              <PatientInstructionsPanel
+                encounterId={encounterId}
+                chiefComplaint={payload.chiefComplaint ?? ""}
+                assessment={clinicalNote.note.assessment ?? ""}
+                plan={clinicalNote.note.plan ?? ""}
+                disabled={clinicalNote.isSigned}
+              />
+            </SectionAccordion>
+          )}
+
+          <SectionAccordion title="Auditoría Clínica">
+            <ClinicalGapsPanel
+              patientId={ctx.appointment.patientId}
+              encounterId={ctx.encounter.id}
+              encounterPayload={payload}
+              aiAvailable={ctx.capabilities.aiAvailable && consent === "GRANTED"}
+            />
+          </SectionAccordion>
+
           <SectionAccordion
             title="Receta"
             badge={
@@ -731,7 +904,7 @@ export function ConsultationWorkspace({ encounterId }: Props) {
           </SectionAccordion>
 
           {!clinicalNote.isSigned && !signoffCheck.ok && (
-            <p className="text-xs text-amber-700 text-right">
+            <p className="text-xs text-warning text-right">
               Para firmar faltan: {signoffCheck.missing.join(", ")}
             </p>
           )}

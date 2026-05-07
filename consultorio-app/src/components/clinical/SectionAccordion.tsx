@@ -30,22 +30,22 @@ export function SectionAccordion({
     onOpenChange?.(next);
   };
   return (
-    <div className="rounded-2xl border border-border bg-background overflow-hidden">
+    <div className="rounded-lg border border-border bg-card overflow-hidden shadow-sm">
       <button
         type="button"
         id={id}
         data-consultation-section={id ?? undefined}
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/30 transition-colors"
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary transition-colors"
         aria-expanded={open}
       >
         <ChevronDown
-          className={`w-4 h-4 transition-transform ${open ? "" : "-rotate-90"}`}
+          className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
         />
-        <span className="font-medium text-left flex-1">{title}</span>
+        <span className="font-semibold text-left flex-1 text-foreground">{title}</span>
         {badge}
       </button>
-      {open && <div className="border-t border-border p-4">{children}</div>}
+      {open && <div className="border-t border-border p-4 bg-background">{children}</div>}
     </div>
   );
 }
