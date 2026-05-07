@@ -1,13 +1,15 @@
-import { addMinutes, format } from 'date-fns'
+import { addMinutes, format, startOfDay, endOfDay } from 'date-fns'
 import {
   AppointmentStatus,
   AuditAction,
   WaitlistEntry,
   WaitlistEntryStatus,
   WaitlistOfferStatus,
+  WaitlistOfferType,
 } from '@prisma/client'
 import prisma from '@/lib/prisma'
-import { getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
+import { sendSms } from '@/lib/smsProvider'
+import { sendEmail } from '@/lib/emailProvider'
 import { AppointmentAuditService } from '@/services/AppointmentAuditService'
 import { formatPatientName } from '@/lib/patientName'
 
@@ -32,8 +34,11 @@ type ProcessVacancyInput = {
   actorType: 'DOCTOR' | 'PATIENT' | 'BOT' | 'SYSTEM'
   actorUserId?: string | null
   source: 'ADMIN_PANEL' | 'PATIENT_PORTAL' | 'WHATSAPP_BOT' | 'SYSTEM' | 'AUTOMATION'
-  trigger: 'CANCELLATION' | 'EXPIRATION' | 'MANUAL'
+  trigger: 'CANCELLATION' | 'EXPIRATION' | 'MANUAL' | 'UNCONFIRMED'
 }
+
+const UNCONFIRMED_LEAD_MINUTES_DEFAULT = 180
+const UNCONFIRMED_MARKER_PREFIX = 'WAITLIST_UNCONFIRMED_TRIGGERED:'
 
 const OFFER_TTL_MINUTES = 15
 const WAITLIST_BLOCK_REASON_PREFIX = 'WAITLIST_OFFER:'
@@ -161,6 +166,7 @@ export class WaitlistService {
             lastNamePaternal: true,
             lastNameMaternal: true,
             phone: true,
+            email: true,
           },
         },
       },
@@ -195,6 +201,7 @@ export class WaitlistService {
       const created = await prisma.$transaction(async (tx) => {
         const offer = await tx.waitlistOffer.create({
           data: {
+            offerType: WaitlistOfferType.WAITLIST,
             waitlistEntryId: entry.id,
             doctorId: entry.doctorId,
             clinicId: entry.clinicId,
@@ -204,7 +211,7 @@ export class WaitlistService {
             slotEndTime: input.slotEndTime,
             expiresAt: addMinutes(new Date(), OFFER_TTL_MINUTES),
             status: WaitlistOfferStatus.SENT,
-            notifiedChannels: ['WHATSAPP', 'PORTAL'],
+            notifiedChannels: ['SMS', 'EMAIL', 'PORTAL'],
             metadata: {
               trigger: input.trigger,
             },
@@ -258,13 +265,14 @@ export class WaitlistService {
         },
       })
 
-      await this.sendOfferWhatsApp({
-        doctorId: input.doctorId,
+      await this.sendOfferNotification({
         to: entry.patient.phone,
+        email: entry.patient.email ?? undefined,
         patientName: formatPatientName(entry.patient),
         offerId: created.id,
         slotStartTime: input.slotStartTime,
         expiresAt: created.expiresAt,
+        messageType: 'WAITLIST',
       })
 
       return { offered: true, offerId: created.id }
@@ -344,8 +352,115 @@ export class WaitlistService {
       return { status: 'REJECTED' as const }
     }
 
-    const appointmentType = offer.waitlistEntry.appointmentType ?? 'NORMAL'
     const durationMin = Math.max(15, Math.round((offer.slotEndTime.getTime() - offer.slotStartTime.getTime()) / 60000))
+    const newSlotDate = new Date(offer.slotStartTime)
+    newSlotDate.setHours(0, 0, 0, 0)
+
+    if (offer.offerType === WaitlistOfferType.SAME_DAY_ADVANCE) {
+      if (!offer.existingAppointmentId) throw new Error('WAITLIST_OFFER_INVALID')
+
+      const existingAppt = await prisma.appointment.findUnique({
+        where: { id: offer.existingAppointmentId },
+        select: { id: true, startTime: true, endTime: true, appointmentType: true, durationMin: true },
+      })
+      if (!existingAppt) throw new Error('WAITLIST_EXISTING_APPOINTMENT_NOT_FOUND')
+
+      const vacatedSlotStart = existingAppt.startTime
+      const vacatedSlotEnd = existingAppt.endTime
+
+      const rescheduledAppointment = await prisma.$transaction(async (tx) => {
+        const overlap = await tx.appointment.findFirst({
+          where: {
+            doctorId: offer.doctorId,
+            id: { not: offer.existingAppointmentId! },
+            status: { notIn: [AppointmentStatus.CANCELLED] },
+            startTime: { lt: offer.slotEndTime },
+            endTime: { gt: offer.slotStartTime },
+          },
+          select: { id: true },
+        })
+        if (overlap) throw new Error('WAITLIST_SLOT_TAKEN')
+
+        await tx.waitlistOffer.update({
+          where: { id: offer.id },
+          data: { status: WaitlistOfferStatus.ACCEPTED, acceptedAt: now },
+        })
+
+        await tx.waitlistOffer.updateMany({
+          where: {
+            id: { not: offer.id },
+            doctorId: offer.doctorId,
+            slotStartTime: offer.slotStartTime,
+            slotEndTime: offer.slotEndTime,
+            status: WaitlistOfferStatus.SENT,
+          },
+          data: { status: WaitlistOfferStatus.EXPIRED, expiredAt: now },
+        })
+
+        await tx.scheduleBlock.deleteMany({
+          where: {
+            doctorId: offer.doctorId,
+            startTime: offer.slotStartTime,
+            endTime: offer.slotEndTime,
+            type: 'PRIVATE_RESERVED',
+          },
+        })
+
+        return tx.appointment.update({
+          where: { id: offer.existingAppointmentId! },
+          data: {
+            date: newSlotDate,
+            startTime: offer.slotStartTime,
+            endTime: offer.slotEndTime,
+            status: 'CONFIRMED',
+            notes: `Adelantada desde lista de espera (offerId: ${offer.id})`,
+          },
+        })
+      })
+
+      await AppointmentAuditService.safeLog({
+        doctorId: offer.doctorId,
+        appointmentId: rescheduledAppointment.id,
+        patientId: offer.patientId,
+        actorType: params.actorType,
+        actorUserId: params.actorUserId ?? null,
+        source: params.source,
+        action: AuditAction.WAITLIST_OFFER_ACCEPTED,
+        metadata: { waitlistOfferId: offer.id, offerType: 'SAME_DAY_ADVANCE' },
+      })
+
+      await AppointmentAuditService.safeLog({
+        doctorId: offer.doctorId,
+        appointmentId: rescheduledAppointment.id,
+        patientId: offer.patientId,
+        actorType: params.actorType,
+        actorUserId: params.actorUserId ?? null,
+        source: params.source,
+        action: AuditAction.WAITLIST_SLOT_REASSIGNED,
+        metadata: {
+          waitlistOfferId: offer.id,
+          previousSlotStart: vacatedSlotStart.toISOString(),
+          previousSlotEnd: vacatedSlotEnd.toISOString(),
+        },
+      })
+
+      // El slot vacío del paciente puede ser tomado por alguien más
+      await this.processVacancy({
+        doctorId: offer.doctorId,
+        clinicId: offer.clinicId,
+        sourceAppointmentId: rescheduledAppointment.id,
+        slotStartTime: vacatedSlotStart,
+        slotEndTime: vacatedSlotEnd,
+        actorType: 'SYSTEM',
+        source: 'AUTOMATION',
+        trigger: 'MANUAL',
+      })
+
+      return { status: 'ACCEPTED' as const, appointmentId: rescheduledAppointment.id }
+    }
+
+    // WAITLIST: crear nueva cita
+    const appointmentType = offer.waitlistEntry?.appointmentType ?? 'NORMAL'
 
     const createdAppointment = await prisma.$transaction(async (tx) => {
       const overlap = await tx.appointment.findFirst({
@@ -361,10 +476,7 @@ export class WaitlistService {
 
       await tx.waitlistOffer.update({
         where: { id: offer.id },
-        data: {
-          status: WaitlistOfferStatus.ACCEPTED,
-          acceptedAt: now,
-        },
+        data: { status: WaitlistOfferStatus.ACCEPTED, acceptedAt: now },
       })
 
       await tx.waitlistOffer.updateMany({
@@ -375,16 +487,15 @@ export class WaitlistService {
           slotEndTime: offer.slotEndTime,
           status: WaitlistOfferStatus.SENT,
         },
-        data: {
-          status: WaitlistOfferStatus.EXPIRED,
-          expiredAt: now,
-        },
+        data: { status: WaitlistOfferStatus.EXPIRED, expiredAt: now },
       })
 
-      await tx.waitlistEntry.update({
-        where: { id: offer.waitlistEntryId },
-        data: { status: WaitlistEntryStatus.BOOKED },
-      })
+      if (offer.waitlistEntryId) {
+        await tx.waitlistEntry.update({
+          where: { id: offer.waitlistEntryId },
+          data: { status: WaitlistEntryStatus.BOOKED },
+        })
+      }
 
       await tx.scheduleBlock.deleteMany({
         where: {
@@ -395,15 +506,12 @@ export class WaitlistService {
         },
       })
 
-      const date = new Date(offer.slotStartTime)
-      date.setHours(0, 0, 0, 0)
-
       return tx.appointment.create({
         data: {
           doctorId: offer.doctorId,
           clinicId: offer.clinicId,
           patientId: offer.patientId,
-          date,
+          date: newSlotDate,
           startTime: offer.slotStartTime,
           endTime: offer.slotEndTime,
           appointmentType,
@@ -423,10 +531,7 @@ export class WaitlistService {
       actorUserId: params.actorUserId ?? null,
       source: params.source,
       action: AuditAction.WAITLIST_OFFER_ACCEPTED,
-      metadata: {
-        waitlistOfferId: offer.id,
-        waitlistEntryId: offer.waitlistEntryId,
-      },
+      metadata: { waitlistOfferId: offer.id, waitlistEntryId: offer.waitlistEntryId },
     })
 
     await AppointmentAuditService.safeLog({
@@ -437,15 +542,184 @@ export class WaitlistService {
       actorUserId: params.actorUserId ?? null,
       source: params.source,
       action: AuditAction.WAITLIST_SLOT_REASSIGNED,
-      metadata: {
-        waitlistOfferId: offer.id,
-        sourceAppointmentId: offer.sourceAppointmentId,
+      metadata: { waitlistOfferId: offer.id, sourceAppointmentId: offer.sourceAppointmentId },
+    })
+
+    return { status: 'ACCEPTED' as const, appointmentId: createdAppointment.id }
+  }
+
+  static async processUnconfirmedVacancies(options: { leadMinutes?: number } = {}) {
+    const leadMinutes = options.leadMinutes ?? UNCONFIRMED_LEAD_MINUTES_DEFAULT
+    const now = new Date()
+    const cutoff = addMinutes(now, leadMinutes)
+
+    const unconfirmed = await prisma.appointment.findMany({
+      where: {
+        status: AppointmentStatus.PENDING,
+        startTime: { gt: now, lte: cutoff },
+        externalId: { not: { startsWith: UNCONFIRMED_MARKER_PREFIX } },
+      },
+      select: {
+        id: true,
+        doctorId: true,
+        clinicId: true,
+        startTime: true,
+        endTime: true,
       },
     })
 
-    return {
-      status: 'ACCEPTED' as const,
-      appointmentId: createdAppointment.id,
+    let processed = 0
+    for (const appt of unconfirmed) {
+      await prisma.appointment.update({
+        where: { id: appt.id },
+        data: { externalId: `${UNCONFIRMED_MARKER_PREFIX}${appt.id}` },
+      })
+
+      await this.processVacancy({
+        doctorId: appt.doctorId,
+        clinicId: appt.clinicId,
+        sourceAppointmentId: appt.id,
+        slotStartTime: appt.startTime,
+        slotEndTime: appt.endTime,
+        actorType: 'SYSTEM',
+        source: 'AUTOMATION',
+        trigger: 'UNCONFIRMED',
+      })
+
+      await this.processSameDayAdvanceOffers({
+        doctorId: appt.doctorId,
+        clinicId: appt.clinicId,
+        unconfirmedAppointmentId: appt.id,
+        slotStartTime: appt.startTime,
+        slotEndTime: appt.endTime,
+      })
+
+      processed++
+    }
+
+    return { processed }
+  }
+
+  private static async processSameDayAdvanceOffers(input: {
+    doctorId: string
+    clinicId?: string | null
+    unconfirmedAppointmentId: string
+    slotStartTime: Date
+    slotEndTime: Date
+  }) {
+    const dayStart = startOfDay(input.slotStartTime)
+    const dayEnd = endOfDay(input.slotStartTime)
+
+    const sameDayPatients = await prisma.appointment.findMany({
+      where: {
+        doctorId: input.doctorId,
+        id: { not: input.unconfirmedAppointmentId },
+        status: { in: [AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING] },
+        startTime: { gt: input.slotEndTime, gte: dayStart, lte: dayEnd },
+      },
+      select: {
+        id: true,
+        patientId: true,
+        startTime: true,
+        endTime: true,
+        patient: { select: { id: true, firstName: true, lastNamePaternal: true, lastNameMaternal: true, phone: true, email: true } },
+      },
+      orderBy: { startTime: 'asc' },
+    })
+
+    for (const appt of sameDayPatients) {
+      const alreadyOffered = await prisma.waitlistOffer.findFirst({
+        where: {
+          patientId: appt.patientId,
+          doctorId: input.doctorId,
+          offerType: WaitlistOfferType.SAME_DAY_ADVANCE,
+          slotStartTime: input.slotStartTime,
+          status: WaitlistOfferStatus.SENT,
+        },
+        select: { id: true },
+      })
+      if (alreadyOffered) continue
+
+      const offer = await prisma.waitlistOffer.create({
+        data: {
+          offerType: WaitlistOfferType.SAME_DAY_ADVANCE,
+          existingAppointmentId: appt.id,
+          doctorId: input.doctorId,
+          clinicId: input.clinicId ?? null,
+          patientId: appt.patientId,
+          sourceAppointmentId: input.unconfirmedAppointmentId,
+          slotStartTime: input.slotStartTime,
+          slotEndTime: input.slotEndTime,
+          expiresAt: addMinutes(new Date(), OFFER_TTL_MINUTES),
+          status: WaitlistOfferStatus.SENT,
+          notifiedChannels: ['SMS', 'EMAIL', 'PORTAL'],
+          metadata: { trigger: 'UNCONFIRMED', existingSlotStart: appt.startTime.toISOString() },
+        },
+      })
+
+      await this.sendOfferNotification({
+        to: appt.patient.phone,
+        email: appt.patient.email ?? undefined,
+        patientName: formatPatientName(appt.patient),
+        offerId: offer.id,
+        slotStartTime: input.slotStartTime,
+        expiresAt: offer.expiresAt,
+        messageType: 'SAME_DAY_ADVANCE',
+        currentSlotTime: appt.startTime,
+      })
+
+      await AppointmentAuditService.safeLog({
+        doctorId: input.doctorId,
+        appointmentId: input.unconfirmedAppointmentId,
+        patientId: appt.patientId,
+        actorType: 'SYSTEM',
+        source: 'AUTOMATION',
+        action: AuditAction.WAITLIST_OFFER_SENT,
+        metadata: {
+          waitlistOfferId: offer.id,
+          offerType: 'SAME_DAY_ADVANCE',
+          existingAppointmentId: appt.id,
+          slotStartTime: input.slotStartTime.toISOString(),
+        },
+      })
+
+      // Solo notificamos al primero en aceptar — si acepta, el slot queda tomado
+      return
+    }
+  }
+
+  private static async sendOfferNotification(input: {
+    to: string
+    email?: string
+    patientName: string
+    offerId: string
+    slotStartTime: Date
+    expiresAt: Date
+    messageType: 'WAITLIST' | 'SAME_DAY_ADVANCE'
+    currentSlotTime?: Date
+  }) {
+    const formattedSlot = format(input.slotStartTime, 'dd/MM/yyyy HH:mm')
+    const formattedExpiry = format(input.expiresAt, 'HH:mm')
+
+    const smsBody = input.messageType === 'SAME_DAY_ADVANCE'
+      ? `Hola ${input.patientName}, hay un espacio disponible a las ${format(input.slotStartTime, 'HH:mm')} hoy, antes de tu cita de las ${format(input.currentSlotTime!, 'HH:mm')}. Si quieres adelantar, acepta en el portal antes de las ${formattedExpiry} (ID: ${input.offerId}).`
+      : `Hola ${input.patientName}, se liberó un espacio para consulta el ${formattedSlot}. Acepta en el portal antes de las ${formattedExpiry} (ID: ${input.offerId}).`
+
+    try {
+      await sendSms(input.to, smsBody)
+    } catch (error) {
+      console.error('[WaitlistService] Error enviando SMS de oferta', error)
+    }
+
+    if (input.email) {
+      const subject = input.messageType === 'SAME_DAY_ADVANCE'
+        ? 'Espacio disponible para adelantar tu cita de hoy'
+        : `Espacio disponible para consulta el ${formattedSlot}`
+      try {
+        await sendEmail({ to: input.email, subject, text: smsBody })
+      } catch (error) {
+        console.error('[WaitlistService] Error enviando email de oferta', error)
+      }
     }
   }
 

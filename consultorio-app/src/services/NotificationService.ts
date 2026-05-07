@@ -14,6 +14,16 @@ import { WhatsAppMessageLogService } from './WhatsAppMessageLogService'
 import { getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
 import { AppointmentAuditService } from './AppointmentAuditService'
 import { formatPatientName } from '@/lib/patientName'
+import { sendSms } from '@/lib/smsProvider'
+import { sendEmail, EmailAction } from '@/lib/emailProvider'
+import {
+  signAppointmentActionToken,
+  buildActionMarker,
+  extractActionToken,
+  stripActionMarker,
+  buildCitaUrl,
+} from '@/lib/appointmentActionToken'
+import { createShortLink, buildShortUrl } from '@/lib/shortLink'
 
 type QueueNotificationInput = {
   appointmentId: string
@@ -135,15 +145,15 @@ const DEFAULT_STATUS_WINDOW_DAYS = 7
 const DEFAULT_FAILED_LIST_LIMIT = 10
 const DEFAULT_BOOKING_TEMPLATE =
   'Hola {paciente}, tu cita ({tipo_cita}) quedó agendada para el {fecha_hora}. ' +
-  'Para confirmar tu asistencia responde "CONFIRMO".'
+  'Usa el enlace para confirmar o cancelar tu asistencia.'
 const DEFAULT_QUESTIONNAIRE_TEMPLATE =
   'Hola {paciente}, puedes responder este cuestionario preconsulta antes de tu cita: {link_cuestionario}'
 const DEFAULT_REMINDER_PENDING_TEMPLATE =
   'Hola {paciente}, te recordamos tu cita el {fecha_hora}. ' +
-  'Faltan aproximadamente {tiempo_restante}. Responde "CONFIRMO" para confirmar tu asistencia.'
+  'Faltan aproximadamente {tiempo_restante}. Usa el enlace para confirmar o cancelar.'
 const DEFAULT_REMINDER_CONFIRMED_TEMPLATE =
   'Hola {paciente}, recordatorio de tu cita el {fecha_hora}. ' +
-  'Si necesitas cancelarla, responde "CANCELAR".'
+  'Si necesitas cancelarla, usa el enlace que te enviamos.'
 
 type PendingNotification = Prisma.NotificationGetPayload<{
   include: {
@@ -258,16 +268,16 @@ export class NotificationService {
 
     try {
       const rows = await prisma.$queryRaw<Array<{
-        whatsappBookingMessageTemplate: string | null
-        whatsappQuestionnaireTemplate: string | null
-        whatsappReminderPendingTemplate: string | null
-        whatsappReminderConfirmedTemplate: string | null
+        bookingMessageTemplate: string | null
+        questionnaireTemplate: string | null
+        reminderPendingTemplate: string | null
+        reminderConfirmedTemplate: string | null
       }>>`
         SELECT
-          "whatsappBookingMessageTemplate",
-          "whatsappQuestionnaireTemplate",
-          "whatsappReminderPendingTemplate",
-          "whatsappReminderConfirmedTemplate"
+          "bookingMessageTemplate",
+          "questionnaireTemplate",
+          "reminderPendingTemplate",
+          "reminderConfirmedTemplate"
         FROM "DoctorConfig"
         WHERE "doctorId" = ${doctorId}
         LIMIT 1
@@ -277,10 +287,10 @@ export class NotificationService {
       if (!row) return defaults
 
       return {
-        bookingMessageTemplate: row.whatsappBookingMessageTemplate,
-        questionnaireTemplate: row.whatsappQuestionnaireTemplate,
-        reminderPendingTemplate: row.whatsappReminderPendingTemplate,
-        reminderConfirmedTemplate: row.whatsappReminderConfirmedTemplate,
+        bookingMessageTemplate: row.bookingMessageTemplate,
+        questionnaireTemplate: row.questionnaireTemplate,
+        reminderPendingTemplate: row.reminderPendingTemplate,
+        reminderConfirmedTemplate: row.reminderConfirmedTemplate,
       }
     } catch {
       return defaults
@@ -380,33 +390,43 @@ export class NotificationService {
   }
 
   private static async queueNotification(input: QueueNotificationInput): Promise<QueueNotificationResult> {
-    const existing = await prisma.notification.findFirst({
-      where: {
-        appointmentId: input.appointmentId,
-        channel: NotificationChannel.WHATSAPP,
-        type: input.type,
-        status: { in: [NotificationStatus.PENDING, NotificationStatus.SENT] },
-      },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true },
-    })
+    const channels = [NotificationChannel.SMS, NotificationChannel.EMAIL]
+    let firstId: string | null = null
+    let anyCreated = false
 
-    if (existing) {
-      return { id: existing.id, created: false }
+    for (const channel of channels) {
+      const existing = await prisma.notification.findFirst({
+        where: {
+          appointmentId: input.appointmentId,
+          channel,
+          type: input.type,
+          status: { in: [NotificationStatus.PENDING, NotificationStatus.SENT] },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      })
+
+      if (existing) {
+        firstId ??= existing.id
+        continue
+      }
+
+      const created = await prisma.notification.create({
+        data: {
+          appointmentId: input.appointmentId,
+          channel,
+          type: input.type,
+          status: NotificationStatus.PENDING,
+          message: input.message,
+        },
+        select: { id: true },
+      })
+
+      firstId ??= created.id
+      anyCreated = true
     }
 
-    const created = await prisma.notification.create({
-      data: {
-        appointmentId: input.appointmentId,
-        channel: NotificationChannel.WHATSAPP,
-        type: input.type,
-        status: NotificationStatus.PENDING,
-        message: input.message,
-      },
-      select: { id: true },
-    })
-
-    return { id: created.id, created: true }
+    return { id: firstId ?? '', created: anyCreated }
   }
 
   private static async markFailed(notificationId: string, reason: string) {
@@ -420,6 +440,20 @@ export class NotificationService {
   }
 
   private static async dispatchPendingNotification(notification: PendingNotification): Promise<boolean> {
+    switch (notification.channel) {
+      case NotificationChannel.WHATSAPP:
+        return this.dispatchWhatsAppNotification(notification)
+      case NotificationChannel.SMS:
+        return this.dispatchSmsNotification(notification)
+      case NotificationChannel.EMAIL:
+        return this.dispatchEmailNotification(notification)
+      default:
+        await this.markFailed(notification.id, `Canal no soportado: ${notification.channel}`)
+        return false
+    }
+  }
+
+  private static async dispatchWhatsAppNotification(notification: PendingNotification): Promise<boolean> {
     const appointment = notification.appointment
     const patientPhone = appointment.patient.phone?.trim()
     if (!patientPhone) {
@@ -447,9 +481,7 @@ export class NotificationService {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '')
-        throw new Error(
-          errorText || `Proveedor WhatsApp respondió con estado ${response.status}`
-        )
+        throw new Error(errorText || `Proveedor WhatsApp respondió con estado ${response.status}`)
       }
 
       const payload = await response.json().catch(() => null) as { id?: string; messageId?: string } | null
@@ -457,11 +489,7 @@ export class NotificationService {
 
       await prisma.notification.update({
         where: { id: notification.id },
-        data: {
-          status: NotificationStatus.SENT,
-          sentAt: new Date(),
-          externalId: externalId || null,
-        },
+        data: { status: NotificationStatus.SENT, sentAt: new Date(), externalId: externalId || null },
       })
 
       await WhatsAppMessageLogService.create({
@@ -477,9 +505,97 @@ export class NotificationService {
       return true
     } catch (error: unknown) {
       const reason = this.normalizeErrorReason(error)
-      console.error(`[NotificationService] Fallo al enviar notificación ${notification.id}: ${reason}`, error)
+      console.error(`[NotificationService] WhatsApp fallo ${notification.id}: ${reason}`, error)
       await this.markFailed(notification.id, reason)
       return false
+    }
+  }
+
+  private static async dispatchSmsNotification(notification: PendingNotification): Promise<boolean> {
+    const patient = notification.appointment.patient
+    const phone = patient.phone?.trim()
+    if (!phone) {
+      await this.markFailed(notification.id, 'El paciente no tiene teléfono registrado.')
+      return false
+    }
+
+    const actionToken = extractActionToken(notification.message)
+    let body = stripActionMarker(notification.message)
+    if (actionToken) {
+      const baseUrl = process.env.APP_BASE_URL ?? ''
+      const citaUrl = buildCitaUrl(baseUrl, actionToken)
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      const code = await createShortLink(citaUrl, expiresAt)
+      body += `\nGestiona tu cita: ${buildShortUrl(baseUrl, code)}`
+    }
+
+    try {
+      const { sid } = await sendSms(phone, body)
+      await prisma.notification.update({
+        where: { id: notification.id },
+        data: { status: NotificationStatus.SENT, sentAt: new Date(), externalId: sid },
+      })
+      return true
+    } catch (error: unknown) {
+      const reason = this.normalizeErrorReason(error)
+      console.error(`[NotificationService] SMS fallo ${notification.id}: ${reason}`, error)
+      await this.markFailed(notification.id, reason)
+      return false
+    }
+  }
+
+  private static async dispatchEmailNotification(notification: PendingNotification): Promise<boolean> {
+    const isDoctorAlert = notification.message.startsWith('[DOCTOR] ')
+    const recipientEmail = notification.recipientEmail?.trim()
+      ?? (!isDoctorAlert ? notification.appointment.patient.email?.trim() : undefined)
+
+    if (!recipientEmail) {
+      await this.markFailed(notification.id, isDoctorAlert
+        ? 'Sin email de destino para alerta al médico.'
+        : 'El paciente no tiene correo electrónico registrado.')
+      return false
+    }
+
+    const rawMessage = isDoctorAlert
+      ? notification.message.slice('[DOCTOR] '.length)
+      : notification.message
+
+    const subject = isDoctorAlert ? 'Aviso de MiDoc' : this.resolveEmailSubject(notification.type)
+    const actionToken = isDoctorAlert ? null : extractActionToken(rawMessage)
+    const text = isDoctorAlert ? rawMessage : stripActionMarker(rawMessage)
+    const email = recipientEmail
+
+    let actions: EmailAction[] | undefined
+    if (actionToken) {
+      const baseUrl = process.env.APP_BASE_URL ?? ''
+      const citaUrl = buildCitaUrl(baseUrl, actionToken)
+      actions = [
+        { label: 'Confirmar asistencia', url: `${citaUrl}?accion=confirmar`, variant: 'primary' },
+        { label: 'Cancelar cita', url: `${citaUrl}?accion=cancelar`, variant: 'danger' },
+      ]
+    }
+
+    try {
+      const { id } = await sendEmail({ to: email, subject, text, actions })
+      await prisma.notification.update({
+        where: { id: notification.id },
+        data: { status: NotificationStatus.SENT, sentAt: new Date(), externalId: id },
+      })
+      return true
+    } catch (error: unknown) {
+      const reason = this.normalizeErrorReason(error)
+      console.error(`[NotificationService] Email fallo ${notification.id}: ${reason}`, error)
+      await this.markFailed(notification.id, reason)
+      return false
+    }
+  }
+
+  private static resolveEmailSubject(type: NotificationType): string {
+    switch (type) {
+      case NotificationType.CONFIRMATION: return 'Confirmación de tu cita médica'
+      case NotificationType.REMINDER: return 'Recordatorio de tu cita médica'
+      case NotificationType.QUESTIONNAIRE_INVITATION: return 'Cuestionario preconsulta'
+      default: return 'Notificación de MiDoc'
     }
   }
 
@@ -500,9 +616,12 @@ export class NotificationService {
       estado_cita: appointment.status,
     }
 
-    const msg =
+    const baseMsg =
       this.applyTemplate(templates.bookingMessageTemplate, templateVars) ??
       this.applyTemplate(DEFAULT_BOOKING_TEMPLATE, templateVars)!
+
+    const actionToken = await signAppointmentActionToken(appointmentId)
+    const msg = `${baseMsg}\n${buildActionMarker(actionToken)}`
 
     return this.queueNotification({
       appointmentId,
@@ -628,6 +747,17 @@ export class NotificationService {
     let escalatedReminders = 0
     let autoClosedNoShow = 0
 
+    const pendingAuditLogs: Parameters<typeof AppointmentAuditService.safeBatchLog>[0] = []
+    const pendingNotifications: Array<{
+      appointmentId: string
+      channel: NotificationChannel
+      type: NotificationType
+      status: NotificationStatus
+      externalId: string
+      message: string
+    }> = []
+    const doctorAlertsToSend: Parameters<typeof NotificationService.notifyDoctorAppointmentAutoClosedNoShow>[0][] = []
+
     for (const appointment of candidates) {
       const appointmentActions = actionSetByAppointment.get(appointment.id) ?? new Set<AuditAction>()
       const overdueAt = addMinutes(appointment.endTime, config.pendingOverdueMinutes)
@@ -639,7 +769,7 @@ export class NotificationService {
       const shouldAutoClose = now >= autoCloseAt
 
       if (isOverdue && !appointmentActions.has(AuditAction.APPOINTMENT_MARKED_OVERDUE)) {
-        await AppointmentAuditService.safeLog({
+        pendingAuditLogs.push({
           doctorId: appointment.doctorId,
           appointmentId: appointment.id,
           patientId: appointment.patient.id,
@@ -659,27 +789,29 @@ export class NotificationService {
 
       if (
         canEscalate &&
-        appointment.doctor.doctorConfig?.whatsappConnected &&
         !appointmentActions.has(AuditAction.APPOINTMENT_REMINDER_ESCALATED) &&
         !escalationNotificationSet.has(appointment.id)
       ) {
         const patientDisplay = formatPatientName(appointment.patient)
-        const message = isOverdue
-          ? `Hola ${patientDisplay}, tu cita del ${this.formatDateTime(appointment.startTime)} está marcada como vencida por falta de confirmación. Si aún asistirás responde "CONFIRMO".`
-          : `Hola ${patientDisplay}, tu cita del ${this.formatDateTime(appointment.startTime)} sigue pendiente. Responde "CONFIRMO" para confirmar asistencia o "CANCELAR" si no podrás asistir.`
+        const baseEscalationMessage = isOverdue
+          ? `Hola ${patientDisplay}, tu cita del ${this.formatDateTime(appointment.startTime)} está marcada como vencida por falta de confirmación. Usa el enlace para confirmar o cancelar.`
+          : `Hola ${patientDisplay}, tu cita del ${this.formatDateTime(appointment.startTime)} sigue pendiente de confirmación. Usa el enlace para confirmar o cancelar.`
 
-        await prisma.notification.create({
-          data: {
+        const escalationToken = await signAppointmentActionToken(appointment.id)
+        const message = `${baseEscalationMessage}\n${buildActionMarker(escalationToken)}`
+
+        for (const channel of [NotificationChannel.SMS, NotificationChannel.EMAIL]) {
+          pendingNotifications.push({
             appointmentId: appointment.id,
-            channel: NotificationChannel.WHATSAPP,
+            channel,
             type: NotificationType.REMINDER,
             status: NotificationStatus.PENDING,
             externalId: AUTO_ESCALATION_NOTIFICATION_MARKER,
             message,
-          },
-        })
+          })
+        }
 
-        await AppointmentAuditService.safeLog({
+        pendingAuditLogs.push({
           doctorId: appointment.doctorId,
           appointmentId: appointment.id,
           patientId: appointment.patient.id,
@@ -701,18 +833,14 @@ export class NotificationService {
       }
 
       if (shouldAutoClose && !appointmentActions.has(AuditAction.APPOINTMENT_AUTO_CLOSED_NO_SHOW)) {
+        // Status update must stay per-appointment to guard against concurrent changes
         const updateResult = await prisma.appointment.updateMany({
-          where: {
-            id: appointment.id,
-            status: AppointmentStatus.PENDING,
-          },
-          data: {
-            status: AppointmentStatus.CANCELLED,
-          },
+          where: { id: appointment.id, status: AppointmentStatus.PENDING },
+          data: { status: AppointmentStatus.CANCELLED },
         })
 
         if (updateResult.count > 0) {
-          await AppointmentAuditService.safeLog({
+          pendingAuditLogs.push({
             doctorId: appointment.doctorId,
             appointmentId: appointment.id,
             patientId: appointment.patient.id,
@@ -727,20 +855,24 @@ export class NotificationService {
             },
           })
 
-          if (appointment.doctor.doctorConfig?.whatsappConnected && !closeNotificationSet.has(appointment.id)) {
-            await prisma.notification.create({
-              data: {
+          if (!closeNotificationSet.has(appointment.id)) {
+            const closeMessage =
+              `Hola ${formatPatientName(appointment.patient)}, tu cita del ${this.formatDateTime(appointment.startTime)} ` +
+              'se canceló automáticamente por falta de confirmación. Contáctanos si deseas reagendar.'
+
+            for (const channel of [NotificationChannel.SMS, NotificationChannel.EMAIL]) {
+              pendingNotifications.push({
                 appointmentId: appointment.id,
-                channel: NotificationChannel.WHATSAPP,
+                channel,
                 type: NotificationType.REMINDER,
                 status: NotificationStatus.PENDING,
                 externalId: AUTO_CLOSE_NOTIFICATION_MARKER,
-                message:
-                  `Hola ${formatPatientName(appointment.patient)}, tu cita del ${this.formatDateTime(appointment.startTime)} ` +
-                  'se canceló automáticamente por falta de confirmación. Si deseas reagendar, responde a este mensaje.',
-              },
-            })
+                message: closeMessage,
+              })
+            }
+
             closeNotificationSet.add(appointment.id)
+            doctorAlertsToSend.push(appointment)
           }
 
           appointmentActions.add(AuditAction.APPOINTMENT_AUTO_CLOSED_NO_SHOW)
@@ -749,12 +881,56 @@ export class NotificationService {
       }
     }
 
+    // Flush accumulated writes in parallel
+    await Promise.all([
+      pendingNotifications.length > 0
+        ? prisma.notification.createMany({ data: pendingNotifications })
+        : Promise.resolve(),
+      AppointmentAuditService.safeBatchLog(pendingAuditLogs),
+      ...doctorAlertsToSend.map((a) => this.notifyDoctorAppointmentAutoClosedNoShow(a)),
+    ])
+
     return {
       scanned: candidates.length,
       markedOverdue,
       escalatedReminders,
       autoClosedNoShow,
     }
+  }
+
+  private static async notifyDoctorAppointmentAutoClosedNoShow(appointment: {
+    id: string
+    startTime: Date
+    doctor: { email: string; name: string }
+    patient: { firstName: string; lastNamePaternal: string }
+  }) {
+    const doctorEmail = appointment.doctor.email
+    if (!doctorEmail) return
+    const patientName = `${appointment.patient.firstName} ${appointment.patient.lastNamePaternal}`.trim()
+    const dateStr = format(appointment.startTime, 'dd/MM/yyyy HH:mm')
+    await prisma.notification.create({
+      data: {
+        appointmentId: appointment.id,
+        channel: NotificationChannel.EMAIL,
+        type: NotificationType.REMINDER,
+        status: NotificationStatus.PENDING,
+        recipientEmail: doctorEmail,
+        message: `[DOCTOR] La cita del paciente ${patientName} del ${dateStr} fue cancelada automáticamente por falta de confirmación. El slot ha quedado disponible.`,
+      },
+    })
+  }
+
+  static async enqueueDoctorAlert(appointmentId: string, doctorEmail: string, message: string) {
+    await prisma.notification.create({
+      data: {
+        appointmentId,
+        channel: NotificationChannel.EMAIL,
+        type: NotificationType.REMINDER,
+        status: NotificationStatus.PENDING,
+        recipientEmail: doctorEmail,
+        message: `[DOCTOR] ${message}`,
+      },
+    })
   }
 
   static async enqueueDueReminders(options: EnqueueReminderOptions = {}) {
@@ -830,14 +1006,15 @@ export class NotificationService {
       where: {
         appointmentId: { in: appointments.map((appointment) => appointment.id) },
         type: NotificationType.REMINDER,
-        channel: NotificationChannel.WHATSAPP,
+        channel: { in: [NotificationChannel.SMS, NotificationChannel.EMAIL] },
         status: { in: [NotificationStatus.PENDING, NotificationStatus.SENT, NotificationStatus.FAILED] },
       },
-      select: { appointmentId: true, message: true },
+      select: { appointmentId: true, message: true, channel: true },
     })
 
+    // Key includes channel so SMS and EMAIL are tracked independently
     const existingReminderKeys = new Set(
-      existingReminders.map((notification) => `${notification.appointmentId}|${notification.message}`)
+      existingReminders.map((n) => `${n.appointmentId}|${n.message}|${n.channel}`)
     )
     const toCreate: Array<{
       appointmentId: string
@@ -871,8 +1048,8 @@ export class NotificationService {
           tiempo_restante: leadLabel,
         }
 
-        const customPendingTemplate = appointment.doctor.doctorConfig?.whatsappReminderPendingTemplate ?? null
-        const customConfirmedTemplate = appointment.doctor.doctorConfig?.whatsappReminderConfirmedTemplate ?? null
+        const customPendingTemplate = appointment.doctor.doctorConfig?.reminderPendingTemplate ?? null
+        const customConfirmedTemplate = appointment.doctor.doctorConfig?.reminderConfirmedTemplate ?? null
 
         const message =
           appointment.status === AppointmentStatus.PENDING
@@ -884,17 +1061,21 @@ export class NotificationService {
                 this.applyTemplate(customConfirmedTemplate, templateVars) ??
                 this.applyTemplate(DEFAULT_REMINDER_CONFIRMED_TEMPLATE, templateVars)!
               )
-        const key = `${appointment.id}|${message}`
-        if (existingReminderKeys.has(key)) continue
+        const actionToken = await signAppointmentActionToken(appointment.id)
+        const messageWithMarker = `${message}\n${buildActionMarker(actionToken)}`
 
-        existingReminderKeys.add(key)
-        toCreate.push({
-          appointmentId: appointment.id,
-          channel: NotificationChannel.WHATSAPP,
-          type: NotificationType.REMINDER,
-          status: NotificationStatus.PENDING,
-          message,
-        })
+        for (const channel of [NotificationChannel.SMS, NotificationChannel.EMAIL]) {
+          const key = `${appointment.id}|${message}|${channel}`
+          if (existingReminderKeys.has(key)) continue
+          existingReminderKeys.add(key)
+          toCreate.push({
+            appointmentId: appointment.id,
+            channel,
+            type: NotificationType.REMINDER,
+            status: NotificationStatus.PENDING,
+            message: messageWithMarker,
+          })
+        }
       }
     }
 
@@ -908,10 +1089,11 @@ export class NotificationService {
   static async processPendingQueue(options: ProcessQueueOptions = {}): Promise<ProcessQueueResult> {
     const limit = options.limit ?? DEFAULT_PROCESS_LIMIT
 
+    const now = new Date()
     const pendingNotifications = await prisma.notification.findMany({
       where: {
         status: NotificationStatus.PENDING,
-        channel: NotificationChannel.WHATSAPP,
+        OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }],
         ...(options.appointmentId ? { appointmentId: options.appointmentId } : {}),
         ...(options.doctorId ? { appointment: { is: { doctorId: options.doctorId } } } : {}),
       },
@@ -956,7 +1138,6 @@ export class NotificationService {
     const failedNotifications = await prisma.notification.findMany({
       where: {
         status: NotificationStatus.FAILED,
-        channel: NotificationChannel.WHATSAPP,
         createdAt: { gte: windowStart },
         ...(options.appointmentId ? { appointmentId: options.appointmentId } : {}),
         ...(options.doctorId ? { appointment: { is: { doctorId: options.doctorId } } } : {}),
@@ -966,6 +1147,7 @@ export class NotificationService {
       select: {
         id: true,
         appointmentId: true,
+        channel: true,
         type: true,
         message: true,
       },
@@ -981,7 +1163,7 @@ export class NotificationService {
           appointmentId: failed.appointmentId,
           type: failed.type,
           message: failed.message,
-          channel: NotificationChannel.WHATSAPP,
+          channel: failed.channel,
           status: NotificationStatus.PENDING,
         },
         select: { id: true },
@@ -996,7 +1178,7 @@ export class NotificationService {
           appointmentId: failed.appointmentId,
           type: failed.type,
           message: failed.message,
-          channel: NotificationChannel.WHATSAPP,
+          channel: failed.channel,
           createdAt: { gte: windowStart },
         },
       })
@@ -1005,14 +1187,19 @@ export class NotificationService {
         continue
       }
 
+      const retryAttemptNumber = attempts // attempts already counted above (1 = first retry)
+      const backoffMs = Math.min(Math.pow(2, retryAttemptNumber - 1) * 60_000, 30 * 60_000)
+      const scheduledFor = new Date(Date.now() + backoffMs)
+
       await prisma.notification.create({
         data: {
           appointmentId: failed.appointmentId,
-          channel: NotificationChannel.WHATSAPP,
+          channel: failed.channel,
           type: failed.type,
           status: NotificationStatus.PENDING,
           message: failed.message,
           externalId: `RETRY_OF:${failed.id}`,
+          scheduledFor,
         },
       })
       retried += 1
@@ -1043,16 +1230,12 @@ export class NotificationService {
       where: {
         id: options.notificationId,
         status: NotificationStatus.FAILED,
-        channel: NotificationChannel.WHATSAPP,
-        appointment: {
-          is: {
-            doctorId: options.doctorId,
-          },
-        },
+        appointment: { is: { doctorId: options.doctorId } },
       },
       select: {
         id: true,
         appointmentId: true,
+        channel: true,
         type: true,
         message: true,
       },
@@ -1067,7 +1250,7 @@ export class NotificationService {
         appointmentId: failed.appointmentId,
         type: failed.type,
         message: failed.message,
-        channel: NotificationChannel.WHATSAPP,
+        channel: failed.channel,
         status: NotificationStatus.PENDING,
       },
       select: { id: true },
@@ -1082,7 +1265,7 @@ export class NotificationService {
         appointmentId: failed.appointmentId,
         type: failed.type,
         message: failed.message,
-        channel: NotificationChannel.WHATSAPP,
+        channel: failed.channel,
         createdAt: { gte: windowStart },
       },
     })
@@ -1094,7 +1277,7 @@ export class NotificationService {
     await prisma.notification.create({
       data: {
         appointmentId: failed.appointmentId,
-        channel: NotificationChannel.WHATSAPP,
+        channel: failed.channel,
         type: failed.type,
         status: NotificationStatus.PENDING,
         message: failed.message,
@@ -1114,7 +1297,6 @@ export class NotificationService {
 
     const records = await prisma.notification.findMany({
       where: {
-        channel: NotificationChannel.WHATSAPP,
         createdAt: { gte: windowStart },
         appointment: { is: { doctorId: options.doctorId } },
       },

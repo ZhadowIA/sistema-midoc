@@ -1,0 +1,54 @@
+name: Cron Jobs
+
+on:
+  schedule:
+    # Procesar cola de notificaciones cada 5 minutos
+    - cron: '*/5 * * * *'
+    # Limpiar short-links expirados a las 3am UTC diario
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Job a ejecutar manualmente'
+        required: true
+        type: choice
+        options:
+          - notifications
+          - cleanup-short-links
+
+jobs:
+  notifications:
+    name: Procesar notificaciones pendientes
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'notifications' ||
+      github.event_name == 'schedule' && github.event.schedule == '*/5 * * * *'
+    steps:
+      - name: Invoke notifications processor
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            "${{ secrets.APP_BASE_URL }}/api/internal/notifications/process" \
+            -H "x-notification-secret: ${{ secrets.NOTIFICATION_CRON_SECRET }}")
+          echo "HTTP status: $response"
+          if [ "$response" != "200" ]; then
+            echo "Error: endpoint returned $response"
+            exit 1
+          fi
+
+  cleanup-short-links:
+    name: Limpiar short-links expirados
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'cleanup-short-links' ||
+      github.event_name == 'schedule' && github.event.schedule == '0 3 * * *'
+    steps:
+      - name: Invoke short-link cleanup
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            "${{ secrets.APP_BASE_URL }}/api/internal/ops/cleanup-short-links" \
+            -H "x-cron-secret: ${{ secrets.NOTIFICATION_CRON_SECRET }}")
+          echo "HTTP status: $response"
+          if [ "$response" != "200" ]; then
+            echo "Error: endpoint returned $response"
+            exit 1
+          fi
