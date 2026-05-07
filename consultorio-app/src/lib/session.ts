@@ -1,5 +1,6 @@
 import { SignJWT } from "jose";
 import type { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { getServerEnv } from "./env";
 import { SESSION_COOKIE_MAX_AGE_SECONDS } from "./sessionConfig";
 
@@ -15,11 +16,14 @@ export type SessionClaims = {
   productPlan?: "AGENDA" | "CLINICAL_RECORDS" | "COMBINED";
   enabledModules?: Array<"AGENDA" | "CLINICAL_RECORDS">;
   features?: Record<string, unknown>;
+  twoFactorVerified?: boolean;
+  twoFactorSetupRequired?: boolean;
 };
 
 export async function buildSessionToken(claims: SessionClaims): Promise<string> {
   return new SignJWT(claims)
     .setProtectedHeader({ alg: "HS256" })
+    .setJti(randomUUID())
     .setIssuedAt()
     .setExpirationTime(`${SESSION_COOKIE_MAX_AGE_SECONDS}s`)
     .sign(secret);

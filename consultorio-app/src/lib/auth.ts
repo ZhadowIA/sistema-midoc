@@ -14,6 +14,8 @@ export type AuthenticatedUser = {
   productPlan?: 'AGENDA' | 'CLINICAL_RECORDS' | 'COMBINED'
   enabledModules?: Array<'AGENDA' | 'CLINICAL_RECORDS'>
   features?: Record<string, unknown>
+  twoFactorVerified?: boolean
+  twoFactorSetupRequired?: boolean
 }
 
 function coerceFeatures(value: unknown): Record<string, unknown> | undefined {
@@ -31,9 +33,15 @@ export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> 
     const { payload } = await jwtVerify(token, secret)
     const userId = payload.sub
     const role = payload.role
+    const jti = payload.jti
 
     if (typeof userId !== 'string' || typeof role !== 'string') {
       return null
+    }
+
+    if (typeof jti === 'string') {
+      const blacklisted = await prisma.tokenBlacklist.findUnique({ where: { jti }, select: { jti: true } })
+      if (blacklisted) return null
     }
 
     const user = await prisma.user.findUnique({
@@ -62,6 +70,8 @@ export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> 
           )
         : undefined,
       features: coerceFeatures(payload.features),
+      twoFactorVerified: payload.twoFactorVerified === true,
+      twoFactorSetupRequired: payload.twoFactorSetupRequired === true,
     }
   } catch {
     return null

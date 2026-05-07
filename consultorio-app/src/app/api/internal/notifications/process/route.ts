@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { NotificationService } from '@/services/NotificationService'
+import { WaitlistService } from '@/services/WaitlistService'
 import { getServerEnv } from '@/lib/env'
-import { captureError } from '@/lib/observability'
+import { captureError, emitMetric } from '@/lib/observability'
 
 const querySchema = z.object({
   limit: z.coerce.number().int().positive().max(500).optional(),
@@ -13,6 +14,7 @@ const querySchema = z.object({
 
 export async function POST(request: Request) {
   try {
+    emitMetric({ domain: 'whatsapp', metric: 'notification_cron_run' })
     const env = getServerEnv()
     const expectedSecret = env.NOTIFICATION_CRON_SECRET
     if (!expectedSecret) {
@@ -43,6 +45,7 @@ export async function POST(request: Request) {
     }
 
     const automation = await NotificationService.applyAutomaticAppointmentRules()
+    const unconfirmedWaitlist = await WaitlistService.processUnconfirmedVacancies()
 
     const reminders = await NotificationService.enqueueDueReminders({
       leadMinutes: parsed.data.leadMinutes,
@@ -63,6 +66,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       automation,
+      unconfirmedWaitlist,
       reminders,
       retries,
       queue: queueResult,
@@ -70,6 +74,7 @@ export async function POST(request: Request) {
     })
   } catch (error: unknown) {
     captureError('notifications.process.error', error)
+    emitMetric({ domain: 'whatsapp', metric: 'notification_cron_error' })
     const message = error instanceof Error ? error.message : 'Error interno'
     return NextResponse.json({ error: message }, { status: 500 })
   }
