@@ -25,7 +25,7 @@ export async function GET(request: Request) {
 
     const now = Date.now()
 
-    const [pendingCount, failedCount, oldestPending, webhookErrors, overdueDeposits] = await Promise.all([
+    const [pendingCount, failedCount, oldestPending, webhookErrors, webhookReceivedPending, overdueDeposits] = await Promise.all([
       prisma.notification.count({ where: { status: 'PENDING' } }),
       prisma.notification.count({ where: { status: 'FAILED' } }),
       prisma.notification.findFirst({
@@ -35,6 +35,9 @@ export async function GET(request: Request) {
       }),
       prisma.paymentWebhookEvent.count({
         where: { status: { not: 'PROCESSED' }, processingError: { not: null } },
+      }),
+      prisma.paymentWebhookEvent.count({
+        where: { status: 'RECEIVED' },
       }),
       prisma.appointment.count({
         where: {
@@ -61,6 +64,9 @@ export async function GET(request: Request) {
     if (webhookErrors >= WEBHOOK_ERROR_WARN_COUNT) {
       signals.push({ level: 'warn', signal: 'payments.webhook_errors', detail: { webhookErrors } })
     }
+    if (webhookReceivedPending > 0) {
+      signals.push({ level: 'warn', signal: 'payments.webhook_received_pending', detail: { webhookReceivedPending } })
+    }
     if (overdueDeposits > 0) {
       signals.push({ level: 'warn', signal: 'payments.deposit_overdue', detail: { overdueDeposits } })
     }
@@ -85,6 +91,7 @@ export async function GET(request: Request) {
       },
       payments: {
         webhookErrors,
+        webhookReceivedPending,
         overdueDeposits,
       },
       signals,

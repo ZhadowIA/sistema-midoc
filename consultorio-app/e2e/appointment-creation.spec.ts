@@ -23,7 +23,7 @@ test.describe('Appointment & Agenda', () => {
 
   test('agenda navigates to appointment detail', async ({ page }) => {
     // First check if there are any appointments via API
-    const response = await page.request.get('/api/admin/dashboard/summary');
+    const response = await page.request.get('/api/agenda/admin/dashboard/summary');
 
     if (response.status() !== 200) {
       test.skip(true, 'Dashboard API not reachable — skipping');
@@ -50,7 +50,7 @@ test.describe('Appointment & Agenda', () => {
   });
 
   test('appointment detail loads consultation workspace link', async ({ page }) => {
-    const response = await page.request.get('/api/admin/dashboard/summary');
+    const response = await page.request.get('/api/agenda/admin/dashboard/summary');
 
     if (response.status() !== 200) {
       test.skip(true, 'Dashboard API not reachable');
@@ -78,3 +78,4 @@ test.describe('Appointment & Agenda', () => {
     expect(pageContent?.length).toBeGreaterThan(100);
   });
 });
+

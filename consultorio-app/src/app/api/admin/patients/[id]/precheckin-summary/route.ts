@@ -1,23 +1,33 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedUser } from '@/lib/auth'
+import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 
 export async function GET(_request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
 
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser || (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN')) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-    }
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const authUser = access.context.user
+    const doctorId = access.context.doctorId
 
     const patient = await prisma.patient.findUnique({
       where: { id: params.id },
-      select: { id: true, ownerDoctorId: true, clinicId: true },
+      select: {
+        id: true,
+        ownerDoctorId: true,
+        clinicId: true,
+        appointments: {
+          where: { doctorId },
+          select: { id: true },
+          take: 1,
+        },
+      },
     })
     if (!patient) return NextResponse.json({ error: 'Paciente no encontrado' }, { status: 404 })
 
-    if (authUser.role === 'DOCTOR' && patient.ownerDoctorId !== authUser.id) {
+    const hasDoctorScope = patient.ownerDoctorId === doctorId || patient.appointments.length > 0
+    if (authUser.role === 'DOCTOR' && !hasDoctorScope) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
     }
 

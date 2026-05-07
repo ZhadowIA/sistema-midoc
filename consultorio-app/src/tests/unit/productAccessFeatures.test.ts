@@ -1,4 +1,8 @@
 import { getModuleAccessFromFeatures } from '@/lib/productAccessFeatures'
+import {
+  hasAiCapability,
+  SUBSCRIPTION_FEATURES,
+} from '@/lib/subscriptionFeatures'
 import assert from 'node:assert/strict'
 
 export async function runProductAccessFeaturesUnitTests() {
@@ -20,5 +24,22 @@ export async function runProductAccessFeaturesUnitTests() {
 
     assert.equal(access.agendaEnabled, false)
     assert.equal(access.clinicalEnabled, true)
+  })
+
+  test('hasAiCapability accepts future questionnaire and specialty capabilities', () => {
+    assert.equal(
+      hasAiCapability({
+        [SUBSCRIPTION_FEATURES.AI_ENABLED]: true,
+        [SUBSCRIPTION_FEATURES.AI_QUESTIONNAIRE_TEXT]: true,
+      }),
+      true,
+    )
+    assert.equal(
+      hasAiCapability({
+        [SUBSCRIPTION_FEATURES.AI_ENABLED]: true,
+        [SUBSCRIPTION_FEATURES.AI_SPECIALTY_ENABLED]: true,
+      }),
+      true,
+    )
   })
 }

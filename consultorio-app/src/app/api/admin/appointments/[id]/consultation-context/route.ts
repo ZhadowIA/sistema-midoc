@@ -72,11 +72,6 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
       hasAppointmentContext: true,
     })
     if (!capabilities.clinicalUnified.enabled) {
-      console.info('clinical.context.disabled', {
-        doctorId,
-        appointmentId: params.id,
-        reasonCode: capabilities.clinicalUnified.reasonCode,
-      })
       return jsonNoStore(
         {
           error: 'Modo consulta unificado no habilitado',

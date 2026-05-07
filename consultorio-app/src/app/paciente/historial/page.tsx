@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ArrowLeft, CalendarClock, CheckCircle2, Download, LogOut, RefreshCcw, Settings2, XCircle } from "lucide-react";
+import { ArrowLeft, CalendarClock, CheckCircle2, Clock, Download, LogOut, RefreshCcw, Settings2, XCircle } from "lucide-react";
 import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
 import { Modal } from "@/components/Modal";
@@ -13,6 +13,11 @@ import { toast } from "sonner";
 type HistoryAppointment = {
   id: string;
   status: string;
+  paymentStatus: string | null;
+  depositRequiredAmount: number | null;
+  depositPaidAmount: number | null;
+  depositDueAt: string | null;
+  depositPaidAt: string | null;
   source: string;
   appointmentType: string;
   durationMin: number;
@@ -69,6 +74,62 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const MANAGEABLE_STATUSES = new Set(["PENDING", "CONFIRMED", "RESCHEDULED"]);
+
+function DepositBadge({ apt }: { apt: HistoryAppointment }) {
+  const { paymentStatus, depositRequiredAmount, depositPaidAmount, depositDueAt } = apt;
+  if (!paymentStatus || paymentStatus === "NOT_REQUIRED") return null;
+
+  const fmt = (n: number | null) =>
+    n !== null ? new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(n) : "";
+
+  if (paymentStatus === "PAYMENT_PENDING" && depositRequiredAmount) {
+    const due = depositDueAt ? format(new Date(depositDueAt), "dd MMM HH:mm", { locale: es }) : null;
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-warning/10 text-warning border border-warning/30">
+        <Clock className="w-3 h-3" />
+        Anticipo pendiente {fmt(depositRequiredAmount)}{due ? ` · vence ${due}` : ""}
+      </span>
+    );
+  }
+  if (paymentStatus === "DEPOSIT_PAID") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-success/10 text-success border border-success/20">
+        <CheckCircle2 className="w-3 h-3" />
+        Anticipo pagado {fmt(depositPaidAmount)}
+      </span>
+    );
+  }
+  if (paymentStatus === "PAYMENT_FAILED") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-destructive/10 text-destructive border border-destructive/20">
+        <XCircle className="w-3 h-3" />
+        Pago fallido
+      </span>
+    );
+  }
+  if (paymentStatus === "REFUND_PENDING") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-primary/10 text-primary border border-primary/20">
+        Reembolso en proceso {fmt(depositPaidAmount)}
+      </span>
+    );
+  }
+  if (paymentStatus === "CREDIT_ISSUED") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-primary/10 text-primary border border-primary/20">
+        Crédito emitido {fmt(depositPaidAmount)}
+      </span>
+    );
+  }
+  if (paymentStatus === "DEPOSIT_FORFEITED") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-secondary text-muted-foreground border border-border">
+        Anticipo aplicado a penalización
+      </span>
+    );
+  }
+  return null;
+}
 
 export default function PatientHistoryPage() {
   const router = useRouter();
@@ -141,6 +202,23 @@ export default function PatientHistoryPage() {
 
   const canManageAppointment = (appointment: HistoryAppointment) => {
     return MANAGEABLE_STATUSES.has(appointment.status) && new Date(appointment.startTime).getTime() > Date.now();
+  };
+
+  const payDeposit = async (appointmentId: string) => {
+    setActingAppointmentId(appointmentId);
+    try {
+      const res = await fetch(`/api/payments/appointments/${appointmentId}/deposit/checkout`, { method: "POST" });
+      const data = await res.json() as { checkoutUrl?: string; error?: string };
+      if (!res.ok || !data.checkoutUrl) {
+        toast.error(data.error || "No se pudo iniciar el pago del anticipo.");
+        return;
+      }
+      window.location.href = data.checkoutUrl;
+    } catch {
+      toast.error("Error al iniciar el pago.");
+    } finally {
+      setActingAppointmentId(null);
+    }
   };
 
   const runAction = async (appointmentId: string, payload: { action: "CONFIRM" | "CANCEL" | "RESCHEDULE"; newStartTime?: string }) => {
@@ -237,24 +315,24 @@ export default function PatientHistoryPage() {
 
       <div className="max-w-5xl mx-auto px-4 py-8">
         <div className="grid gap-3 sm:grid-cols-4 mb-8">
-          <div className="rounded-xl border border-border bg-card p-4">
+          <div className="rounded-md border border-border bg-card p-4">
             <p className="text-xs text-muted-foreground">Total</p>
             <p className="text-2xl font-semibold">{summary.total}</p>
           </div>
-          <div className="rounded-xl border border-border bg-card p-4">
+          <div className="rounded-md border border-border bg-card p-4">
             <p className="text-xs text-muted-foreground">Completadas</p>
             <p className="text-2xl font-semibold">{summary.completed}</p>
           </div>
-          <div className="rounded-xl border border-border bg-card p-4">
+          <div className="rounded-md border border-border bg-card p-4">
             <p className="text-xs text-muted-foreground">Próximas</p>
             <p className="text-2xl font-semibold">{summary.upcoming}</p>
           </div>
-          <div className="rounded-xl border border-border bg-card p-4">
+          <div className="rounded-md border border-border bg-card p-4">
             <p className="text-xs text-muted-foreground">Canceladas</p>
             <p className="text-2xl font-semibold">{summary.cancelled}</p>
           </div>
         </div>
-        <div className="rounded-xl border border-border bg-card p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="rounded-md border border-border bg-card p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <p className="text-xs text-muted-foreground">Centro de pagos pendientes</p>
             <p className="text-sm">
@@ -270,15 +348,15 @@ export default function PatientHistoryPage() {
         {loading ? (
           <div className="text-center text-muted-foreground py-12">Cargando historial...</div>
         ) : error ? (
-          <div className="rounded-xl border border-red-500 text-red-400 p-4">{error}</div>
+          <div className="rounded-md border border-red-500 text-red-400 p-4">{error}</div>
         ) : appointments.length === 0 ? (
-          <div className="rounded-xl border border-border bg-card p-8 text-center text-muted-foreground">
+          <div className="rounded-md border border-border bg-card p-8 text-center text-muted-foreground">
             Aún no tienes citas vinculadas a tu cuenta.
           </div>
         ) : (
           <div className="space-y-4">
             {downloadHistory.length > 0 && (
-              <div className="rounded-xl border border-border bg-card p-4">
+              <div className="rounded-md border border-border bg-card p-4">
                 <h3 className="text-sm font-semibold text-foreground">Descargas recientes</h3>
                 <ul className="mt-3 space-y-2">
                   {downloadHistory.map((item) => (
@@ -295,7 +373,7 @@ export default function PatientHistoryPage() {
             )}
 
             {appointments.map((appointment) => (
-              <div key={appointment.id} className="rounded-xl border border-border bg-card p-5">
+              <div key={appointment.id} className="rounded-md border border-border bg-card p-5">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <div>
                     <p className="text-sm text-muted-foreground">Médico</p>
@@ -304,9 +382,12 @@ export default function PatientHistoryPage() {
                       {appointment.doctor.specialty || "Especialidad no definida"}
                     </p>
                   </div>
-                  <span className="text-sm px-2 py-1 rounded-md bg-secondary text-foreground w-fit">
-                    {STATUS_LABELS[appointment.status] || appointment.status}
-                  </span>
+                  <div className="flex flex-col items-end gap-1.5">
+                    <span className="text-sm px-2 py-1 rounded-md bg-secondary text-foreground w-fit">
+                      {STATUS_LABELS[appointment.status] || appointment.status}
+                    </span>
+                    <DepositBadge apt={appointment} />
+                  </div>
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-4 text-sm text-muted-foreground">
@@ -319,6 +400,16 @@ export default function PatientHistoryPage() {
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-2">
+                  {appointment.paymentStatus === "PAYMENT_PENDING" && canManageAppointment(appointment) && (
+                    <Button
+                      size="sm"
+                      onClick={() => void payDeposit(appointment.id)}
+                      disabled={actingAppointmentId === appointment.id}
+                    >
+                      Pagar anticipo
+                    </Button>
+                  )}
+
                   {appointment.status === "PENDING" && canManageAppointment(appointment) && (
                     <Button
                       size="sm"
@@ -370,7 +461,7 @@ export default function PatientHistoryPage() {
                     size="sm"
                     variant="tertiary"
                     onClick={() =>
-                      router.push(`/agendar${appointment.doctor.slug ? `?doctor=${appointment.doctor.slug}` : ""}`)
+                      router.push(appointment.doctor.slug ? `/doctor/${appointment.doctor.slug}` : "/paciente")
                     }
                   >
                     Agendar de nuevo
@@ -390,7 +481,7 @@ export default function PatientHistoryPage() {
                 </div>
 
                 {rescheduleAppointmentId === appointment.id && (
-                  <div className="mt-4 rounded-xl border border-border bg-secondary/20 p-4 space-y-3">
+                  <div className="mt-4 rounded-md border border-border bg-secondary/20 p-4 space-y-3">
                     <Input
                       label="Nueva fecha"
                       type="date"
@@ -486,4 +577,3 @@ export default function PatientHistoryPage() {
     </div>
   );
 }
-

@@ -31,7 +31,7 @@ export const RadioGroup = ({ label, options, value, onValueChange, error }: Radi
         {options.map((option) => (
           <label
             key={option.value}
-            className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+            className={`flex items-start gap-3 p-4 rounded-md border-2 cursor-pointer transition-all ${
               value === option.value
                 ? "border-primary bg-primary/5"
                 : "border-border hover:border-primary/50 bg-card"

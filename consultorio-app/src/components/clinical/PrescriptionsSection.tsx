@@ -30,7 +30,7 @@ export function PrescriptionsSection({
         prescriptions.map((p, i) => (
           <div
             key={i}
-            className="rounded-xl border border-border bg-secondary/15 p-3 space-y-2"
+            className="rounded-md border border-border bg-secondary/15 p-3 space-y-2"
           >
             <div className="flex items-start gap-2">
               <Input

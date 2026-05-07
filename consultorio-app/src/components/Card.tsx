@@ -9,12 +9,12 @@ interface CardProps {
 }
 
 export const Card = ({ children, className = "", hover = false, onClick }: CardProps) => {
-  const hoverClasses = hover ? "hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-pointer" : "";
+  const hoverClasses = hover ? "hover:shadow-md hover:border-primary/20 transition-all duration-200 cursor-pointer" : "";
   const clickableClasses = onClick ? "cursor-pointer" : "";
 
   return (
     <div
-      className={`bg-card border border-border rounded-2xl shadow-sm p-6 ${hoverClasses} ${clickableClasses} ${className}`}
+      className={`bg-card border border-border rounded-md shadow-sm p-6 ${hoverClasses} ${clickableClasses} ${className}`}
       onClick={onClick}
     >
       {children}

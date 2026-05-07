@@ -71,7 +71,7 @@ export default function DoctorRegisterPage() {
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
-            className="inline-flex w-16 h-16 bg-primary/10 rounded-2xl items-center justify-center mb-4"
+            className="inline-flex w-16 h-16 bg-primary/10 rounded-lg items-center justify-center mb-4"
           >
             <ShieldPlus className="w-8 h-8 text-primary" />
           </motion.div>
@@ -83,7 +83,7 @@ export default function DoctorRegisterPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3, duration: 0.6 }}
-          className="bg-card border border-border rounded-2xl shadow-lg p-8"
+          className="bg-card border border-border rounded-lg shadow-lg p-8"
         >
           {error && <div className="mb-4 p-3 bg-red-100/10 border border-red-500 rounded-md text-red-500 text-sm">{error}</div>}
 
@@ -114,6 +114,7 @@ export default function DoctorRegisterPage() {
             <Input
               label="Correo electrónico"
               type="email"
+              autoComplete="email"
               placeholder="doctor@consultorio.com"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
@@ -123,6 +124,7 @@ export default function DoctorRegisterPage() {
             <Input
               label="Teléfono"
               type="tel"
+              autoComplete="tel"
               placeholder="6141234567"
               value={form.phone}
               onChange={(e) => setForm({ ...form, phone: e.target.value })}
@@ -132,6 +134,7 @@ export default function DoctorRegisterPage() {
             <Input
               label="Contraseña"
               type="password"
+              autoComplete="new-password"
               placeholder="Mínimo 8 caracteres"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
@@ -139,7 +142,7 @@ export default function DoctorRegisterPage() {
               minLength={8}
             />
 
-            <div className="space-y-2 rounded-xl border border-border p-4">
+            <div className="space-y-2 rounded-md border border-border p-4">
               <label className="flex items-center gap-3 text-sm text-foreground">
                 <input
                   type="checkbox"

@@ -34,6 +34,54 @@ export function buildEmptyEncounterHistory(): EncounterHistoryPayload {
   }
 }
 
+export function normalizeEncounterHistoryPayload(
+  payload: Partial<EncounterHistoryPayload> | null | undefined,
+): EncounterHistoryPayload {
+  const base = buildEmptyEncounterHistory()
+  if (!payload || typeof payload !== 'object') return base
+
+  return {
+    ...base,
+    ...payload,
+    chiefComplaint:
+      typeof payload.chiefComplaint === 'string'
+        ? payload.chiefComplaint
+        : base.chiefComplaint,
+    presentIllness:
+      payload.presentIllness && typeof payload.presentIllness === 'object'
+        ? payload.presentIllness
+        : base.presentIllness,
+    pertinentNegatives: Array.isArray(payload.pertinentNegatives)
+      ? payload.pertinentNegatives
+      : base.pertinentNegatives,
+    reviewOfSystems:
+      payload.reviewOfSystems && typeof payload.reviewOfSystems === 'object'
+        ? payload.reviewOfSystems
+        : base.reviewOfSystems,
+    vitals: payload.vitals && typeof payload.vitals === 'object' ? payload.vitals : base.vitals,
+    physicalExam:
+      payload.physicalExam && typeof payload.physicalExam === 'object'
+        ? payload.physicalExam
+        : base.physicalExam,
+    assessment: Array.isArray(payload.assessment) ? payload.assessment : base.assessment,
+    diagnosticPlan:
+      payload.diagnosticPlan && typeof payload.diagnosticPlan === 'object'
+        ? payload.diagnosticPlan
+        : base.diagnosticPlan,
+    treatmentPlan:
+      payload.treatmentPlan && typeof payload.treatmentPlan === 'object'
+        ? payload.treatmentPlan
+        : base.treatmentPlan,
+    followUp:
+      payload.followUp && typeof payload.followUp === 'object'
+        ? payload.followUp
+        : base.followUp,
+    completionPct:
+      typeof payload.completionPct === 'number' ? payload.completionPct : base.completionPct,
+    status: payload.status ?? base.status,
+  }
+}
+
 function countFilled(obj: Record<string, unknown> | null | undefined): number {
   if (!obj) return 0
   let count = 0

@@ -3,6 +3,10 @@ import { QuestionnaireService } from '@/services/QuestionnaireService'
 import { transcribeAudio, generateQuestionnaireFollowUp } from '@/lib/aiNoteService'
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit'
 import { z } from 'zod'
+import { getDoctorProductAccess } from '@/lib/productAccess'
+import { SUBSCRIPTION_FEATURES } from '@/lib/subscriptionFeatures'
+import { recordAiUsage, resolvePromptVersion } from '@/lib/aiTelemetry'
+import { consumeAICredits, validateAICredits } from '@/lib/aiCreditsMiddleware'
 
 const interviewSchema = z.object({
   history: z.array(z.object({
@@ -24,8 +28,21 @@ export async function POST(
     const appointment = await QuestionnaireService.validateTokenContext(token)
     if (!appointment) return NextResponse.json({ error: 'Token inválido o cita no encontrada' }, { status: 404 })
     if (appointment.questionnaireAnswered) return NextResponse.json({ error: 'Cuestionario ya respondido' }, { status: 400 })
+    const access = await getDoctorProductAccess(appointment.doctorId, 'DOCTOR')
+    const aiEnabled = access.features[SUBSCRIPTION_FEATURES.AI_ENABLED] === true
+    const hasAiText = aiEnabled && access.features[SUBSCRIPTION_FEATURES.AI_QUESTIONNAIRE_TEXT] === true
+    const hasAiAudio = aiEnabled && access.features[SUBSCRIPTION_FEATURES.AI_QUESTIONNAIRE_AUDIO] === true
+    const contentTypeEarly = req.headers.get('content-type') || ''
+    const isAudioRequest = contentTypeEarly.includes('multipart/form-data')
+    if (isAudioRequest ? !hasAiAudio : !hasAiText) {
+      return NextResponse.json({ error: 'Entrevista IA no disponible para este consultorio.' }, { status: 403 })
+    }
+    const creditCheck = await validateAICredits(appointment.doctorId, 'questionnaireFollowUp')
+    if (!creditCheck.hasCredits) {
+      return NextResponse.json({ error: creditCheck.error }, { status: 402 })
+    }
 
-    const rateLimit = checkRateLimit(req, {
+    const rateLimit = await checkRateLimit(req, {
       key: `public:ai-interview:${token.slice(0, 12)}`,
       limit: 15,
       windowMs: 5 * 60_000,
@@ -42,7 +59,17 @@ export async function POST(
       const historyRaw = formData.get('history') as string | null
       
       if (historyRaw) {
-        history = JSON.parse(historyRaw)
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(historyRaw)
+        } catch {
+          return NextResponse.json({ error: 'Historial inválido' }, { status: 400 })
+        }
+        const validated = interviewSchema.safeParse({ history: parsed })
+        if (!validated.success) {
+          return NextResponse.json({ error: 'Historial inválido', details: validated.error.issues }, { status: 400 })
+        }
+        history = validated.data.history
       }
 
       if (audioBlob) {
@@ -66,15 +93,36 @@ export async function POST(
       return NextResponse.json({ error: 'No se recibió entrada del paciente' }, { status: 400 })
     }
 
-    const aiResponse = await generateQuestionnaireFollowUp({
-      transcript,
-      history
-    })
+    const t0 = Date.now()
+    const aiResponse = await generateQuestionnaireFollowUp({ transcript, history })
+    const durationMs = Date.now() - t0
 
-    return NextResponse.json({
-      transcript,
-      ...aiResponse
-    })
+    // Estimación de tokens: historial + respuesta del paciente + respuesta IA
+    const historyChars = history.reduce((s, h) => s + h.content.length, 0)
+    const estimatedInputTokens = Math.ceil((historyChars + transcript.length) / 4)
+    const estimatedOutputTokens = Math.ceil(JSON.stringify(aiResponse).length / 4)
+
+    recordAiUsage({
+      doctorId: appointment.doctorId,
+      appointmentId: appointment.id,
+      sourceModule: 'AI_QUESTIONNAIRE_INTERVIEW',
+      provider: 'openai',
+      model: 'gpt-4o',
+      promptVersion: resolvePromptVersion('AI_QUESTIONNAIRE_INTERVIEW'),
+      inputTokens: estimatedInputTokens,
+      outputTokens: estimatedOutputTokens,
+      durationMs,
+      status: 'COMPLETED',
+      metadata: { historyTurns: history.length, isFinished: aiResponse.isFinished },
+    }).catch(err => console.error('[aiTelemetry] questionnaire:', err))
+
+    consumeAICredits(
+      appointment.doctorId,
+      'questionnaireFollowUp',
+      `Appointment ${appointment.id}: questionnaire AI interview`,
+    ).catch(() => undefined)
+
+    return NextResponse.json({ transcript, ...aiResponse })
 
   } catch (error: unknown) {
     console.error('AI Interview Error:', error)

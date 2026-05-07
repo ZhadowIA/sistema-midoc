@@ -12,7 +12,7 @@ const querySchema = z.object({
 })
 
 export async function GET(request: Request) {
-  const rateLimit = checkRateLimit(request, {
+  const rateLimit = await checkRateLimit(request, {
     key: 'public:doctors',
     limit: 90,
     windowMs: 60_000,
@@ -48,7 +48,7 @@ export async function GET(request: Request) {
     }
 
     const doctors = await prisma.user.findMany({
-      where: { active: true, role: { in: ['ADMIN', 'DOCTOR'] } },
+      where: { active: true, role: { in: ['ADMIN', 'DOCTOR'] }, slug: { not: null } },
       select: {
         id: true,
         name: true,

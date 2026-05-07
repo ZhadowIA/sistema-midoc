@@ -43,7 +43,7 @@ export function FeedbackState({
   return (
     <div
       className={[
-        "flex flex-col items-center justify-center text-center rounded-xl border border-border bg-secondary/20",
+        "flex flex-col items-center justify-center text-center rounded-md border border-border bg-secondary/20",
         compact ? "py-6 px-4" : "py-12 px-6",
         className || "",
       ].join(" ")}

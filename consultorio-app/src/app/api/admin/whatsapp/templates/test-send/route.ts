@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { WhatsAppMessageAction, WhatsAppMessageDirection } from '@prisma/client'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { requireAgendaDoctorApiAccess } from '@/lib/medicalApi'
 import { getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
 import { WhatsAppMessageLogService } from '@/services/WhatsAppMessageLogService'
 import {
@@ -25,10 +25,9 @@ const payloadSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-    }
+    const access = await requireAgendaDoctorApiAccess({ allowSecretary: true })
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     const rawBody = await request.json().catch(() => ({}))
     const hasTemplateProp =
@@ -47,10 +46,10 @@ export async function POST(request: Request) {
       where: { doctorId },
       select: {
         whatsappConnected: true,
-        whatsappBookingMessageTemplate: true,
-        whatsappQuestionnaireTemplate: true,
-        whatsappReminderPendingTemplate: true,
-        whatsappReminderConfirmedTemplate: true,
+        bookingMessageTemplate: true,
+        questionnaireTemplate: true,
+        reminderPendingTemplate: true,
+        reminderConfirmedTemplate: true,
       },
     })
 

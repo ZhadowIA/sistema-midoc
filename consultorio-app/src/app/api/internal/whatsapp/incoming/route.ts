@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import {
   AppointmentStatus,
@@ -9,7 +10,7 @@ import { addDays, format, subHours } from 'date-fns'
 import { z } from 'zod'
 import prisma from '@/lib/prisma'
 import { getServerEnv } from '@/lib/env'
-import { captureError, logEvent } from '@/lib/observability'
+import { captureError, emitMetric, logEvent } from '@/lib/observability'
 import { WhatsAppMessageLogService } from '@/services/WhatsAppMessageLogService'
 import { AppointmentAuditService } from '@/services/AppointmentAuditService'
 import { WaitlistService } from '@/services/WaitlistService'
@@ -239,17 +240,22 @@ function formatDateTime(date: Date) {
 
 export async function POST(request: Request) {
   try {
+    emitMetric({ domain: 'whatsapp', metric: 'incoming_message_received' })
     const env = getServerEnv()
-    const expectedSecret = env.WHATSAPP_WEBHOOK_SECRET || env.NOTIFICATION_CRON_SECRET
+    const expectedSecret = env.WHATSAPP_WEBHOOK_SECRET
     if (!expectedSecret) {
       return NextResponse.json(
-        { error: 'No está configurado WHATSAPP_WEBHOOK_SECRET (o NOTIFICATION_CRON_SECRET)' },
+        { error: 'No está configurado WHATSAPP_WEBHOOK_SECRET' },
         { status: 503 }
       )
     }
 
-    const providedSecret = request.headers.get('x-whatsapp-secret')
-    if (providedSecret !== expectedSecret) {
+    const providedSecret = request.headers.get('x-whatsapp-secret') ?? ''
+    const expected = Buffer.from(expectedSecret)
+    const provided = Buffer.from(providedSecret)
+    const secretValid =
+      provided.length === expected.length && timingSafeEqual(provided, expected)
+    if (!secretValid) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
@@ -265,6 +271,7 @@ export async function POST(request: Request) {
     const incomingPhone = normalizePhone(parsed.data.from)
     const message = parsed.data.message.trim()
     const intent = detectIntent(message)
+    emitMetric({ domain: 'whatsapp', metric: 'incoming_intent_detected', tags: { intent } })
     const normalizedMessage = normalizeText(message)
     const wantsReschedule = RESCHEDULE_KEYWORDS.some((keyword) => normalizedMessage.includes(keyword))
     const now = new Date()
@@ -524,6 +531,15 @@ export async function POST(request: Request) {
       })
     }
 
+    emitMetric({
+      domain: 'whatsapp',
+      metric: 'incoming_message_processed',
+      tags: {
+        action,
+        hasMatchedAppointment: Boolean(matchedAppointment),
+      },
+    })
+
     return NextResponse.json({
       success: true,
       action,
@@ -532,6 +548,7 @@ export async function POST(request: Request) {
     })
   } catch (error: unknown) {
     captureError('whatsapp.incoming.error', error)
+    emitMetric({ domain: 'whatsapp', metric: 'incoming_message_error' })
     const message = error instanceof Error ? error.message : 'Error interno'
     return NextResponse.json({ error: message }, { status: 500 })
   }

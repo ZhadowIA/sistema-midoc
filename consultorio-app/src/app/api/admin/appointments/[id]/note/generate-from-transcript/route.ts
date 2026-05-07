@@ -18,7 +18,7 @@ export async function POST(
   props: { params: Promise<{ id: string }> },
 ) {
   try {
-    const rateLimit = checkRateLimit(req, {
+    const rateLimit = await checkRateLimit(req, {
       key: "admin:ai:note:generate-from-transcript",
       limit: 15,
       windowMs: 15 * 60_000,
@@ -86,6 +86,7 @@ export async function POST(
       appointmentId: appointment.id,
       doctorId,
       patientId: appointment.patientId,
+      clinicId: appointment.clinicId ?? null,
       actorUserId,
       ipAddress,
       userAgent,

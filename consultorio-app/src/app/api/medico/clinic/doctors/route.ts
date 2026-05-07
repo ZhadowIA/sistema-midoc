@@ -4,12 +4,13 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getClinicSeatSummary } from "@/lib/clinicSeats";
+import { MedicalSpecialty } from "@prisma/client";
 
 const inviteDoctorSchema = z.object({
   name: z.string().trim().min(1),
   email: z.string().trim().email(),
   password: z.string().min(8),
-  specialty: z.string().trim().optional(),
+  specialty: z.nativeEnum(MedicalSpecialty).optional(),
 });
 
 export async function GET() {
@@ -102,7 +103,7 @@ export async function POST(request: Request) {
           email: input.email.toLowerCase().trim(),
           passwordHash,
           role: "DOCTOR",
-          specialty: input.specialty?.trim() || "Médico Especialista",
+          specialty: input.specialty || null,
           clinicId: actor.clinicId,
           active: true,
         },

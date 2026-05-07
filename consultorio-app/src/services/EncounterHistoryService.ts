@@ -7,6 +7,7 @@ import {
 import {
   buildEmptyEncounterHistory,
   calculateEncounterCompletionPct,
+  normalizeEncounterHistoryPayload,
 } from '@/lib/clinicalFormat'
 
 export class EncounterHistoryService {
@@ -16,7 +17,17 @@ export class EncounterHistoryService {
 
   static async getOrBuildForAppointment(appointmentId: string) {
     const existing = await this.getByAppointmentId(appointmentId)
-    if (existing) return { record: existing, built: false }
+    if (existing) {
+      return {
+        record: {
+          ...existing,
+          payload: normalizeEncounterHistoryPayload(
+            existing.payload as Partial<EncounterHistoryPayload> | null,
+          ),
+        },
+        built: false,
+      }
+    }
 
     return {
       record: {
@@ -42,7 +53,17 @@ export class EncounterHistoryService {
     appointmentId?: string | null
   }) {
     const existing = await this.getByClinicalEncounterId(input.clinicalEncounterId)
-    if (existing) return { record: existing, built: false }
+    if (existing) {
+      return {
+        record: {
+          ...existing,
+          payload: normalizeEncounterHistoryPayload(
+            existing.payload as Partial<EncounterHistoryPayload> | null,
+          ),
+        },
+        built: false,
+      }
+    }
 
     return {
       record: {
@@ -127,7 +148,7 @@ export class EncounterHistoryService {
         where: { clinicalEncounterId },
         create: {
           clinicalEncounterId,
-          appointmentId: appointmentId ?? clinicalEncounterId,
+          appointmentId: appointmentId ?? null,
           patientId,
           doctorId,
           payload: payloadJson,
@@ -136,7 +157,7 @@ export class EncounterHistoryService {
           prefilledFromQuestionnaire: opts?.prefilledFromQuestionnaire ?? false,
         },
         update: {
-          appointmentId: appointmentId ?? undefined,
+          ...(appointmentId ? { appointmentId } : {}),
           payload: payloadJson,
           completionPct: parsed.completionPct,
           status: parsed.status,
@@ -149,7 +170,7 @@ export class EncounterHistoryService {
       await tx.encounterHistoryVersion.create({
         data: {
           encounterHistoryId: record.id,
-          appointmentId: appointmentId ?? clinicalEncounterId,
+          appointmentId: appointmentId ?? null,
           patientId,
           doctorId,
           payload: payloadJson,
@@ -224,7 +245,7 @@ export class EncounterHistoryService {
 
     const baseCreate = {
       clinicalEncounterId: input.clinicalEncounterId,
-      appointmentId: input.appointmentId ?? input.clinicalEncounterId,
+      appointmentId: input.appointmentId ?? null,
       patientId: input.patientId,
       doctorId: input.doctorId,
       payload: buildEmptyEncounterHistory() as unknown as Prisma.InputJsonValue,

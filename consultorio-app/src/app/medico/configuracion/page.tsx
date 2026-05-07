@@ -8,6 +8,8 @@ import { Modal } from "@/components/Modal";
 import { toast } from "sonner";
 import { useSearchParams, useRouter } from "next/navigation";
 import { formatPatientName } from "@/lib/patientName";
+import { Select } from "@/components/Select";
+import { SPECIALTY_TRANSLATIONS } from "@/lib/specialtyTemplates";
 
 type Tab = "perfil" | "parametros" | "disponibilidad" | "whatsapp" | "equipo";
 
@@ -348,7 +350,7 @@ function NotificationStatusPanel() {
               { label: "Fallidas", value: status.summary.failed },
               { label: "Reintentos", value: status.retryStats.retriesCreated },
             ].map(item => (
-              <div key={item.label} className="p-3 bg-secondary/30 rounded-xl border border-border">
+              <div key={item.label} className="p-3 bg-secondary/30 rounded-md border border-border">
                 <p className="text-xs text-muted-foreground">{item.label}</p>
                 <p className="text-lg font-semibold text-foreground">{item.value}</p>
               </div>
@@ -478,13 +480,13 @@ function SecretaryManager() {
       {loading ? (
         <p className="text-sm text-muted-foreground animate-pulse">Cargando equipo...</p>
       ) : secretaries.length === 0 ? (
-        <div className="text-center py-12 border-2 border-dashed border-border rounded-2xl">
+        <div className="text-center py-12 border-2 border-dashed border-border rounded-lg">
           <p className="text-sm text-muted-foreground">No tienes personal registrado todavía.</p>
         </div>
       ) : (
         <div className="grid gap-3">
           {secretaries.map((s) => (
-            <div key={s.id} className="p-4 bg-secondary/20 rounded-xl border border-border flex items-center justify-between">
+            <div key={s.id} className="p-4 bg-secondary/20 rounded-md border border-border flex items-center justify-between">
               <div>
                 <p className="font-medium text-foreground">{s.name}</p>
                 <p className="text-xs text-muted-foreground">{s.email}</p>
@@ -594,10 +596,17 @@ function DoctorConfigurationContent() {
     whatsappAutoReplyEnabled: true,
     whatsappAutoConfirmEnabled: true,
     whatsappAutoCancelEnabled: true,
-    whatsappBookingMessageTemplate: "",
-    whatsappQuestionnaireTemplate: "",
-    whatsappReminderPendingTemplate: "",
-    whatsappReminderConfirmedTemplate: "",
+    bookingMessageTemplate: "",
+    questionnaireTemplate: "",
+    reminderPendingTemplate: "",
+    reminderConfirmedTemplate: "",
+    // Anticipo y no-show
+    depositEnabled: false,
+    depositAmount: "" as number | string,
+    depositExpiresInMinutes: 30 as number | string,
+    cancellationWindowHours: 24 as number | string,
+    cancellationRefundMode: "FULL" as "FULL" | "PARTIAL" | "CREDIT" | "FORFEIT",
+    cancellationPartialRefundPct: 50 as number | string,
   });
 
   // Availability
@@ -605,6 +614,15 @@ function DoctorConfigurationContent() {
   const [loadingSchedule, setLoadingSchedule] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [scheduleMsg, setScheduleMsg] = useState("");
+
+  // Services
+  type DoctorServiceItem = { id: string; name: string; description: string | null; price: string; active: boolean; sortOrder: number }
+  const [services, setServices] = useState<DoctorServiceItem[]>([])
+  const [loadingServices, setLoadingServices] = useState(false)
+  const [serviceForm, setServiceForm] = useState({ name: "", description: "", price: "" })
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null)
+  const [savingService, setSavingService] = useState(false)
+  const [showServiceForm, setShowServiceForm] = useState(false)
 
   // WhatsApp
   const [waConnected, setWaConnected] = useState(false);
@@ -692,22 +710,28 @@ function DoctorConfigurationContent() {
             data?.whatsappAutoCancelEnabled !== undefined
               ? !!data.whatsappAutoCancelEnabled
               : prev.whatsappAutoCancelEnabled,
-          whatsappBookingMessageTemplate:
-            typeof data?.whatsappBookingMessageTemplate === "string"
-              ? data.whatsappBookingMessageTemplate
-              : prev.whatsappBookingMessageTemplate,
-          whatsappQuestionnaireTemplate:
-            typeof data?.whatsappQuestionnaireTemplate === "string"
-              ? data.whatsappQuestionnaireTemplate
-              : prev.whatsappQuestionnaireTemplate,
-          whatsappReminderPendingTemplate:
-            typeof data?.whatsappReminderPendingTemplate === "string"
-              ? data.whatsappReminderPendingTemplate
-              : prev.whatsappReminderPendingTemplate,
-          whatsappReminderConfirmedTemplate:
-            typeof data?.whatsappReminderConfirmedTemplate === "string"
-              ? data.whatsappReminderConfirmedTemplate
-              : prev.whatsappReminderConfirmedTemplate,
+          bookingMessageTemplate:
+            typeof data?.bookingMessageTemplate === "string"
+              ? data.bookingMessageTemplate
+              : prev.bookingMessageTemplate,
+          questionnaireTemplate:
+            typeof data?.questionnaireTemplate === "string"
+              ? data.questionnaireTemplate
+              : prev.questionnaireTemplate,
+          reminderPendingTemplate:
+            typeof data?.reminderPendingTemplate === "string"
+              ? data.reminderPendingTemplate
+              : prev.reminderPendingTemplate,
+          reminderConfirmedTemplate:
+            typeof data?.reminderConfirmedTemplate === "string"
+              ? data.reminderConfirmedTemplate
+              : prev.reminderConfirmedTemplate,
+          depositEnabled: data?.depositEnabled !== undefined ? !!data.depositEnabled : prev.depositEnabled,
+          depositAmount: data?.depositAmount != null ? Number(data.depositAmount) : prev.depositAmount,
+          depositExpiresInMinutes: typeof data?.depositExpiresInMinutes === "number" ? data.depositExpiresInMinutes : prev.depositExpiresInMinutes,
+          cancellationWindowHours: typeof data?.cancellationWindowHours === "number" ? data.cancellationWindowHours : prev.cancellationWindowHours,
+          cancellationRefundMode: (["FULL","PARTIAL","CREDIT","FORFEIT"] as const).includes(data?.cancellationRefundMode) ? data.cancellationRefundMode : prev.cancellationRefundMode,
+          cancellationPartialRefundPct: typeof data?.cancellationPartialRefundPct === "number" ? data.cancellationPartialRefundPct : prev.cancellationPartialRefundPct,
         }));
       }).catch(console.error);
 
@@ -718,7 +742,58 @@ function DoctorConfigurationContent() {
           setSetupChecklist(data.setupChecklist);
         }
       }).catch(console.error);
+
+    setLoadingServices(true);
+    fetch("/api/admin/services")
+      .then(r => r.json())
+      .then(data => { if (data?.services) setServices(data.services); })
+      .catch(console.error)
+      .finally(() => setLoadingServices(false));
   }, []);
+
+  const handleSaveService = async () => {
+    if (!serviceForm.name.trim() || !serviceForm.price) return;
+    setSavingService(true);
+    try {
+      const url = editingServiceId ? `/api/admin/services/${editingServiceId}` : "/api/admin/services";
+      const method = editingServiceId ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...serviceForm, price: Number(serviceForm.price) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      toast.success(editingServiceId ? "Servicio actualizado" : "Servicio añadido");
+      setShowServiceForm(false);
+      setEditingServiceId(null);
+      setServiceForm({ name: "", description: "", price: "" });
+      const updated = await fetch("/api/admin/services").then(r => r.json());
+      if (updated?.services) setServices(updated.services);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al guardar servicio");
+    } finally {
+      setSavingService(false);
+    }
+  };
+
+  const handleDeleteService = async (id: string) => {
+    if (!confirm("¿Eliminar este servicio?")) return;
+    try {
+      const res = await fetch(`/api/admin/services/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      setServices(prev => prev.filter(s => s.id !== id));
+      toast.success("Servicio eliminado");
+    } catch {
+      toast.error("Error al eliminar servicio");
+    }
+  };
+
+  const openEditService = (s: DoctorServiceItem) => {
+    setEditingServiceId(s.id);
+    setServiceForm({ name: s.name, description: s.description ?? "", price: String(s.price) });
+    setShowServiceForm(true);
+  };
 
   // Load weekly template based on upcoming blocks when tab is active
   useEffect(() => {
@@ -828,7 +903,11 @@ function DoctorConfigurationContent() {
           baseDuration: Number(formData.baseDuration) || 30,
           priceNormal: Number(formData.priceNormal) || 0,
           priceExtended: Number(formData.priceExtended) || 0,
-          reminderWindowMinutes: Number(formData.reminderWindowMinutes) || 15
+          reminderWindowMinutes: Number(formData.reminderWindowMinutes) || 15,
+          depositAmount: formData.depositEnabled ? (Number(formData.depositAmount) || 0) : undefined,
+          depositExpiresInMinutes: Number(formData.depositExpiresInMinutes) || 30,
+          cancellationWindowHours: Number(formData.cancellationWindowHours) ?? 24,
+          cancellationPartialRefundPct: Number(formData.cancellationPartialRefundPct) ?? 50,
         })
       });
       if (!res.ok) throw new Error((await res.json()).error);
@@ -945,10 +1024,10 @@ function DoctorConfigurationContent() {
   };
 
   const getTemplateTextByType = (type: WhatsAppTemplateType) => {
-    if (type === "booking") return formData.whatsappBookingMessageTemplate;
-    if (type === "questionnaire") return formData.whatsappQuestionnaireTemplate;
-    if (type === "reminder_pending") return formData.whatsappReminderPendingTemplate;
-    return formData.whatsappReminderConfirmedTemplate;
+    if (type === "booking") return formData.bookingMessageTemplate;
+    if (type === "questionnaire") return formData.questionnaireTemplate;
+    if (type === "reminder_pending") return formData.reminderPendingTemplate;
+    return formData.reminderConfirmedTemplate;
   };
 
   const loadTemplatePreview = async (type: WhatsAppTemplateType = waPreviewType) => {
@@ -1017,10 +1096,10 @@ function DoctorConfigurationContent() {
         whatsappAutoReplyEnabled: formData.whatsappAutoReplyEnabled,
         whatsappAutoConfirmEnabled: formData.whatsappAutoConfirmEnabled,
         whatsappAutoCancelEnabled: formData.whatsappAutoCancelEnabled,
-        whatsappBookingMessageTemplate: formData.whatsappBookingMessageTemplate,
-        whatsappQuestionnaireTemplate: formData.whatsappQuestionnaireTemplate,
-        whatsappReminderPendingTemplate: formData.whatsappReminderPendingTemplate,
-        whatsappReminderConfirmedTemplate: formData.whatsappReminderConfirmedTemplate,
+        bookingMessageTemplate: formData.bookingMessageTemplate,
+        questionnaireTemplate: formData.questionnaireTemplate,
+        reminderPendingTemplate: formData.reminderPendingTemplate,
+        reminderConfirmedTemplate: formData.reminderConfirmedTemplate,
       };
       const res = await fetch("/api/admin/config", {
         method: "PUT",
@@ -1046,7 +1125,7 @@ function DoctorConfigurationContent() {
     { id: "perfil", label: "Perfil Público" },
     { id: "parametros", label: "Parámetros" },
     { id: "disponibilidad", label: "Disponibilidad" },
-    { id: "whatsapp", label: "WhatsApp" },
+    { id: "whatsapp", label: "Notificaciones" },
     { id: "equipo", label: "Equipo" },
   ];
 
@@ -1060,7 +1139,7 @@ function DoctorConfigurationContent() {
         </div>
 
         {setupChecklist && (
-          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
+          <div className="bg-card border border-border rounded-lg shadow-sm mb-6">
             <div className="px-6 py-4 border-b border-border">
               <h2 className="font-semibold text-foreground">Checklist de puesta en marcha</h2>
               <p className="text-xs text-muted-foreground mt-1">
@@ -1079,7 +1158,7 @@ function DoctorConfigurationContent() {
                 {setupChecklist.items.map((item) => (
                   <div
                     key={item.id}
-                    className="rounded-xl border border-border bg-secondary/20 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
+                    className="rounded-md border border-border bg-secondary/20 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
                   >
                     <div>
                       <p className="text-sm font-medium text-foreground flex items-center gap-2">
@@ -1124,7 +1203,7 @@ function DoctorConfigurationContent() {
         </div>
 
         {/* Card wrapper */}
-        <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
+        <div className="bg-card border border-border rounded-lg p-6 shadow-sm">
 
           {/* ═══════════════════════════════════════
               TAB: PERFIL PÚBLICO
@@ -1145,11 +1224,11 @@ function DoctorConfigurationContent() {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-primary mb-1.5 block">Especialidad</label>
-                  <input
-                    className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  <Select
+                    options={Object.entries(SPECIALTY_TRANSLATIONS).map(([value, label]) => ({ value, label }))}
                     value={profileData.specialty}
-                    onChange={e => setProfileData({ ...profileData, specialty: e.target.value })}
-                    placeholder="Medicina General"
+                    onValueChange={val => setProfileData({ ...profileData, specialty: val })}
+                    placeholder="Seleccionar especialidad..."
                   />
                 </div>
               </div>
@@ -1199,6 +1278,15 @@ function DoctorConfigurationContent() {
                     placeholder="dra-maria-gonzalez"
                   />
                 </div>
+                {profileData.slug ? (
+                  <p className="mt-2 text-xs text-success">
+                    Perfil público activo en: {origin ? `${origin}/doctor/${profileData.slug}` : `/doctor/${profileData.slug}`}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs text-warning">
+                    Perfil público incompleto: sin URL personalizada no aparecerás en el directorio de pacientes.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -1283,6 +1371,75 @@ function DoctorConfigurationContent() {
                 <p className={`text-sm ${profileMsg.startsWith("Error") ? "text-destructive" : "text-success"}`}>{profileMsg}</p>
               )}
 
+              {/* ── Servicios ── */}
+              <div className="pt-4 border-t border-border space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-foreground">Mis servicios</h3>
+                  <Button
+                    variant="secondary"
+                    onClick={() => { setEditingServiceId(null); setServiceForm({ name: "", description: "", price: "" }); setShowServiceForm(v => !v); }}
+                  >
+                    {showServiceForm && !editingServiceId ? "Cancelar" : "+ Añadir"}
+                  </Button>
+                </div>
+
+                {showServiceForm && (
+                  <div className="bg-secondary/30 rounded-md p-4 space-y-3">
+                    <input
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                      placeholder="Nombre del servicio"
+                      value={serviceForm.name}
+                      onChange={e => setServiceForm(f => ({ ...f, name: e.target.value }))}
+                    />
+                    <input
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                      placeholder="Descripción (opcional)"
+                      value={serviceForm.description}
+                      onChange={e => setServiceForm(f => ({ ...f, description: e.target.value }))}
+                    />
+                    <input
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                      type="number"
+                      placeholder="Precio (MXN)"
+                      value={serviceForm.price}
+                      onChange={e => setServiceForm(f => ({ ...f, price: e.target.value }))}
+                    />
+                    <div className="flex gap-2">
+                      <Button onClick={handleSaveService} disabled={savingService || !serviceForm.name || !serviceForm.price}>
+                        {savingService ? "Guardando..." : "Guardar"}
+                      </Button>
+                      <Button variant="secondary" onClick={() => { setShowServiceForm(false); setEditingServiceId(null); }}>
+                        Cancelar
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {loadingServices ? (
+                  <p className="text-sm text-muted-foreground animate-pulse">Cargando servicios...</p>
+                ) : services.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sin servicios registrados. Añade los servicios que ofreces con su precio.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {services.map(s => (
+                      <div key={s.id} className="flex items-center justify-between gap-3 bg-card border border-border rounded-md px-4 py-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-foreground truncate">{s.name}</p>
+                          {s.description && <p className="text-xs text-muted-foreground">{s.description}</p>}
+                        </div>
+                        <span className="text-sm font-semibold text-foreground whitespace-nowrap">
+                          ${Number(s.price).toLocaleString("es-MX", { minimumFractionDigits: 0 })}
+                        </span>
+                        <div className="flex gap-1">
+                          <button type="button" onClick={() => openEditService(s)} className="text-xs text-primary hover:underline px-1">Editar</button>
+                          <button type="button" onClick={() => handleDeleteService(s.id)} className="text-xs text-destructive hover:underline px-1">Eliminar</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <Button onClick={handleSaveProfile} disabled={savingProfile} className="w-full h-11">
                 {savingProfile ? "Guardando..." : "Guardar perfil"}
               </Button>
@@ -1354,6 +1511,105 @@ function DoctorConfigurationContent() {
                 </div>
               </div>
 
+              {/* ─── Política de anticipo y no-show ─── */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-medium text-foreground">Anticipo y política de no-show</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Solicita un anticipo al reservar y define qué pasa si el paciente cancela tarde o no llega.
+                    </p>
+                  </div>
+                  <Toggle
+                    checked={formData.depositEnabled}
+                    onChange={v => setFormData({ ...formData, depositEnabled: v })}
+                  />
+                </div>
+
+                {formData.depositEnabled && (
+                  <div className="rounded-md border border-border bg-card p-4 space-y-4">
+                    {/* Monto y vencimiento */}
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium text-primary mb-1.5 block">Monto del anticipo (MXN)</label>
+                        <input
+                          type="text" inputMode="numeric"
+                          className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          placeholder="ej. 200"
+                          value={formData.depositAmount}
+                          onChange={e => setFormData({ ...formData, depositAmount: e.target.value.replace(/^0+(?=\d)/, "") })}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-primary mb-1.5 block">Tiempo para pagar (minutos)</label>
+                        <input
+                          type="text" inputMode="numeric"
+                          className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          placeholder="ej. 30"
+                          value={formData.depositExpiresInMinutes}
+                          onChange={e => setFormData({ ...formData, depositExpiresInMinutes: e.target.value.replace(/^0+(?=\d)/, "") })}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">Si no paga en este tiempo, la cita se cancela automáticamente.</p>
+                      </div>
+                    </div>
+
+                    {/* Ventana de cancelación sin penalización */}
+                    <div>
+                      <label className="text-sm font-medium text-primary mb-1.5 block">Ventana de cancelación sin penalización (horas)</label>
+                      <input
+                        type="text" inputMode="numeric"
+                        className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        placeholder="ej. 24"
+                        value={formData.cancellationWindowHours}
+                        onChange={e => setFormData({ ...formData, cancellationWindowHours: e.target.value.replace(/^0+(?=\d)/, "") })}
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">Si cancela antes de este plazo, se aplica reembolso completo sin importar el modo.</p>
+                    </div>
+
+                    {/* Modo de reembolso */}
+                    <div>
+                      <label className="text-sm font-medium text-primary mb-1.5 block">Política de reembolso (si cancela tarde o no llega)</label>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {([
+                          { value: "FULL",    label: "Reembolso total",    hint: "Devuelve el 100%" },
+                          { value: "PARTIAL", label: "Reembolso parcial",  hint: "Devuelve un porcentaje" },
+                          { value: "CREDIT",  label: "Crédito",            hint: "Crédito para próxima cita" },
+                          { value: "FORFEIT", label: "Sin reembolso",      hint: "El anticipo se pierde" },
+                        ] as const).map(opt => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setFormData({ ...formData, cancellationRefundMode: opt.value })}
+                            className={`flex flex-col items-start p-2.5 rounded-md border text-left transition-colors ${
+                              formData.cancellationRefundMode === opt.value
+                                ? "border-primary bg-primary/10"
+                                : "border-border bg-background hover:bg-secondary/30"
+                            }`}
+                          >
+                            <span className={`text-xs font-semibold ${formData.cancellationRefundMode === opt.value ? "text-primary" : "text-foreground"}`}>{opt.label}</span>
+                            <span className="text-[11px] text-muted-foreground mt-0.5">{opt.hint}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Porcentaje parcial */}
+                    {formData.cancellationRefundMode === "PARTIAL" && (
+                      <div>
+                        <label className="text-sm font-medium text-primary mb-1.5 block">Porcentaje a devolver (%)</label>
+                        <input
+                          type="text" inputMode="numeric"
+                          className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          placeholder="ej. 50"
+                          value={formData.cancellationPartialRefundPct}
+                          onChange={e => setFormData({ ...formData, cancellationPartialRefundPct: e.target.value.replace(/^0+(?=\d)/, "") })}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {paramsMsg && (
                 <p className={`text-sm ${paramsMsg.startsWith("Error") ? "text-destructive" : "text-success"}`}>{paramsMsg}</p>
               )}
@@ -1386,7 +1642,7 @@ function DoctorConfigurationContent() {
               ) : (
                 <div className="space-y-3">
                   {weeklySchedule.map((day) => (
-                    <div key={day.dayOfWeek} className="border border-border rounded-xl p-4 bg-card">
+                    <div key={day.dayOfWeek} className="border border-border rounded-md p-4 bg-card">
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2">
                           <Clock className="w-4 h-4 text-primary" />
@@ -1474,10 +1730,10 @@ function DoctorConfigurationContent() {
           ═══════════════════════════════════════ */}
           {activeTab === "whatsapp" && (
             <div className="space-y-5">
-              <h2 className="text-lg font-semibold text-foreground">Integración WhatsApp</h2>
+              <h2 className="text-lg font-semibold text-foreground">Notificaciones (SMS y Email)</h2>
 
               {/* Status */}
-              <div className="flex items-center justify-between gap-2 px-4 py-3 bg-secondary/40 rounded-xl border border-border">
+              <div className="flex items-center justify-between gap-2 px-4 py-3 bg-secondary/40 rounded-md border border-border">
                 <div className="flex items-center gap-2">
                   <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${waConnected ? "bg-success" : "bg-muted-foreground"}`} />
                   <span className="text-sm font-medium text-foreground">
@@ -1509,7 +1765,7 @@ function DoctorConfigurationContent() {
               )}
 
               {/* Instructions box */}
-              <div className="px-4 py-4 bg-secondary/30 rounded-xl border border-border space-y-2">
+              <div className="px-4 py-4 bg-secondary/30 rounded-md border border-border space-y-2">
                 <p className="text-sm font-medium text-foreground">Instrucciones para conectar:</p>
                 <ol className="space-y-1">
                   {[
@@ -1528,7 +1784,7 @@ function DoctorConfigurationContent() {
               {/* QR if not connected */}
               {!waConnected && waQr && (
                 <div className="flex justify-center">
-                  <div className="w-56 h-56 bg-white border border-border rounded-2xl p-2 overflow-hidden shadow-sm">
+                  <div className="w-56 h-56 bg-white border border-border rounded-lg p-2 overflow-hidden shadow-sm">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={waQr} alt="WhatsApp QR" className="w-full h-full object-contain" />
                   </div>
@@ -1540,7 +1796,7 @@ function DoctorConfigurationContent() {
                 <button
                   onClick={() => setDisconnectConfirmOpen(true)}
                   disabled={disconnecting}
-                  className="w-full px-4 py-2.5 border border-border rounded-xl text-sm font-medium text-foreground hover:bg-secondary transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+                  className="w-full px-4 py-2.5 border border-border rounded-md text-sm font-medium text-foreground hover:bg-secondary transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
                 >
                   <LogOut className="w-4 h-4" /> {disconnecting ? "Desvinculando..." : "Desvincular WhatsApp"}
                 </button>
@@ -1548,13 +1804,13 @@ function DoctorConfigurationContent() {
                 <button
                   onClick={verifyConnection}
                   disabled={verifying}
-                  className="w-full px-4 py-2.5 border border-border rounded-xl text-sm font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-60"
+                  className="w-full px-4 py-2.5 border border-border rounded-md text-sm font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-60"
                 >
                   {verifying ? "Verificando..." : "Generar / Verificar QR"}
                 </button>
               )}
 
-              <div className="space-y-3 p-4 bg-secondary/20 rounded-xl border border-border">
+              <div className="space-y-3 p-4 bg-secondary/20 rounded-md border border-border">
                 <p className="text-sm font-medium text-foreground">Reglas automáticas del bot</p>
 
                 <div className="grid sm:grid-cols-2 gap-3">
@@ -1635,11 +1891,11 @@ function DoctorConfigurationContent() {
                     </label>
                     <textarea
                       rows={3}
-                      value={formData.whatsappBookingMessageTemplate}
+                      value={formData.bookingMessageTemplate}
                       onChange={(e) =>
                         setFormData((prev) => ({
                           ...prev,
-                          whatsappBookingMessageTemplate: e.target.value,
+                          bookingMessageTemplate: e.target.value,
                         }))
                       }
                       placeholder='Hola {paciente}, tu cita ({tipo_cita}) quedó agendada para el {fecha_hora}. Para confirmar responde "CONFIRMO".'
@@ -1653,11 +1909,11 @@ function DoctorConfigurationContent() {
                     </label>
                     <textarea
                       rows={3}
-                      value={formData.whatsappQuestionnaireTemplate}
+                      value={formData.questionnaireTemplate}
                       onChange={(e) =>
                         setFormData((prev) => ({
                           ...prev,
-                          whatsappQuestionnaireTemplate: e.target.value,
+                          questionnaireTemplate: e.target.value,
                         }))
                       }
                       placeholder="Hola {paciente}, completa tu preconsulta aquí: {link_cuestionario}"
@@ -1671,11 +1927,11 @@ function DoctorConfigurationContent() {
                     </label>
                     <textarea
                       rows={3}
-                      value={formData.whatsappReminderPendingTemplate}
+                      value={formData.reminderPendingTemplate}
                       onChange={(e) =>
                         setFormData((prev) => ({
                           ...prev,
-                          whatsappReminderPendingTemplate: e.target.value,
+                          reminderPendingTemplate: e.target.value,
                         }))
                       }
                       placeholder='Hola {paciente}, te recordamos tu cita {fecha_hora}. Faltan {tiempo_restante}. Responde "CONFIRMO" para confirmar.'
@@ -1689,11 +1945,11 @@ function DoctorConfigurationContent() {
                     </label>
                     <textarea
                       rows={3}
-                      value={formData.whatsappReminderConfirmedTemplate}
+                      value={formData.reminderConfirmedTemplate}
                       onChange={(e) =>
                         setFormData((prev) => ({
                           ...prev,
-                          whatsappReminderConfirmedTemplate: e.target.value,
+                          reminderConfirmedTemplate: e.target.value,
                         }))
                       }
                       placeholder='Hola {paciente}, recordatorio de tu cita {fecha_hora}. Si deseas cancelarla responde "CANCELAR".'
@@ -1702,7 +1958,7 @@ function DoctorConfigurationContent() {
                   </div>
                 </div>
 
-                <div className="space-y-3 rounded-xl border border-border bg-card/60 p-4">
+                <div className="space-y-3 rounded-md border border-border bg-card/60 p-4">
                   <p className="text-sm font-medium text-foreground">Vista previa y prueba de plantillas</p>
 
                   <div className="grid sm:grid-cols-2 gap-3">
@@ -1785,7 +2041,7 @@ function DoctorConfigurationContent() {
                 )}
 
                 <Button onClick={saveWhatsappRules} disabled={savingWaRules} className="h-10 w-full sm:w-auto">
-                  {savingWaRules ? "Guardando..." : "Guardar reglas de WhatsApp"}
+                  {savingWaRules ? "Guardando..." : "Guardar configuración de notificaciones"}
                 </Button>
               </div>
 
@@ -1797,9 +2053,9 @@ function DoctorConfigurationContent() {
                   "Envío de cuestionario pre-clínico",
                   "Recordatorios de cita en múltiples horas configurables",
                   "Plantillas personalizadas de mensajes por médico",
-                  "Confirmación por WhatsApp respondiendo CONFIRMO",
-                  "Cancelación por WhatsApp respondiendo CANCELAR",
-                  "Respuesta automática inteligente a mensajes entrantes",
+                  "Confirmación de cita vía enlace en SMS y Email",
+                  "Cancelación de cita vía enlace en SMS y Email",
+                  "Reintentos automáticos en caso de fallo de entrega",
                 ].map((feature, i) => (
                   <div key={i} className="flex items-center gap-2 text-sm text-primary">
                     <span>•</span>
@@ -1826,7 +2082,7 @@ function DoctorConfigurationContent() {
                 ) : (
                   <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                     {waHistory.map((item) => (
-                      <div key={item.id} className="p-3 rounded-xl border border-border bg-secondary/20">
+                      <div key={item.id} className="p-3 rounded-md border border-border bg-secondary/20">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-xs font-medium text-foreground">
                             {item.direction === "INBOUND" ? "Paciente → Bot" : "Bot → Paciente"}
@@ -1887,7 +2143,7 @@ export default function DoctorConfiguration() {
       fallback={
         <DoctorLayout>
           <div className="p-6 lg:p-8 w-full">
-            <div className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">
+            <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
               Cargando configuración...
             </div>
           </div>
@@ -1898,4 +2154,3 @@ export default function DoctorConfiguration() {
     </Suspense>
   );
 }
-

@@ -8,7 +8,7 @@ test.describe('Clinical Note (SOAP)', () => {
 
   test('consultation workspace loads for an appointment', async ({ page }) => {
     // Find an appointment via API
-    const response = await page.request.get('/api/admin/dashboard/summary');
+    const response = await page.request.get('/api/agenda/admin/dashboard/summary');
 
     if (response.status() !== 200) {
       test.skip(true, 'Dashboard API not reachable');
@@ -42,7 +42,7 @@ test.describe('Clinical Note (SOAP)', () => {
 
   test('SOAP note can be saved via API', async ({ page }) => {
     // Find an appointment via API
-    const response = await page.request.get('/api/admin/dashboard/summary');
+    const response = await page.request.get('/api/agenda/admin/dashboard/summary');
 
     if (response.status() !== 200) {
       test.skip(true, 'Dashboard API not reachable');
@@ -82,3 +82,4 @@ test.describe('Clinical Note (SOAP)', () => {
     expect(noteData).toBeTruthy();
   });
 });
+

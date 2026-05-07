@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma'
 import { getServerEnv } from '@/lib/env'
 import { captureError } from '@/lib/observability'
 import { WaitlistService } from '@/services/WaitlistService'
+import { AppointmentAuditService } from '@/services/AppointmentAuditService'
 
 export async function POST(request: Request) {
   try {
@@ -48,6 +49,21 @@ export async function POST(request: Request) {
           status: 'CANCELLED',
           paymentStatus: 'PAYMENT_FAILED',
         },
+      })
+
+      await AppointmentAuditService.safeLog({
+        doctorId: appointment.doctorId,
+        appointmentId: appointment.id,
+        patientId: appointment.patientId,
+        actorType: 'SYSTEM',
+        actorUserId: null,
+        source: 'SYSTEM',
+        ipAddress: null,
+        userAgent: null,
+        action: 'APPOINTMENT_CANCELLED',
+        fromStatus: 'PENDING',
+        toStatus: 'CANCELLED',
+        metadata: { reason: 'DEPOSIT_EXPIRED', paymentStatus: 'PAYMENT_FAILED' },
       })
 
       await WaitlistService.processVacancy({

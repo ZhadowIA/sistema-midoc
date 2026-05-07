@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { resolveCommercialAccess } from "@/server/subscription/commercialAccess";
 
 export type SetupStep = "DASHBOARD" | "SUBSCRIPTION" | "ONBOARDING";
 
@@ -22,7 +23,7 @@ export async function getDoctorSetupStatus(userId: string, role: string): Promis
   const [subscription, onboarding] = await Promise.all([
     prisma.doctorSubscription.findUnique({
       where: { doctorId: userId },
-      select: { status: true, currentPeriodEnd: true },
+      select: { status: true, currentPeriodEnd: true, cancelAtPeriodEnd: true },
     }),
     prisma.doctorOnboarding.findUnique({
       where: { doctorId: userId },
@@ -31,9 +32,19 @@ export async function getDoctorSetupStatus(userId: string, role: string): Promis
   ]);
 
   // Backward compatibility: legacy doctors without subscription record are treated as active.
-  const hasActiveSubscription = !subscription
-    ? true
-    : subscription.status === "ACTIVE" && (!subscription.currentPeriodEnd || subscription.currentPeriodEnd > now);
+  const commercialAccess = !subscription
+    ? {
+        hasActiveSubscription: true,
+      }
+    : resolveCommercialAccess(
+        {
+          status: subscription.status,
+          currentPeriodEnd: subscription.currentPeriodEnd,
+          cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+        },
+        now,
+      );
+  const hasActiveSubscription = !subscription ? true : commercialAccess.hasActiveSubscription;
 
   // Backward compatibility: legacy doctors without onboarding record are treated as completed.
   const onboardingCompleted = onboarding ? onboarding.completed : true;

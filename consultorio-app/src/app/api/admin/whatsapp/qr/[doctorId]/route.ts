@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { requireAgendaDoctorApiAccess } from '@/lib/medicalApi'
 import { buildWhatsAppProviderUrl } from '@/lib/whatsappProvider'
 
 export async function GET(_: Request, props: { params: Promise<{ doctorId: string }> }) {
   const params = await props.params
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireAgendaDoctorApiAccess({ allowSecretary: true })
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
     if (params.doctorId !== doctorId) {
       return NextResponse.json({ error: 'No autorizado para este recurso' }, { status: 403 })
     }

@@ -57,6 +57,11 @@ type CreatePublicAppointmentInput = {
   contact?: ContactInput | null
   ipAddress?: string | null
   userAgent?: string | null
+  utmSource?: string | null
+  utmMedium?: string | null
+  utmCampaign?: string | null
+  utmContent?: string | null
+  referrerChannel?: string | null
 }
 
 type CreatedAppointmentResult = {
@@ -79,6 +84,11 @@ type CreatedAppointmentResult = {
     recommended: true
     optional: true
     url: string
+  }
+  payment: {
+    status: string
+    depositRequiredAmount: number | null
+    depositDueAt: string | null
   }
 }
 
@@ -158,6 +168,9 @@ export class AppointmentService {
 
     let createdAppointmentId = ''
     let createdAppointmentStatus = ''
+    let createdPaymentStatus = 'NOT_REQUIRED'
+    let createdDepositRequiredAmount: number | null = null
+    let createdDepositDueAt: Date | null = null
 
     for (let attempt = 1; attempt <= MAX_SERIALIZABLE_RETRIES; attempt += 1) {
       try {
@@ -350,6 +363,11 @@ export class AppointmentService {
                 depositRequiredAmount: depositRequirement.depositRequiredAmount,
                 depositDueAt: depositRequirement.depositDueAt,
                 cancellationPolicySnapshot: depositRequirement.cancellationPolicySnapshot ?? undefined,
+                utmSource: data.utmSource ?? null,
+                utmMedium: data.utmMedium ?? null,
+                utmCampaign: data.utmCampaign ?? null,
+                utmContent: data.utmContent ?? null,
+                referrerChannel: (data.referrerChannel as import('@prisma/client').BookingChannel) ?? 'UNKNOWN',
               },
             })
 
@@ -429,6 +447,11 @@ export class AppointmentService {
 
         createdAppointmentId = appointment.id
         createdAppointmentStatus = appointment.status
+        createdPaymentStatus = appointment.paymentStatus
+        createdDepositRequiredAmount = appointment.depositRequiredAmount
+          ? Number(appointment.depositRequiredAmount)
+          : null
+        createdDepositDueAt = appointment.depositDueAt
         break
       } catch (error: unknown) {
         const shouldRetry = this.isSerializableConflict(error) && attempt < MAX_SERIALIZABLE_RETRIES
@@ -482,6 +505,12 @@ export class AppointmentService {
         optional: true,
         url: tokenUrl,
       },
+      payment: {
+        status: createdPaymentStatus,
+        depositRequiredAmount: createdDepositRequiredAmount,
+        depositDueAt: createdDepositDueAt?.toISOString() ?? null,
+      },
     }
   }
 }
+

@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Calendar, Clock, CheckCircle, CheckCircle2, AlertCircle, UserRound, ArrowRight } from "lucide-react";
+import { Calendar, CheckCircle, CheckCircle2, AlertCircle, UserRound, ChevronDown } from "lucide-react";
 import { DoctorLayout } from "@/components/DoctorLayout";
+import { OnboardingBanner, OnboardingWizard } from "@/components/OnboardingWizard";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { useRouter } from "next/navigation";
@@ -136,6 +137,42 @@ type DashboardSummaryResponse = {
   };
 };
 
+type FunnelSummaryResponse = {
+  period: { days: number; since: string };
+  summary: { visits: number; confirmed: number; overallConversion: number };
+  funnel: Array<{ step: string; count: number; conversionFromVisit: number }>;
+  byChannel: Array<{ channel: string; confirmed: number }>;
+  appointmentsByChannel: Array<{ channel: string; count: number }>;
+};
+
+type AiUsageSummaryResponse = {
+  totals: {
+    jobs: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+  };
+  byModule: Array<{
+    module: string;
+    jobs: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+  }>;
+  byModel: Array<{
+    model: string;
+    jobs: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+  }>;
+  dailySeries: Array<{
+    date: string;
+    jobs: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+  }>;
+};
+
 const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> = {
   pending: { label: "Pendiente", color: "text-warning", bg: "bg-warning/10" },
   confirmed: { label: "Confirmada", color: "text-success", bg: "bg-success/10" },
@@ -164,6 +201,16 @@ export default function DoctorDashboard() {
   const [updatingKey, setUpdatingKey] = useState<string | null>(null);
   const [now, setNow] = useState(new Date());
   const [loadingData, setLoadingData] = useState(false);
+  const [aiUsage, setAiUsage] = useState<AiUsageSummaryResponse | null>(null);
+  const [aiUsageLoading, setAiUsageLoading] = useState(false);
+  const [funnelData, setFunnelData] = useState<FunnelSummaryResponse | null>(null);
+  const [funnelLoading, setFunnelLoading] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [showFunnel, setShowFunnel] = useState(false);
+  const [showAiUsage, setShowAiUsage] = useState(false);
+  const [showPriorityThree, setShowPriorityThree] = useState(false);
+  const [showClinic, setShowClinic] = useState(false);
 
   const loadDashboard = useCallback(async (initial = false) => {
     if (initial) setLoading(true);
@@ -227,6 +274,50 @@ export default function DoctorDashboard() {
     };
   }, [loadDashboard]);
 
+  useEffect(() => {
+    const loadAiUsage = async () => {
+      setAiUsageLoading(true);
+      try {
+        const to = new Date();
+        const from = new Date();
+        from.setDate(from.getDate() - 29);
+        const params = new URLSearchParams({
+          from: from.toISOString(),
+          to: to.toISOString(),
+        });
+        const response = await fetch(`/api/admin/ai/usage/summary?${params.toString()}`, { cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || "No se pudo cargar uso/costo de IA");
+        }
+        setAiUsage(data as AiUsageSummaryResponse);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Error inesperado";
+        toast.error(message);
+      } finally {
+        setAiUsageLoading(false);
+      }
+    };
+
+    void loadAiUsage();
+  }, []);
+
+  useEffect(() => {
+    const loadFunnel = async () => {
+      setFunnelLoading(true);
+      try {
+        const response = await fetch('/api/admin/funnel/summary?days=30', { cache: 'no-store' });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok) setFunnelData(data as FunnelSummaryResponse);
+      } catch {
+        // no mostrar error — el funnel es secundario
+      } finally {
+        setFunnelLoading(false);
+      }
+    };
+    void loadFunnel();
+  }, []);
+
   const updateAppointmentStatus = async (
     appointmentId: string,
     status: "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED"
@@ -267,6 +358,11 @@ export default function DoctorDashboard() {
     style: "currency",
     currency: "MXN",
     maximumFractionDigits: 2,
+  });
+  const usdFormatter = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 4,
   });
 
   const todayStr = format(now, "yyyy-MM-dd");
@@ -323,498 +419,565 @@ export default function DoctorDashboard() {
   return (
     <DoctorLayout>
       <div className="p-6 lg:p-8 w-full">
-        <div className="mb-8">
-          <h1 className="text-2xl font-semibold text-foreground">Dashboard</h1>
-          <div className="flex items-center gap-3 mt-1">
-            <p className="text-muted-foreground text-sm capitalize">
+
+        {/* Header */}
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h1 className="text-xl font-semibold text-foreground">Dashboard</h1>
+            <p className="text-sm text-muted-foreground capitalize mt-0.5">
               {format(now, "EEEE, d 'de' MMMM 'de' yyyy", { locale: es })}
             </p>
-            {loadingData && <span className="text-xs text-muted-foreground animate-pulse">Actualizando…</span>}
           </div>
+          {loadingData && <span className="text-xs text-muted-foreground animate-pulse">Actualizando…</span>}
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-8">
+        {/* Stats strip */}
+        <div className="flex flex-wrap gap-2 mb-6">
           {stats.map((stat) => (
             <button
               key={stat.label}
               type="button"
               onClick={() => router.push(stat.href)}
-              className="bg-card border border-border rounded-2xl p-5 shadow-sm text-left transition-all hover:border-primary/40 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/40"
               title={`Ver ${stat.label.toLowerCase()} en la agenda`}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg border bg-card text-left transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 hover:border-primary/40 ${
+                stat.label === "Vencidas" && stat.value > 0 ? "border-destructive/40" : "border-border"
+              }`}
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{stat.label}</p>
-                  <p className="text-3xl font-semibold text-foreground mt-1">{stat.value}</p>
-                </div>
-                <div className={`w-10 h-10 ${stat.bg} rounded-xl flex items-center justify-center`}>
-                  <stat.icon className={`w-5 h-5 ${stat.color}`} />
-                </div>
-              </div>
+              <stat.icon className={`w-3.5 h-3.5 ${stat.color} shrink-0`} />
+              <span className="text-xs text-muted-foreground">{stat.label}</span>
+              <span className={`text-sm font-bold tabular-nums ${stat.label === "Vencidas" && stat.value > 0 ? "text-destructive" : "text-foreground"}`}>
+                {stat.value}
+              </span>
             </button>
           ))}
         </div>
 
-        {clinicAggregates?.mode === "CLINIC" && (
-          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
-            <div className="px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Reporte agregado de clínica</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                {clinicAggregates.doctorsCount} médicos activos en la clínica
-              </p>
-            </div>
-            <div className="p-6">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">Citas hoy (clínica)</p>
-                  <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.todayAppointments}</p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">Pendientes</p>
-                  <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.pending}</p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">Confirmadas</p>
-                  <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.confirmed}</p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">Completadas</p>
-                  <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.completed}</p>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {clinicAggregates.doctors.map((doctor) => (
-                  <div key={doctor.doctorId} className="rounded-lg border border-border p-3 bg-secondary/10">
-                    <p className="text-sm font-semibold text-foreground">{doctor.doctorName}</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Hoy: {doctor.todayAppointments} · Pendientes: {doctor.pending} · Confirmadas: {doctor.confirmed} · Completadas: {doctor.completed} · Vencidas: {doctor.overduePending}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
-          <div className="bg-card border border-border rounded-2xl shadow-sm">
-            <div className="px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Cita en curso</h2>
-            </div>
-            <div className="p-6">
-              {loading ? (
-                <p className="text-sm text-muted-foreground text-center py-4 animate-pulse">Buscando cita en horario actual...</p>
-              ) : !currentAppointment ? (
-                <p className="text-sm text-muted-foreground text-center py-6">No hay una cita en curso en este momento.</p>
-              ) : (
-                <div className="rounded-xl border border-border bg-secondary/20 p-4 space-y-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Horario actual</p>
-                      <p className="font-semibold text-foreground">{formatTimeRange(currentAppointment)}</p>
-                    </div>
-                    <StatusBadge status={currentAppointment.status} />
-                  </div>
-
+        {/* Hero: current appointment + overdue */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
+          {/* Current appointment */}
+          <div className={`rounded-lg border p-5 ${currentAppointment ? "border-primary/30 bg-primary/[0.04]" : "border-border bg-card"}`}>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">Cita en curso</p>
+            {loading ? (
+              <p className="text-sm text-muted-foreground animate-pulse py-3">Buscando cita activa...</p>
+            ) : !currentAppointment ? (
+              <p className="text-sm text-muted-foreground py-3">Sin cita activa en este momento.</p>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs text-muted-foreground">Paciente</p>
                     <p className="text-lg font-semibold text-foreground">{currentAppointment.patientName}</p>
-                    <p className="text-sm text-muted-foreground capitalize">
-                      {currentAppointment.consultType === "extended" ? "Consulta integral" : "Consulta normal"}
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                      {formatTimeRange(currentAppointment)} · {currentAppointment.consultType === "extended" ? "Consulta integral" : "Consulta normal"}
                     </p>
                   </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => router.push(`/medico/citas/${currentAppointment.id}`)}
-                      className="px-3 py-2 text-sm font-medium rounded-lg border border-border hover:bg-secondary transition-colors"
-                    >
-                      Ir a la cita
-                    </button>
-                    <button
-                      onClick={() => router.push(`/medico/pacientes/${currentAppointment.patientId}`)}
-                      className="px-3 py-2 text-sm font-medium rounded-lg border border-border hover:bg-secondary transition-colors inline-flex items-center gap-2"
-                    >
-                      <UserRound className="w-4 h-4" />
-                      Ver paciente
-                    </button>
-                    {currentAppointment.status === "pending" && (
-                      <button
-                        onClick={() => void updateAppointmentStatus(currentAppointment.id, "CONFIRMED")}
-                        disabled={updatingKey !== null}
-                        className="px-3 py-2 text-sm font-medium rounded-lg border border-primary/40 text-primary hover:bg-primary/10 transition-colors disabled:opacity-60"
-                      >
-                        {updatingKey === `${currentAppointment.id}:CONFIRMED` ? "Actualizando..." : "Confirmar"}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => void updateAppointmentStatus(currentAppointment.id, "COMPLETED")}
-                      disabled={updatingKey !== null}
-                      className="px-3 py-2 text-sm font-medium rounded-lg border border-success/40 text-success hover:bg-success/10 transition-colors disabled:opacity-60"
-                    >
-                      {updatingKey === `${currentAppointment.id}:COMPLETED` ? "Actualizando..." : "Marcar realizada"}
-                    </button>
-                    <button
-                      onClick={() => void updateAppointmentStatus(currentAppointment.id, "CANCELLED")}
-                      disabled={updatingKey !== null}
-                      className="px-3 py-2 text-sm font-medium rounded-lg border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-60"
-                    >
-                      {updatingKey === `${currentAppointment.id}:CANCELLED` ? "Actualizando..." : "Cancelar"}
-                    </button>
-                  </div>
+                  <StatusBadge status={currentAppointment.status} />
                 </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => router.push(`/medico/citas/${currentAppointment.id}`)}
+                    className="px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                  >
+                    Ir a la cita
+                  </button>
+                  <button
+                    onClick={() => router.push(`/medico/pacientes/${currentAppointment.patientId}`)}
+                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-border hover:bg-secondary transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <UserRound className="w-3.5 h-3.5" />
+                    Ver paciente
+                  </button>
+                  {currentAppointment.status === "pending" && (
+                    <button
+                      onClick={() => void updateAppointmentStatus(currentAppointment.id, "CONFIRMED")}
+                      disabled={updatingKey !== null}
+                      className="px-3 py-1.5 text-xs font-medium rounded-md border border-success/40 text-success hover:bg-success/10 transition-colors disabled:opacity-60"
+                    >
+                      {updatingKey === `${currentAppointment.id}:CONFIRMED` ? "…" : "Confirmar"}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => void updateAppointmentStatus(currentAppointment.id, "COMPLETED")}
+                    disabled={updatingKey !== null}
+                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-success/40 text-success hover:bg-success/10 transition-colors disabled:opacity-60"
+                  >
+                    {updatingKey === `${currentAppointment.id}:COMPLETED` ? "…" : "Marcar realizada"}
+                  </button>
+                  <button
+                    onClick={() => void updateAppointmentStatus(currentAppointment.id, "CANCELLED")}
+                    disabled={updatingKey !== null}
+                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-60"
+                  >
+                    {updatingKey === `${currentAppointment.id}:CANCELLED` ? "…" : "Cancelar"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Overdue pending */}
+          <div className="rounded-lg border border-border bg-card p-5">
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pendientes vencidas</p>
+              {overduePendingAppointments.length > 0 && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-destructive/10 text-destructive font-semibold tabular-nums">
+                  {overduePendingAppointments.length}
+                </span>
               )}
             </div>
-          </div>
-
-          <div className="bg-card border border-border rounded-2xl shadow-sm">
-            <div className="px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Citas pasadas pendientes</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                Se muestran citas pendientes cuyo horario de fin ya fue superado.
-              </p>
-            </div>
-            <div className="p-6 space-y-3">
-              {loading ? (
-                <p className="text-sm text-muted-foreground text-center py-4 animate-pulse">Cargando pendientes...</p>
-              ) : overduePendingAppointments.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  No hay citas pasadas en estado pendiente.
-                </p>
-              ) : (
-                overduePendingAppointments.map((apt) => {
-                  const minutesLate = Math.max(
-                    1,
-                    Math.floor((now.getTime() - new Date(apt.endTime).getTime()) / 60_000)
-                  );
+            {loading ? (
+              <p className="text-sm text-muted-foreground animate-pulse py-3">Cargando...</p>
+            ) : overduePendingAppointments.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-3">Sin pendientes vencidas.</p>
+            ) : (
+              <div className="space-y-2">
+                {overduePendingAppointments.map((apt) => {
+                  const minutesLate = Math.max(1, Math.floor((now.getTime() - new Date(apt.endTime).getTime()) / 60_000));
                   return (
-                    <div
-                      key={apt.id}
-                      className="rounded-xl border border-border bg-secondary/20 p-4"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div key={apt.id} className="rounded-md border border-destructive/25 bg-destructive/5 p-3">
+                      <div className="flex items-start justify-between gap-2">
                         <div>
-                          <p className="font-semibold text-foreground">{apt.patientName}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {format(new Date(apt.startTime), "EEE dd MMM", { locale: es })} · {formatTimeRange(apt)}
-                          </p>
-                          <p className="text-xs text-warning mt-1">Terminó hace {minutesLate} min</p>
+                          <p className="text-sm font-semibold text-foreground">{apt.patientName}</p>
+                          <p className="text-xs text-destructive mt-0.5">Terminó hace {minutesLate} min · {formatTimeRange(apt)}</p>
                         </div>
                         <StatusBadge status={apt.status} />
                       </div>
-
-                      <div className="flex flex-wrap gap-2 mt-3">
+                      <div className="flex gap-2 mt-2.5">
                         <button
                           onClick={() => updateAppointmentStatus(apt.id, "COMPLETED")}
                           disabled={updatingKey !== null}
-                          className="px-3 py-1.5 text-xs font-medium rounded-lg border border-success/40 text-success hover:bg-success/10 transition-colors disabled:opacity-60"
+                          className="px-2.5 py-1 text-xs font-medium rounded border border-success/40 text-success hover:bg-success/10 transition-colors disabled:opacity-60"
                         >
-                          {updatingKey === `${apt.id}:COMPLETED` ? "Actualizando..." : "Marcar realizada"}
+                          {updatingKey === `${apt.id}:COMPLETED` ? "…" : "Realizada"}
                         </button>
                         <button
                           onClick={() => updateAppointmentStatus(apt.id, "CANCELLED")}
                           disabled={updatingKey !== null}
-                          className="px-3 py-1.5 text-xs font-medium rounded-lg border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-60"
+                          className="px-2.5 py-1 text-xs font-medium rounded border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-60"
                         >
-                          {updatingKey === `${apt.id}:CANCELLED` ? "Actualizando..." : "Cancelar"}
+                          {updatingKey === `${apt.id}:CANCELLED` ? "…" : "Cancelar"}
                         </button>
                         <button
                           onClick={() => router.push(`/medico/citas/${apt.id}`)}
-                          className="px-3 py-1.5 text-xs font-medium rounded-lg border border-border hover:bg-secondary transition-colors"
+                          className="px-2.5 py-1 text-xs font-medium rounded border border-border hover:bg-secondary transition-colors"
                         >
-                          Ver cita
+                          Ver
                         </button>
                       </div>
                     </div>
                   );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
-          <div className="px-6 py-4 border-b border-border">
-            <h2 className="font-semibold text-foreground">Citas de Hoy</h2>
-          </div>
-          <div className="p-6 space-y-3">
-            {loading ? (
-              <p className="text-sm text-muted-foreground text-center py-6 animate-pulse">Cargando citas...</p>
-            ) : todayAppointments.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">No hay citas programadas para hoy</p>
-            ) : (
-              todayAppointments.map((apt) => (
-                <div
-                  key={apt.id}
-                  onClick={() => router.push(`/medico/citas/${apt.id}`)}
-                  className="flex items-center gap-4 p-4 rounded-xl border border-border hover:bg-secondary/50 transition-colors cursor-pointer"
-                >
-                  <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center shrink-0">
-                    <Clock className="w-5 h-5 text-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium text-foreground">{formatTimeRange(apt)}</p>
-                      <span className="text-muted-foreground">—</span>
-                      <p className="text-foreground truncate">{apt.patientName}</p>
-                    </div>
-                    <p className="text-sm text-muted-foreground capitalize">
-                      {apt.consultType === "extended" ? "Consulta Integral" : "Consulta Normal"}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <StatusBadge status={apt.status} />
-                    {apt.status === "pending" && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void updateAppointmentStatus(apt.id, "CONFIRMED");
-                        }}
-                        disabled={updatingKey !== null}
-                        className="px-3 py-1.5 text-xs font-medium border border-primary/40 text-primary rounded-lg hover:bg-primary/10 transition-colors disabled:opacity-60"
-                      >
-                        {updatingKey === `${apt.id}:CONFIRMED` ? "..." : "Confirmar"}
-                      </button>
-                    )}
-                    {["pending", "confirmed", "rescheduled"].includes(apt.status) && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void updateAppointmentStatus(apt.id, "COMPLETED");
-                        }}
-                        disabled={updatingKey !== null}
-                        className="px-3 py-1.5 text-xs font-medium border border-success/40 text-success rounded-lg hover:bg-success/10 transition-colors disabled:opacity-60"
-                      >
-                        {updatingKey === `${apt.id}:COMPLETED` ? "..." : "Realizada"}
-                      </button>
-                    )}
-                    {["pending", "confirmed", "rescheduled"].includes(apt.status) && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void updateAppointmentStatus(apt.id, "CANCELLED");
-                        }}
-                        disabled={updatingKey !== null}
-                        className="px-3 py-1.5 text-xs font-medium border border-destructive/40 text-destructive rounded-lg hover:bg-destructive/10 transition-colors disabled:opacity-60"
-                      >
-                        {updatingKey === `${apt.id}:CANCELLED` ? "..." : "Cancelar"}
-                      </button>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        router.push(`/medico/citas/${apt.id}`);
-                      }}
-                      className="px-3 py-1.5 text-xs font-medium border border-border rounded-lg hover:bg-secondary transition-colors"
-                    >
-                      Ver detalle
-                    </button>
-                  </div>
-                </div>
-              ))
+                })}
+              </div>
             )}
           </div>
         </div>
 
+        {/* Onboarding */}
         {setupChecklist && (
-          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
-            <div className="px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Checklist de puesta en marcha</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                {setupChecklist.completed}/{setupChecklist.total} completados · {setupChecklist.progressPct}%
-              </p>
-            </div>
-            <div className="p-6">
-              <div className="h-2 rounded-full bg-secondary overflow-hidden mb-6">
-                <div className="h-full bg-primary transition-all" style={{ width: `${setupChecklist.progressPct}%` }} />
-              </div>
+          <>
+            <OnboardingBanner checklist={setupChecklist} onOpen={() => setWizardOpen(true)} />
+            <OnboardingWizard checklist={setupChecklist} open={wizardOpen} onClose={() => setWizardOpen(false)} />
+          </>
+        )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {setupChecklist.items.map((item) => (
-                  <div 
-                    key={item.id} 
-                    className={`flex items-start gap-3 p-4 rounded-xl border transition-all ${
-                      item.done 
-                        ? "bg-secondary/10 border-border/50 opacity-75" 
-                        : "bg-card border-border shadow-sm hover:border-primary/30"
-                    }`}
-                  >
-                    <div className={`mt-0.5 shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
-                      item.done ? "bg-success/20 text-success" : "bg-secondary text-muted-foreground"
-                    }`}>
-                      {item.done ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-medium ${item.done ? "text-muted-foreground line-through" : "text-foreground"}`}>
-                        {item.label}
-                      </p>
-                      {!item.done && (
-                        <>
-                          <p className="text-xs text-muted-foreground mt-1">{item.hint}</p>
-                          <button
-                            onClick={() => router.push(item.actionHref)}
-                            className="mt-3 text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1"
-                          >
-                            {item.actionLabel}
-                            <ArrowRight className="w-3 h-3" />
-                          </button>
-                        </>
-                      )}
-                    </div>
+        {/* Today appointments — compact list */}
+        <div className="bg-card border border-border rounded-lg mb-4">
+          <div className="px-5 py-3.5 border-b border-border flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-foreground">Citas de hoy</h2>
+            <span className="text-xs text-muted-foreground tabular-nums">{todayAppointments.length} citas</span>
+          </div>
+          {loading ? (
+            <p className="text-sm text-muted-foreground text-center py-6 animate-pulse">Cargando citas...</p>
+          ) : todayAppointments.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Sin citas programadas para hoy.</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {todayAppointments.map((apt) => (
+                <div
+                  key={apt.id}
+                  onClick={() => router.push(`/medico/citas/${apt.id}`)}
+                  className="flex items-center gap-3 px-5 py-3 hover:bg-secondary/30 transition-colors cursor-pointer"
+                >
+                  <span className="w-[80px] shrink-0 text-sm font-medium text-foreground tabular-nums">
+                    {format(new Date(apt.startTime), "HH:mm")}
+                  </span>
+                  <span className="flex-1 min-w-0 text-sm text-foreground truncate">{apt.patientName}</span>
+                  <span className="text-xs text-muted-foreground shrink-0 hidden md:block capitalize">
+                    {apt.consultType === "extended" ? "Integral" : "Normal"}
+                  </span>
+                  <StatusBadge status={apt.status} />
+                  <div className="flex gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    {apt.status === "pending" && (
+                      <button
+                        onClick={() => void updateAppointmentStatus(apt.id, "CONFIRMED")}
+                        disabled={updatingKey !== null}
+                        className="px-2.5 py-1 text-xs font-medium border border-primary/40 text-primary rounded hover:bg-primary/10 transition-colors disabled:opacity-60"
+                      >
+                        {updatingKey === `${apt.id}:CONFIRMED` ? "…" : "Confirmar"}
+                      </button>
+                    )}
+                    {["pending", "confirmed", "rescheduled"].includes(apt.status) && (
+                      <button
+                        onClick={() => void updateAppointmentStatus(apt.id, "COMPLETED")}
+                        disabled={updatingKey !== null}
+                        className="px-2.5 py-1 text-xs font-medium border border-success/40 text-success rounded hover:bg-success/10 transition-colors disabled:opacity-60"
+                      >
+                        {updatingKey === `${apt.id}:COMPLETED` ? "…" : "Realizada"}
+                      </button>
+                    )}
+                    {["pending", "confirmed", "rescheduled"].includes(apt.status) && (
+                      <button
+                        onClick={() => void updateAppointmentStatus(apt.id, "CANCELLED")}
+                        disabled={updatingKey !== null}
+                        className="px-2.5 py-1 text-xs font-medium border border-destructive/40 text-destructive rounded hover:bg-destructive/10 transition-colors disabled:opacity-60"
+                      >
+                        {updatingKey === `${apt.id}:CANCELLED` ? "…" : "Cancelar"}
+                      </button>
+                    )}
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        {analytics && (
-          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
-            <div className="px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Analítica mensual</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                Corte {analytics.currentMonth.label}
-              </p>
-            </div>
-            <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                <p className="text-xs text-muted-foreground">Citas del mes</p>
-                <p className="text-xl font-semibold text-foreground">{analytics.currentMonth.totalAppointments}</p>
-              </div>
-              <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                <p className="text-xs text-muted-foreground">Completadas</p>
-                <p className="text-xl font-semibold text-foreground">{analytics.currentMonth.completedAppointments}</p>
-              </div>
-              <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                <p className="text-xs text-muted-foreground">Ingreso realizado</p>
-                <p className="text-xl font-semibold text-foreground">
-                  {currencyFormatter.format(analytics.currentMonth.estimatedRevenueCompleted)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                <p className="text-xs text-muted-foreground">Ingreso programado</p>
-                <p className="text-xl font-semibold text-foreground">
-                  {currencyFormatter.format(analytics.currentMonth.estimatedRevenueScheduled)}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {priorityThree && (
-          <div className="bg-card border border-border rounded-2xl shadow-sm mb-6">
-            <div className="px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Control de Asistencia y Reglas del Asistente</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                Estadísticas de pacientes, reglas de automatización y registro de cambios.
-              </p>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">Pacientes que no asistieron</p>
-                  <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.noShowRatePct}%</p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">Citas confirmadas</p>
-                  <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.confirmationRatePct}%</p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">Citas canceladas</p>
-                  <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.cancellationRatePct}%</p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/20 p-3">
-                  <p className="text-xs text-muted-foreground">Tiempo de respuesta del paciente</p>
-                  <p className="text-xl font-semibold text-foreground">
-                    {priorityThree.metrics.averageMinutesToConfirmation ?? "—"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="rounded-xl border border-border bg-secondary/10 p-4">
-                  <p className="text-sm font-medium text-foreground mb-2">Cómo trabaja tu asistente automático</p>
-                  <p className="text-xs text-muted-foreground">
-                    Marcar cita como vencida tras: {priorityThree.automationRules.pendingOverdueMinutes} min.
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Aviso de confirmación urgente: {priorityThree.automationRules.pendingEscalationMinutes} min antes.
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Cerrar cita por inasistencia tras: {priorityThree.automationRules.pendingAutoCloseHours} horas.
-                  </p>
-                </div>
-                <div className="rounded-xl border border-border bg-secondary/10 p-4">
-                  <p className="text-sm font-medium text-foreground mb-2">Tareas realizadas por el sistema</p>
-                  <p className="text-xs text-muted-foreground">
-                    Citas vencidas ahora: {priorityThree.automationExecution.overduePendingNow}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Vencidas (última semana): {priorityThree.automationExecution.last7Days.markedOverdue}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Recordatorios extra (última semana): {priorityThree.automationExecution.last7Days.escalatedReminders}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Citas cerradas por inasistencia (última semana): {priorityThree.automationExecution.last7Days.autoClosedNoShow}
-                  </p>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-border bg-secondary/10 p-4">
-                <p className="text-sm font-medium text-foreground mb-3">Últimos movimientos y cambios</p>
-                {priorityThree.recentAuditEvents.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">Sin eventos recientes.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {priorityThree.recentAuditEvents.slice(0, 8).map((event) => (
-                      <div key={event.id} className="rounded-lg border border-border bg-card p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-sm font-medium text-foreground">{event.actionLabel}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {new Date(event.createdAt).toLocaleString("es-MX")}
-                          </p>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {event.patientName || "Paciente"} · {event.source} · {event.actorType}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
+        {/* Upcoming appointments */}
         {upcomingAppointments.length > 0 && (
-          <div className="bg-card border border-border rounded-2xl shadow-sm mt-6">
-            <div className="px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Próximas citas</h2>
+          <div className="bg-card border border-border rounded-lg mb-4">
+            <div className="px-5 py-3.5 border-b border-border flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-foreground">Próximas citas</h2>
+              <span className="text-xs text-muted-foreground tabular-nums">{upcomingAppointments.length}</span>
             </div>
-            <div className="p-6 space-y-3">
+            <div className="divide-y divide-border">
               {upcomingAppointments.map((apt) => (
                 <div
                   key={apt.id}
                   onClick={() => router.push(`/medico/agenda?date=${apt.dateLocal}`)}
-                  className="flex items-center gap-4 p-4 rounded-xl border border-border hover:bg-secondary/50 transition-colors cursor-pointer"
+                  className="flex items-center gap-3 px-5 py-3 hover:bg-secondary/30 transition-colors cursor-pointer"
                 >
-                  <div className="w-10 h-10 bg-muted rounded-xl flex items-center justify-center shrink-0">
-                    <Calendar className="w-4 h-4 text-muted-foreground" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-foreground truncate">{apt.patientName}</p>
-                    <p className="text-sm text-muted-foreground capitalize">
-                      {format(new Date(apt.date), "EEE dd MMM", { locale: es })} · {format(new Date(apt.startTime), "HH:mm")}
-                    </p>
-                  </div>
+                  <span className="w-[80px] shrink-0 text-sm text-muted-foreground tabular-nums">
+                    {format(new Date(apt.startTime), "HH:mm")}
+                  </span>
+                  <span className="text-xs text-muted-foreground shrink-0 hidden sm:block w-20">
+                    {format(new Date(apt.date), "EEE dd MMM", { locale: es })}
+                  </span>
+                  <span className="flex-1 min-w-0 text-sm text-foreground truncate">{apt.patientName}</span>
                   <StatusBadge status={apt.status} />
                 </div>
               ))}
             </div>
           </div>
         )}
+
+        {/* Analytics — collapsed by default */}
+        {analytics && (
+          <div className="bg-card border border-border rounded-lg mb-4">
+            <button
+              type="button"
+              onClick={() => setShowAnalytics((v) => !v)}
+              className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-secondary/20 transition-colors rounded-lg"
+            >
+              <div>
+                <span className="text-sm font-semibold text-foreground">Analítica mensual</span>
+                <span className="text-xs text-muted-foreground ml-2">· {analytics.currentMonth.label}</span>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showAnalytics ? "rotate-180" : ""}`} />
+            </button>
+            {showAnalytics && (
+              <div className="border-t border-border p-5 grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-md border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Citas del mes</p>
+                  <p className="text-xl font-semibold text-foreground">{analytics.currentMonth.totalAppointments}</p>
+                </div>
+                <div className="rounded-md border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Completadas</p>
+                  <p className="text-xl font-semibold text-foreground">{analytics.currentMonth.completedAppointments}</p>
+                </div>
+                <div className="rounded-md border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Ingreso realizado</p>
+                  <p className="text-xl font-semibold text-foreground">{currencyFormatter.format(analytics.currentMonth.estimatedRevenueCompleted)}</p>
+                </div>
+                <div className="rounded-md border border-border bg-secondary/20 p-3">
+                  <p className="text-xs text-muted-foreground">Ingreso programado</p>
+                  <p className="text-xl font-semibold text-foreground">{currencyFormatter.format(analytics.currentMonth.estimatedRevenueScheduled)}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Funnel — collapsed */}
+        <div className="bg-card border border-border rounded-lg mb-4">
+          <button
+            type="button"
+            onClick={() => setShowFunnel((v) => !v)}
+            className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-secondary/20 transition-colors rounded-lg"
+          >
+            <div>
+              <span className="text-sm font-semibold text-foreground">Conversión por canal</span>
+              <span className="text-xs text-muted-foreground ml-2">· últimos 30 días</span>
+            </div>
+            <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showFunnel ? "rotate-180" : ""}`} />
+          </button>
+          {showFunnel && (
+            <div className="border-t border-border p-5">
+              {funnelLoading ? (
+                <p className="text-sm text-muted-foreground animate-pulse">Cargando métricas de conversión...</p>
+              ) : !funnelData || funnelData.summary.visits === 0 ? (
+                <p className="text-sm text-muted-foreground">Sin datos de funnel todavía. Los eventos se registran en tiempo real desde la página de reserva.</p>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-md border border-border bg-secondary/20 p-3">
+                      <p className="text-xs text-muted-foreground">Visitas</p>
+                      <p className="text-xl font-semibold text-foreground">{funnelData.summary.visits}</p>
+                    </div>
+                    <div className="rounded-md border border-border bg-secondary/20 p-3">
+                      <p className="text-xs text-muted-foreground">Confirmadas</p>
+                      <p className="text-xl font-semibold text-foreground">{funnelData.summary.confirmed}</p>
+                    </div>
+                    <div className="rounded-md border border-border bg-secondary/20 p-3">
+                      <p className="text-xs text-muted-foreground">Conversión</p>
+                      <p className="text-xl font-semibold text-foreground">{funnelData.summary.overallConversion}%</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="rounded-md border border-border bg-secondary/10 p-4">
+                      <p className="text-sm font-medium text-foreground mb-3">Pasos del funnel</p>
+                      <div className="space-y-2">
+                        {funnelData.funnel.map((item) => (
+                          <div key={item.step} className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">{item.step.replace(/_/g, " ").toLowerCase()}</span>
+                            <span className="font-medium text-foreground">
+                              {item.count} <span className="text-muted-foreground">({item.conversionFromVisit}%)</span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-border bg-secondary/10 p-4">
+                      <p className="text-sm font-medium text-foreground mb-3">Citas por canal</p>
+                      <div className="space-y-2">
+                        {funnelData.appointmentsByChannel.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">Sin citas con atribución de canal aún.</p>
+                        ) : (
+                          funnelData.appointmentsByChannel.map((item) => (
+                            <div key={item.channel} className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">{item.channel.replace(/_/g, " ").toLowerCase()}</span>
+                              <span className="font-medium text-foreground">{item.count}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* AI usage — collapsed */}
+        <div className="bg-card border border-border rounded-lg mb-4">
+          <button
+            type="button"
+            onClick={() => setShowAiUsage((v) => !v)}
+            className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-secondary/20 transition-colors rounded-lg"
+          >
+            <div>
+              <span className="text-sm font-semibold text-foreground">IA · uso y costo</span>
+              <span className="text-xs text-muted-foreground ml-2">· últimos 30 días</span>
+            </div>
+            <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showAiUsage ? "rotate-180" : ""}`} />
+          </button>
+          {showAiUsage && (
+            <div className="border-t border-border p-5">
+              {aiUsageLoading ? (
+                <p className="text-sm text-muted-foreground animate-pulse">Cargando métricas de IA...</p>
+              ) : !aiUsage ? (
+                <p className="text-sm text-muted-foreground">Sin datos de uso de IA para este periodo.</p>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="rounded-md border border-border bg-secondary/20 p-3">
+                      <p className="text-xs text-muted-foreground">Eventos IA</p>
+                      <p className="text-xl font-semibold text-foreground">{aiUsage.totals.jobs}</p>
+                    </div>
+                    <div className="rounded-md border border-border bg-secondary/20 p-3">
+                      <p className="text-xs text-muted-foreground">Tokens totales</p>
+                      <p className="text-xl font-semibold text-foreground">{aiUsage.totals.totalTokens}</p>
+                    </div>
+                    <div className="rounded-md border border-border bg-secondary/20 p-3 md:col-span-2">
+                      <p className="text-xs text-muted-foreground">Costo estimado</p>
+                      <p className="text-xl font-semibold text-foreground">{usdFormatter.format(aiUsage.totals.estimatedCostUsd)}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="rounded-md border border-border bg-secondary/10 p-4">
+                      <p className="text-sm font-medium text-foreground mb-2">Top módulos</p>
+                      <div className="space-y-2">
+                        {aiUsage.byModule.slice(0, 5).map((item) => (
+                          <div key={item.module} className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">{item.module}</span>
+                            <span className="font-medium text-foreground">{usdFormatter.format(item.estimatedCostUsd)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-border bg-secondary/10 p-4">
+                      <p className="text-sm font-medium text-foreground mb-2">Top modelos</p>
+                      <div className="space-y-2">
+                        {aiUsage.byModel.slice(0, 5).map((item) => (
+                          <div key={item.model} className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">{item.model}</span>
+                            <span className="font-medium text-foreground">{usdFormatter.format(item.estimatedCostUsd)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-border bg-secondary/10 p-4">
+                    <p className="text-sm font-medium text-foreground mb-2">Serie diaria (últimas 2 semanas)</p>
+                    <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                      {aiUsage.dailySeries.slice(-14).map((point) => (
+                        <div key={point.date} className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">{point.date}</span>
+                          <span className="text-foreground tabular-nums">
+                            {point.jobs} jobs · {point.totalTokens} tokens · {usdFormatter.format(point.estimatedCostUsd)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Priority three — collapsed */}
+        {priorityThree && (
+          <div className="bg-card border border-border rounded-lg mb-4">
+            <button
+              type="button"
+              onClick={() => setShowPriorityThree((v) => !v)}
+              className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-secondary/20 transition-colors rounded-lg"
+            >
+              <span className="text-sm font-semibold text-foreground">Control de asistencia y automatización</span>
+              <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showPriorityThree ? "rotate-180" : ""}`} />
+            </button>
+            {showPriorityThree && (
+              <div className="border-t border-border p-5 space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="rounded-md border border-border bg-secondary/20 p-3">
+                    <p className="text-xs text-muted-foreground">No asistieron</p>
+                    <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.noShowRatePct}%</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-secondary/20 p-3">
+                    <p className="text-xs text-muted-foreground">Confirmación</p>
+                    <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.confirmationRatePct}%</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-secondary/20 p-3">
+                    <p className="text-xs text-muted-foreground">Cancelación</p>
+                    <p className="text-xl font-semibold text-foreground">{priorityThree.metrics.cancellationRatePct}%</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-secondary/20 p-3">
+                    <p className="text-xs text-muted-foreground">Tiempo de respuesta</p>
+                    <p className="text-xl font-semibold text-foreground">
+                      {priorityThree.metrics.averageMinutesToConfirmation ?? "—"}
+                    </p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="rounded-md border border-border bg-secondary/10 p-4">
+                    <p className="text-sm font-medium text-foreground mb-2">Reglas del asistente automático</p>
+                    <p className="text-xs text-muted-foreground">Vencida tras: {priorityThree.automationRules.pendingOverdueMinutes} min.</p>
+                    <p className="text-xs text-muted-foreground mt-1">Escalado urgente: {priorityThree.automationRules.pendingEscalationMinutes} min antes.</p>
+                    <p className="text-xs text-muted-foreground mt-1">Cierre por inasistencia: {priorityThree.automationRules.pendingAutoCloseHours} h.</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-secondary/10 p-4">
+                    <p className="text-sm font-medium text-foreground mb-2">Tareas ejecutadas</p>
+                    <p className="text-xs text-muted-foreground">Vencidas ahora: {priorityThree.automationExecution.overduePendingNow}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Vencidas (7d): {priorityThree.automationExecution.last7Days.markedOverdue}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Recordatorios (7d): {priorityThree.automationExecution.last7Days.escalatedReminders}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Cerradas por inasistencia (7d): {priorityThree.automationExecution.last7Days.autoClosedNoShow}</p>
+                  </div>
+                </div>
+                <div className="rounded-md border border-border bg-secondary/10 p-4">
+                  <p className="text-sm font-medium text-foreground mb-3">Últimos movimientos</p>
+                  {priorityThree.recentAuditEvents.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Sin eventos recientes.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {priorityThree.recentAuditEvents.slice(0, 8).map((event) => (
+                        <div key={event.id} className="rounded border border-border bg-card p-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-medium text-foreground">{event.actionLabel}</p>
+                            <p className="text-xs text-muted-foreground tabular-nums">
+                              {new Date(event.createdAt).toLocaleString("es-MX")}
+                            </p>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {event.patientName || "Paciente"} · {event.source} · {event.actorType}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Clinic aggregates — collapsed */}
+        {clinicAggregates?.mode === "CLINIC" && (
+          <div className="bg-card border border-border rounded-lg mb-4">
+            <button
+              type="button"
+              onClick={() => setShowClinic((v) => !v)}
+              className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-secondary/20 transition-colors rounded-lg"
+            >
+              <div>
+                <span className="text-sm font-semibold text-foreground">Reporte de clínica</span>
+                <span className="text-xs text-muted-foreground ml-2">· {clinicAggregates.doctorsCount} médicos</span>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showClinic ? "rotate-180" : ""}`} />
+            </button>
+            {showClinic && (
+              <div className="border-t border-border p-5">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <div className="rounded-md border border-border bg-secondary/20 p-3">
+                    <p className="text-xs text-muted-foreground">Citas hoy</p>
+                    <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.todayAppointments}</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-secondary/20 p-3">
+                    <p className="text-xs text-muted-foreground">Pendientes</p>
+                    <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.pending}</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-secondary/20 p-3">
+                    <p className="text-xs text-muted-foreground">Confirmadas</p>
+                    <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.confirmed}</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-secondary/20 p-3">
+                    <p className="text-xs text-muted-foreground">Completadas</p>
+                    <p className="text-xl font-semibold text-foreground">{clinicAggregates.totals.completed}</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {clinicAggregates.doctors.map((doctor) => (
+                    <div key={doctor.doctorId} className="rounded border border-border p-3 bg-secondary/10">
+                      <p className="text-sm font-semibold text-foreground">{doctor.doctorName}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Hoy: {doctor.todayAppointments} · Pendientes: {doctor.pending} · Confirmadas: {doctor.confirmed} · Completadas: {doctor.completed} · Vencidas: {doctor.overduePending}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
     </DoctorLayout>
   );

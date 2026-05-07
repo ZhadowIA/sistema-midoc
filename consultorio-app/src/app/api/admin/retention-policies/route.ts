@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedUser } from '@/lib/auth'
+import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
+import { can, PERMISSIONS } from '@/lib/permissions'
 
 const createSchema = z.object({
   scope: z.enum(['GLOBAL', 'CLINIC']).default('GLOBAL'),
@@ -14,17 +15,31 @@ const createSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser || (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN')) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const authUser = access.context.user
+    if (!can(authUser, PERMISSIONS.CLINICAL_NOTE_READ)) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
     }
 
+    const actor = await prisma.user.findUnique({
+      where: { id: authUser.id },
+      select: { clinicId: true },
+    })
+
     const category = new URL(request.url).searchParams.get('category')
+    const policyScopeFilter =
+      authUser.role === 'ADMIN'
+        ? {}
+        : actor?.clinicId
+          ? { OR: [{ scope: 'GLOBAL' as const }, { clinicId: actor.clinicId }] }
+          : { scope: 'GLOBAL' as const }
 
     const policies = await prisma.dataRetentionPolicy.findMany({
       where: {
         active: true,
         ...(category ? { dataCategory: category as never } : {}),
+        ...policyScopeFilter,
       },
       orderBy: [{ scope: 'asc' }, { dataCategory: 'asc' }, { createdAt: 'desc' }],
     })
@@ -38,10 +53,17 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser || (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN')) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const authUser = access.context.user
+    if (!can(authUser, PERMISSIONS.CLINICAL_NOTE_WRITE)) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
     }
+
+    const actor = await prisma.user.findUnique({
+      where: { id: authUser.id },
+      select: { clinicId: true },
+    })
 
     const parsed = createSchema.safeParse(await request.json())
     if (!parsed.success) {
@@ -50,6 +72,14 @@ export async function POST(request: Request) {
 
     if (parsed.data.scope === 'CLINIC' && !parsed.data.clinicId) {
       return NextResponse.json({ error: 'clinicId es requerido para scope CLINIC' }, { status: 400 })
+    }
+    if (parsed.data.scope === 'GLOBAL' && authUser.role !== 'ADMIN') {
+      return NextResponse.json({ error: 'Solo ADMIN puede crear políticas globales.' }, { status: 403 })
+    }
+    if (parsed.data.scope === 'CLINIC' && authUser.role !== 'ADMIN') {
+      if (!actor?.clinicId || parsed.data.clinicId !== actor.clinicId) {
+        return NextResponse.json({ error: 'No autorizado para crear políticas de otra clínica.' }, { status: 403 })
+      }
     }
 
     const created = await prisma.dataRetentionPolicy.create({

@@ -54,7 +54,7 @@ export function ConsultationModeSelector({ value, onChange, aiAvailable }: Props
             disabled={disabled}
             onClick={() => !disabled && onChange(opt.value)}
             className={[
-              "text-left rounded-xl border p-3 transition-colors",
+              "text-left rounded-md border p-3 transition-colors",
               active
                 ? "border-primary bg-primary/10"
                 : "border-border bg-background hover:bg-secondary/30",

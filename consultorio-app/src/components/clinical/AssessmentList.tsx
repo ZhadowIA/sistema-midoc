@@ -31,7 +31,7 @@ export function AssessmentList({ value, onChange, disabled }: Props) {
       {value.map((item, idx) => (
         <div
           key={idx}
-          className="rounded-xl border border-border bg-card/50 p-4 space-y-2"
+          className="rounded-md border border-border bg-card/50 p-4 space-y-2"
         >
           <div className="flex gap-2 items-start">
             <Input
@@ -62,7 +62,7 @@ export function AssessmentList({ value, onChange, disabled }: Props) {
               type="button"
               onClick={() => remove(idx)}
               disabled={disabled}
-              className="mt-7 p-2 text-red-600 hover:bg-red-500/10 rounded-lg"
+              className="mt-7 p-2 text-destructive hover:bg-destructive/10 rounded-lg"
               aria-label="Eliminar diagnóstico"
             >
               <Trash2 className="w-4 h-4" />

@@ -1,5 +1,7 @@
 import { getServerEnv } from "./env";
 
+export const DEFAULT_DEEPGRAM_EPHEMERAL_KEY_TTL_SECONDS = 15 * 60;
+
 export type EphemeralKey = {
   apiKey: string;
   expiresAt: string;
@@ -11,6 +13,10 @@ type CreateKeyResponse = {
   expiration_date?: string | null;
 };
 
+export function getDeepgramEphemeralKeyTtlSeconds(): number {
+  return getServerEnv().DEEPGRAM_EPHEMERAL_KEY_TTL_SECONDS;
+}
+
 export async function mintEphemeralKey(options: {
   comment: string;
   ttlSeconds?: number;
@@ -20,7 +26,7 @@ export async function mintEphemeralKey(options: {
     throw new Error("Deepgram no está configurado (faltan DEEPGRAM_API_KEY o DEEPGRAM_PROJECT_ID).");
   }
 
-  const ttl = options.ttlSeconds ?? 60 * 60;
+  const ttl = options.ttlSeconds ?? env.DEEPGRAM_EPHEMERAL_KEY_TTL_SECONDS ?? DEFAULT_DEEPGRAM_EPHEMERAL_KEY_TTL_SECONDS;
   const res = await fetch(
     `https://api.deepgram.com/v1/projects/${env.DEEPGRAM_PROJECT_ID}/keys`,
     {

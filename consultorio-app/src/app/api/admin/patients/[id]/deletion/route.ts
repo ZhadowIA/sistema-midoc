@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedUser } from '@/lib/auth'
+import { requireMedicalDoctorApiAccess } from '@/lib/medicalApi'
 
 const schema = z.object({
   mode: z.enum(['SOFT', 'HARD']),
@@ -12,18 +12,30 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   const params = await props.params
 
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser || (authUser.role !== 'DOCTOR' && authUser.role !== 'ADMIN' && authUser.role !== 'CLINIC_ADMIN')) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-    }
+    const access = await requireMedicalDoctorApiAccess()
+    if (access.response) return access.response
+    const authUser = access.context.user
+    const doctorId = access.context.doctorId
 
     const parsed = schema.safeParse(await request.json())
     if (!parsed.success) {
       return NextResponse.json({ error: 'Payload inválido', details: parsed.error.issues }, { status: 400 })
     }
 
-    const patient = await prisma.patient.findUnique({ where: { id: params.id } })
+    const patient = await prisma.patient.findUnique({
+      where: { id: params.id },
+    })
     if (!patient) return NextResponse.json({ error: 'Paciente no encontrado' }, { status: 404 })
+
+    if (authUser.role === 'DOCTOR' && patient.ownerDoctorId !== doctorId) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
+    }
+    if (authUser.role === 'CLINIC_ADMIN') {
+      const actor = await prisma.user.findUnique({ where: { id: authUser.id }, select: { clinicId: true } })
+      if (!actor?.clinicId || actor.clinicId !== patient.clinicId) {
+        return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
+      }
+    }
 
     if (parsed.data.mode === 'SOFT') {
       await prisma.$transaction(async (tx) => {

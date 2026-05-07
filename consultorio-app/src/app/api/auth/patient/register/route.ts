@@ -3,18 +3,23 @@ import prisma from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { buildFullName } from '@/lib/patientName'
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit'
+import { validatePasswordPolicy } from '@/lib/passwordPolicy'
+import { captureError, logEvent } from '@/lib/observability'
 
 const registerPatientSchema = z.object({
   firstName: z.string().min(2, 'El nombre es requerido'),
   lastNamePaternal: z.string().min(2, 'El apellido paterno es requerido'),
   lastNameMaternal: z.string().optional().nullable(),
   email: z.string().email('Correo inválido'),
-  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
+  password: z.string().min(1, 'La contraseña es requerida'),
   phone: z.string().min(10, 'El teléfono debe tener al menos 10 dígitos'),
   dateOfBirth: z.string().refine((val) => !isNaN(Date.parse(val)), {
     message: "Fecha de nacimiento inválida",
   }),
 })
+
+const PATIENT_REGISTER_RATE_LIMIT = { key: 'auth:patient:register', limit: 8, windowMs: 60 * 60 * 1000 }
 
 export async function POST(request: Request) {
   try {
@@ -27,6 +32,17 @@ export async function POST(request: Request) {
     const password = parsed.password
     const phone = parsed.phone.trim()
     const dateOfBirth = new Date(parsed.dateOfBirth)
+
+    const limit = await checkRateLimit(request, { ...PATIENT_REGISTER_RATE_LIMIT, identifier: email || phone || 'anon' })
+    if (!limit.ok) {
+      logEvent('warn', 'auth.patient.register.rate_limited', { email })
+      return rateLimitExceededResponse(limit)
+    }
+
+    const passwordPolicy = validatePasswordPolicy(password)
+    if (!passwordPolicy.ok) {
+      return NextResponse.json({ error: passwordPolicy.message }, { status: 400 })
+    }
 
     const existingUser = await prisma.user.findUnique({
       where: { email },
@@ -72,10 +88,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, user: result })
   } catch (error: unknown) {
+    captureError('auth.patient.register.error', error)
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Datos inválidos', details: error.issues }, { status: 400 })
     }
-    const message = error instanceof Error ? error.message : 'Error interno'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: 'No fue posible completar el registro' }, { status: 500 })
   }
 }

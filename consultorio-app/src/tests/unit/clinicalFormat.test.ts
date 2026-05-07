@@ -7,6 +7,7 @@ import {
   hasMinimumForSignoff,
   buildSignoffBlockedMessage,
   evaluateSignoffButtonState,
+  normalizeEncounterHistoryPayload,
   migrateFromMedicalRecord,
 } from '../../lib/clinicalFormat.ts'
 import { runSuite } from '../testHarness.ts'
@@ -32,6 +33,30 @@ export async function runClinicalFormatUnitTests() {
         assert.equal(p.completionPct, 0)
         assert.equal(p.chiefComplaint, '')
         assert.deepEqual(p.assessment, [])
+      },
+    },
+    {
+      name: 'normalizeEncounterHistoryPayload completa payload parcial sin perder datos',
+      run: () => {
+        const p = normalizeEncounterHistoryPayload({
+          chiefComplaint: 'dolor dental',
+          assessment: [{ diagnosis: 'caries' }],
+        })
+        assert.equal(p.chiefComplaint, 'dolor dental')
+        assert.deepEqual(p.assessment, [{ diagnosis: 'caries' }])
+        assert.deepEqual(p.presentIllness, {})
+        assert.deepEqual(p.treatmentPlan, {})
+        assert.equal(p.status, 'DRAFT')
+      },
+    },
+    {
+      name: 'normalizeEncounterHistoryPayload convierte objeto vacío en encuentro válido',
+      run: () => {
+        const p = normalizeEncounterHistoryPayload({})
+        assert.equal(p.chiefComplaint, '')
+        assert.deepEqual(p.pertinentNegatives, [])
+        assert.deepEqual(p.assessment, [])
+        assert.doesNotThrow(() => hasMinimumForSignoff(p))
       },
     },
     {

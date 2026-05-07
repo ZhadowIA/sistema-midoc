@@ -32,7 +32,7 @@ export const Modal = ({ open, onOpenChange, title, description, children, size =
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
+                  className="fixed inset-0 bg-foreground/40 backdrop-blur-sm z-50"
                 />
               </Dialog.Overlay>
               <Dialog.Content asChild>
@@ -41,7 +41,7 @@ export const Modal = ({ open, onOpenChange, title, description, children, size =
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.95, y: 20 }}
                   transition={{ type: "spring", duration: 0.3 }}
-                  className={`fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full ${sizeClasses[size]} bg-card border border-border rounded-2xl shadow-2xl p-6 z-50 max-h-[90vh] overflow-y-auto`}
+                  className={`fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full ${sizeClasses[size]} bg-card border border-border rounded-lg shadow-2xl p-6 z-50 max-h-[90vh] overflow-y-auto`}
                 >
                   {title && (
                     <Dialog.Title className="text-xl font-semibold text-foreground mb-2">

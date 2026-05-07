@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { getAuthenticatedDoctorId } from '@/lib/auth'
+import { requireAgendaDoctorApiAccess } from '@/lib/medicalApi'
 import { WhatsAppMessageLogService } from '@/services/WhatsAppMessageLogService'
 
 const querySchema = z.object({
@@ -9,8 +9,9 @@ const querySchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    const doctorId = await getAuthenticatedDoctorId()
-    if (!doctorId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireAgendaDoctorApiAccess({ allowSecretary: true })
+    if (access.response) return access.response
+    const doctorId = access.context.doctorId
 
     const url = new URL(request.url)
     const parsed = querySchema.safeParse({

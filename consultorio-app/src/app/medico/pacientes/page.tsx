@@ -45,11 +45,22 @@ function getLastAppointment(appointments?: PatientAppointmentSummary[]): string 
   });
 }
 
+type PaginatedResponse = {
+  data: PatientDirectoryItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
 export default function PatientsDirectoryPage() {
   const router = useRouter();
   const [patients, setPatients] = useState<PatientDirectoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({
@@ -62,17 +73,32 @@ export default function PatientsDirectoryPage() {
   });
   const [creatingEncounterPatientId, setCreatingEncounterPatientId] = useState<string | null>(null);
 
-  const loadPatients = async () => {
-    const res = await fetch("/api/clinical/admin/patients");
-    const data = await res.json();
-    if (Array.isArray(data)) setPatients(data);
+  const loadPatients = async (targetPage: number, q: string) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(targetPage) });
+      if (q) params.set("q", q);
+      const res = await fetch(`/api/clinical/admin/patients?${params.toString()}`);
+      const json = await res.json() as PaginatedResponse;
+      setPatients(json.data ?? []);
+      setTotalPages(json.totalPages ?? 1);
+      setTotal(json.total ?? 0);
+      setPage(json.page ?? 1);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    loadPatients()
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    loadPatients(1, "").catch(console.error);
   }, []);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      loadPatients(1, search).catch(console.error);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [search]);
 
   const handleCreatePatient = async () => {
     setCreating(true);
@@ -101,7 +127,7 @@ export default function PatientsDirectoryPage() {
         email: "",
         dateOfBirth: "",
       });
-      await loadPatients();
+      await loadPatients(1, search);
 
       if (data.patient?.id) {
         router.push(`/medico/pacientes/${data.patient.id}`);
@@ -117,6 +143,15 @@ export default function PatientsDirectoryPage() {
   const handleCreateStandaloneEncounter = async (patientId: string) => {
     setCreatingEncounterPatientId(patientId);
     try {
+      // Check for an existing open standalone encounter first
+      const existing = await fetch(`/api/clinical/admin/encounters?patientId=${patientId}&status=OPEN`);
+      const existingData = await existing.json() as { encounters?: { id: string; source: string }[] };
+      const openStandalone = existingData.encounters?.find(e => e.source === "STANDALONE");
+      if (openStandalone) {
+        router.push(`/medico/expedientes/encounters/${openStandalone.id}`);
+        return;
+      }
+
       const res = await fetch("/api/clinical/admin/encounters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -139,11 +174,6 @@ export default function PatientsDirectoryPage() {
     }
   };
 
-  const filtered = patients.filter(p =>
-    formatPatientName(p).toLowerCase().includes(search.toLowerCase()) ||
-    p.phone.includes(search)
-  );
-
   return (
     <DoctorLayout>
       <div className="p-6 lg:p-8 w-full">
@@ -162,11 +192,11 @@ export default function PatientsDirectoryPage() {
         </div>
 
         {/* Search bar */}
-        <div className="bg-card border border-border rounded-2xl p-4 mb-6 shadow-sm">
+        <div className="bg-card border border-border rounded-lg p-4 mb-6 shadow-sm">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
-              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-md text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
               placeholder="Buscar por nombre o teléfono..."
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -177,13 +207,13 @@ export default function PatientsDirectoryPage() {
         {/* Patients grid */}
         {loading ? (
           <p className="text-sm text-muted-foreground text-center py-12 animate-pulse">Cargando pacientes...</p>
-        ) : filtered.length === 0 ? (
-          <div className="bg-card border border-border rounded-2xl p-12 text-center shadow-sm">
+        ) : patients.length === 0 ? (
+          <div className="bg-card border border-border rounded-lg p-12 text-center shadow-sm">
             <p className="text-muted-foreground">No se encontraron pacientes</p>
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filtered.map(patient => {
+            {patients.map(patient => {
               const age = calculateAge(patient.dateOfBirth);
               const count = patient.appointmentCount ?? patient.appointments?.length ?? 0;
               const last = getLastAppointment(patient.appointments);
@@ -191,7 +221,7 @@ export default function PatientsDirectoryPage() {
                 <div
                   key={patient.id}
                   onClick={() => router.push(`/medico/pacientes/${patient.id}`)}
-                  className="bg-card border border-border rounded-2xl p-6 cursor-pointer hover:shadow-md hover:border-primary/30 transition-all"
+                  className="bg-card border border-border rounded-lg p-6 cursor-pointer hover:shadow-md hover:border-primary/30 transition-all"
                 >
                   {/* Avatar + name */}
                   <div className="flex items-center gap-4 mb-5">
@@ -237,6 +267,30 @@ export default function PatientsDirectoryPage() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {!loading && totalPages > 1 && (
+          <div className="flex items-center justify-between mt-6 pt-4 border-t border-border">
+            <p className="text-sm text-muted-foreground">
+              {total} paciente{total !== 1 ? "s" : ""} · página {page} de {totalPages}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                disabled={page <= 1}
+                onClick={() => { void loadPatients(page - 1, search); }}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={page >= totalPages}
+                onClick={() => { void loadPatients(page + 1, search); }}
+              >
+                Siguiente
+              </Button>
+            </div>
           </div>
         )}
       </div>

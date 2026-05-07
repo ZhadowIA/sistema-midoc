@@ -30,19 +30,19 @@ export const WHATSAPP_DEFAULT_TEMPLATES: Record<WhatsAppTemplateType, string> = 
 }
 
 export type WhatsAppTemplateConfigSource = {
-  whatsappBookingMessageTemplate?: string | null
-  whatsappQuestionnaireTemplate?: string | null
-  whatsappReminderPendingTemplate?: string | null
-  whatsappReminderConfirmedTemplate?: string | null
+  bookingMessageTemplate?: string | null
+  questionnaireTemplate?: string | null
+  reminderPendingTemplate?: string | null
+  reminderConfirmedTemplate?: string | null
 }
 
 type TemplateSource = 'custom_input' | 'doctor_config' | 'default'
 
 const TYPE_TO_FIELD: Record<WhatsAppTemplateType, keyof WhatsAppTemplateConfigSource> = {
-  booking: 'whatsappBookingMessageTemplate',
-  questionnaire: 'whatsappQuestionnaireTemplate',
-  reminder_pending: 'whatsappReminderPendingTemplate',
-  reminder_confirmed: 'whatsappReminderConfirmedTemplate',
+  booking: 'bookingMessageTemplate',
+  questionnaire: 'questionnaireTemplate',
+  reminder_pending: 'reminderPendingTemplate',
+  reminder_confirmed: 'reminderConfirmedTemplate',
 }
 
 function normalizeString(value: string | null | undefined) {

@@ -1,3 +1,12 @@
+import {
+  AGENDA_FEATURE_KEYS,
+  AI_FEATURE_KEYS,
+  buildFeatureRecord,
+  CLINICAL_FEATURE_KEYS,
+  SPECIALTY_FEATURE_KEYS,
+  type SubscriptionFeatureKey,
+} from "@/lib/subscriptionFeatures";
+
 export const COMMERCIAL_BASE_PLANS = {
   AGENDA: "AGENDA",
   CLINICAL: "CLINICAL",
@@ -8,7 +17,9 @@ export type CommercialBasePlan =
   (typeof COMMERCIAL_BASE_PLANS)[keyof typeof COMMERCIAL_BASE_PLANS];
 
 export const COMMERCIAL_ADD_ONS = {
-  AI: "AI",
+  AI_30: "AI_30",
+  AI_60: "AI_60",
+  AI_100: "AI_100",
 } as const;
 
 export type CommercialAddOn =
@@ -37,8 +48,8 @@ type CommercialCatalogEntry = {
   legacyPlanName: string;
   monthlyPriceMx: number | null;
   description: string;
-  features: string[];
-  excludes: string[];
+  features: readonly SubscriptionFeatureKey[];
+  excludes: readonly SubscriptionFeatureKey[];
 };
 
 type CommercialAddOnEntry = {
@@ -46,7 +57,7 @@ type CommercialAddOnEntry = {
   displayName: string;
   monthlyPriceMx: number | null;
   description: string;
-  features: string[];
+  features: readonly SubscriptionFeatureKey[];
 };
 
 const CATALOG_VERSION = "2026-04-21" as const;
@@ -56,94 +67,62 @@ const BASE_PLAN_CATALOG: Record<CommercialBasePlan, CommercialCatalogEntry> = {
     code: COMMERCIAL_BASE_PLANS.AGENDA,
     displayName: "Plan Agenda",
     legacyPlanName: "Plan Agenda MiDoc",
-    monthlyPriceMx: null,
+    monthlyPriceMx: 299,
     description: "Agenda en línea con recordatorios y operación administrativa básica.",
-    features: [
-      "agenda.enabled",
-      "agenda.reminders.whatsapp",
-      "agenda.waitlist",
-    ],
+    features: AGENDA_FEATURE_KEYS,
     excludes: [
-      "clinical.enabled",
-      "clinical.history",
-      "clinical.notes",
-      "clinical.prescriptions",
-      "clinical.signoff",
-      "clinical.encounters.standalone",
-      "ai.enabled",
-      "ai.dictation",
-      "ai.insights",
+      ...CLINICAL_FEATURE_KEYS,
+      ...AI_FEATURE_KEYS,
+      ...SPECIALTY_FEATURE_KEYS,
     ],
   },
   CLINICAL: {
     code: COMMERCIAL_BASE_PLANS.CLINICAL,
     displayName: "Plan Clínico",
     legacyPlanName: "Plan Clínico MiDoc",
-    monthlyPriceMx: null,
+    monthlyPriceMx: 449,
     description: "Expediente clínico, historia médica, notas, recetas y firma clínica sin agenda.",
-    features: [
-      "clinical.enabled",
-      "clinical.history",
-      "clinical.notes",
-      "clinical.prescriptions",
-      "clinical.signoff",
-      "clinical.encounters.standalone",
-    ],
+    features: CLINICAL_FEATURE_KEYS,
     excludes: [
-      "agenda.enabled",
-      "agenda.reminders.whatsapp",
-      "agenda.waitlist",
-      "ai.enabled",
-      "ai.dictation",
-      "ai.insights",
+      ...AGENDA_FEATURE_KEYS,
+      ...AI_FEATURE_KEYS,
+      ...SPECIALTY_FEATURE_KEYS,
     ],
   },
   INTEGRAL: {
     code: COMMERCIAL_BASE_PLANS.INTEGRAL,
     displayName: "Plan Integral",
     legacyPlanName: "Plan Integral MiDoc",
-    monthlyPriceMx: 899,
+    monthlyPriceMx: 599,
     description: "Agenda + sistema clínico trabajando en conjunto.",
-    features: [
-      "agenda.enabled",
-      "agenda.reminders.whatsapp",
-      "agenda.waitlist",
-      "clinical.enabled",
-      "clinical.history",
-      "clinical.notes",
-      "clinical.prescriptions",
-      "clinical.signoff",
-      "clinical.encounters.standalone",
-    ],
-    excludes: [
-      "ai.enabled",
-      "ai.dictation",
-      "ai.insights",
-    ],
+    features: [...AGENDA_FEATURE_KEYS, ...CLINICAL_FEATURE_KEYS],
+    excludes: [...AI_FEATURE_KEYS, ...SPECIALTY_FEATURE_KEYS],
   },
 };
 
 const ADD_ON_CATALOG: Record<CommercialAddOn, CommercialAddOnEntry> = {
-  AI: {
-    code: COMMERCIAL_ADD_ONS.AI,
-    displayName: "Add-on IA",
-    monthlyPriceMx: null,
-    description: "Capas de IA clínica premium sobre el plan base.",
-    features: [
-      "ai.enabled",
-      "ai.dictation",
-      "ai.insights",
-    ],
+  AI_30: {
+    code: COMMERCIAL_ADD_ONS.AI_30,
+    displayName: "Add-on IA 30%",
+    monthlyPriceMx: 359,
+    description: "IA clínica en el 30% de tus consultas (126 consultas/mes). Transcripción, SOAP estructurado, insights diagnósticos, validación farmacológica e indicaciones para paciente.",
+    features: AI_FEATURE_KEYS,
+  },
+  AI_60: {
+    code: COMMERCIAL_ADD_ONS.AI_60,
+    displayName: "Add-on IA 60%",
+    monthlyPriceMx: 669,
+    description: "IA clínica en el 60% de tus consultas (252 consultas/mes). Transcripción, SOAP estructurado, insights diagnósticos, validación farmacológica e indicaciones para paciente.",
+    features: AI_FEATURE_KEYS,
+  },
+  AI_100: {
+    code: COMMERCIAL_ADD_ONS.AI_100,
+    displayName: "Add-on IA Ilimitado",
+    monthlyPriceMx: 999,
+    description: "IA clínica en todas tus consultas (420 consultas/mes). Acceso completo a transcripción, SOAP estructurado, insights diagnósticos, validación farmacológica e indicaciones para paciente.",
+    features: AI_FEATURE_KEYS,
   },
 };
-
-function buildFeatureRecord(featureKeys: string[]) {
-  const features: SubscriptionCatalogFeatures = {};
-  for (const key of featureKeys) {
-    features[key] = true;
-  }
-  return features;
-}
 
 function uniqueAddOns(addOns: CommercialAddOn[] | undefined): CommercialAddOn[] {
   return Array.from(new Set(addOns ?? []));
@@ -207,7 +186,10 @@ export function resolveCommercialPlanFromSubscription(input: {
     return resolveCommercialPlan({
       basePlan: basePlanValue,
       addOns: addOnsValue.filter(
-        (item): item is CommercialAddOn => item === COMMERCIAL_ADD_ONS.AI,
+        (item): item is CommercialAddOn =>
+          item === COMMERCIAL_ADD_ONS.AI_30 ||
+          item === COMMERCIAL_ADD_ONS.AI_60 ||
+          item === COMMERCIAL_ADD_ONS.AI_100,
       ),
     });
   }

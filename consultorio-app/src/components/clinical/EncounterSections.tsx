@@ -3,6 +3,7 @@
 import { Input } from "@/components/Input";
 import { TextArea } from "@/components/TextArea";
 import type { EncounterHistoryPayload } from "@/lib/encounterHistorySchema";
+import { type SpecialtyTemplate, SPECIALTY_TEMPLATES } from "@/lib/specialtyTemplates";
 import { AssessmentList } from "./AssessmentList";
 
 export type SectionProps = {
@@ -12,6 +13,7 @@ export type SectionProps = {
     value: EncounterHistoryPayload[K],
   ) => void;
   disabled?: boolean;
+  template?: SpecialtyTemplate;
 };
 
 export function ChiefComplaintSection({ payload, update, disabled }: SectionProps) {
@@ -73,7 +75,10 @@ function RecordTextAreas({
   entries: ReadonlyArray<readonly [string, string]>;
   rows?: number;
 }) {
-  const data = payload[field] as Record<string, unknown>;
+  const data = (payload[field] || {}) as Record<string, unknown>;
+  const definedKeys = new Set(entries.map(([k]) => k));
+  const extraKeys = Object.keys(data).filter((k) => !definedKeys.has(k) && data[k]);
+
   return (
     <>
       {entries.map(([k, label]) => (
@@ -91,26 +96,33 @@ function RecordTextAreas({
           disabled={disabled}
         />
       ))}
+      {extraKeys.map((k) => (
+        <TextArea
+          key={k}
+          label={`[Otros] ${k}`}
+          rows={rows}
+          value={String(data[k] ?? "")}
+          onChange={(e) => {
+            const next = { ...data };
+            if (e.target.value) next[k] = e.target.value;
+            else delete next[k];
+            update(field, next as EncounterHistoryPayload[typeof field]);
+          }}
+          disabled={disabled}
+        />
+      ))}
     </>
   );
 }
 
 export function ReviewOfSystemsSection(props: SectionProps) {
+  const entries = props.template?.reviewOfSystems || SPECIALTY_TEMPLATES.FAMILY_MEDICINE.reviewOfSystems;
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
       <RecordTextAreas
         {...props}
         field="reviewOfSystems"
-        entries={[
-          ["respiratorio", "Respiratorio"],
-          ["cardiovascular", "Cardiovascular"],
-          ["digestivo", "Digestivo"],
-          ["genitourinario", "Genitourinario"],
-          ["musculoesqueletico", "Musculoesquelético"],
-          ["neurologico", "Neurológico"],
-          ["endocrino", "Endocrino"],
-          ["piel", "Piel y tegumentos"],
-        ]}
+        entries={entries}
       />
     </div>
   );
@@ -145,21 +157,13 @@ export function VitalsSection({ payload, update, disabled }: SectionProps) {
 }
 
 export function PhysicalExamSection(props: SectionProps) {
+  const entries = props.template?.physicalExam || SPECIALTY_TEMPLATES.FAMILY_MEDICINE.physicalExam;
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
       <RecordTextAreas
         {...props}
         field="physicalExam"
-        entries={[
-          ["general", "General"],
-          ["cabezaCuello", "Cabeza y cuello"],
-          ["cardiopulmonar", "Cardiopulmonar"],
-          ["abdomen", "Abdomen"],
-          ["extremidades", "Extremidades"],
-          ["neurologico", "Neurológico"],
-          ["piel", "Piel y tegumentos"],
-          ["otros", "Otros hallazgos"],
-        ]}
+        entries={entries}
       />
     </div>
   );
@@ -176,32 +180,26 @@ export function AssessmentSection({ payload, update, disabled }: SectionProps) {
 }
 
 export function DiagnosticPlanSection(props: SectionProps) {
+  const entries = props.template?.diagnosticPlan || SPECIALTY_TEMPLATES.FAMILY_MEDICINE.diagnosticPlan;
   return (
     <div className="space-y-3">
       <RecordTextAreas
         {...props}
         field="diagnosticPlan"
-        entries={[
-          ["laboratorios", "Laboratorios"],
-          ["gabinete", "Imagen / gabinete"],
-          ["interconsultas", "Interconsultas"],
-        ]}
+        entries={entries}
       />
     </div>
   );
 }
 
 export function TreatmentPlanSection(props: SectionProps) {
+  const entries = props.template?.treatmentPlan || SPECIALTY_TEMPLATES.FAMILY_MEDICINE.treatmentPlan;
   return (
     <div className="space-y-3">
       <RecordTextAreas
         {...props}
         field="treatmentPlan"
-        entries={[
-          ["farmacologico", "Farmacológico"],
-          ["no_farmacologico", "No farmacológico"],
-          ["educacion", "Educación al paciente"],
-        ]}
+        entries={entries}
       />
     </div>
   );

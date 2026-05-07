@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import {
   buildInsightApplicationKey,
+  getInsightAction,
   isInsightApplied,
+  markInsightAction,
   markInsightApplied,
 } from "../../lib/aiInsights.ts";
 import { runSuite } from "../testHarness.ts";
@@ -34,6 +36,16 @@ export async function runAiInsightsUnitTests() {
         assert.equal(isInsightApplied(state, "Hidratación oral"), false);
       },
     },
+    {
+      name: "markInsightAction y getInsightAction soportan rechazado/ignorado/editado",
+      run: () => {
+        const stateA = markInsightAction({}, "Dolor lumbar", "REJECTED");
+        const stateB = markInsightAction(stateA, "Amoxicilina 500 mg", "EDITED");
+        assert.equal(getInsightAction(stateB, "dolor lumbar"), "REJECTED");
+        assert.equal(getInsightAction(stateB, "amoxicilina 500 mg"), "EDITED");
+        assert.equal(isInsightApplied(stateB, "amoxicilina 500 mg"), true);
+        assert.equal(isInsightApplied(stateB, "dolor lumbar"), false);
+      },
+    },
   ]);
 }
-

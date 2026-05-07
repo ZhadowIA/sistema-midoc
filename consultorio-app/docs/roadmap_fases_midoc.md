@@ -4,9 +4,11 @@ Documento vivo. Se actualiza con cada avance para permitir handoff entre agentes
 
 **Convención de estados:** ✅ completada · 🟡 en progreso · ⬜ pendiente · ⏸ pausada · ❌ descartada
 
-**Última actualización:** 2026-04-21 (Fase 13 iniciada)
+**Última actualización:** 2026-04-25 (Fase 5 completa: monetización real, política anticipo, historial depósitos, autoservicio suscripción)
 **Responsable humano:** spampa@outlook.com
 **Target inicial:** médico solo con arquitectura lista para multi-doctor.
+
+**Nota de consolidación (2026-04-23):** este roadmap ya contempla la reestructuración del cuestionario pre-clínico IA, su gating por add-on, la política de créditos clínicos por sesión y la estrategia especialidad-first con benchmark competitivo.
 
 ---
 
@@ -153,7 +155,7 @@ Activar el `clinicId` que ya quedó en schema y habilitar flujos multi-usuario.
   - ✅ 4.3.b Telemetría de seats: endpoint devuelve `seats.included/used/available/overLimit` (basado en `DoctorSubscription.features.seats` + usuarios activos de clínica)
   - ✅ 4.3.c Enforcement de seats al alta/invitación de médicos: nuevo endpoint `POST /api/medico/clinic/doctors` valida límite y bloquea alta con `SEAT_LIMIT_REACHED` cuando la clínica supera seats incluidos
 - ✅ **4.4 Reportes agregados por clínica**
-  - ✅ Dashboard API (`/api/admin/dashboard/summary`) ahora incluye `clinicAggregates` para `CLINIC_ADMIN` con totales de clínica y desglose por médico activo
+  - ✅ Dashboard API (`/api/agenda/admin/dashboard/summary`) ahora incluye `clinicAggregates` para `CLINIC_ADMIN` con totales de clínica y desglose por médico activo
   - ✅ Dashboard UI (`/medico/dashboard`) muestra tarjeta de reporte agregado con métricas clínicas y breakdown por doctor
 
 ---
@@ -164,7 +166,7 @@ Activar el `clinicId` que ya quedó en schema y habilitar flujos multi-usuario.
 
 Cerrar el bloque de cobro real para que MiDoc deje de operar en modo pruebas y pueda monetizar de forma estable, con reglas de anticipo, cancelación y evidencia contractual mínima.
 
-- 🟡 **5.1 Pasarela real y suscripción productiva** — EN PROGRESO: proveedor definido (`STRIPE`)
+- 🟡 **5.1 Pasarela real y suscripción productiva** — proveedor `STRIPE` implementado; pendiente validación E2E con cuenta Stripe live
   - ✅ Checkout real Stripe implementado en `POST /api/payments/checkout` (session de suscripción)
   - ✅ Webhook Stripe con validación de firma + idempotencia implementado en `POST /api/payments/webhook`
   - ✅ Cancelación al fin de periodo sincronizada con Stripe desde `PATCH /api/admin/subscription`
@@ -179,23 +181,18 @@ Cerrar el bloque de cobro real para que MiDoc deje de operar en modo pruebas y p
     - reactivación
   - Webhooks productivos con validación de firma e idempotencia
 
-- 🟡 **5.2 Anticipo por cita y política de no-show**
-  - ✅ 5.2.a Ciclo de pago separado del ciclo clínico: nuevo `Appointment.paymentStatus` (`NOT_REQUIRED`, `PAYMENT_PENDING`, `DEPOSIT_PAID`, `PAYMENT_FAILED`) evita contaminar `AppointmentStatus`
-  - ✅ 5.2.b Configuración base por médico: `DoctorConfig` ahora soporta `depositEnabled`, `depositAmount`, `depositExpiresInMinutes`, `cancellationWindowHours`, `cancellationRefundMode` y `cancellationPartialRefundPct`
-  - ✅ 5.2.c Reserva condicionada a anticipo en booking público: `AppointmentService.createPublicAppointment` calcula `depositRequiredAmount`, `depositDueAt` y snapshot de política al crear la cita
-  - ✅ 5.2.d Expiración operativa de apartados sin pago: nuevo `POST /api/internal/payments/process` cancela citas vencidas con `paymentStatus=PAYMENT_FAILED` y libera el hueco hacia waitlist
-  - ✅ 5.2.e Portal paciente ya distingue pagos pendientes reales: `GET /api/auth/patient/history` prioriza `paymentStatus/depositDueAt`; cancelación devuelve `billingOutcome` según snapshot de política
-  - ⬜ Pendiente: conectar cobro real del anticipo con Stripe para mover `PAYMENT_PENDING` → `DEPOSIT_PAID`
-  - ⬜ Pendiente: exponer UI médica para configurar política de anticipo/no-show
-  - ⬜ Pendiente: aplicar anticipo también en flujos admin/waitlist cuando se confirme dependencia con 5.1
+- ✅ **5.2 Anticipo por cita y política de no-show**
+  - ✅ 5.2.a Ciclo de pago separado del ciclo clínico: `AppointmentPaymentStatus` enum extendido con `REFUND_PENDING`, `CREDIT_ISSUED`, `DEPOSIT_FORFEITED` (migración aplicada)
+  - ✅ 5.2.b UI de configuración de política en `/medico/configuracion` tab “parámetros”: toggle anticipo, monto, tiempo para pagar, ventana sin penalización, modo de reembolso (total/parcial/crédito/forfeit), porcentaje parcial
+  - ✅ 5.2.c Booking público calcula `depositRequiredAmount`, `depositDueAt` y snapshot de política en `cancellationPolicySnapshot` al crear la cita
+  - ✅ 5.2.d Expiración automática: `POST /api/internal/payments/process` cancela citas vencidas con `PAYMENT_FAILED` + `AppointmentAuditService.safeLog` con `reason: DEPOSIT_EXPIRED` + libera hueco a waitlist
+  - ✅ 5.2.e Cancelación con reembolso: `updateAppointmentStatus` calcula `resolveDepositCancellationOutcome` cuando `DEPOSIT_PAID`; actualiza `paymentStatus` → `REFUND_PENDING | CREDIT_ISSUED | DEPOSIT_FORFEITED`; devuelve `billingOutcome` en respuesta PATCH
+  - ⬜ Gap productivo: `paymentIntentId` no persiste en `Appointment` — `stripe.refunds.create()` requiere el PI ID; resolver cuando Stripe live esté conectado
 
-- ⬜ **5.3 Historial de cobro y autoservicio**
-  - Pantalla “Mi suscripción”
-  - Método de pago
-  - Historial de cobros
-  - Estado actual
-  - Próxima renovación
-  - Grace period por impago
+- ✅ **5.3 Historial de cobro y autoservicio**
+  - ✅ `/medico/suscripcion`: historial de eventos de cobro (Stripe webhooks), método de pago (**** last4), monto, próxima renovación, grace period, botón cancelar/reactivar — implementado completamente
+  - ✅ Portal paciente `/paciente/historial`: badge de estado de depósito por cita (`PAYMENT_PENDING` con vencimiento, `DEPOSIT_PAID`, `REFUND_PENDING`, `CREDIT_ISSUED`, `DEPOSIT_FORFEITED`, `PAYMENT_FAILED`)
+  - ✅ Botón “Pagar anticipo” activo para citas con `paymentStatus=PAYMENT_PENDING` — redirige a Stripe Checkout vía `POST /api/payments/appointments/[id]/deposit/checkout`
 
 - ⬜ **5.4 Minimización de riesgo PCI**
   - Usar tokenización / hosted checkout
@@ -393,28 +390,74 @@ Cerrar los pendientes P0 que separan un MVP avanzado de un SaaS comercializable 
 
 Pasar de “IA que genera cosas” a IA que ahorra tiempo clínico real, con trazabilidad, métricas y límites de uso claros.
 
-- ⬜ **11.1 Productividad clínica**
-  - Plantillas por especialidad
-  - Resumen longitudinal entre consultas
-  - Indicaciones para paciente en lenguaje simple
-  - Seguimiento automatizado inteligente por WhatsApp
+- ✅ **11.1 Productividad clínica** *(2026-04-26)*
+  - ✅ Plantillas por especialidad — `specialtyTemplates.ts` con templates para las 8 especialidades, aplicado automáticamente en `ConsultationWorkspace` según `doctor.specialty`
+  - ✅ Resumen longitudinal entre consultas — `GET /api/clinical/admin/encounters/[id]/longitudinal-summary` + `LongitudinalSummaryPanel` en workspace
+  - ✅ Indicaciones para paciente en lenguaje simple — `generatePatientInstructions` (IA) + `POST /api/clinical/admin/encounters/[id]/patient-instructions` + `PatientInstructionsPanel` en workspace (copiable al portapapeles)
+  - ⬜ Seguimiento automatizado inteligente por WhatsApp *(diferido a Fase 12 — requiere flujo post-firma con lógica de notificación)*
 
-- ⬜ **11.2 Detección de huecos clínicos**
-  - Alergias faltantes
-  - Datos incompletos
-  - Contradicciones
-  - Alertas de revisión clínica
+- ✅ **11.2 Detección de huecos clínicos** *(implementado antes de 2026-04-26)*
+  - ✅ Alergias faltantes — regla determinística en `deterministicGapAnalysis`
+  - ✅ Datos incompletos — 6 reglas: sangre, antecedentes patológicos/familiares, medicamentos, vitales, exploración física
+  - ✅ Contradicciones — `llmGapAnalysis` con `category: "contradiction"` vía GPT-4o
+  - ✅ Alertas de revisión clínica — `llmGapAnalysis` con `category: "red-flag"` + deduplicación híbrida
 
-- ⬜ **11.3 Gobernanza IA**
-  - Trazabilidad de prompts/modelos/versiones
-  - Métricas de uso y costo por módulo IA
-  - Registro de aceptación/rechazo de sugerencias por el médico
+- ✅ **11.3 Gobernanza IA** *(2026-04-25)*
+  - ✅ Trazabilidad de prompts/modelos/versiones (`AIUsageEvent` con `promptVersion`, `model`, `provider`)
+  - ✅ Métricas de uso y costo por módulo IA — página `/medico/ia-gobernanza` + API `GET /api/admin/ai/usage/summary`
+  - ✅ Registro de aceptación/rechazo de sugerencias — `AIInsightFeedback` + API `GET /api/admin/ai/insights/feedback/summary`
+  - ✅ Trazabilidad por cita — `GET /api/admin/ai/trace?appointmentId=`
 
-- ⬜ **11.4 Límites regulatorios visibles**
-  - Disclaimers en módulos IA
-  - Diferenciar “sugerencia” vs “decisión médica”
-  - Consentimiento para funciones IA si aplica por flujo
-  - Dictamen externo de postura comercial/regulatoria
+- ✅ **11.4 Límites regulatorios visibles** *(2026-04-26)*
+  - ✅ Disclaimers en módulos IA — `AiClinicalDisclaimer` en `DictationPanel`, `AiInsightsPanel` y `PatientInstructionsPanel`
+  - ✅ Diferenciar “sugerencia” vs “decisión médica” — disclaimer explicita “NO emite diagnóstico autónomo; la decisión final y firma son responsabilidad del profesional”
+  - ✅ Consentimiento para funciones IA — `AiConsentModal` con registro de trazabilidad por cita (`AiConsentState` en `EncounterHistory`)
+  - ⬜ Dictamen externo de postura comercial/regulatoria *(tarea de negocio/legal — fuera de scope de ingeniería)*
+
+- ✅ **11.5 Cuestionario pre-clínico IA conversacional (texto)** *(2026-04-26)*
+  - ✅ Flujo conversacional con primera pregunta fija + hasta 4 preguntas adicionales generadas por IA
+  - ✅ Historial de preguntas/respuestas enviado en cada turno para evitar repetición y aumentar especificidad
+  - ✅ Terminación inteligente: motivos rutinarios/procedimentales (revisión de brackets, chequeo, seguimiento) terminan en 1 turno sin preguntar más; motivos con síntomas activos profundizan con hasta 3 preguntas adicionales
+  - ✅ Barra de progreso dinámica — muestra “Pregunta X de máx. 4”, no fija en 5 pasos
+  - ✅ Salida para médico: conversación completa + resumen + posibles padecimientos orientativos + checklist de exploración física (omitidos para motivos rutinarios)
+  - ✅ Gating comercial: requiere `ai.questionnaire.text` en features del doctor
+  - ✅ Telemetría: `AI_QUESTIONNAIRE_INTERVIEW` registrado con tokens y duración
+
+- ✅ **11.6 Cuestionario pre-clínico IA por voz con silencio inteligente**
+  - ✅ `VoiceAiInterviewer` component: VAD por RMS con `AnalyserNode`, auto-corte a 1.8s de silencio post-habla, hard cap de 60s
+  - ✅ Phases: `idle → requesting → listening → processing → speaking → done`; barra de progreso de silencio en tiempo real
+  - ✅ `MediaRecorder` con `audio/webm;codecs=opus`, envía `FormData` a `/api/clinical/public/questionnaire/[token]/ai-interview`
+  - ✅ Integrado en `cuestionario/[token]/page.tsx` con botón “ENTREVISTA IA (VOZ)” independiente del botón de texto
+  - ✅ Feature gate: solo disponible con `ai.questionnaire.audio`; ruta diferencia audio vs texto para aplicar gate correcto
+  - ✅ Telemetría: mismo endpoint `AI_QUESTIONNAIRE_INTERVIEW`, path de audio usa `transcribeAudio()` antes de `generateQuestionnaireFollowUp()`
+
+- ✅ **11.7 Playbooks clínicos por especialidad (Top 8 v1)**
+  - ✅ `specialtyTemplates.ts`: 8 especialidades con secciones SOAP estructuradas (reviewOfSystems, physicalExam, diagnosticPlan, treatmentPlan)
+  - ✅ `specialtyPayloadSchemas.ts`: Zod schemas + tipos + payloads vacíos para las 8 especialidades
+  - ✅ Módulos UI integrados en `ConsultationWorkspace` como `SectionAccordion` condicional por especialidad:
+    - ✅ Medicina familiar (`FamilyMedicineSection`): factores de riesgo, preventivo, revisión por sistemas
+    - ✅ Pediatría (`PediatricsSection`): curvas de crecimiento, vacunación, hitos de desarrollo, alertas pediátricas
+    - ✅ Gineco/Ob (`GynecologySection`): fórmula obstétrica, FUM/FPP, control prenatal, tamizajes
+    - ✅ Dermatología (`DermatologySection`): `LesionMapCanvas` interactivo con topografía y morfología
+    - ✅ Cardiología (`CardiologySection`): factores CV, Framingham/ASCVD, escalas NYHA/CCS
+    - ✅ Salud mental (`MentalHealthSection`): PHQ-9/GAD-7, evaluación de riesgo, plan terapéutico
+    - ✅ Odontología (`DentalSpecialtySection`): odontograma interactivo, periodontograma, plan de tratamiento
+    - ✅ Oftalmología (`OphthalmologySection`): agudeza visual OD/OI, refracción, PIO, segmentos
+  - ✅ Disponible para todos los planes (sin requisito de IA)
+
+- ✅ **11.8 IA especializada por especialidad (solo planes IA)**
+  - ✅ `generateDictationFromTranscriptWithTelemetry`: acepta `specialty` en `clinicalContext`; inyecta hint en system prompt para adaptar terminología, secciones ROS y plan a la especialidad
+  - ✅ `generateComprehensiveInsightsWithTelemetry`: acepta `specialty`; ajusta sugerencias diagnósticas y terapéuticas a la especialidad del médico
+  - ✅ `generatePatientInstructions`: ya aceptaba `specialty` desde 11.1; route ya la cargaba de `doctor.specialty`
+  - ✅ `AINoteGenerationService.loadClinicalContext`: carga `doctor.specialty` de Prisma y lo incluye en el contexto pasado a la IA
+  - ✅ Route `ai-insights POST`: carga `doctor.specialty` desde `appointment.doctor.specialty` y lo pasa al contexto de `generateComprehensiveInsightsWithTelemetry`
+  - ✅ Gobernanza preservada: `promptVersion` + `model` ya se registran en `AIUsageEvent` para todas las llamadas afectadas
+
+- ✅ **11.9 Métricas por especialidad (operación y valor clínico)**
+  - ✅ `GET /api/admin/ai/usage/summary`: agrega `bySpecialty` al response — carga `doctor.specialty` desde Prisma y lo incluye con totales (jobs, tokens, costo)
+  - ✅ Dashboard `ia-gobernanza/page.tsx`: sección "Uso por especialidad" con tabla (especialidad, llamadas, tokens, costo) y etiquetas en español
+  - ✅ Costo IA por especialidad visible en el período seleccionado
+  - ✅ Tasa de aceptación de sugerencias IA ya existía en el mismo dashboard (byKind DIAGNOSIS/TREATMENT)
 
 ---
 
@@ -422,23 +465,27 @@ Pasar de “IA que genera cosas” a IA que ahorra tiempo clínico real, con tra
 
 Escalar de “médico solo” a “equipo clínico operando diario” y dejar a MiDoc listo para venta a clínicas más exigentes.
 
-- ⬜ **12.1 Workflow de recepción**
-  - Llegada
-  - Sala de espera
-  - Cobro
-  - Documentos faltantes
-  - Check-in
+- ✅ **12.1 Workflow de recepción** *(H6 Sub-fase A — 2026-04-25)*
+  - ✅ Estados de recepción: ARRIVED → WAITING → IN_CONSULTATION → CHECKOUT_PENDING → COMPLETED
+  - ✅ Endpoint `PATCH /api/agenda/admin/appointments/[id]/reception` con auditoría
+  - ✅ Página `/medico/recepcion` con acciones rápidas, tiempo en sala y botón de cobro
+  - ✅ Cobro atómico: `POST /api/agenda/admin/appointments/[id]/checkout` (DailyCashEntry + COMPLETED en una transacción)
+  - ✅ `CobrarModal` reutilizable integrado en: Recepción, ConsultationWorkspace (post-firma), Agenda (día y semana)
 
-- ⬜ **12.2 Agenda por recursos**
-  - Consultorio
-  - Sala
-  - Equipo
-  - Conflictos de recurso
+- ✅ **12.2 Agenda por recursos** *(H6 Sub-fase C — 2026-04-25)*
+  - ✅ Modelo `Resource` (ROOM/EQUIPMENT/UNIT) con `resourceId` en `Appointment`
+  - ✅ `checkResourceConflict` — validación de solapamiento en creación de cita
+  - ✅ Selector de recurso en formulario de agenda (opcional, con detección de conflicto)
+  - ✅ Endpoint `GET /api/admin/resources/occupancy?date=` — citas por recurso por día
+  - ✅ Vista de ocupación en `/medico/recursos` (tab “Ocupación por día”)
 
-- ⬜ **12.3 Caja y productividad**
-  - Caja/cierre diario por clínica
-  - Productividad por médico y secretaria
-  - Tablero de operación
+- ✅ **12.3 Caja y productividad** *(H6 Sub-fase B — 2026-04-25)*
+  - ✅ `DailyCashEntry` — registro de cobros vinculados a cita o manual
+  - ✅ Modelo `DayClosure` — cierre formal del día con snapshot de totales por método
+  - ✅ `POST /api/agenda/admin/cash/close` — upsert idempotente, recalcula totales al re-cerrar
+  - ✅ `/medico/caja` mejorada: totales live, banner de cierre, alerta de CHECKOUT_PENDING, actor visible por cobro
+  - ⬜ Productividad por médico y secretaria (pendiente)
+  - ⬜ Tablero de operación (pendiente)
 
 - ⬜ **12.4 Permisos finos por rol**
   - Médico
@@ -478,6 +525,19 @@ Convertir MiDoc en un producto modular, donde Agenda, Sistema Médico y IA pueda
     - `clinical.encounters.standalone`
     - `ai.dictation`
     - `ai.insights`
+    - `ai.questionnaire.text`
+    - `ai.questionnaire.audio`
+    - `ai.credits.enabled`
+    - `specialty.core.enabled`
+    - `specialty.family.enabled`
+    - `specialty.pediatrics.enabled`
+    - `specialty.obgyn.enabled`
+    - `specialty.dermatology.enabled`
+    - `specialty.cardiology.enabled`
+    - `specialty.behavioral.enabled`
+    - `specialty.dental.enabled`
+    - `specialty.ophthalmology.enabled`
+    - `ai.specialty.enabled`
   - Bundles permitidos:
     - Solo Agenda
     - Solo Clínico
@@ -491,6 +551,13 @@ Convertir MiDoc en un producto modular, donde Agenda, Sistema Médico y IA pueda
   - Helpers canónicos `canUseAgenda`, `canUseClinical`, `canUseAi`
   - Guards de API por módulo: agenda, clínico, IA
   - UI condicional por capacidad, no por nombre de plan
+  - Reglas específicas de cuestionario pre-clínico:
+    - Sin add-on IA: mostrar únicamente pregunta de texto libre **“Motivo de consulta”**
+    - Con add-on IA: habilitar chat pre-clínico (`ai.questionnaire.text`) y/o audio pre-clínico (`ai.questionnaire.audio`) según capability
+    - El fallback sin add-on no debe exponer chat IA ni captura de audio IA
+  - Reglas de especialidad:
+    - `specialty.core.enabled` y `specialty.<nombre>.enabled` habilitan funciones clínicas por especialidad para todos los planes
+    - `ai.specialty.enabled` habilita copiloto IA por especialidad solo en planes IA
   - Reglas de error consistentes:
     - 401 no autenticado
     - 403 sin capacidad
@@ -507,6 +574,35 @@ Convertir MiDoc en un producto modular, donde Agenda, Sistema Médico y IA pueda
     - qué incluye cada bundle
     - qué excluye
     - qué add-ons se pueden combinar
+  - Política de créditos clínicos para cuestionario IA:
+    - Consumo por **sesión de cuestionario completada** (no por turno)
+    - Evento de cobro al cierre de sesión
+  - Telemetría obligatoria por módulo IA (incluyendo cuestionario texto/audio) para costo y adopción
+
+- 🔴 **13.4 Contratos funcionales y superficies públicas (roadmap)**
+  - Capacidades/feature flags de planeación: `ai.questionnaire.text`, `ai.questionnaire.audio`, `ai.credits.enabled`, `specialty.core.enabled`, `specialty.<nombre>.enabled`, `ai.specialty.enabled`
+  - Contrato funcional del cuestionario IA:
+    - Entrada mínima: `motivo de consulta` + historial conversacional
+    - Salida para médico: transcript conversacional + recomendaciones clínicas orientativas + checklist sugerido de exploración física
+  - Contrato funcional por especialidad (backlog técnico):
+    - Entrada: motivo + datos estructurados del playbook + historial clínico relevante
+    - Salida base (sin IA): formulario/checklist + resumen por especialidad
+    - Salida IA (planes IA): sugerencias, huecos, hipótesis orientativas y plan de revisión
+  - Política de cobro asociada al contrato: consumo de crédito al cierre de sesión de cuestionario IA
+
+## Benchmark competitivo por especialidad (referencia de mercado)
+
+Subsección documental para alinear prioridades funcionales con patrones ya validados en software líder.
+
+- Dentrix: dental charting, periodontograma e integración de imágenes odontológicas
+- Epic (specialty modules): flujos especializados para cardiología, oncología y oftalmología
+- athenahealth: plantillas/workflows por specialty practice
+- AdvancedMD: templates y operación por especialidad ambulatoria
+- ModMed (EMA): EHR verticalizado por especialidad (ej. derma, oftalmo)
+
+Objetivo de producto: paridad funcional por especialidad en flujo clínico base + diferenciación con copiloto IA especializado en planes IA.
+
+---
 
 ## Prioridad ejecutiva
 
@@ -534,12 +630,12 @@ Convertir MiDoc en un producto modular, donde Agenda, Sistema Médico y IA pueda
 - Fase 9
 
 **Después**
-- Fase 11
+- Fase 11 *(dependiente de cerrar gating/capacidades, política de créditos y capacidades de especialidad en Fase 13)*
 - Fase 12
 
 ---
 
-## Decisiones clave (D1–D6) registradas
+## Decisiones clave (D1–D24) registradas
 
 - **D1:** migrar a campos estructurados; segundo apellido opcional
 - **D2:** Sexo (Hombre/Mujer/Intersexual) y Género (8 opciones) como selects
@@ -556,6 +652,15 @@ Convertir MiDoc en un producto modular, donde Agenda, Sistema Médico y IA pueda
 - **D13:** la matriz NOM-004 / NOM-024 se trabaja como entregable vivo de producto + compliance
 - **D14:** venta a clínicas más exigentes requiere data room y one-pager de seguridad/compliance
 - **D15:** MiDoc se comercializa como bundles modulares: Agenda, Clínico y IA deben poder contratarse por separado o combinados, con `DoctorSubscription.features` como fuente de verdad de capacidades
+- **D16:** cuestionario pre-clínico IA (texto y audio) requiere add-on IA
+- **D17:** sin add-on IA, el fallback del cuestionario pre-clínico es únicamente “Motivo de consulta”
+- **D18:** chat pre-clínico IA opera con máximo 5 preguntas totales (1 fija + 4 generadas por IA)
+- **D19:** el consumo de créditos del cuestionario IA se contabiliza por sesión completada
+- **D20:** cuestionario pre-clínico por voz incorpora detección inteligente de silencio para corte y avance automático
+- **D21:** estrategia especialidad-first: funciones clínicas por especialidad se incluyen para todos los planes (con o sin IA)
+- **D22:** IA por especialidad se habilita únicamente en planes IA mediante `ai.specialty.enabled`
+- **D23:** catálogo inicial v1 de especialidades: medicina familiar, pediatría, gineco/ob, dermatología, cardiología, salud mental, odontología y oftalmología
+- **D24:** métricas por especialidad son obligatorias para medir adopción, completitud clínica, tiempos y costo IA
 
 ## Notas operativas
 
@@ -568,3 +673,4 @@ Convertir MiDoc en un producto modular, donde Agenda, Sistema Médico y IA pueda
   - owner humano responsable
 - Todo entregable con dependencia externa debe marcarse como `EXTERNAL_DEPENDENCY`
 - No declarar cumplimiento comercial fuerte de expediente electrónico, privacidad avanzada o postura regulatoria de IA hasta cerrar evidencia mínima correspondiente
+

@@ -6,6 +6,7 @@ import { ClinicalHistoryPayloadSchema } from '@/lib/clinicalHistorySchema'
 import { AppointmentAuditService } from '@/services/AppointmentAuditService'
 import { AuditActorType, AuditSource } from '@prisma/client'
 import { isClinicalHistoryEnabled } from '@/lib/featureFlags'
+import { safeLogClinicalAccess } from '@/lib/clinicalAudit'
 
 function disabledResponse() {
   return jsonNoStore({ error: 'Historia clínica no habilitada' }, { status: 404 })
@@ -29,7 +30,7 @@ async function assertPatientAccess(patientId: string, doctorId: string) {
   return { patient, ok }
 }
 
-export async function GET(_request: Request, props: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   if (!isClinicalHistoryEnabled()) return disabledResponse()
   const params = await props.params
   try {
@@ -40,6 +41,15 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
     const { patient, ok } = await assertPatientAccess(params.id, doctorId)
     if (!patient) return jsonNoStore({ error: 'Paciente no encontrado' }, { status: 404 })
     if (!ok) return jsonNoStore({ error: 'No autorizado' }, { status: 403 })
+
+    await safeLogClinicalAccess({
+      request,
+      action: 'CLINICAL_HISTORY_VIEWED',
+      doctorId,
+      actorUserId: access.context.user.id,
+      patientId: patient.id,
+      metadata: { route: '/api/admin/patients/[id]/clinical-history' },
+    })
 
     const [result, versions] = await Promise.all([
       ClinicalHistoryService.getOrBuildForPatient(params.id, doctorId),

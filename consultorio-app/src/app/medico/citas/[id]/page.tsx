@@ -7,6 +7,16 @@ import {
   CheckCircle2, XCircle, Save, Printer, Plus, Trash2,
   Mic, Square, Wand2, Loader2, AlertCircle, Brain, Stethoscope, Utensils, AlertTriangle, ChevronRight, Pill, Info
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { DoctorLayout } from "@/components/DoctorLayout";
 import { PatientClinicalAlerts } from "@/components/clinical/PatientClinicalAlerts";
 import { Button } from "@/components/Button";
@@ -25,10 +35,10 @@ import {
 } from "@/lib/questionnaireFormatting";
 
 const STATUS_OPTIONS = [
-  { value: "PENDING", label: "Pendiente", color: "bg-yellow-500/15 text-yellow-700 border-yellow-500/30", icon: Clock },
-  { value: "CONFIRMED", label: "Confirmada", color: "bg-blue-500/15 text-blue-700 border-blue-500/30", icon: CheckCircle2 },
-  { value: "COMPLETED", label: "Realizada", color: "bg-green-500/15 text-green-700 border-green-500/30", icon: CheckCircle2 },
-  { value: "CANCELLED", label: "Cancelada", color: "bg-red-500/15 text-red-700 border-red-500/30", icon: XCircle },
+  { value: "PENDING", label: "Pendiente", color: "bg-warning/10 text-warning border-warning/30", icon: Clock },
+  { value: "CONFIRMED", label: "Confirmada", color: "bg-primary/10 text-primary border-primary/30", icon: CheckCircle2 },
+  { value: "COMPLETED", label: "Realizada", color: "bg-success/10 text-success border-success/30", icon: CheckCircle2 },
+  { value: "CANCELLED", label: "Cancelada", color: "bg-destructive/10 text-destructive border-destructive/30", icon: XCircle },
 ];
 
 type PrescriptionForm = {
@@ -170,6 +180,11 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
   const [creatingAndAssigningPatient, setCreatingAndAssigningPatient] = useState(false);
   const [clinicalTab, setClinicalTab] = useState<"soap" | "questionnaire" | "ai">("soap");
   const [precheckinSummary, setPrecheckinSummary] = useState<PrecheckinSummary | null>(null);
+  const [uploadsEnabled, setUploadsEnabled] = useState(false);
+  const [uploadsExpiresInHours, setUploadsExpiresInHours] = useState(24);
+  const [externalUploadLink, setExternalUploadLink] = useState("");
+  const [doctorUploadFile, setDoctorUploadFile] = useState<File | null>(null);
+  const [doctorDocuments, setDoctorDocuments] = useState<Array<{ id: string; fileName: string; fileUrl: string; uploadedAt: string; uploadSource?: string }>>([]);
 
   // Notas Médicas (SOAP)
   const [noteData, setNoteData] = useState({
@@ -181,6 +196,10 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
     prescriptions: [] as PrescriptionForm[]
   });
   const [savingNote, setSavingNote] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const noteDataOriginalRef = useRef<typeof noteData | null>(null);
+  const isDirtyNote = noteDataOriginalRef.current !== null &&
+    JSON.stringify(noteData) !== JSON.stringify(noteDataOriginalRef.current);
 
   // AI Recording & Generation
   const [isRecording, setIsRecording] = useState(false);
@@ -194,6 +213,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
   const [lastVerbalConsentAt, setLastVerbalConsentAt] = useState<string | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const appointmentId = appointment?.id
 
   // AI Insights State
   const [aiInsights, setAiInsights] = useState<AIInsights | null>(null);
@@ -238,14 +258,16 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
       .then(res => res.json())
       .then(data => {
         if (!data.error && data.id) {
-          setNoteData({
+          const loaded = {
             subjective: data.subjective || "",
             objective: data.objective || "",
             assessment: data.assessment || "",
             plan: data.plan || "",
             privateNotes: data.privateNotes || "",
             prescriptions: data.prescriptions || []
-          });
+          };
+          setNoteData(loaded);
+          noteDataOriginalRef.current = loaded;
         }
       })
       .catch(console.error)
@@ -267,6 +289,14 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
       .then((data) => setPrecheckinSummary(data))
       .catch(() => setPrecheckinSummary(null))
   }, [appointment?.patient?.id])
+
+  useEffect(() => {
+    if (!appointmentId) return;
+    fetch(`/api/clinical/admin/appointments/${appointmentId}/documents`)
+      .then((res) => res.json())
+      .then((data) => setDoctorDocuments(Array.isArray(data.documents) ? data.documents : []))
+      .catch(() => setDoctorDocuments([]));
+  }, [appointmentId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -307,6 +337,17 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
   }, []);
 
   useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirtyNote) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirtyNote]);
+
+  useEffect(() => {
     if (!showRescheduleMenu || !rescheduleDate || !appointment) {
       setRescheduleSlots([]);
       setRescheduleSlot("");
@@ -332,8 +373,6 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
       .catch(() => setRescheduleSlots([]))
       .finally(() => setLoadingRescheduleSlots(false));
   }, [showRescheduleMenu, rescheduleDate, appointment]);
-
-  const appointmentId = appointment?.id
 
   useEffect(() => {
     if (!appointmentId) return;
@@ -522,6 +561,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
         body: JSON.stringify(noteData)
       });
       if (!res.ok) throw new Error("Error guardando evolución clínica");
+      noteDataOriginalRef.current = { ...noteData };
       toast.success("Evolución médica actualizada exitosamente.");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Error inesperado";
@@ -529,6 +569,40 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
     } finally {
       setSavingNote(false);
     }
+  };
+
+  const toggleAppointmentUploads = async (enabled: boolean) => {
+    if (!appointmentId) return;
+    const res = await fetch(`/api/clinical/admin/appointments/${appointmentId}/uploads`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uploadsEnabled: enabled, expiresInHours: uploadsExpiresInHours }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return toast.error(data.error || "No se pudo actualizar permisos de carga");
+    setUploadsEnabled(Boolean(data.appointment?.uploadsEnabled));
+    toast.success(enabled ? "Carga habilitada para esta cita" : "Carga deshabilitada para esta cita");
+  };
+
+  const generateExternalLink = async () => {
+    if (!appointmentId) return;
+    const res = await fetch(`/api/clinical/admin/appointments/${appointmentId}/uploads`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return toast.error(data.error || "No se pudo generar link");
+    setExternalUploadLink(`${window.location.origin}${data.url}`);
+    toast.success("Link generado");
+  };
+
+  const uploadAsDoctor = async () => {
+    if (!appointmentId || !doctorUploadFile) return toast.error("Selecciona un archivo");
+    const fd = new FormData();
+    fd.append("file", doctorUploadFile);
+    const res = await fetch(`/api/clinical/admin/appointments/${appointmentId}/documents`, { method: "POST", body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return toast.error(data.error || "No se pudo subir archivo");
+    setDoctorUploadFile(null);
+    setDoctorDocuments((prev) => [data.document, ...prev]);
+    toast.success("Archivo subido correctamente");
   };
 
   const addMedication = () => {
@@ -897,7 +971,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
             </div>
             <div className="flex items-center gap-3 flex-wrap">
               {currentStatusOption && (
-                <div className={`px-4 py-2 rounded-xl border text-sm font-semibold ${currentStatusOption.color}`}>
+                <div className={`px-4 py-2 rounded-md border text-sm font-semibold ${currentStatusOption.color}`}>
                   {currentStatusOption.label}
                 </div>
               )}
@@ -936,14 +1010,14 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
+                <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-md">
                   <User className="w-5 h-5 text-muted-foreground" />
                   <div>
                     <div className="text-xs text-muted-foreground">Nombre</div>
                     <div className="font-semibold">{formatPatientName(appointment.patient)}</div>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
+                <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-md">
                   <Phone className="w-5 h-5 text-muted-foreground" />
                   <div>
                     <div className="text-xs text-muted-foreground">Teléfono</div>
@@ -951,7 +1025,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   </div>
                 </div>
                 {appointment.patient.email && (
-                  <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
+                  <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-md">
                     <Mail className="w-5 h-5 text-muted-foreground" />
                     <div>
                       <div className="text-xs text-muted-foreground">Email</div>
@@ -960,32 +1034,32 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 bg-secondary/30 rounded-xl">
+                  <div className="p-3 bg-secondary/30 rounded-md">
                     <div className="text-xs text-muted-foreground">Edad</div>
                     <div className="font-semibold">{new Date().getFullYear() - new Date(appointment.patient.dateOfBirth).getFullYear()} años</div>
                   </div>
-                  <div className="p-3 bg-secondary/30 rounded-xl">
+                  <div className="p-3 bg-secondary/30 rounded-md">
                     <div className="text-xs text-muted-foreground">Tipo de consulta</div>
                     <div className="font-semibold capitalize">{appointment.appointmentType.toLowerCase()}</div>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 bg-secondary/30 rounded-xl">
+                  <div className="p-3 bg-secondary/30 rounded-md">
                     <div className="text-xs text-muted-foreground">Duración</div>
                     <div className="font-semibold">{appointment.durationMin} minutos</div>
                   </div>
-                  <div className="p-3 bg-secondary/30 rounded-xl">
+                  <div className="p-3 bg-secondary/30 rounded-md">
                     <div className="text-xs text-muted-foreground">Origen</div>
                     <div className="font-semibold capitalize">{appointment.source.toLowerCase()}</div>
                   </div>
                 </div>
-                <div className="p-3 bg-secondary/30 rounded-xl">
+                <div className="p-3 bg-secondary/30 rounded-md">
                   <div className="text-xs text-muted-foreground">Expediente</div>
                   <div className="font-semibold">
                     {appointment.patient.ownerDoctorId ? "Vinculado al directorio" : "Cita de invitado (sin vincular)"}
                   </div>
                 </div>
-                <div className="p-3 bg-secondary/30 rounded-xl space-y-2">
+                <div className="p-3 bg-secondary/30 rounded-md space-y-2">
                   <div className="text-xs text-muted-foreground">Resumen previo (portal paciente)</div>
                   {precheckinSummary?.precheckin ? (
                     <div className="text-sm space-y-1">
@@ -1001,6 +1075,40 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   )}
                   <div className="text-xs text-muted-foreground">
                     Documentos recientes: <strong>{precheckinSummary?.documents?.length ?? 0}</strong>
+                  </div>
+                  <div className="mt-4 rounded-lg border border-border p-3 space-y-3">
+                    <div className="font-semibold text-sm">Estudios clínicos (control por cita)</div>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant={uploadsEnabled ? "secondary" : "primary"} onClick={() => toggleAppointmentUploads(!uploadsEnabled)}>
+                        {uploadsEnabled ? "Deshabilitar carga paciente/external" : "Habilitar carga paciente/external"}
+                      </Button>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={168}
+                        className="w-28"
+                        value={uploadsExpiresInHours}
+                        onChange={(e) => setUploadsExpiresInHours(Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="secondary" onClick={generateExternalLink}>Generar link externo</Button>
+                    </div>
+                    {externalUploadLink ? (
+                      <div className="text-xs break-all bg-secondary/20 rounded p-2 border border-border">{externalUploadLink}</div>
+                    ) : null}
+                    <div className="border-t border-border pt-3 space-y-2">
+                      <div className="text-sm font-medium">Subir como médico</div>
+                      <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => setDoctorUploadFile(e.target.files?.[0] ?? null)} className="block w-full text-sm" />
+                      <Button size="sm" onClick={uploadAsDoctor}>Subir archivo</Button>
+                    </div>
+                    <div className="space-y-1">
+                      {doctorDocuments.slice(0, 5).map((doc) => (
+                        <a key={doc.id} href={doc.fileUrl} target="_blank" rel="noreferrer" className="block text-xs text-primary underline">
+                          {doc.fileName} · {new Date(doc.uploadedAt).toLocaleString("es-MX")}
+                        </a>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -1024,8 +1132,14 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                     return (
                       <button
                         key={opt.value}
-                        onClick={() => setSelectedStatus(opt.value)}
-                        className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${
+                        onClick={() => {
+                          if (opt.value === "CANCELLED" && selectedStatus !== "CANCELLED") {
+                            setShowCancelConfirm(true);
+                          } else {
+                            setSelectedStatus(opt.value);
+                          }
+                        }}
+                        className={`flex items-center gap-3 p-3 rounded-md border-2 transition-all text-left ${
                           isSelected
                             ? `${opt.color} border-current shadow-sm`
                             : "border-border hover:border-muted-foreground/30 bg-secondary/20"
@@ -1039,7 +1153,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                 </div>
 
                 <div className="pt-2">
-                  <div className="rounded-xl border border-border bg-secondary/20 p-3 space-y-3">
+                  <div className="rounded-md border border-border bg-secondary/20 p-3 space-y-3">
                     <div className="text-sm font-medium">Asignar cita a paciente del directorio</div>
                     {!appointment.patient.ownerDoctorId && (
                       <Button
@@ -1076,7 +1190,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                             }}
                           />
                           {patientSearchOpen && (
-                            <div className="max-h-52 overflow-auto rounded-xl border border-border bg-background">
+                            <div className="max-h-52 overflow-auto rounded-md border border-border bg-background">
                               {filteredDirectoryPatients.length > 0 ? (
                                 filteredDirectoryPatients.map((patient) => (
                                   <button
@@ -1153,7 +1267,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                                   key={slot.start}
                                   type="button"
                                   onClick={() => setRescheduleSlot(slot.start)}
-                                  className={`p-3 rounded-xl border text-left transition-all ${
+                                  className={`p-3 rounded-md border text-left transition-all ${
                                     selected
                                       ? "border-primary bg-primary/10 shadow-sm"
                                       : "border-border hover:border-primary/40 bg-secondary/20"
@@ -1167,7 +1281,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                           </div>
                         </div>
                       ) : rescheduleDate ? (
-                        <div className="p-3 bg-warning/10 border border-warning/30 rounded-xl text-sm">
+                        <div className="p-3 bg-warning/10 border border-warning/30 rounded-md text-sm">
                           No hay módulos disponibles para esa fecha.
                         </div>
                       ) : (
@@ -1215,11 +1329,11 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
           transition={{ delay: 0.3 }}
           className="mt-6 space-y-4"
         >
-          <div className="inline-flex items-center rounded-2xl bg-secondary/40 p-1 border border-border">
+          <div className="inline-flex items-center rounded-lg bg-secondary/40 p-1 border border-border">
             <button
               type="button"
               onClick={() => setClinicalTab("soap")}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
+              className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${
                 clinicalTab === "soap"
                   ? "bg-card text-foreground border border-border shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
@@ -1229,8 +1343,11 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
             </button>
             <button
               type="button"
-              onClick={() => setClinicalTab("questionnaire")}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
+              onClick={() => {
+                if (clinicalTab === "soap" && isDirtyNote && !window.confirm("Tienes cambios sin guardar en la nota clínica. ¿Deseas continuar sin guardar?")) return;
+                setClinicalTab("questionnaire");
+              }}
+              className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${
                 clinicalTab === "questionnaire"
                   ? "bg-card text-foreground border border-border shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
@@ -1240,8 +1357,11 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
             </button>
             <button
               type="button"
-              onClick={() => setClinicalTab("ai")}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
+              onClick={() => {
+                if (clinicalTab === "soap" && isDirtyNote && !window.confirm("Tienes cambios sin guardar en la nota clínica. ¿Deseas continuar sin guardar?")) return;
+                setClinicalTab("ai");
+              }}
+              className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${
                 clinicalTab === "ai"
                   ? "bg-card text-foreground border border-border shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
@@ -1262,7 +1382,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   <div className="rounded-3xl border border-primary/20 bg-primary/5 p-4 sm:p-5">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                       <div className="flex items-start gap-3">
-                        <div className={`p-3 rounded-2xl ${isRecording ? 'bg-destructive animate-pulse' : 'bg-primary/10'}`}>
+                        <div className={`p-3 rounded-lg ${isRecording ? 'bg-destructive animate-pulse' : 'bg-primary/10'}`}>
                           <Mic className={`w-6 h-6 ${isRecording ? 'text-white' : 'text-primary'}`} />
                         </div>
                         <div className="space-y-1">
@@ -1305,12 +1425,12 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                     </div>
 
                     <div className="mt-4 grid gap-3 md:grid-cols-3">
-                      <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
+                      <div className="rounded-lg border border-border/70 bg-background/70 p-3">
                         <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Micrófono</div>
                         <div className="mt-1 text-sm font-medium text-foreground">{microphonePermission}</div>
                         <div className="mt-1 text-xs text-muted-foreground">{microphoneStatusMessage[microphonePermission]}</div>
                       </div>
-                      <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
+                      <div className="rounded-lg border border-border/70 bg-background/70 p-3">
                         <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Consentimiento verbal</div>
                         <div className="mt-1 text-sm font-medium text-foreground">
                           {lastVerbalConsentAt
@@ -1321,7 +1441,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                           El botón de inicio guarda evidencia del consentimiento en la base de datos.
                         </div>
                       </div>
-                      <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
+                      <div className="rounded-lg border border-border/70 bg-background/70 p-3">
                         <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Seguridad</div>
                         <div className="mt-1 text-sm font-medium text-foreground">HTTPS obligatorio o localhost</div>
                         <div className="mt-1 text-xs text-muted-foreground">
@@ -1335,10 +1455,10 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                     <motion.div
                       initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="rounded-2xl border border-border bg-secondary/20 p-4"
+                      className="rounded-lg border border-border bg-secondary/20 p-4"
                     >
                       <div className="flex items-center gap-3">
-                        <Wand2 className="w-5 h-5 text-primary animate-bounce" />
+                        <Wand2 className="w-5 h-5 text-primary animate-pulse" />
                         <div className="flex-1">
                           <p className="text-sm font-medium text-foreground">
                             {generationStatus || "Analizando la conversación y estructurando los campos SOAP en español..."}
@@ -1358,7 +1478,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   )}
                   <TextArea
                     label="Subjetivo (S)"
-                    placeholder="Lo que el paciente refiere..."
+                    placeholder="Motivo de consulta, síntomas referidos, evolución temporal, antecedentes relevantes del episodio actual..."
                     value={noteData.subjective}
                     onChange={(e) => setNoteData({ ...noteData, subjective: e.target.value })}
                     rows={3}
@@ -1366,7 +1486,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   />
                   <TextArea
                     label="Objetivo (O)"
-                    placeholder="Signos vitales, hallazgos físicos..."
+                    placeholder="Signos vitales (TA, FC, FR, T°, SpO2), exploración física por aparatos y sistemas, hallazgos relevantes..."
                     value={noteData.objective}
                     onChange={(e) => setNoteData({ ...noteData, objective: e.target.value })}
                     rows={3}
@@ -1374,7 +1494,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   />
                   <TextArea
                     label="Evaluación (A)"
-                    placeholder="Diagnóstico, impresión clínica..."
+                    placeholder="Diagnóstico principal (CIE-10), diagnósticos diferenciales, impresión clínica, correlación con hallazgos..."
                     value={noteData.assessment}
                     onChange={(e) => setNoteData({ ...noteData, assessment: e.target.value })}
                     rows={3}
@@ -1382,7 +1502,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   />
                   <TextArea
                     label="Plan (P)"
-                    placeholder="Tratamiento, seguimiento..."
+                    placeholder="Tratamiento indicado, medicamentos, dosis y duración, indicaciones al paciente, estudios solicitados, próxima revisión..."
                     value={noteData.plan}
                     onChange={(e) => setNoteData({ ...noteData, plan: e.target.value })}
                     rows={3}
@@ -1390,7 +1510,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   />
                   <TextArea
                     label="Notas privadas"
-                    placeholder="Notas confidenciales..."
+                    placeholder="Observaciones confidenciales no incluidas en el resumen clínico del paciente..."
                     value={noteData.privateNotes}
                     onChange={(e) => setNoteData({ ...noteData, privateNotes: e.target.value })}
                     rows={3}
@@ -1432,7 +1552,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                           {prescriptionAlerts.map((alert, i) => (
                             <div 
                               key={i} 
-                              className={`p-3 rounded-xl border flex gap-3 ${
+                              className={`p-3 rounded-md border flex gap-3 ${
                                 alert.severity === 'high' 
                                   ? 'bg-destructive/10 border-destructive/20 text-destructive' 
                                   : 'bg-warning/10 border-warning/20 text-warning-foreground'
@@ -1452,7 +1572,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                     {noteData.prescriptions.length > 0 ? (
                       <div className="space-y-3">
                         {noteData.prescriptions.map((p, i) => (
-                          <div key={`${i}-${p.medication}`} className="rounded-2xl border border-border bg-secondary/15 p-3 sm:p-4">
+                          <div key={`${i}-${p.medication}`} className="rounded-lg border border-border bg-secondary/15 p-3 sm:p-4">
                             <div className="flex items-start gap-2">
                               <Input
                                 placeholder="Medicamento"
@@ -1501,13 +1621,16 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                         ))}
                       </div>
                     ) : (
-                      <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+                      <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
                         Aún no hay medicamentos recetados.
                       </div>
                     )}
                   </div>
 
                   <div className="border-t border-border pt-5 flex flex-col gap-2 sm:flex-row sm:items-center">
+                    {isDirtyNote && !savingNote && (
+                      <p className="text-xs text-warning sm:order-last sm:ml-auto">Cambios sin guardar</p>
+                    )}
                     <Button
                       size="sm"
                       onClick={handleSaveNote}
@@ -1549,7 +1672,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
 
                           <div className="border-t border-border pt-5">
                             <h3 className="text-2xl font-semibold text-foreground">Síntomas</h3>
-                            <div className="mt-4 rounded-xl bg-secondary/30 border border-border/70 p-4">
+                            <div className="mt-4 rounded-md bg-secondary/30 border border-border/70 p-4">
                               {uniqueQuestionnaireSymptoms.length > 0 ? (
                                 <ul className="list-disc pl-5 space-y-1 text-foreground">
                                   {uniqueQuestionnaireSymptoms.map((symptom) => (
@@ -1569,13 +1692,13 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                             <div className="mt-4 space-y-3">
                               {questionnaireEntries.length > 0 ? (
                                 questionnaireEntries.map((entry, index) => (
-                                  <div key={`${entry.label}-${index}`} className="rounded-xl bg-secondary/30 border border-border/70 p-3">
+                                  <div key={`${entry.label}-${index}`} className="rounded-md bg-secondary/30 border border-border/70 p-3">
                                     <div className="text-sm text-muted-foreground">{entry.label}</div>
                                     <div className="mt-1 text-lg font-medium text-foreground break-words">{entry.value}</div>
                                   </div>
                                 ))
                               ) : (
-                                <div className="rounded-xl bg-secondary/30 border border-border/70 p-4 text-sm text-muted-foreground">
+                                <div className="rounded-md bg-secondary/30 border border-border/70 p-4 text-sm text-muted-foreground">
                                   No hay respuestas disponibles para esta cita.
                                 </div>
                               )}
@@ -1587,7 +1710,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                           </div>
                         </>
                       ) : (
-                        <div className="rounded-xl bg-secondary/30 border border-border/70 p-6 text-center text-muted-foreground">
+                        <div className="rounded-md bg-secondary/30 border border-border/70 p-6 text-center text-muted-foreground">
                           El paciente no ha respondido el cuestionario.
                         </div>
                       )}
@@ -1595,7 +1718,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                   ) : (
                     <div className="p-5 sm:p-6 space-y-6">
                       {/* AI INSIGHTS TAB */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-primary/5 border border-primary/20 rounded-2xl">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-primary/5 border border-primary/20 rounded-lg">
                         <div className="flex items-center gap-3">
                           <Brain className="w-6 h-6 text-primary" />
                           <div>
@@ -1629,7 +1752,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                             </div>
                             <div className="space-y-3">
                               {aiInsights.diagnoses?.map((d, i: number) => (
-                                <div key={i} className="p-4 bg-secondary/20 border border-border rounded-xl group relative">
+                                <div key={i} className="p-4 bg-secondary/20 border border-border rounded-md group relative">
                                   <p className="font-bold text-foreground pr-8">{d.diagnosis}</p>
                                   <p className="text-sm text-muted-foreground mt-1">{d.reasoning}</p>
                                   <button 
@@ -1649,7 +1772,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                             </div>
                             <div className="space-y-3">
                               {aiInsights.treatments?.map((t, i: number) => (
-                                <div key={i} className="p-4 bg-secondary/20 border border-border rounded-xl group relative">
+                                <div key={i} className="p-4 bg-secondary/20 border border-border rounded-md group relative">
                                   <p className="font-bold text-foreground pr-8">{t.treatment}</p>
                                   <p className="text-sm text-muted-foreground mt-1">{t.instructions}</p>
                                   <div className="absolute top-4 right-4 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1681,7 +1804,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                             </div>
                             
                             <div className="grid grid-cols-1 gap-4">
-                              <div className="p-4 bg-success/5 border border-success/20 rounded-xl">
+                              <div className="p-4 bg-success/5 border border-success/20 rounded-md">
                                 <p className="text-xs font-bold text-success uppercase mb-2">Permitidos / Recomendados</p>
                                 <ul className="list-disc list-inside space-y-1">
                                   {aiInsights.allowedFoods?.map((f: string, i: number) => (
@@ -1690,7 +1813,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                                 </ul>
                               </div>
 
-                              <div className="p-4 bg-destructive/5 border border-destructive/20 rounded-xl">
+                              <div className="p-4 bg-destructive/5 border border-destructive/20 rounded-md">
                                 <p className="text-xs font-bold text-destructive uppercase mb-2">Prohibidos / Evitar</p>
                                 <ul className="list-disc list-inside space-y-1">
                                   {aiInsights.forbiddenFoods?.map((f: string, i: number) => (
@@ -1700,7 +1823,7 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
                               </div>
                             </div>
 
-                            <div className="p-4 bg-secondary/10 border border-border rounded-xl">
+                            <div className="p-4 bg-secondary/10 border border-border rounded-md">
                               <div className="flex items-center gap-2 mb-2">
                                 <Info className="w-4 h-4 text-primary" />
                                 <p className="text-xs font-bold text-foreground italic">Contexto detectado</p>
@@ -1725,9 +1848,26 @@ export default function AppointmentDetailPage(props: { params: Promise<{ id: str
               </Card>
             </motion.div>
           </div>
+
+          <AlertDialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>¿Cancelar esta cita?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Esta acción marcará la cita como cancelada. El paciente no recibirá notificación automática desde aquí. Podrás revertirla cambiando el estado manualmente.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Mantener cita</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  onClick={() => setSelectedStatus("CANCELLED")}
+                >
+                  Confirmar cancelación
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </DoctorLayout>
       );
     }
-
-
-

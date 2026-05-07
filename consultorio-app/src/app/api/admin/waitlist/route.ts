@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server'
 import { WaitlistEntryStatus } from '@prisma/client'
 import { z } from 'zod'
 import prisma from '@/lib/prisma'
-import { getAuthenticatedUser } from '@/lib/auth'
+import { requireAgendaAccess } from '@/lib/medicalApi'
 import { WaitlistService } from '@/services/WaitlistService'
+import { can, PERMISSIONS } from '@/lib/permissions'
+import { SUBSCRIPTION_FEATURES } from '@/lib/subscriptionFeatures'
 
 const createEntrySchema = z.object({
   doctorId: z.string().min(1).optional(),
@@ -17,10 +19,6 @@ const createEntrySchema = z.object({
 })
 const statusQuerySchema = z.nativeEnum(WaitlistEntryStatus)
 
-function canManageRole(role: string) {
-  return role === 'DOCTOR' || role === 'ADMIN' || role === 'CLINIC_ADMIN'
-}
-
 async function resolveDoctorScope(authUser: { id: string; role: string }, requestedDoctorId?: string) {
   const actor = await prisma.user.findUnique({
     where: { id: authUser.id },
@@ -33,7 +31,7 @@ async function resolveDoctorScope(authUser: { id: string; role: string }, reques
     return { doctorId: actor.id, clinicId: actor.clinicId ?? null }
   }
 
-  if (actor.role !== 'CLINIC_ADMIN') return null
+  if (!can(actor.role, PERMISSIONS.CLINIC_MANAGE_DOCTORS)) return null
   if (!actor.clinicId) return null
 
   const doctor = await prisma.user.findFirst({
@@ -52,9 +50,15 @@ async function resolveDoctorScope(authUser: { id: string; role: string }, reques
 
 export async function GET(request: Request) {
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser || !canManageRole(authUser.role)) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireAgendaAccess({
+      allowSecretary: false,
+      requiredFeature: SUBSCRIPTION_FEATURES.AGENDA_WAITLIST,
+      featureForbiddenMessage: 'La lista de espera no está incluida en tu plan.',
+    })
+    if (access.response) return access.response
+    const authUser = access.context.user
+    if (!can(authUser, PERMISSIONS.APPOINTMENT_UPDATE)) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
     }
 
     const { searchParams } = new URL(request.url)
@@ -96,9 +100,15 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const authUser = await getAuthenticatedUser()
-    if (!authUser || !canManageRole(authUser.role)) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    const access = await requireAgendaAccess({
+      allowSecretary: false,
+      requiredFeature: SUBSCRIPTION_FEATURES.AGENDA_WAITLIST,
+      featureForbiddenMessage: 'La lista de espera no está incluida en tu plan.',
+    })
+    if (access.response) return access.response
+    const authUser = access.context.user
+    if (!can(authUser, PERMISSIONS.APPOINTMENT_CREATE)) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
     }
 
     const parsed = createEntrySchema.safeParse(await request.json())

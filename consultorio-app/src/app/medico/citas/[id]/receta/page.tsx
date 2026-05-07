@@ -97,7 +97,7 @@ export default function PrescriptionPrintPage(props: { params: Promise<{ id: str
       </div>
 
       {/* Non-Printable Action Bar */}
-      <div className="print:hidden bg-secondary border-b p-4 flex justify-between items-center max-w-4xl mx-auto mt-4 rounded-xl shadow-sm">
+      <div className="print:hidden bg-secondary border-b p-4 flex justify-between items-center max-w-4xl mx-auto mt-4 rounded-md shadow-sm">
         <p className="text-sm text-muted-foreground font-medium">Esta vista está optimizada para imprimirse en tamaño Carta (A4) o exportarse a PDF.</p>
         <button 
           onClick={() => window.print()}
@@ -115,7 +115,7 @@ export default function PrescriptionPrintPage(props: { params: Promise<{ id: str
             <div className="flex items-center gap-4">
               {doctor.logoImage ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={doctor.logoImage} alt="Logo del consultorio" className="w-24 h-20 object-contain rounded-xl bg-white border border-gray-200 p-2" />
+                <img src={doctor.logoImage} alt="Logo del consultorio" className="w-24 h-20 object-contain rounded-md bg-white border border-gray-200 p-2" />
               ) : (
               <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center">
                 <CopyPlus className="w-10 h-10 text-primary" />
@@ -134,14 +134,14 @@ export default function PrescriptionPrintPage(props: { params: Promise<{ id: str
         </div>
 
         {/* Patient Info Box */}
-        <div className="bg-gray-50 rounded-xl p-4 mb-8 grid grid-cols-2 gap-4 text-sm border">
+        <div className="bg-gray-50 rounded-md p-4 mb-8 grid grid-cols-2 gap-4 text-sm border">
           <div><span className="font-semibold text-gray-500">Paciente:</span> {formatPatientName(patient)}</div>
            <div><span className="font-semibold text-gray-500">Edad:</span> {new Date().getFullYear() - new Date(patient.dateOfBirth).getFullYear()} años</div>
            <div><span className="font-semibold text-gray-500">Fecha de Consulta:</span> {format(new Date(appointment.startTime), "dd/MM/yyyy HH:mm")}</div>
            <div><span className="font-semibold text-gray-500">Peso / Talla:</span> __________________</div>
         </div>
 
-        <div className="text-4xl font-serif text-primary opacity-30 mb-6 italic pl-2 border-l-4 border-primary">
+        <div className="text-4xl font-serif text-primary opacity-30 mb-6 italic">
           Rx
         </div>
 
