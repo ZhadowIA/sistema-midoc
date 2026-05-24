@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import Link from "next/link";
-import { ArrowRight, CheckCircle2, AlertCircle, Brain, Stethoscope, FileText, BarChart3, Lock, Zap, Calendar, ClipboardList, Layers, Sparkles } from "lucide-react";
+import { ArrowRight, CheckCircle2, Brain, Stethoscope, FileText, BarChart3, Lock, Zap, Calendar, ClipboardList, Layers, Sparkles } from "lucide-react";
 
 const FEATURES = [
   {
@@ -260,7 +260,7 @@ export default function MarketingLanding() {
                 transition={{ delay: i * 0.1 }}
                 className="bg-card border border-border rounded-lg p-6 space-y-4"
               >
-                <p className="text-foreground leading-relaxed italic">"{t.text}"</p>
+                <p className="text-foreground leading-relaxed italic">&ldquo;{t.text}&rdquo;</p>
                 <div className="space-y-2 pt-4 border-t border-border">
                   <p className="font-semibold text-foreground text-sm">{t.name}</p>
                   <p className="text-xs text-muted-foreground">{t.role}</p>

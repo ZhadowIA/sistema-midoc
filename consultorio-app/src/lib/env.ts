@@ -9,6 +9,7 @@ const serverEnvSchema = z.object({
   QUESTIONNAIRE_TOKEN_SECRET: z.string().min(1, "QUESTIONNAIRE_TOKEN_SECRET es requerida"),
   NOTIFICATION_CRON_SECRET: z.string().min(8).optional(),
   WHATSAPP_WEBHOOK_SECRET: z.string().min(8).optional(),
+  WHATSAPP_BOT_API_SECRET: z.string().min(16).optional(),
   WHATSAPP_API_URL: z.string().url().optional(),
   OPENAI_API_KEY: z.string().min(20).optional(),
   DEEPGRAM_API_KEY: z.string().min(20).optional(),

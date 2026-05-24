@@ -1,6 +1,6 @@
 import { format } from 'date-fns'
 import type { AppointmentPaymentStatus, AppointmentStatus, PrismaClient } from '@prisma/client'
-import { getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
+import { getWhatsAppProviderJsonHeaders, getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
 import { formatPatientName } from '@/lib/patientName'
 import { AppointmentAuditService } from '@/services/AppointmentAuditService'
 import { WaitlistService } from '@/services/WaitlistService'
@@ -76,7 +76,7 @@ export async function updateAppointmentStatus(input: UpdateAppointmentStatusInpu
       try {
         await fetch(getWhatsAppProviderSendUrl(), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getWhatsAppProviderJsonHeaders(),
           body: JSON.stringify({ doctorId: input.doctorId, to: patient.phone, message: msg }),
         })
       } catch (err) {
@@ -145,4 +145,3 @@ export async function updateAppointmentStatus(input: UpdateAppointmentStatusInpu
 
   return { ...hydrated, billingOutcome }
 }
-

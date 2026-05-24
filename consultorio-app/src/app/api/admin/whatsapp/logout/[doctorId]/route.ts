@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireAgendaDoctorApiAccess } from '@/lib/medicalApi'
-import { buildWhatsAppProviderUrl } from '@/lib/whatsappProvider'
+import { buildWhatsAppProviderUrl, getWhatsAppProviderAuthHeaders } from '@/lib/whatsappProvider'
 
 export async function DELETE(_: Request, props: { params: Promise<{ doctorId: string }> }) {
   const params = await props.params
@@ -16,6 +16,7 @@ export async function DELETE(_: Request, props: { params: Promise<{ doctorId: st
     const response = await fetch(providerUrl, {
       method: 'DELETE',
       cache: 'no-store',
+      headers: getWhatsAppProviderAuthHeaders(),
     })
 
     if (!response.ok) {

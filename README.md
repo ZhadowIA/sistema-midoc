@@ -1,54 +1,30 @@
 # Sistema MiDoc Monorepo
 
-Este repositorio contiene los dos servicios del sistema:
+Monorepo principal de MiDoc.
 
-- `consultorio-app/`: aplicacion principal (Next.js + Prisma).
-- `whatsapp-bot/`: bot de WhatsApp para mensajes y automatizaciones.
+## Servicios
+- `consultorio-app/`: aplicación principal clínica/comercial en Next.js + Prisma.
+- `whatsapp-bot/`: bot de WhatsApp para notificaciones y automatizaciones.
+- `frontend/`: referencia visual/UI desacoplada del backend.
 
-## Requisitos
-- Node.js 22+
-- npm 10+
-
-## Estructura
-```text
-Sistema MiDoc/
-├─ consultorio-app/
-└─ whatsapp-bot/
-```
+## Documentación canónica
+- Índice maestro: `consultorio-app/docs/INDICE_DOCUMENTACION.md`
+- Estado actual del sistema: `consultorio-app/docs/SISTEMA_ACTUAL.md`
+- Roadmap maestro: `consultorio-app/docs/ROADMAP_MAESTRO.md`
+- Historial de fases completadas: `consultorio-app/docs/FASES_COMPLETADAS.md`
+- Mapa documental: `consultorio-app/docs/MAPA_DOCUMENTAL.md`
 
 ## Desarrollo local
-### Opcion rapida (recomendada en equipo nuevo)
+### Opción rápida
 ```powershell
 .\setup.ps1
 ```
 
-Con eso:
-- Crea `.env` desde `.env.example` en ambos servicios (si no existen).
-- Instala dependencias.
-- Ejecuta `prisma generate` y `prisma db push` en `consultorio-app`.
+### Opción manual
+1. Crear `.env` desde los `.env.example` de cada servicio.
+2. Instalar dependencias por servicio.
+3. Ejecutar los servicios necesarios.
 
-Para abrir ambos servicios automaticamente al terminar:
-```powershell
-.\setup.ps1 -Run
-```
-
-### Opcion manual
-1. Configurar variables:
-- `consultorio-app/.env` (a partir de `consultorio-app/.env.example`)
-- `whatsapp-bot/.env` (a partir de `whatsapp-bot/.env.example`)
-
-2. Instalar dependencias por servicio:
-```powershell
-cd consultorio-app; npm install
-cd ../whatsapp-bot; npm install
-```
-
-3. Ejecutar servicios:
-```powershell
-cd consultorio-app; npm run dev
-cd ../whatsapp-bot; npm run dev
-```
-
-## Documentacion
-- Fuente de verdad: `consultorio-app/docs/SISTEMA_ACTUAL.md`
-- Indice de documentacion: `consultorio-app/docs/INDICE_DOCUMENTACION.md`
+## Regla documental
+La puerta de entrada documental del producto es `consultorio-app/docs/INDICE_DOCUMENTACION.md`.
+Los documentos legacy o reemplazados viven en `consultorio-app/docs/archive/`.

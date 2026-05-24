@@ -113,4 +113,4 @@ APP_WEBHOOK_SECRET=<must match consultorio-app WHATSAPP_WEBHOOK_SECRET>
 
 - `consultorio-app/docs/SISTEMA_ACTUAL.md` — canonical technical and functional spec (updated 2026-04-15)
 - `consultorio-app/docs/DEPLOY_CHECKLIST.md` — pre-production requirements
-- `consultorio-app/docs/ROADMAP_FASES_BLOQUES.md` — planned phase roadmap
+- `consultorio-app/docs/ROADMAP_MAESTRO.md` — canonical consolidated roadmap

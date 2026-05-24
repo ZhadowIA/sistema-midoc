@@ -624,7 +624,9 @@ export async function generateDictationFromTranscriptWithTelemetry(
   }
 
   const specialty = clinicalContext?.specialty ?? null
-  const { specialty: _specialty, ...contextWithoutSpecialty } = clinicalContext ?? {}
+  const contextWithoutSpecialty = clinicalContext
+    ? Object.fromEntries(Object.entries(clinicalContext).filter(([key]) => key !== 'specialty'))
+    : {}
   const safeContext = Object.keys(contextWithoutSpecialty).length > 0
     ? pseudonymizeStructuredData(contextWithoutSpecialty, identifiers)
     : null

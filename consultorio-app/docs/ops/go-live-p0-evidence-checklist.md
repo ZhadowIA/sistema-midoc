@@ -2,12 +2,29 @@
 
 Estado: Vigente  
 Última actualización: 2026-04-30  
-Referencia principal: `docs/ops/go-live-roadmap-4-6-semanas.md`
+Referencia principal: `docs/ROADMAP_MAESTRO.md`
 
 ## Instrucción de uso
 
 No marcar una casilla solo porque “ya existe algo en código”.  
 Cada ítem requiere una evidencia concreta: link a PR, documento, comando, incidente de prueba, captura o resultado verificable.
+
+---
+
+## 0. Gate técnico automatizado
+
+- [ ] Typecheck limpio
+  - Evidencia: salida CI de `npx tsc --noEmit` en `.github/workflows/main_midoc-web-prod.yml`.
+- [ ] Lint limpio
+  - Evidencia: salida CI de `npm run lint`.
+- [ ] Unit tests completos
+  - Evidencia: salida CI de `npm run test:unit`.
+- [ ] Integration tests completos
+  - Evidencia: salida CI de `npm run test:integration`.
+- [ ] Auditoría sin vulnerabilidades `high` en dependencias productivas
+  - Evidencia: salida CI de `npm audit --omit=dev --audit-level=high` para `consultorio-app` y bitácora separada para `whatsapp-bot` si se despliega.
+- [ ] Pipeline Docker Azure validado en staging
+  - Evidencia: ejecución exitosa de `.github/workflows/main_midoc-web-prod.yml`, imagen publicada en ACR y health/readiness en verde.
 
 ---
 

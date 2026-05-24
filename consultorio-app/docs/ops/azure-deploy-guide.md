@@ -220,7 +220,8 @@ az webapp config appsettings set \
     APP_BASE_URL="https://midoc-consultorio.azurewebsites.net" \
     APP_TIMEZONE="America/Chihuahua" \
     WHATSAPP_API_URL="https://midoc-whatsapp.azurewebsites.net" \
-    WHATSAPP_WEBHOOK_SECRET="<genera-con: openssl rand -hex 16>" \
+    WHATSAPP_WEBHOOK_SECRET="<genera-con: openssl rand -hex 32>" \
+    WHATSAPP_BOT_API_SECRET="<genera-con: openssl rand -hex 32>" \
     NOTIFICATION_CRON_SECRET="<genera-con: openssl rand -hex 16>" \
     QUESTIONNAIRE_TOKEN_SECRET="<genera-con: openssl rand -hex 16>" \
     TERMS_VERSION="1.0" \
@@ -231,11 +232,17 @@ az webapp config appsettings set \
     DEEPGRAM_PROJECT_ID="<tu-deepgram-project-id>" \
     RECAPTCHA_V3_SECRET="<tu-recaptcha-secret-opcional>" \
     NEXT_PUBLIC_RECAPTCHA_V3_SITE_KEY="<tu-recaptcha-site-key-opcional>" \
-    PAYMENTS_PROVIDER="MOCK" \
+    PAYMENTS_PROVIDER="STRIPE" \
     PAYMENTS_WEBHOOK_SECRET="<genera-con: openssl rand -hex 16>" \
     STRIPE_SECRET_KEY="<sk_test_o_sk_live>" \
     STRIPE_WEBHOOK_SECRET="<whsec_...>" \
     STRIPE_PRICE_ID="<price_id_legacy_opcional>" \
+    STRIPE_PRICE_AGENDA_MONTHLY="<price_live_agenda>" \
+    STRIPE_PRICE_CLINICAL_MONTHLY="<price_live_clinical>" \
+    STRIPE_PRICE_INTEGRAL_MONTHLY="<price_live_integral>" \
+    STRIPE_PRICE_AI_30_MONTHLY="<price_live_ai_30>" \
+    STRIPE_PRICE_AI_60_MONTHLY="<price_live_ai_60>" \
+    STRIPE_PRICE_AI_100_MONTHLY="<price_live_ai_100>" \
     NODE_ENV="production" \
     WEBSITES_PORT="3000"
 ```
@@ -261,7 +268,8 @@ Usa esta matriz para evitar estados “a medias” en producción:
 | Clínico unificado | `CLINICAL_HISTORY_ENABLED=true` |
 | IA clínica (dictado + insights) | `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID` |
 | Captcha público (opcional) | `RECAPTCHA_V3_SECRET` + `NEXT_PUBLIC_RECAPTCHA_V3_SITE_KEY` |
-| Stripe | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, y price IDs de catálogo (recomendado por plan/add-on) |
+| Stripe comercial | `PAYMENTS_PROVIDER=STRIPE`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_AGENDA_MONTHLY`, `STRIPE_PRICE_CLINICAL_MONTHLY`, `STRIPE_PRICE_INTEGRAL_MONTHLY`, `STRIPE_PRICE_AI_30_MONTHLY`, `STRIPE_PRICE_AI_60_MONTHLY`, `STRIPE_PRICE_AI_100_MONTHLY` |
+| Bot WhatsApp interno (si se mantiene) | `WHATSAPP_API_URL`, `WHATSAPP_WEBHOOK_SECRET`, `WHATSAPP_BOT_API_SECRET`; el bot debe quedar en red interna o con CORS restringido |
 
 > Si defines `OPENAI_API_KEY` sin Deepgram, el sistema puede mostrar capacidades IA parciales/no disponibles según contexto.
 > Si defines `RECAPTCHA_V3_SECRET` sin `NEXT_PUBLIC_RECAPTCHA_V3_SITE_KEY`, el frontend no podrá completar el flujo de captcha.
@@ -274,8 +282,11 @@ az webapp config appsettings set \
   --resource-group $RESOURCE_GROUP \
   --settings \
     PORT="3001" \
+    NODE_ENV="production" \
     APP_WEBHOOK_URL="https://midoc-consultorio.azurewebsites.net/api/internal/whatsapp/incoming" \
     APP_WEBHOOK_SECRET="<mismo valor que WHATSAPP_WEBHOOK_SECRET arriba>" \
+    BOT_API_SECRET="<mismo valor que WHATSAPP_BOT_API_SECRET arriba>" \
+    BOT_ALLOWED_ORIGINS="https://midoc-consultorio.azurewebsites.net" \
     WEBSITES_PORT="3001"
 ```
 
@@ -427,7 +438,34 @@ az webapp config appsettings set \
 
 ## Fase 7 — CI/CD automático con GitHub Actions (opcional pero recomendado)
 
-Crear `.github/workflows/deploy.yml` en el repositorio:
+El repositorio ya incluye `.github/workflows/main_midoc-web-prod.yml` con el flujo Docker recomendado:
+
+1. instala dependencias en `consultorio-app`;
+2. ejecuta `env:check`, lint, typecheck, unit, integration y audit high;
+3. construye la imagen Docker;
+4. publica tags inmutables por SHA y tag de entorno;
+5. despliega la imagen en Azure Web App;
+6. valida `/api/health` y `/api/health/ready`.
+
+Configurar estos **GitHub Secrets**:
+
+| Secret | Uso |
+|---|---|
+| `AZURE_CLIENT_ID` | OIDC service principal para deploy |
+| `AZURE_TENANT_ID` | tenant del service principal |
+| `AZURE_SUBSCRIPTION_ID` | suscripción Azure |
+
+Configurar estos **GitHub Variables**:
+
+| Variable | Uso |
+|---|---|
+| `AZURE_ACR_NAME` | nombre corto del Azure Container Registry |
+| `AZURE_ACR_LOGIN_SERVER` | login server, por ejemplo `midocregistry.azurecr.io` |
+| `AZURE_WEBAPP_NAME` | App Service de `consultorio-app` |
+| `AZURE_WEBAPP_SLOT` | `Production` o slot de staging |
+| `APP_BASE_URL` | URL pública del ambiente a validar |
+
+El siguiente ejemplo histórico queda solo como referencia manual si necesitas recrear el workflow desde cero:
 
 ```yaml
 name: Deploy to Azure
