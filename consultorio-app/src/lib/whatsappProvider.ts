@@ -22,6 +22,20 @@ export function getWhatsAppProviderSendUrl() {
   return `${getWhatsAppProviderBaseUrl()}/send`
 }
 
+export function getWhatsAppProviderAuthHeaders(): Record<string, string> {
+  const env = getServerEnv()
+  return env.WHATSAPP_BOT_API_SECRET
+    ? { 'x-bot-secret': env.WHATSAPP_BOT_API_SECRET }
+    : {}
+}
+
+export function getWhatsAppProviderJsonHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    ...getWhatsAppProviderAuthHeaders(),
+  }
+}
+
 export function buildWhatsAppProviderUrl(pathname: string) {
   const cleanPath = pathname.startsWith('/') ? pathname : `/${pathname}`
   return `${getWhatsAppProviderBaseUrl()}${cleanPath}`

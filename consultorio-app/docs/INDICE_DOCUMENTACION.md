@@ -1,39 +1,63 @@
-# MiDoc - Indice de Documentacion
+# MiDoc - Índice maestro de documentación
 
-Ultima actualizacion: 2026-04-20
+Última actualización: 2026-05-19
 
 ## Objetivo
-Este indice centraliza que documento es vigente, cual es historico y para que se usa cada archivo.
+Este índice define la arquitectura documental oficial del proyecto. Aquí se decide QUÉ documento es canónico, cuál es de soporte y cuál quedó archivado.
 
-## Documentos vigentes
+## Documentos canónicos
 
-| Archivo | Uso | Estado |
+| Archivo | Propósito | Estado |
 |---|---|---|
-| `docs/SISTEMA_ACTUAL.md` | Fuente de verdad funcional y tecnica del sistema actual | Vigente |
-| `docs/roadmap_fases_midoc.md` | Roadmap operativo detallado por fases y estado real de avance | Vigente (canónico) |
-| `docs/ROADMAP_FASES_BLOQUES.md` | Resumen ejecutivo de capacidades consolidadas y backlog | Vigente (resumen) |
-| `docs/DEPLOY_CHECKLIST.md` | Checklist operativo para desplegar a staging/produccion | Vigente |
-| `docs/PRE_PRODUCCION_CAMBIOS_REQUERIDOS.md` | Lista de cambios obligatorios antes de go-live comercial | Vigente |
-| `docs/ops/go-live-roadmap-4-6-semanas.md` | Ruta priorizada de 4–6 semanas para producción comercial segura | Vigente |
-| `docs/ops/go-live-p0-evidence-checklist.md` | Checklist P0 con evidencia obligatoria para salida a producción | Vigente |
-| `docs/ops/commercial-state-policy.md` | Política canónica de estado comercial, gracia y degradación | Vigente |
-| `docs/ops/minimum-alerts-matrix.md` | Matriz mínima de alertas exigible antes de go-live | Vigente |
-| `plan_implementacion_historia_clinica_midoc.md` | Plan detallado de historia clínica (ubicado en raíz del repo) | Referencia vigente |
-| `docs/acta_piloto_workspace_unificado.md` | Evidencia y acuerdos del piloto del workspace unificado | Vigente |
-| `docs/workspace_unified_status.md` | Estado operativo del workspace unificado | Vigente |
+| `docs/SISTEMA_ACTUAL.md` | Fuente de verdad funcional y técnica del sistema implementado | Canónico |
+| `docs/ROADMAP_MAESTRO.md` | Roadmap único del producto, consolidado y contrastado contra el código real | Canónico |
+| `docs/FASES_COMPLETADAS.md` | Historial de fases cerradas con evidencia técnica | Canónico |
+| `docs/MAPA_DOCUMENTAL.md` | Inventario documental con clasificación y criterio de limpieza | Canónico |
+| `docs/DEPLOY_CHECKLIST.md` | Checklist operativo de despliegue | Vigente |
+| `docs/PRE_PRODUCCION_CAMBIOS_REQUERIDOS.md` | Bloqueadores y requisitos previos a producción comercial | Vigente |
+| `docs/ops/go-live-p0-evidence-checklist.md` | Evidencia mínima exigible para salida a producción | Vigente |
+| `docs/ops/commercial-state-policy.md` | Política canónica de estados comerciales y degradación | Vigente |
+| `docs/ops/minimum-alerts-matrix.md` | Matriz mínima de alertas | Vigente |
+| `docs/compliance/ai-claims-policy.md` | Política de claims permitidos/prohibidos para IA | Vigente |
+| `docs/compliance/nom-matrix.md` | Matriz viva NOM-004 / NOM-024 y brechas | Vigente |
+| `plan_implementacion_historia_clinica_midoc.md` | Anexo de diseño/alcance para historia clínica completa; ya no opera como roadmap separado | Referencia vigente |
 
-## Documentos de referencia/legacy
+## Documentos vigentes de soporte
 
-| Archivo | Uso | Estado |
+| Archivo | Propósito | Estado |
 |---|---|---|
-| `docs/README.md` | Documento tecnico anterior, conservado por trazabilidad | Legacy |
-| `docs/README_OLD.md` | Respaldo historico del documento tecnico anterior | Legacy |
-| `docs/design-brief.md` | Brief de UI/UX para rediseno visual, no es fuente tecnica de backend | Referencia |
+| `docs/design-brief.md` | Referencia UI/UX; no es fuente técnica de backend ni roadmap | Referencia |
+| `docs/security-hardening.md` | Endurecimiento técnico de seguridad | Referencia |
+| `docs/security/incident-response.md` | Proceso y severidades para incidentes de seguridad | Vigente |
+| `docs/privacy/*` | Políticas de retención, inventario de datos y subprocesadores | Vigente |
+| `docs/ops/*.md` | Runbooks, backups, observabilidad, humo, rollback y operación diaria | Vigente |
+| `docs/workspace_unified_status.md` | Estado operativo del workspace clínico unificado | Referencia |
+| `docs/acta_piloto_workspace_unificado.md` | Evidencia histórica del piloto del workspace unificado | Referencia |
+| `docs/api-product-separation.md` | Nota arquitectónica puntual | Referencia |
 
-## Orden recomendado para onboarding tecnico
-1. Leer `docs/SISTEMA_ACTUAL.md`.
-2. Revisar `docs/roadmap_fases_midoc.md`.
-3. Revisar `docs/ROADMAP_FASES_BLOQUES.md`.
-4. Revisar `docs/PRE_PRODUCCION_CAMBIOS_REQUERIDOS.md`.
-5. Revisar `docs/ops/go-live-roadmap-4-6-semanas.md` y `docs/ops/go-live-p0-evidence-checklist.md`.
-6. Antes de release, ejecutar `docs/DEPLOY_CHECKLIST.md`.
+## Documentos archivados
+
+Todos los documentos reemplazados o absorbidos por la nueva estructura viven en `docs/archive/`.
+
+Archivados en esta limpieza:
+- `docs/archive/README_legacy_tecnico.md`
+- `docs/archive/README_old_respaldo.md`
+- `docs/archive/roadmap_fases_midoc.md`
+- `docs/archive/ROADMAP_FASES_BLOQUES.md`
+- `docs/archive/roadmap_priorizado_midoc.md`
+- `docs/archive/compliance-roadmap.md`
+- `docs/archive/ops/go-live-roadmap-4-6-semanas.md`
+
+## Orden recomendado de lectura
+1. `docs/SISTEMA_ACTUAL.md`
+2. `docs/ROADMAP_MAESTRO.md`
+3. `docs/FASES_COMPLETADAS.md`
+4. `docs/MAPA_DOCUMENTAL.md`
+5. `docs/PRE_PRODUCCION_CAMBIOS_REQUERIDOS.md`
+6. `docs/ops/go-live-p0-evidence-checklist.md`
+7. `docs/DEPLOY_CHECKLIST.md`
+
+## Regla de mantenimiento
+- Si un documento define el estado actual del producto, debe contrastarse contra código real.
+- Si un roadmap queda absorbido por otro, se archiva; NO compite por canonicidad.
+- Si un documento solo aporta contexto histórico, no debe seguir en el flujo principal.

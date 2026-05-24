@@ -8,14 +8,53 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const NODE_ENV = process.env.NODE_ENV || 'development';
 const APP_WEBHOOK_URL = process.env.APP_WEBHOOK_URL || 'http://localhost:3000/api/internal/whatsapp/incoming';
 const APP_WEBHOOK_SECRET =
   process.env.APP_WEBHOOK_SECRET ||
   process.env.WHATSAPP_WEBHOOK_SECRET ||
-  'MiDoc_local_webhook_secret';
+  (NODE_ENV === 'production' ? '' : 'MiDoc_local_webhook_secret');
+const BOT_API_SECRET = process.env.BOT_API_SECRET || process.env.WHATSAPP_BOT_API_SECRET || '';
+const ALLOWED_ORIGINS = (process.env.BOT_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
-app.use(cors());
+if (NODE_ENV === 'production') {
+  if (!APP_WEBHOOK_SECRET || APP_WEBHOOK_SECRET.length < 16) {
+    throw new Error('APP_WEBHOOK_SECRET/WHATSAPP_WEBHOOK_SECRET debe configurarse con al menos 16 caracteres en producción.');
+  }
+  if (!BOT_API_SECRET || BOT_API_SECRET.length < 16) {
+    throw new Error('BOT_API_SECRET debe configurarse con al menos 16 caracteres en producción.');
+  }
+}
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('Origen no permitido por CORS'));
+  },
+}));
 app.use(express.json());
+
+function requireBotSecret(req, res, next) {
+  if (!BOT_API_SECRET) {
+    next();
+    return;
+  }
+
+  const provided = req.get('x-bot-secret');
+  if (provided !== BOT_API_SECRET) {
+    return res.status(401).json({ error: 'No autorizado' });
+  }
+
+  next();
+}
+
+app.use('/api/whatsapp', requireBotSecret);
 
 // Main map keeping track of instantiated doctors
 const clients = {};

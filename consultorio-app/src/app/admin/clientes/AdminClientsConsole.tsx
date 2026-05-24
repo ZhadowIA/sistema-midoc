@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowRightLeft,
@@ -272,7 +272,7 @@ export function AdminClientsConsole() {
     aiOverrides: DetailResponse["client"]["aiOverrides"];
   } | null>(null);
 
-  async function loadClients() {
+  const loadClients = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
@@ -294,7 +294,7 @@ export function AdminClientsConsole() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [activeFilter, aiFilter, page, pageSize, planFilter, riskFilter, search, statusFilter]);
   async function loadSecurityOverview() {
     try {
       const response = await fetch("/api/internal-admin/security/2fa/overview", { cache: "no-store" });
@@ -351,7 +351,7 @@ export function AdminClientsConsole() {
       void loadClients();
     }, 250);
     return () => clearTimeout(timer);
-  }, [search, planFilter, statusFilter, aiFilter, activeFilter, riskFilter, page, pageSize]);
+  }, [loadClients]);
 
   const filteredClients = payload?.clients ?? [];
 

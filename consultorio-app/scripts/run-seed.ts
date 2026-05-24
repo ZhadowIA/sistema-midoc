@@ -1,4 +1,4 @@
-import { PrismaClient, MedicalSpecialty } from '@prisma/client'
+import { Prisma, PrismaClient, MedicalSpecialty } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
@@ -101,7 +101,7 @@ async function ensureSubscription(
       provider: 'MOCK',
       planName,
       currency: 'MXN',
-      features: features as any,
+      features: features as Prisma.InputJsonValue,
     },
     create: {
       doctorId,
@@ -109,7 +109,7 @@ async function ensureSubscription(
       provider: 'MOCK',
       planName,
       currency: 'MXN',
-      features: features as any,
+      features: features as Prisma.InputJsonValue,
     },
   })
 }

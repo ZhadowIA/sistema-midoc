@@ -4,7 +4,7 @@ Estado: Vigente
 Ultima actualizacion: 2026-04-15  
 Referencia principal: `docs/SISTEMA_ACTUAL.md`
 Complementos operativos:
-- `docs/ops/go-live-roadmap-4-6-semanas.md`
+- `docs/ROADMAP_MAESTRO.md`
 - `docs/ops/go-live-p0-evidence-checklist.md`
 - `docs/ops/commercial-state-policy.md`
 - `docs/ops/minimum-alerts-matrix.md`
@@ -65,7 +65,7 @@ Solo liberar a produccion comercial cuando todos los puntos P0 esten cerrados y 
 
 Este documento sigue siendo la lista P0 resumida. La ejecución detallada ahora se apoya en:
 
-- `docs/ops/go-live-roadmap-4-6-semanas.md` — secuencia por olas y semanas.
+- `docs/ROADMAP_MAESTRO.md` — secuencia por olas y semanas.
 - `docs/ops/go-live-p0-evidence-checklist.md` — evidencia exigible por cada bloqueador.
 - `docs/ops/commercial-state-policy.md` — definición canónica de estados, gracia y degradación.
 - `docs/ops/minimum-alerts-matrix.md` — alertas mínimas obligatorias para producción.
