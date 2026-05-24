@@ -1,6 +1,6 @@
 import { addMinutes, format } from 'date-fns'
 import type { AppointmentStatus, PrismaClient } from '@prisma/client'
-import { getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
+import { getWhatsAppProviderJsonHeaders, getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
 import { formatPatientName } from '@/lib/patientName'
 import { AppointmentAuditService } from '@/services/AppointmentAuditService'
 import {
@@ -117,7 +117,7 @@ export async function rescheduleAppointment(input: RescheduleAppointmentInput) {
     try {
       await fetch(getWhatsAppProviderSendUrl(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getWhatsAppProviderJsonHeaders(),
         body: JSON.stringify({ doctorId: input.doctorId, to: updated.patient.phone, message: msg }),
       })
     } catch (err) {

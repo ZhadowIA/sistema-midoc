@@ -2,7 +2,7 @@
 
 Fecha: 2026-04-30  
 Entorno: STAGING/PROD-SIM  
-Proveedor: `PENDIENTE` (`STRIPE` / `CONEKTA` / `OPENPAY`)  
+Proveedor objetivo: `STRIPE`  
 Responsable: `PENDIENTE`
 
 ## Precondiciones
@@ -11,6 +11,14 @@ Responsable: `PENDIENTE`
 - Webhook configurado con secreto correcto
 - Usuario de prueba comercial dedicado
 - Trazabilidad habilitada (`PaymentWebhookEvent`, `DoctorSubscription`, `AuditLog`)
+- `PAYMENTS_PROVIDER=STRIPE`
+- Price IDs productivos configurados por plan/add-on:
+  - `STRIPE_PRICE_AGENDA_MONTHLY`
+  - `STRIPE_PRICE_CLINICAL_MONTHLY`
+  - `STRIPE_PRICE_INTEGRAL_MONTHLY`
+  - `STRIPE_PRICE_AI_30_MONTHLY`
+  - `STRIPE_PRICE_AI_60_MONTHLY`
+  - `STRIPE_PRICE_AI_100_MONTHLY`
 
 ## Matriz E2E obligatoria
 

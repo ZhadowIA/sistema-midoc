@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { requireAgendaDoctorApiAccess } from '@/lib/medicalApi'
+import { buildWhatsAppProviderUrl, getWhatsAppProviderAuthHeaders } from '@/lib/whatsappProvider'
 import { z } from 'zod'
 
 function asNullableString(value: unknown): string | null {
@@ -50,8 +51,8 @@ export async function GET() {
     
     try {
       // Intentamos consultar al bot directamente
-      const botBaseUrl = process.env.WHATSAPP_API_URL?.replace('/send', '') || 'http://localhost:3001/api/whatsapp'
-      const botRes = await fetch(`${botBaseUrl}/status/${doctorId}`, { 
+      const botRes = await fetch(buildWhatsAppProviderUrl(`/status/${doctorId}`), { 
+        headers: getWhatsAppProviderAuthHeaders(),
         signal: AbortSignal.timeout(2000) // Timeout corto para no bloquear el dashboard
       })
       
