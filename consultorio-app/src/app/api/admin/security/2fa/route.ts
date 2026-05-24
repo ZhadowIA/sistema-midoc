@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireStaffApiAccess } from "@/lib/medicalApi";
 import { jsonNoStore } from "@/lib/http";

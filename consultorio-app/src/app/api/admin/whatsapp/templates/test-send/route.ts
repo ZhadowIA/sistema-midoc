@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { WhatsAppMessageAction, WhatsAppMessageDirection } from '@prisma/client'
 import prisma from '@/lib/prisma'
 import { requireAgendaDoctorApiAccess } from '@/lib/medicalApi'
-import { getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
+import { getWhatsAppProviderJsonHeaders, getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
 import { WhatsAppMessageLogService } from '@/services/WhatsAppMessageLogService'
 import {
   resolveWhatsAppTemplate,
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
 
     const providerResponse = await fetch(getWhatsAppProviderSendUrl(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getWhatsAppProviderJsonHeaders(),
       body: JSON.stringify({
         doctorId,
         to: parsed.data.phone,

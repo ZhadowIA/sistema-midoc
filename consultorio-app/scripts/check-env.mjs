@@ -21,12 +21,9 @@ function parseEnvFile(content) {
   return values;
 }
 
-if (!fs.existsSync(envPath)) {
-  console.error("❌ No se encontró archivo .env en la raíz del proyecto.");
-  process.exit(1);
-}
-
-const envValues = parseEnvFile(fs.readFileSync(envPath, "utf-8"));
+const envValues = fs.existsSync(envPath)
+  ? { ...process.env, ...parseEnvFile(fs.readFileSync(envPath, "utf-8")) }
+  : process.env;
 const requiredKeys = [
   "DATABASE_URL",
   "NEXTAUTH_SECRET",

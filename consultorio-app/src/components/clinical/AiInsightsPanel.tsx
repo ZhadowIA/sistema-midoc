@@ -165,25 +165,6 @@ export function AiInsightsPanel({
     [onApplyTreatment, trackAction],
   );
 
-  const editDiagnosis = useCallback(
-    (diagnosis: string) => {
-      const edited = window.prompt("Edita el diagnóstico antes de aplicarlo:", diagnosis);
-      if (!edited || !edited.trim()) return;
-      applyDiagnosis(diagnosis, "EDITED", edited.trim());
-    },
-    [applyDiagnosis],
-  );
-
-  const editTreatment = useCallback(
-    (treatment: string, instructions?: string) => {
-      const payload = instructions ? `${treatment} — ${instructions}` : treatment;
-      const edited = window.prompt("Edita el tratamiento antes de aplicarlo:", payload);
-      if (!edited || !edited.trim()) return;
-      applyTreatment(treatment, instructions, "EDITED", edited.trim());
-    },
-    [applyTreatment],
-  );
-
   const resolveActionLabel = (action: AIInsightAction | undefined) => {
     if (action === "EDITED") return "Editado";
     if (action === "REJECTED") return "Rechazado";

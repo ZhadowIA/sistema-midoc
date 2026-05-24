@@ -38,7 +38,6 @@ type ProcessVacancyInput = {
 }
 
 const UNCONFIRMED_LEAD_MINUTES_DEFAULT = 180
-const UNCONFIRMED_MARKER_PREFIX = 'WAITLIST_UNCONFIRMED_TRIGGERED:'
 
 const OFFER_TTL_MINUTES = 15
 const WAITLIST_BLOCK_REASON_PREFIX = 'WAITLIST_OFFER:'
@@ -557,7 +556,13 @@ export class WaitlistService {
       where: {
         status: AppointmentStatus.PENDING,
         startTime: { gt: now, lte: cutoff },
-        externalId: { not: { startsWith: UNCONFIRMED_MARKER_PREFIX } },
+        waitlistOffers: {
+          none: {
+            offerType: {
+              in: [WaitlistOfferType.WAITLIST, WaitlistOfferType.SAME_DAY_ADVANCE],
+            },
+          },
+        },
       },
       select: {
         id: true,
@@ -570,11 +575,6 @@ export class WaitlistService {
 
     let processed = 0
     for (const appt of unconfirmed) {
-      await prisma.appointment.update({
-        where: { id: appt.id },
-        data: { externalId: `${UNCONFIRMED_MARKER_PREFIX}${appt.id}` },
-      })
-
       await this.processVacancy({
         doctorId: appt.doctorId,
         clinicId: appt.clinicId,
@@ -742,32 +742,5 @@ export class WaitlistService {
         expiredAt: now,
       },
     })
-  }
-
-  private static async sendOfferWhatsApp(input: {
-    doctorId: string
-    to: string
-    patientName: string
-    offerId: string
-    slotStartTime: Date
-    expiresAt: Date
-  }) {
-    const msg =
-      `Hola *${input.patientName}*, se liberó un espacio para consulta el *${format(input.slotStartTime, 'dd/MM/yyyy HH:mm')}*. ` +
-      `Responde en portal para tomarlo antes de *${format(input.expiresAt, 'HH:mm')}* (ID oferta: ${input.offerId}).`
-
-    try {
-      await fetch(getWhatsAppProviderSendUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          doctorId: input.doctorId,
-          to: input.to,
-          message: msg,
-        }),
-      })
-    } catch (error) {
-      console.error('[WaitlistService] No se pudo enviar oferta por WhatsApp', error)
-    }
   }
 }

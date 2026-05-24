@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
+type PublicAvailabilitySlot = {
+  startTime: string;
+  endTime: string;
+  isAvailable: boolean;
+};
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
@@ -77,7 +83,7 @@ export async function GET(
 
         return acc;
       },
-      {} as Record<string, any[]>
+      {} as Record<string, PublicAvailabilitySlot[]>
     );
 
     const response = Array.from(
@@ -107,16 +113,18 @@ export async function GET(
   }
 }
 
-function generateSlots(
-  startTime: Date,
-  endTime: Date,
-  durationMin: number
-): Array<{
+type GeneratedSlot = {
   start: string;
   end: string;
   startTime: string;
   endTime: string;
-}> {
+};
+
+function generateSlots(
+  startTime: Date,
+  endTime: Date,
+  durationMin: number
+): GeneratedSlot[] {
   const slots = [];
   let current = new Date(startTime);
 

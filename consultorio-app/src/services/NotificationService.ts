@@ -11,7 +11,7 @@ import {
 import { addHours, addMinutes, format, subHours, subMinutes } from 'date-fns'
 import prisma from '../lib/prisma'
 import { WhatsAppMessageLogService } from './WhatsAppMessageLogService'
-import { getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
+import { getWhatsAppProviderJsonHeaders, getWhatsAppProviderSendUrl } from '@/lib/whatsappProvider'
 import { AppointmentAuditService } from './AppointmentAuditService'
 import { formatPatientName } from '@/lib/patientName'
 import { sendSms } from '@/lib/smsProvider'
@@ -469,7 +469,7 @@ export class NotificationService {
     try {
       const response = await fetch(this.getProviderUrl(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getWhatsAppProviderJsonHeaders(),
         body: JSON.stringify({
           doctorId: appointment.doctorId,
           to: patientPhone,
