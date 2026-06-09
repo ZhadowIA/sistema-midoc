@@ -1,0 +1,11 @@
+{
+  "name": "sistema-midoc-v2",
+  "private": true,
+  "scripts": {
+    "dev:app": "npm --prefix consultorio-app run dev",
+    "test": "npm --prefix consultorio-app run test",
+    "lint": "npm --prefix consultorio-app run lint",
+    "build": "npm --prefix consultorio-app run build",
+    "env:check": "npm --prefix consultorio-app run env:check"
+  }
+}
