@@ -2,115 +2,57 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Monorepo structure
+## Repository structure
 
+```text
+Sistema MiDoc/
+├── V1/                      # Previous system. FROZEN — read-only reference, never modified or deployed.
+│   ├── consultorio-app/     # Next.js 16 full-stack SaaS app
+│   ├── whatsapp-bot/        # Express service (whatsapp-web.js)
+│   └── frontend/            # Legacy UI reference
+└── V2/                      # Active development
+    ├── consultorio-app/     # Cloud portal (Next.js + minimal PostgreSQL)
+    ├── desktop-app/         # Doctor's app (Tauri 2 + React + encrypted SQLite) — created in step 0
+    └── *.md                 # Product docs, development line, rules
 ```
-sistema-midoc/
-├── consultorio-app/   # Next.js 16 full-stack app (frontend + API)
-└── whatsapp-bot/      # Standalone Express service (whatsapp-web.js)
-```
 
-The two services communicate via webhooks: the bot forwards inbound WhatsApp messages to `POST /api/internal/whatsapp/incoming` (authenticated with `x-whatsapp-secret`), and `consultorio-app` sends outbound messages by calling the bot's REST API at `WHATSAPP_API_URL`.
+## V2 architecture (current decision, 2026-06-09)
 
----
+V2 is **local-first**: all clinical data (records, SOAP notes, prescriptions, documents) lives encrypted on the doctor's computer inside the installable desktop app. The cloud portal only handles public booking, the doctor's public profile, a temporary encrypted inbox (pre-consultation forms and patient uploads, purged after the desktop app syncs them down), SMS/email notifications, and the SaaS subscription. **No clinical data is ever persisted permanently in the cloud.** Everything is TypeScript.
 
-## consultorio-app
+There is no WhatsApp bot in V2 — notifications use SMS and email.
 
-### Commands
+## Mandatory reading before working on V2
+
+- `V2/REGLAS_DESARROLLO.md` — binding development rules (layering, Zod at boundaries, data-residency classification, testing requirements, Definition of Done, git flow). Follow them exactly.
+- `V2/10_linea_de_desarrollo.md` — stepped development line with gates. Every task must be located in a step; tasks belonging to future steps are documented, not implemented.
+- `V2/01_contexto_v2.md` — product context and architecture decision.
+- `V2/12_inventario_funcional_v1.md` — full V1 feature inventory with keep/adapt/defer/omit proposals.
+
+## Key rules (summary — full version in REGLAS_DESARROLLO.md)
+
+- Never persist clinical content in the cloud, in logs, telemetry, or error messages — reference IDs only.
+- Route handlers and UI components delegate business logic to domain services; validate all external input with Zod.
+- V1 code is consulted for business rules but never imported — reimplement under V2 conventions.
+- No feature is done without tests, passing lint/types, and updated docs.
+- Work on short branches (`v2/<step>-<description>`), PR into `dev`; `main` only receives validated merges from `dev`.
+
+## Next.js version warning
+
+V2's portal uses **Next.js 16**, which has breaking changes from prior versions. Before writing any Next.js-specific code, check `V2/consultorio-app/node_modules/next/dist/docs/` for the relevant guide. Do not rely on training-data conventions.
+
+## V2 portal commands (V2/consultorio-app)
 
 ```bash
-npm run dev             # dev server (localhost:3000)
-npm run dev:turbo       # dev with Turbopack
+npm run dev
 npm run build
 npm run lint
-npm run env:check       # validate all required env vars
-npm run test            # unit + integration
-npm run test:unit
-npm run test:integration
-
-# Database
-npm run db:migrate:dev         # apply dev migrations
-npm run db:migrate:deploy      # apply production migrations
-npm run db:migrate:status
-npm run db:generate:no-engine  # regenerate Prisma client
+npm run test
+npm run env:check
+npm run db:migrate:dev
+npm run db:generate:no-engine
 ```
 
-Seed the local DB with `tsx prisma/seed.ts`. Default credentials: `admin@consultorio.com` / `admin123`.
+## V1 reference documentation
 
-### Next.js version warning
-
-This project uses **Next.js 16**, which has breaking changes from prior versions. Before writing any Next.js-specific code, check `node_modules/next/dist/docs/` for the relevant guide. Do not rely on training-data conventions for routing, data fetching, or middleware — they may not apply.
-
-### Architecture
-
-**API route layers** (`src/app/api/`):
-- `public/*` — unauthenticated booking endpoints (availability, slot holds, appointments, questionnaires)
-- `auth/*` — doctor and patient auth, registration, onboarding, subscription
-- `admin/*` — doctor panel (appointments, SOAP/AI, patients, config, WhatsApp, billing)
-- `internal/*` — cron-triggered notification processing and inbound WhatsApp webhook
-- `payments/*` — checkout placeholder and idempotent payment webhook
-
-**Domain services** (`src/services/`): `AppointmentService`, `AvailabilityService`, `NotificationService`, `QuestionnaireService`, `AppointmentAuditService`, `WhatsAppMessageLogService`. Route handlers should delegate business logic here rather than implementing it inline.
-
-**Utilities** (`src/lib/`): `aiNoteService.ts` (OpenAI integration with Zod validation, retry/backoff, JSON sanitization), `auth.ts`/`session.ts` (JWT in HttpOnly cookie `med_token`), `whatsappProvider.ts`, `env.ts`, `rateLimit.ts`, `dateTime.ts`.
-
-### Key data model relationships
-
-- `User` (doctor) → `DoctorConfig` (1:1), `DoctorSubscription` (1:1), `DoctorOnboarding` (1:1)
-- `Patient` is per-doctor (`ownerDoctorId`) and can optionally be linked to a `User` patient account (`userId`)
-- `Appointment` has `source` (PATIENT | DOCTOR) and `status` (PENDING | CONFIRMED | CANCELLED | RESCHEDULED | COMPLETED)
-- `Notification` is a queue consumed by the internal cron; supports WhatsApp/SMS/EMAIL channels
-- `AppointmentAuditLog` records every critical state change with actor + source
-
-### SaaS onboarding flow
-
-Register → Subscribe (`POST /api/auth/subscribe`) → Onboarding (`POST /api/auth/onboarding/complete`). `GET /api/auth/setup-status` returns `nextStep` (`SUBSCRIPTION` | `ONBOARDING` | `DASHBOARD`) to drive redirects.
-
-### AI features
-
-Audio-to-SOAP pipeline: audio upload → OpenAI transcription → structured SOAP JSON, validated with Zod. `src/lib/aiNoteService.ts` owns this with timeout, retry-with-backoff, and deterministic pharmacovigilance deduplication. `AIInsight` stores diagnosis/treatment suggestions separately from `ClinicalNote`.
-
-### Required environment variables
-
-```
-DATABASE_URL
-NEXTAUTH_SECRET
-APP_BASE_URL
-QUESTIONNAIRE_TOKEN_SECRET
-TERMS_VERSION
-PRIVACY_VERSION
-WHATSAPP_API_URL
-WHATSAPP_WEBHOOK_SECRET
-NOTIFICATION_CRON_SECRET
-OPENAI_API_KEY           # optional; required for AI features
-PAYMENTS_PROVIDER        # MOCK | STRIPE | CONEKTA | OPENPAY
-PAYMENTS_WEBHOOK_SECRET
-```
-
-Full reference in `consultorio-app/.env.example`. Run `npm run env:check` to validate.
-
----
-
-## whatsapp-bot
-
-### Commands
-
-```bash
-npm run dev   # node index.js (localhost:3001)
-```
-
-### Environment variables
-
-```
-PORT=3001
-APP_WEBHOOK_URL=http://localhost:3000/api/internal/whatsapp/incoming
-APP_WEBHOOK_SECRET=<must match consultorio-app WHATSAPP_WEBHOOK_SECRET>
-```
-
----
-
-## Authoritative documentation
-
-- `consultorio-app/docs/SISTEMA_ACTUAL.md` — canonical technical and functional spec (updated 2026-04-15)
-- `consultorio-app/docs/DEPLOY_CHECKLIST.md` — pre-production requirements
-- `consultorio-app/docs/ROADMAP_MAESTRO.md` — canonical consolidated roadmap
+Canonical V1 spec (for understanding inherited business rules): `V1/consultorio-app/docs/SISTEMA_ACTUAL.md`, index at `V1/consultorio-app/docs/INDICE_DOCUMENTACION.md`.
