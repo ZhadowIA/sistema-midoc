@@ -1,30 +1,23 @@
-# Sistema MiDoc Monorepo
+# Sistema MiDoc
 
-Monorepo principal de MiDoc.
+Plataforma para consultorios medicos. El repositorio contiene dos generaciones del sistema:
 
-## Servicios
-- `consultorio-app/`: aplicación principal clínica/comercial en Next.js + Prisma.
-- `whatsapp-bot/`: bot de WhatsApp para notificaciones y automatizaciones.
-- `frontend/`: referencia visual/UI desacoplada del backend.
-
-## Documentación canónica
-- Índice maestro: `consultorio-app/docs/INDICE_DOCUMENTACION.md`
-- Estado actual del sistema: `consultorio-app/docs/SISTEMA_ACTUAL.md`
-- Roadmap maestro: `consultorio-app/docs/ROADMAP_MAESTRO.md`
-- Historial de fases completadas: `consultorio-app/docs/FASES_COMPLETADAS.md`
-- Mapa documental: `consultorio-app/docs/MAPA_DOCUMENTAL.md`
-
-## Desarrollo local
-### Opción rápida
-```powershell
-.\setup.ps1
+```text
+Sistema MiDoc/
+├── V1/   # Sistema anterior (Next.js SaaS + bot WhatsApp). Congelado, solo referencia.
+└── V2/   # Sistema en desarrollo: app de escritorio local-first + portal nube.
 ```
 
-### Opción manual
-1. Crear `.env` desde los `.env.example` de cada servicio.
-2. Instalar dependencias por servicio.
-3. Ejecutar los servicios necesarios.
+## V2 (activo)
 
-## Regla documental
-La puerta de entrada documental del producto es `consultorio-app/docs/INDICE_DOCUMENTACION.md`.
-Los documentos legacy o reemplazados viven en `consultorio-app/docs/archive/`.
+V2 es un rediseño local-first: los datos clinicos viven cifrados en el ordenador del medico (app de escritorio Tauri 2 + SQLite cifrado) y la nube solo opera agenda publica, buzon temporal, notificaciones SMS/correo y suscripcion (portal Next.js).
+
+- Punto de entrada documental: `V2/README.md`
+- Contexto y arquitectura: `V2/01_contexto_v2.md`
+- Linea de desarrollo: `V2/10_linea_de_desarrollo.md`
+- Inventario funcional heredado de V1: `V2/12_inventario_funcional_v1.md`
+- Reglas obligatorias de desarrollo: `V2/REGLAS_DESARROLLO.md`
+
+## V1 (congelado)
+
+V1 no se mantiene ni se despliega; se conserva como referencia de reglas de negocio para la reimplementacion. Su documentacion vive en `V1/consultorio-app/docs/` (indice: `INDICE_DOCUMENTACION.md`).
