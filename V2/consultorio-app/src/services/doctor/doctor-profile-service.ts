@@ -6,16 +6,10 @@ import {
 } from "@prisma/client";
 
 import { writeAuditLog } from "../../lib/audit";
+import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 
-class DoctorProfileServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly status = 400
-  ) {
-    super(message);
-  }
-}
+class DoctorProfileServiceError extends ServiceError {}
 
 function assertTimeRange(startTime: string, endTime: string) {
   const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -100,7 +94,20 @@ export async function updateDoctorProfile(
   const { doctor, doctorProfile } = await getDoctorProfileOrThrow(userId);
 
   if (input.publicSlug) {
-    assertSlug(input.publicSlug.trim());
+    const slug = input.publicSlug.trim();
+    assertSlug(slug);
+
+    const slugTaken = await prisma.doctorProfile.findFirst({
+      where: {
+        publicSlug: slug,
+        id: { not: doctorProfile.id }
+      },
+      select: { id: true }
+    });
+
+    if (slugTaken) {
+      throw new DoctorProfileServiceError("Ese enlace publico ya esta en uso.", 409);
+    }
   }
 
   if (input.consultationDuration !== undefined && input.consultationDuration <= 0) {
@@ -275,6 +282,34 @@ export async function createAvailabilityRule(
 
   const ruleType = input.specificDate ? AvailabilityRuleType.DATE_OVERRIDE : AvailabilityRuleType.WEEKLY;
 
+  if (ruleType === AvailabilityRuleType.WEEKLY && input.dayOfWeek === undefined) {
+    throw new DoctorProfileServiceError("Weekly rules require dayOfWeek.");
+  }
+
+  // Overlapping active rules on the same day would duplicate public slots.
+  const siblingRules = await prisma.doctorAvailability.findMany({
+    where: {
+      doctorProfileId: doctorProfile.id,
+      isActive: true,
+      ruleType,
+      ...(ruleType === AvailabilityRuleType.WEEKLY
+        ? { dayOfWeek: input.dayOfWeek }
+        : { specificDate: new Date(input.specificDate!) })
+    },
+    select: { startTime: true, endTime: true }
+  });
+
+  const overlaps = siblingRules.some(
+    (sibling) => input.startTime < sibling.endTime && sibling.startTime < input.endTime
+  );
+
+  if (overlaps) {
+    throw new DoctorProfileServiceError(
+      "El horario se solapa con una regla de disponibilidad existente.",
+      409
+    );
+  }
+
   const rule = await prisma.doctorAvailability.create({
     data: {
       doctorProfileId: doctorProfile.id,
@@ -302,6 +337,104 @@ export async function createAvailabilityRule(
   });
 
   return rule;
+}
+
+export async function setAvailabilityRuleActive(
+  userId: string,
+  ruleId: string,
+  isActive: boolean
+) {
+  const { doctor, doctorProfile } = await getDoctorProfileOrThrow(userId);
+
+  const existingRule = await prisma.doctorAvailability.findFirst({
+    where: {
+      id: ruleId,
+      doctorProfileId: doctorProfile.id
+    }
+  });
+
+  if (!existingRule) {
+    throw new DoctorProfileServiceError("Availability rule not found.", 404);
+  }
+
+  const rule = await prisma.doctorAvailability.update({
+    where: { id: existingRule.id },
+    data: { isActive }
+  });
+
+  await writeAuditLog({
+    actorUserId: doctor.id,
+    entityType: "DoctorAvailability",
+    entityId: rule.id,
+    action: isActive ? "doctor-availability.activated" : "doctor-availability.deactivated",
+    source: "doctor-profile-service"
+  });
+
+  return rule;
+}
+
+export async function deleteAvailabilityRule(userId: string, ruleId: string) {
+  const { doctor, doctorProfile } = await getDoctorProfileOrThrow(userId);
+
+  const existingRule = await prisma.doctorAvailability.findFirst({
+    where: {
+      id: ruleId,
+      doctorProfileId: doctorProfile.id
+    }
+  });
+
+  if (!existingRule) {
+    throw new DoctorProfileServiceError("Availability rule not found.", 404);
+  }
+
+  await prisma.doctorAvailability.delete({
+    where: { id: existingRule.id }
+  });
+
+  await writeAuditLog({
+    actorUserId: doctor.id,
+    entityType: "DoctorAvailability",
+    entityId: existingRule.id,
+    action: "doctor-availability.deleted",
+    source: "doctor-profile-service",
+    metadata: {
+      ruleType: existingRule.ruleType,
+      dayOfWeek: existingRule.dayOfWeek,
+      startTime: existingRule.startTime,
+      endTime: existingRule.endTime
+    }
+  });
+}
+
+export async function deleteAvailabilityBlock(userId: string, blockId: string) {
+  const { doctor, doctorProfile } = await getDoctorProfileOrThrow(userId);
+
+  const existingBlock = await prisma.doctorAvailabilityBlock.findFirst({
+    where: {
+      id: blockId,
+      doctorProfileId: doctorProfile.id
+    }
+  });
+
+  if (!existingBlock) {
+    throw new DoctorProfileServiceError("Availability block not found.", 404);
+  }
+
+  await prisma.doctorAvailabilityBlock.delete({
+    where: { id: existingBlock.id }
+  });
+
+  await writeAuditLog({
+    actorUserId: doctor.id,
+    entityType: "DoctorAvailabilityBlock",
+    entityId: existingBlock.id,
+    action: "doctor-availability-block.deleted",
+    source: "doctor-profile-service",
+    metadata: {
+      startsAt: existingBlock.startsAt.toISOString(),
+      endsAt: existingBlock.endsAt.toISOString()
+    }
+  });
 }
 
 export async function createAvailabilityBlock(

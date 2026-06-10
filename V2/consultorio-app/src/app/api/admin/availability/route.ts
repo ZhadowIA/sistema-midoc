@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { toErrorResponse } from "../../../../lib/api-error";
 import { requireDoctorUser } from "../../../../lib/auth/session-user";
 import { createAvailabilityRule, getDoctorWorkspace } from "../../../../services/doctor/doctor-profile-service";
 
@@ -23,12 +24,7 @@ export async function GET(request: Request) {
       availability: workspace.availabilityRules
     });
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unauthorized"
-      },
-      { status: 401 }
-    );
+    return toErrorResponse(error, "No se pudo obtener la disponibilidad.");
   }
 }
 
@@ -40,13 +36,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ rule }, { status: 201 });
   } catch (error) {
-    const status = typeof error === "object" && error && "status" in error ? Number(error.status) : 400;
-
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unable to create availability rule."
-      },
-      { status }
-    );
+    return toErrorResponse(error, "No se pudo crear la regla de disponibilidad.");
   }
 }

@@ -12,7 +12,10 @@ import {
   createAvailabilityBlock,
   createAvailabilityRule,
   createDoctorService,
+  deleteAvailabilityBlock,
+  deleteAvailabilityRule,
   getPublicDoctorProfile,
+  setAvailabilityRuleActive,
   updateDoctorProfile
 } from "../../src/services/doctor/doctor-profile-service";
 
@@ -202,6 +205,136 @@ describe("doctor setup and public profile", () => {
       expect(publicProfile?.services[0]?.name).toBe("Limpieza dental");
       expect(publicProfile?.availability).toHaveLength(1);
       expect(publicProfile?.blocks).toHaveLength(1);
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("rejects a duplicate public slug with a conflict error", async () => {
+    const emailA = uniqueEmail("doctor-slug-a");
+    const emailB = uniqueEmail("doctor-slug-b");
+    const slug = uniqueSlug("dr-slug-compartido");
+
+    try {
+      const accountA = await createDoctorAccount({
+        email: emailA,
+        password: "Str0ngPass!123",
+        firstName: "Marta",
+        lastName: "Lopez",
+        professionalName: "Dra. Marta Lopez",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+      const accountB = await createDoctorAccount({
+        email: emailB,
+        password: "Str0ngPass!123",
+        firstName: "Hugo",
+        lastName: "Reyes",
+        professionalName: "Dr. Hugo Reyes",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await updateDoctorProfile(accountA.user.id, { publicSlug: slug });
+
+      await expect(
+        updateDoctorProfile(accountB.user.id, { publicSlug: slug })
+      ).rejects.toMatchObject({ status: 409 });
+    } finally {
+      await cleanupUserByEmail(emailA);
+      await cleanupUserByEmail(emailB);
+    }
+  });
+
+  it("rejects overlapping availability rules on the same day", async () => {
+    const email = uniqueEmail("doctor-overlap");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Nora",
+        lastName: "Campos",
+        professionalName: "Dra. Nora Campos",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: 3,
+        startTime: "09:00",
+        endTime: "13:00"
+      });
+
+      await expect(
+        createAvailabilityRule(account.user.id, {
+          dayOfWeek: 3,
+          startTime: "12:00",
+          endTime: "15:00"
+        })
+      ).rejects.toMatchObject({ status: 409 });
+
+      // Adjacent (non-overlapping) range on the same day is fine.
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: 3,
+        startTime: "13:00",
+        endTime: "17:00"
+      });
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("lets the doctor deactivate and delete availability rules and blocks", async () => {
+    const email = uniqueEmail("doctor-edit-availability");
+    const slug = uniqueSlug("dra-edicion");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Iris",
+        lastName: "Duarte",
+        professionalName: "Dra. Iris Duarte",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        isPublic: true
+      });
+
+      const rule = await createAvailabilityRule(account.user.id, {
+        dayOfWeek: 4,
+        startTime: "09:00",
+        endTime: "12:00"
+      });
+      const block = await createAvailabilityBlock(account.user.id, {
+        startsAt: "2027-01-05T09:00:00.000Z",
+        endsAt: "2027-01-05T10:00:00.000Z"
+      });
+
+      await setAvailabilityRuleActive(account.user.id, rule.id, false);
+      const profileWhileInactive = await getPublicDoctorProfile(slug);
+      expect(profileWhileInactive?.availability).toHaveLength(0);
+
+      await deleteAvailabilityBlock(account.user.id, block.id);
+      await deleteAvailabilityRule(account.user.id, rule.id);
+
+      const remaining = await prisma.doctorAvailability.findFirst({
+        where: { id: rule.id }
+      });
+      expect(remaining).toBeNull();
+
+      // Another doctor's rule must be untouchable.
+      await expect(
+        deleteAvailabilityRule(account.user.id, rule.id)
+      ).rejects.toMatchObject({ status: 404 });
     } finally {
       await cleanupUserByEmail(email);
     }

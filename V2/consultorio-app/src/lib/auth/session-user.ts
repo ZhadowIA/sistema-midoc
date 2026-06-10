@@ -1,6 +1,7 @@
 import { UserRole, type User } from "@prisma/client";
 
 import { SESSION_COOKIE_NAME } from "./session-cookie";
+import { ServiceError } from "../errors";
 import { validateAuthSession } from "../../services/auth/auth-service";
 
 export function getSessionTokenFromCookieHeader(cookieHeader: string | null) {
@@ -25,7 +26,7 @@ export async function requireDoctorUser(request: Request): Promise<User> {
   const user = await getSessionUserFromRequest(request);
 
   if (!user || user.role !== UserRole.DOCTOR) {
-    throw new Error("Unauthorized");
+    throw new ServiceError("No autorizado.", 401);
   }
 
   return user;
