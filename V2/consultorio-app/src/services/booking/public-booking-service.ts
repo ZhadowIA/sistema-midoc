@@ -16,6 +16,7 @@ import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { generateOpaqueToken } from "../../lib/security/token";
 import { writeAuditLog } from "../../lib/audit";
+import { emitSyncEvent } from "../sync/sync-service";
 
 const HOLD_TTL_MS = 1000 * 60 * 10;
 const SLOT_TAKEN_MESSAGE = "El horario seleccionado ya no esta disponible.";
@@ -646,6 +647,23 @@ export async function bookPublicAppointment(input: {
     }
   });
 
+  // Evento para la app del medico: datos de cita y contacto (no clinicos).
+  await emitSyncEvent(hold.doctorId, "APPOINTMENT_BOOKED", {
+    appointmentId: appointment.id,
+    status: appointment.status,
+    scheduledStart: appointment.scheduledStart.toISOString(),
+    scheduledEnd: appointment.scheduledEnd.toISOString(),
+    serviceName: hold.service?.name ?? null,
+    reason: appointment.reason ?? null,
+    patient: {
+      id: patient.id,
+      firstName: patient.firstName,
+      lastName: patient.lastName,
+      phone: patient.phone ?? null,
+      email: patient.email ?? null
+    }
+  });
+
   return {
     appointment,
     patient,
@@ -717,6 +735,11 @@ export async function confirmPublicAppointment(input: { confirmationToken: strin
     source: "public-booking-service"
   });
 
+  await emitSyncEvent(appointment.doctorId, "APPOINTMENT_CONFIRMED", {
+    appointmentId: appointment.id,
+    status: updated.status
+  });
+
   return updated;
 }
 
@@ -754,6 +777,12 @@ export async function cancelPublicAppointment(input: {
     entityId: appointment.id,
     action: "public-booking.appointment-cancelled",
     source: "public-booking-service"
+  });
+
+  await emitSyncEvent(appointment.doctorId, "APPOINTMENT_CANCELLED", {
+    appointmentId: appointment.id,
+    status: updated.status,
+    cancellationReason: updated.cancellationReason ?? null
   });
 
   return updated;
@@ -868,6 +897,13 @@ export async function reschedulePublicAppointment(input: {
     }
   });
 
+  await emitSyncEvent(appointment.doctorId, "APPOINTMENT_RESCHEDULED", {
+    appointmentId: appointment.id,
+    status: updated.status,
+    scheduledStart: updated.scheduledStart.toISOString(),
+    scheduledEnd: updated.scheduledEnd.toISOString()
+  });
+
   return updated;
 }
 
@@ -896,28 +932,35 @@ export async function submitPrecheckin(input: {
     }
   });
 
-  if (existing) {
-    return prisma.precheckinSubmission.update({
-      where: {
-        id: existing.id
-      },
-      data: {
-        status: PrecheckinStatus.SUBMITTED,
-        responses: jsonResponses,
-        submittedAt: new Date()
-      }
-    });
-  }
+  const submission = existing
+    ? await prisma.precheckinSubmission.update({
+        where: {
+          id: existing.id
+        },
+        data: {
+          status: PrecheckinStatus.SUBMITTED,
+          responses: jsonResponses,
+          submittedAt: new Date()
+        }
+      })
+    : await prisma.precheckinSubmission.create({
+        data: {
+          appointmentId: appointment.id,
+          patientId: appointment.patientId,
+          status: PrecheckinStatus.SUBMITTED,
+          responses: jsonResponses,
+          submittedAt: new Date()
+        }
+      });
 
-  return prisma.precheckinSubmission.create({
-    data: {
-      appointmentId: appointment.id,
-      patientId: appointment.patientId,
-      status: PrecheckinStatus.SUBMITTED,
-      responses: jsonResponses,
-      submittedAt: new Date()
-    }
+  // CLINICO en transito: este payload se purga del buzon tras el ACK.
+  await emitSyncEvent(appointment.doctorId, "PRECHECKIN_SUBMITTED", {
+    appointmentId: appointment.id,
+    precheckinId: submission.id,
+    responses: jsonResponses
   });
+
+  return submission;
 }
 
 export async function listDoctorAppointments(doctorUserId: string) {
