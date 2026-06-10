@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requestIpFrom, toErrorResponse } from "../../../../lib/api-error";
+import { assertRateLimit } from "../../../../lib/rate-limit";
 import { bookPublicAppointment } from "../../../../services/booking/public-booking-service";
 
 const appointmentSchema = z.object({
@@ -29,12 +31,17 @@ const appointmentSchema = z.object({
 
 export async function POST(request: Request) {
   try {
+    const ip = requestIpFrom(request);
+    if (ip) {
+      assertRateLimit({ key: `public-book-ip:${ip}`, limit: 10, windowMs: 1000 * 60 * 15 });
+    }
+
     const payload = appointmentSchema.parse(await request.json());
     const appointment = await bookPublicAppointment({
       ...payload,
       legal: {
         ...payload.legal,
-        ipAddress: request.headers.get("x-forwarded-for") ?? undefined,
+        ipAddress: ip,
         userAgent: request.headers.get("user-agent") ?? undefined
       }
     });
@@ -51,13 +58,6 @@ export async function POST(request: Request) {
       { status: 201 }
     );
   } catch (error) {
-    const status = typeof error === "object" && error && "status" in error ? Number(error.status) : 400;
-
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unable to create appointment."
-      },
-      { status }
-    );
+    return toErrorResponse(error, "No se pudo crear la cita.");
   }
 }
