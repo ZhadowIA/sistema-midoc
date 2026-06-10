@@ -56,6 +56,44 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. |
 | 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. |
 
+## Modelo y esfuerzo recomendado por tipo de tarea
+
+Esta guia ayuda a administrar el costo en tokens: no toda tarea necesita el modelo mas caro ni el maximo razonamiento. Elegir el nivel adecuado por anticipado evita gastar de mas en trabajo mecanico y evita quedarse corto en trabajo critico.
+
+Modelos disponibles (de mayor a menor capacidad/costo): **Opus 4.8** > **Sonnet 4.6** > **Haiku 4.5**. Fable 5 es alternativa de alta capacidad para iteracion rapida. El **esfuerzo de razonamiento** (bajo / medio / alto) se ajusta aparte del modelo.
+
+| Tipo de tarea | Modelo | Esfuerzo | Por que |
+|---|---|---|---|
+| Diseño de arquitectura, contrato de sincronizacion, decisiones de residencia de datos | Opus 4.8 | Alto | Un error de diseño cuesta semanas; aqui el razonamiento profundo se paga solo. |
+| Logica clinica, seguridad, concurrencia (holds, doble reserva, firma, cifrado) | Opus 4.8 | Alto | Correccion no negociable; casos borde sutiles y consecuencias legales. |
+| Implementacion de feature con reglas claras ya definidas | Sonnet 4.6 | Medio | El diseño ya existe; es ejecucion cuidadosa, no exploracion. |
+| UI sobre un sistema de diseño existente | Sonnet 4.6 | Medio | DESIGN.md ya fija las decisiones; es ensamblar con criterio. |
+| Auditoria de un paso contra su checklist | Opus 4.8 | Medio-Alto | Encontrar lo que falta exige criterio; el costo de pasar algo por alto es alto. |
+| Pruebas, refactors mecanicos, ajustes de tipos/lint | Sonnet 4.6 | Bajo-Medio | Trabajo acotado y verificable de inmediato. |
+| Documentacion, redaccion de docs, indices, READMEs | Haiku 4.5 / Sonnet 4.6 | Bajo | Bajo riesgo, alta tolerancia a iteracion. |
+| Exploracion amplia del codigo, busquedas, "donde esta X" | Haiku 4.5 | Bajo | Fan-out de lectura; delegar a subagente cuando aplique. |
+| Scaffolding, instalacion de dependencias, comandos de entorno | Haiku 4.5 | Bajo | Mecanico; el valor esta en hacerlo, no en pensarlo. |
+
+Recomendacion por paso de esta linea (combinando lo anterior con la naturaleza dominante de cada paso):
+
+| Paso | Modelo | Esfuerzo | Nota |
+|---|---|---|---|
+| 0 Preparacion | Sonnet 4.6 | Medio | Scaffolding; subir a Opus solo para el spike de cifrado. |
+| 1 Identidad y legal | Opus 4.8 | Alto | Seguridad de cuenta, tokens, anti-enumeracion. |
+| 2 Perfil y disponibilidad | Sonnet 4.6 | Medio | Subir a Opus para reglas de solapamiento/concurrencia. |
+| 3 Agenda publica | Opus 4.8 | Alto | Holds, doble reserva, contrato de sincronizacion. |
+| 4 Atencion integrada | Opus 4.8 | Alto | Nucleo clinico: versionado, firma, integridad. |
+| 5 Medicina general/familiar | Sonnet 4.6 | Medio | Plantilla estructurada sobre la nota existente. |
+| 6 Paciente y documentos | Opus 4.8 | Medio-Alto | Permisos, expiracion, cifrado del buzon. |
+| 7 Comunicaciones | Sonnet 4.6 | Medio | Cola, reintentos, plantillas; bien acotado. |
+| 8 Odontologia | Sonnet 4.6 | Medio | Plantilla rica pero con patron del paso 5 ya probado. |
+| 9 Piloto seguro | Opus 4.8 | Alto | Backups, restauracion, E2E, firma de instalador. |
+| 10 Operacion presencial | Sonnet 4.6 | Medio | Extiende el nucleo sin tocar su consistencia. |
+| 11 IA gobernada | Opus 4.8 | Alto | Gobernanza, consentimiento, multi-proveedor, costo. |
+| 12 SaaS/compliance | Opus 4.8 | Medio-Alto | ARCO, retencion, 2FA, gating. |
+
+Regla practica: empezar cada tarea en el nivel sugerido, y **subir** un escalon si aparece complejidad inesperada (un caso borde de concurrencia, una decision de diseño no anticipada) o **bajar** si resulta mas mecanico de lo previsto. La verificacion (pruebas, lint, build) se corre siempre, sin importar el modelo.
+
 ## Paso 0 - Preparacion V2
 
 | Campo | Definicion |

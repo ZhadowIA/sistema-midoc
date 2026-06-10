@@ -26,6 +26,7 @@ interface MockNote {
   plan: string;
   diagnosis: string;
   instructions: string;
+  specialty: Record<string, string>;
 }
 
 const mockState = {
