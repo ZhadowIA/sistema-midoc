@@ -143,7 +143,7 @@ Columna **Destino**: en la arquitectura local-first de V2 (ver `01_contexto_v2.m
 | Templates por medico con preview/test | `whatsappTemplatePreview.ts`, endpoints de preview/test-send | Adaptar (propuesta): templates para SMS/correo | Portal nube |
 | Proveedor SMS | `smsProvider.ts`, Twilio (`api/internal/twilio`) | Conservar (propuesta) | Portal nube |
 | Proveedor correo | `emailProvider.ts` | Conservar (propuesta) | Portal nube |
-| Bot WhatsApp completo | `whatsapp-bot/` (whatsapp-web.js), QR por doctor, webhook entrante, intents confirmar/cancelar, `WhatsAppMessageLog` | Omitir (propuesta): decision V2 ya tomada — SMS y correo sustituyen a WhatsApp; ademas whatsapp-web.js es fragil y no oficial | — |
+| Bot WhatsApp completo | `whatsapp-bot/` (whatsapp-web.js), QR por doctor, webhook entrante, intents confirmar/cancelar, `WhatsAppMessageLog` | **Omitir (decidido 2026-06-09)**: whatsapp-web.js usa una API no oficial con riesgo real de baneo del numero del medico; SMS y correo lo sustituyen. WhatsApp solo se reconsideraria via la API oficial de Meta (WhatsApp Business Platform), como canal futuro del paso 7, nunca con clientes no oficiales | — |
 
 ## 11. Pagos, caja y contabilidad
 
@@ -187,6 +187,6 @@ Estas no provienen de V1 pero son consecuencia directa de la arquitectura local-
 - **Conservar (propuesta):** ~45 funciones — el nucleo agenda + expediente + nota + receta + notificaciones + seguridad.
 - **Adaptar (propuesta):** ~20 funciones — todo lo que toca datos clinicos cambia de residencia (nube → app local) y todo lo SaaS cambia de "app web" a "licencia de app instalable".
 - **Diferir (propuesta):** ~12 funciones — operacion presencial (caja, recepcion, lista de espera, recursos), multi-asiento/secretarias, funnel, depositos, 2FA, incidentes.
-- **Omitir (propuesta):** bot de WhatsApp y almacenamiento clinico en Azure Blob — ambos contradicen decisiones V2 ya tomadas.
+- **Omitir:** bot de WhatsApp (**decidido**: API no oficial, riesgo de baneo) y almacenamiento clinico en Azure Blob (propuesta: contradice el local-first).
 
 El contraste detallado con los requerimientos V2 esta en `09_contraste_v1_v2.md` y la tabla de herencia en `07_capacidades_heredadas_y_alcance.md`; este inventario los complementa con el nivel de detalle del codigo real.
