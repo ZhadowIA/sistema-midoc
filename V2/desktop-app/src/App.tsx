@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc";
 import { Atencion } from "./Atencion";
 import "./App.css";
 
@@ -33,6 +33,13 @@ const STATUS_LABELS: Record<string, string> = {
   COMPLETED: "Atendida"
 };
 
+const STATUS_PILLS: Record<string, string> = {
+  PENDING: "pill pill-primary",
+  CONFIRMED: "pill pill-success",
+  CANCELLED: "pill pill-danger",
+  COMPLETED: "pill pill-muted"
+};
+
 const dateTimeFormatter = new Intl.DateTimeFormat("es-MX", {
   dateStyle: "medium",
   timeStyle: "short"
@@ -47,7 +54,7 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
     setBusy(true);
     setError("");
     try {
-      const result = await invoke<UnlockResult>("unlock_database", { passphrase });
+      const result = await call<UnlockResult>("unlock_database", { passphrase });
       setPassphrase("");
       onUnlocked(result);
     } catch (e) {
@@ -58,29 +65,49 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
   }
 
   return (
-    <main className="container">
-      <h1>MiDoc</h1>
-      <p>Introduce tu frase de seguridad para abrir el expediente cifrado.</p>
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void unlock();
-        }}
-      >
-        <input
-          type="password"
-          value={passphrase}
-          onChange={(e) => setPassphrase(e.currentTarget.value)}
-          placeholder="Frase de seguridad"
-          autoFocus
-        />
-        <button type="submit" disabled={busy || passphrase.length === 0}>
-          {busy ? "Abriendo…" : "Desbloquear"}
-        </button>
-      </form>
-      {error && <p className="error">{error}</p>}
-    </main>
+    <div className="auth-shell">
+      <article className="auth-card">
+        <header>
+          <span className="brand-mark">MiDoc</span>
+          <h1>Abre tu expediente</h1>
+          <p>
+            Tu informacion clinica vive cifrada en esta computadora. Introduce tu frase de
+            seguridad para abrirla.
+          </p>
+        </header>
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void unlock();
+          }}
+        >
+          <label className="field">
+            <span>Frase de seguridad</span>
+            <input
+              type="password"
+              value={passphrase}
+              onChange={(e) => setPassphrase(e.currentTarget.value)}
+              autoFocus
+            />
+          </label>
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="button-row">
+            <button
+              className="action-button"
+              type="submit"
+              disabled={busy || passphrase.length === 0}
+            >
+              {busy ? "Abriendo…" : "Desbloquear"}
+            </button>
+          </div>
+        </form>
+      </article>
+    </div>
   );
 }
 
@@ -95,7 +122,7 @@ function LinkAccountForm({ onLinked }: { onLinked: () => void }) {
     setBusy(true);
     setError("");
     try {
-      await invoke("link_account", { serverUrl, email, password });
+      await call("link_account", { serverUrl, email, password });
       setPassword("");
       onLinked();
     } catch (e) {
@@ -106,12 +133,14 @@ function LinkAccountForm({ onLinked }: { onLinked: () => void }) {
   }
 
   return (
-    <section className="card">
-      <h2>Vincular con tu cuenta MiDoc</h2>
-      <p className="meta">
-        Conecta esta computadora con tu agenda en linea. Tus pacientes agendan en el
-        portal y las citas bajan aqui, a tu expediente cifrado.
-      </p>
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Vincula tu cuenta MiDoc</h2>
+        <p>
+          Tus pacientes agendan en el portal y las citas bajan aqui, a tu expediente
+          cifrado. La contrasena no se guarda en este equipo.
+        </p>
+      </div>
       <form
         className="stack"
         onSubmit={(e) => {
@@ -119,32 +148,46 @@ function LinkAccountForm({ onLinked }: { onLinked: () => void }) {
           void link();
         }}
       >
-        <input
-          type="url"
-          value={serverUrl}
-          onChange={(e) => setServerUrl(e.currentTarget.value)}
-          placeholder="https://portal.midoc.mx"
-          required
-        />
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.currentTarget.value)}
-          placeholder="Correo de tu cuenta"
-          required
-        />
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.currentTarget.value)}
-          placeholder="Contrasena"
-          required
-        />
-        <button type="submit" disabled={busy}>
-          {busy ? "Vinculando…" : "Vincular dispositivo"}
-        </button>
+        <label className="field">
+          <span>Direccion del portal</span>
+          <input
+            type="url"
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.currentTarget.value)}
+            required
+          />
+        </label>
+        <label className="field">
+          <span>Correo de tu cuenta</span>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.currentTarget.value)}
+            autoComplete="email"
+            required
+          />
+        </label>
+        <label className="field">
+          <span>Contrasena</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.currentTarget.value)}
+            autoComplete="current-password"
+            required
+          />
+        </label>
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="button-row">
+          <button className="action-button" type="submit" disabled={busy}>
+            {busy ? "Vinculando…" : "Vincular dispositivo"}
+          </button>
+        </div>
       </form>
-      {error && <p className="error">{error}</p>}
     </section>
   );
 }
@@ -160,8 +203,8 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const refresh = useCallback(async () => {
     try {
       const [nextStatus, rows] = await Promise.all([
-        invoke<SyncStatus>("sync_status"),
-        invoke<AppointmentRow[]>("list_appointments")
+        call<SyncStatus>("sync_status"),
+        call<AppointmentRow[]>("list_appointments")
       ]);
       setStatus(nextStatus);
       setAppointments(rows);
@@ -179,7 +222,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     setMessage("");
     setError("");
     try {
-      const summary = await invoke<{ applied_events: number; cursor: number }>("sync_now");
+      const summary = await call<{ applied_events: number; cursor: number }>("sync_now");
       setMessage(
         summary.applied_events === 0
           ? "Sin novedades en el portal."
@@ -194,14 +237,14 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   }
 
   async function lock() {
-    await invoke("lock_database");
+    await call("lock_database");
     onLock();
   }
 
   async function attend(appointmentId: string) {
     setError("");
     try {
-      const encounter = await invoke<{ id: string }>("open_encounter", { appointmentId });
+      const encounter = await call<{ id: string }>("open_encounter", { appointmentId });
       setActiveEncounter(encounter.id);
     } catch (e) {
       setError(String(e));
@@ -220,80 +263,93 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     );
   }
 
-  if (!status) {
-    return (
-      <main className="container">
-        <h1>MiDoc</h1>
-        <p className="meta">Cargando…</p>
-      </main>
-    );
-  }
-
   return (
-    <main className="container wide">
-      <header className="workspace-header">
-        <h1>MiDoc</h1>
-        <div className="row">
-          {status.linked ? (
-            <button onClick={() => void syncNow()} disabled={busy}>
-              {busy ? "Sincronizando…" : "Sincronizar ahora"}
+    <>
+      <header className="app-topbar">
+        <span className="brand-mark">MiDoc</span>
+        <span className="topbar-context">
+          Expediente cifrado · esquema v{unlocked.schema_version}
+        </span>
+        <div className="button-row">
+          {status?.linked ? (
+            <button className="action-button" onClick={() => void syncNow()} disabled={busy}>
+              {busy ? "Sincronizando…" : "Sincronizar"}
             </button>
           ) : null}
-          <button className="secondary" onClick={() => void lock()}>
+          <button className="ghost-button" onClick={() => void lock()}>
             Bloquear
           </button>
         </div>
       </header>
 
-      {message && <p className="success">{message}</p>}
-      {error && <p className="error">{error}</p>}
+      <div className="content">
+        {message && (
+          <p className="form-success" role="status">
+            {message}
+          </p>
+        )}
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
 
-      {!status.linked ? (
-        <LinkAccountForm onLinked={() => void refresh()} />
-      ) : (
-        <section className="card">
-          <h2>Agenda</h2>
-          {appointments.length === 0 ? (
-            <p className="meta">
-              Sin citas todavia. Cuando un paciente agende en tu portal, pulsa
-              &quot;Sincronizar ahora&quot; para traerlas a tu expediente.
-            </p>
-          ) : (
-            <ul className="appointment-list">
-              {appointments.map((appointment) => (
-                <li key={appointment.id} className="appointment-row">
-                  <div>
-                    <strong>{appointment.patient_name}</strong>
-                    <span className="meta">
-                      {" "}
-                      · {appointment.service_name ?? "Consulta"}
-                      {appointment.has_precheckin ? " · preconsulta recibida" : ""}
-                    </span>
-                    <br />
-                    <span className="meta">
-                      {dateTimeFormatter.format(new Date(appointment.scheduled_start))}
-                      {appointment.reason ? ` · ${appointment.reason}` : ""}
-                    </span>
-                  </div>
-                  <div className="row">
-                    <span className={`status status-${appointment.status.toLowerCase()}`}>
-                      {STATUS_LABELS[appointment.status] ?? appointment.status}
-                    </span>
-                    {appointment.status !== "CANCELLED" ? (
-                      <button onClick={() => void attend(appointment.id)}>Atender</button>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
+        {!status ? (
+          <p className="meta">Cargando…</p>
+        ) : !status.linked ? (
+          <LinkAccountForm onLinked={() => void refresh()} />
+        ) : (
+          <section className="panel">
+            <div className="panel-header">
+              <h2>Agenda</h2>
+              <p>Citas sincronizadas desde tu portal publico.</p>
+            </div>
+            {appointments.length === 0 ? (
+              <div className="empty-state">
+                <strong>Sin citas todavia</strong>
+                <p>
+                  Cuando un paciente agende en tu portal, pulsa &quot;Sincronizar&quot; para
+                  traer sus citas a tu expediente.
+                </p>
+              </div>
+            ) : (
+              <ul className="appointment-list">
+                {appointments.map((appointment) => (
+                  <li key={appointment.id} className="list-row">
+                    <div className="list-row-main">
+                      <strong>{appointment.patient_name}</strong>
+                      <span className="meta">
+                        {dateTimeFormatter.format(new Date(appointment.scheduled_start))} ·{" "}
+                        {appointment.service_name ?? "Consulta"}
+                        {appointment.reason ? ` · ${appointment.reason}` : ""}
+                      </span>
+                      {appointment.has_precheckin ? (
+                        <span className="meta">Preconsulta recibida</span>
+                      ) : null}
+                    </div>
+                    <div className="row-actions">
+                      <span className={STATUS_PILLS[appointment.status] ?? "pill pill-muted"}>
+                        {STATUS_LABELS[appointment.status] ?? appointment.status}
+                      </span>
+                      {appointment.status !== "CANCELLED" ? (
+                        <button
+                          className="ghost-button"
+                          onClick={() => void attend(appointment.id)}
+                        >
+                          Atender
+                        </button>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
 
-      <p className="meta footer-meta">
-        Expediente cifrado · esquema v{unlocked.schema_version} · {unlocked.db_path}
-      </p>
-    </main>
+        <p className="footer-meta">{unlocked.db_path}</p>
+      </div>
+    </>
   );
 }
 
