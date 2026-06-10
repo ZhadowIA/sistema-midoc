@@ -2,6 +2,7 @@ import { DoctorServiceStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { toErrorResponse } from "../../../../lib/api-error";
 import { requireDoctorUser } from "../../../../lib/auth/session-user";
 import { createDoctorService, getDoctorWorkspace } from "../../../../services/doctor/doctor-profile-service";
 
@@ -21,12 +22,7 @@ export async function GET(request: Request) {
     const workspace = await getDoctorWorkspace(user.id);
     return NextResponse.json({ services: workspace.services });
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unauthorized"
-      },
-      { status: 401 }
-    );
+    return toErrorResponse(error, "No se pudieron obtener los servicios.");
   }
 }
 
@@ -37,13 +33,6 @@ export async function POST(request: Request) {
     const service = await createDoctorService(user.id, payload);
     return NextResponse.json({ service }, { status: 201 });
   } catch (error) {
-    const status = typeof error === "object" && error && "status" in error ? Number(error.status) : 400;
-
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unable to create service."
-      },
-      { status }
-    );
+    return toErrorResponse(error, "No se pudo crear el servicio.");
   }
 }
