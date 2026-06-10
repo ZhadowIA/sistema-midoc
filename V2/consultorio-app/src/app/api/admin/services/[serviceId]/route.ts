@@ -2,6 +2,7 @@ import { DoctorServiceStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { toErrorResponse } from "../../../../../lib/api-error";
 import { requireDoctorUser } from "../../../../../lib/auth/session-user";
 import { updateDoctorService } from "../../../../../services/doctor/doctor-profile-service";
 
@@ -27,13 +28,6 @@ export async function PATCH(
 
     return NextResponse.json({ service });
   } catch (error) {
-    const status = typeof error === "object" && error && "status" in error ? Number(error.status) : 400;
-
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unable to update service."
-      },
-      { status }
-    );
+    return toErrorResponse(error, "No se pudo actualizar el servicio.");
   }
 }
