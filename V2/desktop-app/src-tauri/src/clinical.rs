@@ -93,6 +93,10 @@ pub struct NoteContent {
     pub plan: String,
     pub diagnosis: String,
     pub instructions: String,
+    // Plantilla de especialidad (medicina general/familiar, odontologia).
+    // Blob opaco: Rust no conoce su estructura, solo lo versiona y firma.
+    #[serde(default)]
+    pub specialty: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -268,11 +272,13 @@ pub fn get_encounter_detail(
 
     let note = conn
         .query_row(
-            "SELECT version, created_at, subjective, objective, assessment, plan, diagnosis, instructions
+            "SELECT version, created_at, subjective, objective, assessment, plan,
+                    diagnosis, instructions, specialty_payload
              FROM note_versions WHERE encounter_id = ?1
              ORDER BY version DESC LIMIT 1",
             params![encounter_id],
             |row| {
+                let specialty_raw: String = row.get(8)?;
                 Ok(NoteVersion {
                     version: row.get(0)?,
                     created_at: row.get(1)?,
@@ -283,6 +289,7 @@ pub fn get_encounter_detail(
                         plan: row.get(5)?,
                         diagnosis: row.get(6)?,
                         instructions: row.get(7)?,
+                        specialty: serde_json::from_str(&specialty_raw).unwrap_or_default(),
                     },
                 })
             },
@@ -354,11 +361,14 @@ pub fn save_note(
         |row| row.get(0),
     )?;
 
+    let specialty_payload =
+        serde_json::to_string(&content.specialty).unwrap_or_else(|_| "{}".to_string());
+
     conn.execute(
         "INSERT INTO note_versions
             (encounter_id, version, subjective, objective, assessment, plan,
-             diagnosis, instructions, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             diagnosis, instructions, specialty_payload, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             encounter_id,
             next_version,
@@ -368,6 +378,7 @@ pub fn save_note(
             content.plan,
             content.diagnosis,
             content.instructions,
+            specialty_payload,
             now()
         ],
     )?;
@@ -664,5 +675,45 @@ mod tests {
             .query_row("SELECT count(*) FROM clinical_audit", [], |row| row.get(0))
             .unwrap();
         assert!(audit_count >= 5, "se esperaban >=5 eventos, hubo {audit_count}");
+    }
+
+    #[test]
+    fn specialty_payload_roundtrips_and_is_covered_by_signature() {
+        let conn = test_conn("specialty");
+        seed_appointment(&conn, "appt-6", "pat-6");
+        let encounter = open_encounter_for_appointment(&conn, "appt-6").unwrap();
+
+        // Plantilla de medicina general como blob opaco.
+        save_note(
+            &conn,
+            &encounter.id,
+            &NoteContent {
+                diagnosis: "Sano".into(),
+                specialty: serde_json::json!({
+                    "riskFactors": "Tabaquismo, sedentarismo",
+                    "preventivePlan": "Cesacion tabaquica, actividad fisica 150 min/sem"
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // El payload regresa intacto desde la base cifrada.
+        let detail = get_encounter_detail(&conn, &encounter.id).unwrap();
+        let specialty = &detail.note.as_ref().unwrap().content.specialty;
+        assert_eq!(specialty["riskFactors"], "Tabaquismo, sedentarismo");
+
+        sign_encounter(&conn, &encounter.id).unwrap();
+        assert!(verify_signature(&conn, &encounter.id).unwrap());
+
+        // Alterar el payload de especialidad rompe la firma (esta cubierto).
+        conn.execute(
+            "UPDATE note_versions
+             SET specialty_payload = '{\"riskFactors\":\"alterado\"}'
+             WHERE encounter_id = ?1",
+            params![encounter.id],
+        )
+        .unwrap();
+        assert!(!verify_signature(&conn, &encounter.id).unwrap());
     }
 }
