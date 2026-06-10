@@ -58,6 +58,8 @@ Reserva una cita en el portal por HTTP, la baja a una base cifrada temporal, y v
 
 `src-tauri/src/clinical.rs`: la cita abre el encuentro (uno por cita), con expediente del paciente (antecedentes, alergias, historial de encuentros previos), nota SOAP **versionada** (cada guardado crea una version), receta e indicaciones. **Firmar y cerrar** congela el encuentro y guarda un hash SHA-256 del contenido final como evidencia de integridad (`verify_signature` lo recalcula y detecta alteraciones). Todos los cambios criticos quedan en `clinical_audit`. Nada de este modulo toca la red.
 
+**Plantilla de especialidad (paso 5):** la nota lleva un payload JSON de especialidad (`note_versions.specialty_payload`) que Rust trata como blob opaco — la estructura vive en el frontend. Hoy contiene la plantilla de medicina general/familiar (factores de riesgo, revision por sistemas, exploracion, laboratorios, tamizajes, plan preventivo, seguimiento); odontologia (paso 8) reusara el mismo mecanismo. Se versiona y firma junto con la nota: alterarlo rompe la firma.
+
 ## Estado (paso 0)
 
 Compuerta del paso 0: la app crea y abre su base cifrada, rechaza llaves incorrectas y el archivo en disco no es SQLite en claro (verificado por pruebas en `db.rs`).

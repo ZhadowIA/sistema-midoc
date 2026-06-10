@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
 
+interface GeneralMedicinePayload {
+  riskFactors: string;
+  reviewOfSystems: string;
+  physicalExam: string;
+  labs: string;
+  screenings: string;
+  preventivePlan: string;
+  followUp: string;
+}
+
 interface NoteContent {
   subjective: string;
   objective: string;
@@ -8,6 +18,7 @@ interface NoteContent {
   plan: string;
   diagnosis: string;
   instructions: string;
+  specialty: GeneralMedicinePayload;
 }
 
 interface EncounterDetail {
@@ -42,16 +53,27 @@ interface EncounterDetail {
   }>;
 }
 
+const EMPTY_SPECIALTY: GeneralMedicinePayload = {
+  riskFactors: "",
+  reviewOfSystems: "",
+  physicalExam: "",
+  labs: "",
+  screenings: "",
+  preventivePlan: "",
+  followUp: ""
+};
+
 const EMPTY_NOTE: NoteContent = {
   subjective: "",
   objective: "",
   assessment: "",
   plan: "",
   diagnosis: "",
-  instructions: ""
+  instructions: "",
+  specialty: EMPTY_SPECIALTY
 };
 
-const NOTE_FIELDS: Array<{ key: keyof NoteContent; label: string; rows: number }> = [
+const NOTE_FIELDS: Array<{ key: keyof Omit<NoteContent, "specialty">; label: string; rows: number }> = [
   { key: "subjective", label: "S · Subjetivo (lo que refiere el paciente)", rows: 3 },
   { key: "objective", label: "O · Objetivo (exploracion y hallazgos)", rows: 3 },
   { key: "assessment", label: "A · Analisis", rows: 2 },
@@ -59,6 +81,32 @@ const NOTE_FIELDS: Array<{ key: keyof NoteContent; label: string; rows: number }
   { key: "plan", label: "P · Plan", rows: 3 },
   { key: "instructions", label: "Indicaciones al paciente", rows: 3 }
 ];
+
+// Plantilla de medicina general/familiar (paso 5). Se guarda como el payload
+// de especialidad de la nota, versionado y firmado junto con ella.
+const SPECIALTY_FIELDS: Array<{ key: keyof GeneralMedicinePayload; label: string; rows: number }> = [
+  { key: "riskFactors", label: "Factores de riesgo", rows: 2 },
+  { key: "reviewOfSystems", label: "Revision por sistemas", rows: 3 },
+  { key: "physicalExam", label: "Exploracion fisica", rows: 3 },
+  { key: "labs", label: "Laboratorios y estudios", rows: 2 },
+  { key: "screenings", label: "Tamizajes", rows: 2 },
+  { key: "preventivePlan", label: "Plan preventivo", rows: 2 },
+  { key: "followUp", label: "Seguimiento / proxima cita", rows: 2 }
+];
+
+/** Normaliza el payload de especialidad cargado (puede venir vacio o parcial). */
+function coerceSpecialty(value: unknown): GeneralMedicinePayload {
+  const source = (value ?? {}) as Partial<GeneralMedicinePayload>;
+  return {
+    riskFactors: source.riskFactors ?? "",
+    reviewOfSystems: source.reviewOfSystems ?? "",
+    physicalExam: source.physicalExam ?? "",
+    labs: source.labs ?? "",
+    screenings: source.screenings ?? "",
+    preventivePlan: source.preventivePlan ?? "",
+    followUp: source.followUp ?? ""
+  };
+}
 
 const dateTimeFormatter = new Intl.DateTimeFormat("es-MX", {
   dateStyle: "medium",
@@ -101,7 +149,11 @@ export function Atencion({
     call<EncounterDetail>("get_encounter", { encounterId })
       .then((data) => {
         setDetail(data);
-        setNote(data.note ?? EMPTY_NOTE);
+        setNote(
+          data.note
+            ? { ...data.note, specialty: coerceSpecialty(data.note.specialty) }
+            : EMPTY_NOTE
+        );
         setPrescription(data.prescription ?? "");
         setBackground({
           allergies: data.patient.allergies ?? "",
@@ -335,10 +387,35 @@ export function Atencion({
               />
             </label>
           ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h3>Medicina general / familiar</h3>
+          <p>Plantilla de consulta general. Se guarda y firma junto con la nota.</p>
+        </div>
+        <div className="stack">
+          {SPECIALTY_FIELDS.map(({ key, label, rows }) => (
+            <label className="field" key={key}>
+              <span>{label}</span>
+              <textarea
+                rows={rows}
+                value={note.specialty[key]}
+                disabled={busy || signed}
+                onChange={(e) =>
+                  setNote((c) => ({
+                    ...c,
+                    specialty: { ...c.specialty, [key]: e.target.value }
+                  }))
+                }
+              />
+            </label>
+          ))}
           {!signed ? (
             <div className="button-row">
               <button className="action-button" onClick={saveNote} disabled={busy}>
-                Guardar nota
+                Guardar nota y plantilla
               </button>
             </div>
           ) : null}

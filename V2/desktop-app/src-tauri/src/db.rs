@@ -118,6 +118,10 @@ const MIGRATIONS: &[&str] = &[
         at TEXT NOT NULL,
         details TEXT
     );",
+    // v4: plantilla de especialidad (paso 5). Blob JSON opaco para Rust;
+    // la estructura (medicina general/familiar, luego odontologia) vive en
+    // el frontend. Se versiona y firma junto con la nota. Clase: CLINICO.
+    "ALTER TABLE note_versions ADD COLUMN specialty_payload TEXT NOT NULL DEFAULT '{}';",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
