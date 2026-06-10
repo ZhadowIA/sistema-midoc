@@ -20,6 +20,7 @@ const profileSchema = z.object({
   postalCode: z.string().max(40).nullable().optional(),
   country: z.string().max(100).nullable().optional(),
   consultationDuration: z.number().int().positive().optional(),
+  timeZone: z.string().min(1).max(64).optional(),
   isPublic: z.boolean().optional()
 });
 

@@ -491,4 +491,138 @@ describe("public booking flow", () => {
       await cleanupUserByEmail(email);
     }
   });
+
+  it("interprets availability rule times in the doctor's timezone (fixed offset)", async () => {
+    const email = uniqueEmail("doctor-tz");
+    const slug = uniqueSlug("dra-tz");
+    const slotDate = nextWeekdayDate(2);
+    const dateFrom = slotDate.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Elena",
+        lastName: "Mora",
+        professionalName: "Dra. Elena Mora",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      // Ciudad de Mexico es UTC-6 fijo (sin horario de verano desde 2022).
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        isPublic: true,
+        timeZone: "America/Mexico_City"
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta",
+        priceCents: 50000,
+        durationMinutes: 30
+      });
+
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: slotDate.getUTCDay(),
+        startTime: "09:00",
+        endTime: "14:00",
+        slotInterval: 30
+      });
+
+      const availability = await listPublicAvailability({
+        slug,
+        serviceId: service.id,
+        dateFrom,
+        days: 1
+      });
+
+      // 09:00-14:00 con intervalo de 30 min y duracion 30 => 10 slots (09:00..13:30).
+      expect(availability.slots).toHaveLength(10);
+
+      const firstStart = new Date(availability.slots[0]!.slotStart);
+      // 09:00 hora local de CDMX (UTC-6) equivale a las 15:00 UTC.
+      expect(firstStart.getUTCHours()).toBe(15);
+      expect(firstStart.getUTCMinutes()).toBe(0);
+
+      const wallTime = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Mexico_City",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23"
+      }).format(firstStart);
+      expect(wallTime).toBe("09:00");
+
+      const lastStart = new Date(availability.slots[9]!.slotStart);
+      expect(lastStart.getUTCHours()).toBe(19); // 13:30 local => 19:30 UTC
+      expect(lastStart.getUTCMinutes()).toBe(30);
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("respects daylight saving transitions for the doctor's timezone", async () => {
+    const email = uniqueEmail("doctor-dst");
+    const slug = uniqueSlug("dra-dst");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Paula",
+        lastName: "Reyes",
+        professionalName: "Dra. Paula Reyes",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      // Tijuana si observa horario de verano: PDT (UTC-7) verano, PST (UTC-8) invierno.
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        isPublic: true,
+        timeZone: "America/Tijuana"
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta",
+        priceCents: 50000,
+        durationMinutes: 30
+      });
+
+      // Fechas fijas: una en verano (DST) y otra en invierno (estandar).
+      await createAvailabilityRule(account.user.id, {
+        specificDate: "2026-07-15",
+        startTime: "09:00",
+        endTime: "10:00",
+        slotInterval: 30
+      });
+      await createAvailabilityRule(account.user.id, {
+        specificDate: "2026-12-15",
+        startTime: "09:00",
+        endTime: "10:00",
+        slotInterval: 30
+      });
+
+      const summer = await listPublicAvailability({
+        slug,
+        serviceId: service.id,
+        dateFrom: "2026-07-15",
+        days: 1
+      });
+      const winter = await listPublicAvailability({
+        slug,
+        serviceId: service.id,
+        dateFrom: "2026-12-15",
+        days: 1
+      });
+
+      // 09:00 local en verano (PDT, UTC-7) => 16:00 UTC.
+      expect(new Date(summer.slots[0]!.slotStart).getUTCHours()).toBe(16);
+      // 09:00 local en invierno (PST, UTC-8) => 17:00 UTC.
+      expect(new Date(winter.slots[0]!.slotStart).getUTCHours()).toBe(17);
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
 });

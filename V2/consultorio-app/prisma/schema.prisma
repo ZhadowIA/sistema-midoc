@@ -339,6 +339,8 @@ model DoctorProfile {
   country              String?
   isPublic             Boolean                 @default(false)
   consultationDuration Int                     @default(30)
+  // Zona horaria IANA en la que se interpretan las reglas de disponibilidad.
+  timeZone             String                  @default("America/Chihuahua")
   createdAt            DateTime                @default(now())
   updatedAt            DateTime                @updatedAt
   user                 User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
