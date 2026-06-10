@@ -15,12 +15,13 @@ pub enum SyncError {
     Sqlite(#[from] rusqlite::Error),
     #[error("{0}")]
     Server(String),
-    #[error("la app no esta vinculada a una cuenta")]
-    NotLinked,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct InboxEvent {
+    // El orden lo dirige `nextCursor` de la respuesta, no el seq individual;
+    // se deserializa para completitud del contrato y uso en pruebas.
+    #[allow(dead_code)]
     pub seq: i64,
     #[serde(rename = "type")]
     pub event_type: String,
@@ -411,5 +412,199 @@ mod tests {
         assert_eq!(get_cursor(&conn).unwrap(), 42);
         set_state(&conn, "cursor", "43").unwrap();
         assert_eq!(get_cursor(&conn).unwrap(), 43);
+    }
+
+    // ---------- E2E contra portal vivo (Capa 2) ----------
+    //
+    // Requiere el portal corriendo en SERVER (por defecto http://localhost:3000)
+    // con su base Postgres. Por eso esta #[ignore]: no corre en la suite normal.
+    //   cargo test --release sync::tests::e2e -- --ignored --nocapture
+    // Prueba el contrato completo entre procesos: reserva publica en el portal,
+    // descarga a la base cifrada local, y purga del contenido clinico en nube.
+
+    fn server_url() -> String {
+        std::env::var("MIDOC_E2E_SERVER").unwrap_or_else(|_| "http://localhost:3000".into())
+    }
+
+    async fn post_json(
+        client: &reqwest::Client,
+        url: &str,
+        body: serde_json::Value,
+    ) -> serde_json::Value {
+        let response = client.post(url).json(&body).send().await.unwrap();
+        let status = response.status();
+        let json: serde_json::Value = response.json().await.unwrap_or_default();
+        assert!(status.is_success(), "POST {url} -> {status}: {json}");
+        json
+    }
+
+    #[tokio::test]
+    #[ignore = "necesita el portal vivo en localhost:3000"]
+    async fn e2e_booking_reaches_encrypted_db_and_purges_cloud() {
+        use chrono::{Datelike, Duration, Utc};
+
+        let base = server_url();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let email = format!("e2e-{nanos}@example.com");
+        let password = "E2ePass!2026xy";
+        let slug = format!("dra-e2e-{}", nanos % 100_000_000);
+
+        // Cliente con cookies para registro + operaciones admin del medico.
+        let client = reqwest::Client::builder()
+            .cookie_store(true)
+            .build()
+            .unwrap();
+
+        // 1) Registrar medico y abrir sesion.
+        post_json(
+            &client,
+            &format!("{base}/api/auth/register"),
+            serde_json::json!({
+                "email": email, "password": password,
+                "firstName": "Eva", "lastName": "Sync",
+                "professionalName": "Dra. Eva Sync", "specialty": "GENERAL_MEDICINE"
+            }),
+        )
+        .await;
+        post_json(
+            &client,
+            &format!("{base}/api/auth/login"),
+            serde_json::json!({ "email": email, "password": password }),
+        )
+        .await;
+
+        // 2) Publicar perfil, servicio y disponibilidad.
+        post_json_put(
+            &client,
+            &format!("{base}/api/admin/profile"),
+            serde_json::json!({ "publicSlug": slug, "isPublic": true }),
+        )
+        .await;
+        let service = post_json(
+            &client,
+            &format!("{base}/api/admin/services"),
+            serde_json::json!({ "name": "Consulta", "priceCents": 50000, "durationMinutes": 30 }),
+        )
+        .await;
+        let service_id = service["service"]["id"].as_str().unwrap().to_string();
+
+        // Regla para un dia ~3 dias adelante (evita slots en el pasado).
+        let target = Utc::now() + Duration::days(3);
+        post_json(
+            &client,
+            &format!("{base}/api/admin/availability"),
+            serde_json::json!({
+                "dayOfWeek": target.weekday().num_days_from_sunday(),
+                "startTime": "09:00", "endTime": "12:00"
+            }),
+        )
+        .await;
+
+        // 3) Reservar como paciente (hold -> cita) y enviar preconsulta.
+        let date_from = Utc::now().format("%Y-%m-%d").to_string();
+        let availability: serde_json::Value = client
+            .get(format!(
+                "{base}/api/public/doctors/{slug}/availability?serviceId={service_id}&dateFrom={date_from}&days=14"
+            ))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let slot_start = availability["slots"][0]["slotStart"]
+            .as_str()
+            .expect("debe haber al menos un slot disponible")
+            .to_string();
+
+        let hold = post_json(
+            &client,
+            &format!("{base}/api/public/doctors/{slug}/holds"),
+            serde_json::json!({ "serviceId": service_id, "slotStart": slot_start }),
+        )
+        .await;
+        let hold_token = hold["hold"]["token"].as_str().unwrap().to_string();
+
+        let booking = post_json(
+            &client,
+            &format!("{base}/api/public/appointments"),
+            serde_json::json!({
+                "holdToken": hold_token,
+                "patient": { "firstName": "Hugo", "lastName": "Paz", "phone": "6140001111" },
+                "legal": { "acceptedTerms": true, "acceptedPrivacy": true }
+            }),
+        )
+        .await;
+        let confirmation_token = booking["appointment"]["confirmationToken"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        post_json_put(
+            &client,
+            &format!("{base}/api/public/appointments/{confirmation_token}/precheckin"),
+            serde_json::json!({ "responses": { "motivo": "Dolor lumbar e2e" } }),
+        )
+        .await;
+
+        // 4) Vincular la app y sincronizar contra la base cifrada local.
+        let device_token = link_account(&base, &email, password, "PC e2e").await.unwrap();
+        let mut conn = test_conn("e2e");
+        let mut cursor = 0i64;
+        loop {
+            let inbox = fetch_inbox(&base, &device_token, cursor).await.unwrap();
+            if inbox.events.is_empty() {
+                break;
+            }
+            apply_batch(&mut conn, &inbox.events).unwrap();
+            send_ack(&base, &device_token, inbox.next_cursor).await.unwrap();
+            cursor = inbox.next_cursor;
+        }
+
+        // 5) La cita llego a la base cifrada local.
+        let (patient, status): (String, String) = conn
+            .query_row(
+                "SELECT patient_first_name, status FROM appointments LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(patient, "Hugo");
+        assert_eq!(status, "PENDING");
+
+        // 6) La preconsulta clinica vive localmente...
+        let responses: String = conn
+            .query_row("SELECT responses_json FROM precheckins LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(responses.contains("Dolor lumbar e2e"));
+
+        // 7) ...y ya NO en la nube: el evento de preconsulta vuelve sin payload.
+        let after: InboxResponse = fetch_inbox(&base, &device_token, 0).await.unwrap();
+        let precheckin_event = after
+            .events
+            .iter()
+            .find(|event| event.event_type == "PRECHECKIN_SUBMITTED")
+            .expect("el evento debe seguir, pero purgado");
+        assert!(
+            precheckin_event.payload.is_none(),
+            "el contenido clinico debe estar purgado en nube tras el ACK"
+        );
+    }
+
+    async fn post_json_put(
+        client: &reqwest::Client,
+        url: &str,
+        body: serde_json::Value,
+    ) -> serde_json::Value {
+        let response = client.put(url).json(&body).send().await.unwrap();
+        let status = response.status();
+        let json: serde_json::Value = response.json().await.unwrap_or_default();
+        assert!(status.is_success(), "PUT {url} -> {status}: {json}");
+        json
     }
 }
