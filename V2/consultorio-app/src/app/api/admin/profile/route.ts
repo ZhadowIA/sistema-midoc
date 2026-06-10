@@ -2,6 +2,7 @@ import { ClinicalProfile } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { toErrorResponse } from "../../../../lib/api-error";
 import { requireDoctorUser } from "../../../../lib/auth/session-user";
 import { getDoctorWorkspace, updateDoctorProfile } from "../../../../services/doctor/doctor-profile-service";
 
@@ -28,12 +29,7 @@ export async function GET(request: Request) {
     const workspace = await getDoctorWorkspace(user.id);
     return NextResponse.json({ profile: workspace });
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unauthorized"
-      },
-      { status: 401 }
-    );
+    return toErrorResponse(error, "No se pudo obtener el perfil.");
   }
 }
 
@@ -44,13 +40,6 @@ export async function PUT(request: Request) {
     const profile = await updateDoctorProfile(user.id, payload);
     return NextResponse.json({ profile });
   } catch (error) {
-    const status = typeof error === "object" && error && "status" in error ? Number(error.status) : 400;
-
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unable to update profile."
-      },
-      { status }
-    );
+    return toErrorResponse(error, "No se pudo actualizar el perfil.");
   }
 }
