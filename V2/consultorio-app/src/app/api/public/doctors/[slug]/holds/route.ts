@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requestIpFrom, toErrorResponse } from "../../../../../../lib/api-error";
+import { assertRateLimit } from "../../../../../../lib/rate-limit";
 import { createAppointmentHold } from "../../../../../../services/booking/public-booking-service";
 
 const holdSchema = z.object({
@@ -13,6 +15,11 @@ export async function POST(
   context: { params: Promise<{ slug: string }> }
 ) {
   try {
+    const ip = requestIpFrom(request);
+    if (ip) {
+      assertRateLimit({ key: `public-hold-ip:${ip}`, limit: 30, windowMs: 1000 * 60 * 15 });
+    }
+
     const { slug } = await context.params;
     const payload = holdSchema.parse(await request.json());
     const hold = await createAppointmentHold({
@@ -31,13 +38,6 @@ export async function POST(
       }
     });
   } catch (error) {
-    const status = typeof error === "object" && error && "status" in error ? Number(error.status) : 400;
-
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unable to create hold."
-      },
-      { status }
-    );
+    return toErrorResponse(error, "No se pudo apartar el horario.");
   }
 }

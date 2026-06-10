@@ -11,6 +11,7 @@ import {
   createAppointmentHold,
   getPublicAppointmentByToken,
   listPublicAvailability,
+  reschedulePublicAppointment,
   submitPrecheckin
 } from "../../src/services/booking/public-booking-service";
 import {
@@ -278,7 +279,7 @@ describe("public booking flow", () => {
           serviceId: service.id,
           slotStart: availability.slots[0]!.slotStart
         })
-      ).rejects.toThrow(/available/i);
+      ).rejects.toThrow(/disponible/i);
 
       const otherHold = await createAppointmentHold({
         slug,
@@ -309,6 +310,183 @@ describe("public booking flow", () => {
 
       const cancelled = await getPublicAppointmentByToken(second.confirmationToken);
       expect(cancelled?.appointment.status).toBe("CANCELLED");
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("only lets one of two concurrent holds win the same slot", async () => {
+    const email = uniqueEmail("doctor-race");
+    const slug = uniqueSlug("dra-race");
+    const slotDate = nextWeekdayDate(4);
+    const dateFrom = slotDate.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Carmen",
+        lastName: "Rios",
+        professionalName: "Dra. Carmen Rios",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        isPublic: true
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta",
+        priceCents: 50000,
+        durationMinutes: 30
+      });
+
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: slotDate.getUTCDay(),
+        startTime: "09:00",
+        endTime: "10:00",
+        slotInterval: 30
+      });
+
+      const availability = await listPublicAvailability({
+        slug,
+        serviceId: service.id,
+        dateFrom,
+        days: 1
+      });
+      const slotStart = availability.slots[0]!.slotStart;
+
+      const results = await Promise.allSettled([
+        createAppointmentHold({ slug, serviceId: service.id, slotStart }),
+        createAppointmentHold({ slug, serviceId: service.id, slotStart })
+      ]);
+
+      const fulfilled = results.filter((result) => result.status === "fulfilled");
+      const rejected = results.filter((result) => result.status === "rejected");
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("reschedules with re-confirmation, blocks taken slots and completed cancellations, and queues an action link", async () => {
+    const email = uniqueEmail("doctor-reschedule");
+    const slug = uniqueSlug("dr-reschedule");
+    const slotDate = nextWeekdayDate(5);
+    const dateFrom = slotDate.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Pedro",
+        lastName: "Galvan",
+        professionalName: "Dr. Pedro Galvan",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        isPublic: true
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta",
+        priceCents: 60000,
+        durationMinutes: 30
+      });
+
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: slotDate.getUTCDay(),
+        startTime: "09:00",
+        endTime: "11:00",
+        slotInterval: 30
+      });
+
+      const availability = await listPublicAvailability({
+        slug,
+        serviceId: service.id,
+        dateFrom,
+        days: 1
+      });
+
+      const hold = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: availability.slots[0]!.slotStart
+      });
+
+      const booking = await bookPublicAppointment({
+        holdToken: hold.token,
+        patient: {
+          firstName: "Sofia",
+          lastName: "Trejo",
+          phone: "6145550000"
+        },
+        legal: { acceptedTerms: true, acceptedPrivacy: true }
+      });
+
+      // El SMS encolado lleva el enlace de accion con el token.
+      const queuedSms = await prisma.notification.findFirst({
+        where: {
+          appointmentId: booking.appointment.id,
+          channel: "SMS"
+        }
+      });
+      expect(queuedSms?.body).toContain(`/perfil/${slug}/cita/${booking.confirmationToken}`);
+
+      await confirmPublicAppointment({ confirmationToken: booking.confirmationToken });
+
+      // Reagendar a otro horario disponible: vuelve a PENDING.
+      const rescheduled = await reschedulePublicAppointment({
+        confirmationToken: booking.confirmationToken,
+        newSlotStart: availability.slots[2]!.slotStart
+      });
+
+      expect(rescheduled.status).toBe("PENDING");
+      expect(rescheduled.scheduledStart.toISOString()).toBe(availability.slots[2]!.slotStart);
+
+      // Un segundo paciente ocupa otro horario; reagendar encima debe fallar.
+      const blockingHold = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: availability.slots[1]!.slotStart
+      });
+      await bookPublicAppointment({
+        holdToken: blockingHold.token,
+        patient: { firstName: "Ana", lastName: "Vidal", phone: "6145550001" },
+        legal: { acceptedTerms: true, acceptedPrivacy: true }
+      });
+
+      await expect(
+        reschedulePublicAppointment({
+          confirmationToken: booking.confirmationToken,
+          newSlotStart: availability.slots[1]!.slotStart
+        })
+      ).rejects.toMatchObject({ status: 409 });
+
+      // Una cita atendida no puede cancelarse ni reagendarse.
+      await prisma.appointment.update({
+        where: { id: booking.appointment.id },
+        data: { status: "COMPLETED" }
+      });
+
+      await expect(
+        cancelPublicAppointment({ confirmationToken: booking.confirmationToken })
+      ).rejects.toMatchObject({ status: 409 });
+      await expect(
+        reschedulePublicAppointment({
+          confirmationToken: booking.confirmationToken,
+          newSlotStart: availability.slots[3]!.slotStart
+        })
+      ).rejects.toMatchObject({ status: 409 });
     } finally {
       await cleanupUserByEmail(email);
     }
