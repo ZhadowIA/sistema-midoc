@@ -191,9 +191,14 @@ describe("doctor setup and public profile", () => {
         slotInterval: 60
       });
 
+      const blockStart = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+      blockStart.setUTCHours(10, 0, 0, 0);
+      const blockEnd = new Date(blockStart);
+      blockEnd.setUTCHours(12, 0, 0, 0);
+
       await createAvailabilityBlock(account.user.id, {
-        startsAt: "2026-06-10T10:00:00.000Z",
-        endsAt: "2026-06-10T12:00:00.000Z",
+        startsAt: blockStart.toISOString(),
+        endsAt: blockEnd.toISOString(),
         reason: "Capacitacion"
       });
 

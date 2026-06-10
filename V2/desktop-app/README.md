@@ -30,6 +30,30 @@ Requisitos de build en Windows: Rust (rustup, toolchain MSVC), VS Build Tools 20
 - Migraciones versionadas con `PRAGMA user_version` en `src-tauri/src/db.rs`, siempre dentro de transaccion (regla 6).
 - Toda tabla nueva declara su clase de residencia (CLINICO / CONTACTO / OPERATIVO) en un comentario junto a la migracion (regla 4).
 
+## Sincronizacion (paso 3, fase A)
+
+La app descarga citas y preconsultas del portal a la base cifrada (contrato en `../13_contrato_sincronizacion.md`). Modulo `src-tauri/src/sync.rs`; comandos Tauri `link_account`, `sync_now`, `list_appointments`.
+
+### Verificacion end-to-end
+
+**Capa 2 — test automatizado contra portal vivo** (`sync.rs`, `#[ignore]`):
+
+```bash
+# 1. Portal arriba (en V2/consultorio-app): npm run dev  (necesita Postgres)
+# 2. Desde V2/desktop-app/src-tauri:
+cargo test sync::tests::e2e -- --ignored --nocapture
+```
+
+Reserva una cita en el portal por HTTP, la baja a una base cifrada temporal, y verifica que (a) la cita queda local y (b) el contenido clinico de la preconsulta se purga de la nube tras el ACK. Por depender de un portal vivo no corre en la suite normal (`cargo test` la omite).
+
+**Capa 3 — smoke manual de GUI** (la ventana nativa de Tauri no es automatizable):
+
+1. `npm run dev` en `V2/consultorio-app`.
+2. `npm run tauri dev` en `V2/desktop-app`; desbloquear con una frase.
+3. Vincular: URL `http://localhost:3000`, correo y contrasena del medico.
+4. Reservar una cita en el portal (`/perfil/<slug>/agenda`).
+5. En la app, "Sincronizar ahora": la cita aparece en la agenda.
+
 ## Estado (paso 0)
 
 Compuerta del paso 0: la app crea y abre su base cifrada, rechaza llaves incorrectas y el archivo en disco no es SQLite en claro (verificado por pruebas en `db.rs`). El modelo clinico completo llega en el paso 4.
