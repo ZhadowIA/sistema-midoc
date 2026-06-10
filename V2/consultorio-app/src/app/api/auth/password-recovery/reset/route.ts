@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { toErrorResponse } from "../../../../../lib/api-error";
 import { resetPassword } from "../../../../../services/auth/auth-service";
 
 const resetSchema = z.object({
@@ -15,11 +16,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unable to reset password."
-      },
-      { status: 400 }
-    );
+    return toErrorResponse(error, "No se pudo restablecer la contrasena.");
   }
 }

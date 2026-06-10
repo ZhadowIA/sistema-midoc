@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requestIpFrom, toErrorResponse } from "../../../../../lib/api-error";
 import { requestPasswordReset } from "../../../../../services/auth/auth-service";
 
 const requestSchema = z.object({
@@ -10,12 +11,11 @@ const requestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const payload = requestSchema.parse(await request.json());
-    const forwardedFor = request.headers.get("x-forwarded-for") ?? undefined;
     const userAgent = request.headers.get("user-agent") ?? undefined;
 
     const result = await requestPasswordReset({
       email: payload.email,
-      requestIp: forwardedFor,
+      requestIp: requestIpFrom(request),
       requestUserAgent: userAgent
     });
 
@@ -23,11 +23,6 @@ export async function POST(request: Request) {
       message: result.message
     });
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unable to process password reset."
-      },
-      { status: 400 }
-    );
+    return toErrorResponse(error, "No se pudo procesar la solicitud.");
   }
 }
