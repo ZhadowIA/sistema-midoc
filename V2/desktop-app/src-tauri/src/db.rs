@@ -57,6 +57,67 @@ const MIGRATIONS: &[&str] = &[
         responses_json TEXT NOT NULL,
         received_at TEXT NOT NULL
     );",
+    // v3: atencion clinica integrada (paso 4). Todo CLINICO: expediente,
+    // encuentros, notas SOAP versionadas, recetas y auditoria local.
+    // Nada de esto sale jamas de la base cifrada (regla de residencia 1).
+    "CREATE TABLE patients (
+        id TEXT PRIMARY KEY NOT NULL,
+        first_name TEXT NOT NULL DEFAULT '',
+        last_name TEXT NOT NULL DEFAULT '',
+        phone TEXT,
+        email TEXT,
+        birth_date TEXT,
+        sex TEXT,
+        allergies TEXT,
+        medical_background TEXT,
+        family_background TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    INSERT INTO patients (id, first_name, last_name, phone, email, created_at, updated_at)
+        SELECT patient_id, patient_first_name, patient_last_name,
+               patient_phone, patient_email, updated_at, updated_at
+        FROM appointments
+        WHERE patient_id IS NOT NULL
+        GROUP BY patient_id;
+    CREATE TABLE encounters (
+        id TEXT PRIMARY KEY NOT NULL,
+        appointment_id TEXT,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        status TEXT NOT NULL DEFAULT 'OPEN',
+        opened_at TEXT NOT NULL,
+        signed_at TEXT,
+        signed_hash TEXT
+    );
+    CREATE INDEX idx_encounters_patient ON encounters (patient_id);
+    CREATE UNIQUE INDEX idx_encounters_appointment
+        ON encounters (appointment_id) WHERE appointment_id IS NOT NULL;
+    CREATE TABLE note_versions (
+        encounter_id TEXT NOT NULL REFERENCES encounters (id),
+        version INTEGER NOT NULL,
+        subjective TEXT NOT NULL DEFAULT '',
+        objective TEXT NOT NULL DEFAULT '',
+        assessment TEXT NOT NULL DEFAULT '',
+        plan TEXT NOT NULL DEFAULT '',
+        diagnosis TEXT NOT NULL DEFAULT '',
+        instructions TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (encounter_id, version)
+    );
+    CREATE TABLE prescriptions (
+        id TEXT PRIMARY KEY NOT NULL,
+        encounter_id TEXT NOT NULL REFERENCES encounters (id),
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE clinical_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        at TEXT NOT NULL,
+        details TEXT
+    );",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

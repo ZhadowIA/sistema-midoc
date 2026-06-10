@@ -1,0 +1,668 @@
+//! Atencion clinica integrada (paso 4): encuentros, notas SOAP versionadas,
+//! recetas, antecedentes y auditoria. Todo vive en la base cifrada local;
+//! nada de este modulo toca la red.
+
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+#[derive(Debug, thiserror::Error)]
+pub enum ClinicalError {
+    #[error("error de base de datos: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("{0}")]
+    Invalid(String),
+    #[error("la nota ya fue firmada y no puede modificarse")]
+    AlreadySigned,
+    #[error("no encontrado")]
+    NotFound,
+}
+
+fn now() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+/// Hash de integridad del contenido firmado: nota final + receta.
+fn signature_hash(
+    encounter_id: &str,
+    patient_id: &str,
+    note: &NoteVersion,
+    prescription: &Option<String>,
+) -> String {
+    let canonical = serde_json::json!({
+        "encounterId": encounter_id,
+        "patientId": patient_id,
+        "note": note.content,
+        "noteVersion": note.version,
+        "prescription": prescription,
+    })
+    .to_string();
+
+    Sha256::digest(canonical.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn audit(
+    conn: &Connection,
+    entity: &str,
+    entity_id: &str,
+    action: &str,
+    details: Option<&str>,
+) -> Result<(), ClinicalError> {
+    conn.execute(
+        "INSERT INTO clinical_audit (entity, entity_id, action, at, details)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![entity, entity_id, action, now(), details],
+    )?;
+    Ok(())
+}
+
+/* ---------- Tipos ---------- */
+
+#[derive(Debug, Serialize)]
+pub struct Encounter {
+    pub id: String,
+    pub appointment_id: Option<String>,
+    pub patient_id: String,
+    pub status: String,
+    pub opened_at: String,
+    pub signed_at: Option<String>,
+    pub signed_hash: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PatientRecord {
+    pub id: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub birth_date: Option<String>,
+    pub allergies: Option<String>,
+    pub medical_background: Option<String>,
+    pub family_background: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+pub struct NoteContent {
+    pub subjective: String,
+    pub objective: String,
+    pub assessment: String,
+    pub plan: String,
+    pub diagnosis: String,
+    pub instructions: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NoteVersion {
+    pub version: i64,
+    pub created_at: String,
+    #[serde(flatten)]
+    pub content: NoteContent,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HistoryEntry {
+    pub encounter_id: String,
+    pub signed_at: Option<String>,
+    pub status: String,
+    pub diagnosis: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EncounterDetail {
+    pub encounter: Encounter,
+    pub patient: PatientRecord,
+    pub appointment_reason: Option<String>,
+    pub appointment_start: Option<String>,
+    pub precheckin: Option<String>,
+    pub note: Option<NoteVersion>,
+    pub note_version_count: i64,
+    pub prescription: Option<String>,
+    pub history: Vec<HistoryEntry>,
+}
+
+/* ---------- Encuentros ---------- */
+
+fn read_encounter(conn: &Connection, encounter_id: &str) -> Result<Encounter, ClinicalError> {
+    conn.query_row(
+        "SELECT id, appointment_id, patient_id, status, opened_at, signed_at, signed_hash
+         FROM encounters WHERE id = ?1",
+        params![encounter_id],
+        |row| {
+            Ok(Encounter {
+                id: row.get(0)?,
+                appointment_id: row.get(1)?,
+                patient_id: row.get(2)?,
+                status: row.get(3)?,
+                opened_at: row.get(4)?,
+                signed_at: row.get(5)?,
+                signed_hash: row.get(6)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or(ClinicalError::NotFound)
+}
+
+fn ensure_open(encounter: &Encounter) -> Result<(), ClinicalError> {
+    if encounter.status == "SIGNED" {
+        return Err(ClinicalError::AlreadySigned);
+    }
+    Ok(())
+}
+
+/// Abre (o reabre, si ya existe) el encuentro clinico de una cita. La cita
+/// abre el contexto del paciente: si el paciente local no existe todavia
+/// (base anterior a v3), se crea desde los datos de la cita.
+pub fn open_encounter_for_appointment(
+    conn: &Connection,
+    appointment_id: &str,
+) -> Result<Encounter, ClinicalError> {
+    if let Some(existing) = conn
+        .query_row(
+            "SELECT id FROM encounters WHERE appointment_id = ?1",
+            params![appointment_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    {
+        return read_encounter(conn, &existing);
+    }
+
+    let (patient_id, first_name, last_name, phone, email): (
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    ) = conn
+        .query_row(
+            "SELECT patient_id, patient_first_name, patient_last_name, patient_phone, patient_email
+             FROM appointments WHERE id = ?1",
+            params![appointment_id],
+            |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            },
+        )
+        .optional()?
+        .ok_or(ClinicalError::NotFound)?;
+
+    let patient_id = patient_id.ok_or_else(|| {
+        ClinicalError::Invalid("la cita no tiene paciente asociado".into())
+    })?;
+
+    conn.execute(
+        "INSERT INTO patients (id, first_name, last_name, phone, email, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+         ON CONFLICT(id) DO NOTHING",
+        params![patient_id, first_name, last_name, phone, email, now()],
+    )?;
+
+    let encounter_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO encounters (id, appointment_id, patient_id, status, opened_at)
+         VALUES (?1, ?2, ?3, 'OPEN', ?4)",
+        params![encounter_id, appointment_id, patient_id, now()],
+    )?;
+
+    audit(conn, "encounter", &encounter_id, "opened", Some(appointment_id))?;
+    read_encounter(conn, &encounter_id)
+}
+
+pub fn get_encounter_detail(
+    conn: &Connection,
+    encounter_id: &str,
+) -> Result<EncounterDetail, ClinicalError> {
+    let encounter = read_encounter(conn, encounter_id)?;
+
+    let patient = conn
+        .query_row(
+            "SELECT id, first_name, last_name, phone, email, birth_date,
+                    allergies, medical_background, family_background
+             FROM patients WHERE id = ?1",
+            params![encounter.patient_id],
+            |row| {
+                Ok(PatientRecord {
+                    id: row.get(0)?,
+                    first_name: row.get(1)?,
+                    last_name: row.get(2)?,
+                    phone: row.get(3)?,
+                    email: row.get(4)?,
+                    birth_date: row.get(5)?,
+                    allergies: row.get(6)?,
+                    medical_background: row.get(7)?,
+                    family_background: row.get(8)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or(ClinicalError::NotFound)?;
+
+    let (appointment_reason, appointment_start, precheckin) = match &encounter.appointment_id {
+        Some(appointment_id) => {
+            let pair: Option<(Option<String>, String)> = conn
+                .query_row(
+                    "SELECT reason, scheduled_start FROM appointments WHERE id = ?1",
+                    params![appointment_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let precheckin: Option<String> = conn
+                .query_row(
+                    "SELECT responses_json FROM precheckins WHERE appointment_id = ?1",
+                    params![appointment_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            (
+                pair.as_ref().and_then(|(reason, _)| reason.clone()),
+                pair.map(|(_, start)| start),
+                precheckin,
+            )
+        }
+        None => (None, None, None),
+    };
+
+    let note = conn
+        .query_row(
+            "SELECT version, created_at, subjective, objective, assessment, plan, diagnosis, instructions
+             FROM note_versions WHERE encounter_id = ?1
+             ORDER BY version DESC LIMIT 1",
+            params![encounter_id],
+            |row| {
+                Ok(NoteVersion {
+                    version: row.get(0)?,
+                    created_at: row.get(1)?,
+                    content: NoteContent {
+                        subjective: row.get(2)?,
+                        objective: row.get(3)?,
+                        assessment: row.get(4)?,
+                        plan: row.get(5)?,
+                        diagnosis: row.get(6)?,
+                        instructions: row.get(7)?,
+                    },
+                })
+            },
+        )
+        .optional()?;
+
+    let note_version_count: i64 = conn.query_row(
+        "SELECT count(*) FROM note_versions WHERE encounter_id = ?1",
+        params![encounter_id],
+        |row| row.get(0),
+    )?;
+
+    let prescription: Option<String> = conn
+        .query_row(
+            "SELECT content FROM prescriptions WHERE encounter_id = ?1",
+            params![encounter_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    // Expediente desde la cita: encuentros previos del mismo paciente con su
+    // diagnostico mas reciente.
+    let mut statement = conn.prepare(
+        "SELECT e.id, e.signed_at, e.status,
+                COALESCE((SELECT diagnosis FROM note_versions n
+                          WHERE n.encounter_id = e.id
+                          ORDER BY n.version DESC LIMIT 1), '')
+         FROM encounters e
+         WHERE e.patient_id = ?1 AND e.id != ?2
+         ORDER BY e.opened_at DESC",
+    )?;
+    let history = statement
+        .query_map(params![encounter.patient_id, encounter_id], |row| {
+            Ok(HistoryEntry {
+                encounter_id: row.get(0)?,
+                signed_at: row.get(1)?,
+                status: row.get(2)?,
+                diagnosis: row.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(EncounterDetail {
+        encounter,
+        patient,
+        appointment_reason,
+        appointment_start,
+        precheckin,
+        note,
+        note_version_count,
+        prescription,
+        history,
+    })
+}
+
+/* ---------- Nota SOAP, receta y antecedentes ---------- */
+
+pub fn save_note(
+    conn: &Connection,
+    encounter_id: &str,
+    content: &NoteContent,
+) -> Result<i64, ClinicalError> {
+    let encounter = read_encounter(conn, encounter_id)?;
+    ensure_open(&encounter)?;
+
+    let next_version: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(version), 0) + 1 FROM note_versions WHERE encounter_id = ?1",
+        params![encounter_id],
+        |row| row.get(0),
+    )?;
+
+    conn.execute(
+        "INSERT INTO note_versions
+            (encounter_id, version, subjective, objective, assessment, plan,
+             diagnosis, instructions, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            encounter_id,
+            next_version,
+            content.subjective,
+            content.objective,
+            content.assessment,
+            content.plan,
+            content.diagnosis,
+            content.instructions,
+            now()
+        ],
+    )?;
+
+    audit(
+        conn,
+        "note",
+        encounter_id,
+        "version-saved",
+        Some(&format!("v{next_version}")),
+    )?;
+    Ok(next_version)
+}
+
+pub fn save_prescription(
+    conn: &Connection,
+    encounter_id: &str,
+    content: &str,
+) -> Result<(), ClinicalError> {
+    let encounter = read_encounter(conn, encounter_id)?;
+    ensure_open(&encounter)?;
+
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT id FROM prescriptions WHERE encounter_id = ?1",
+            params![encounter_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    match existing {
+        Some(id) => {
+            conn.execute(
+                "UPDATE prescriptions SET content = ?2, created_at = ?3 WHERE id = ?1",
+                params![id, content, now()],
+            )?;
+        }
+        None => {
+            conn.execute(
+                "INSERT INTO prescriptions (id, encounter_id, content, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![uuid::Uuid::new_v4().to_string(), encounter_id, content, now()],
+            )?;
+        }
+    }
+
+    audit(conn, "prescription", encounter_id, "saved", None)?;
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatientBackgroundInput {
+    pub allergies: Option<String>,
+    pub medical_background: Option<String>,
+    pub family_background: Option<String>,
+    pub birth_date: Option<String>,
+}
+
+pub fn update_patient_background(
+    conn: &Connection,
+    patient_id: &str,
+    input: &PatientBackgroundInput,
+) -> Result<(), ClinicalError> {
+    let changed = conn.execute(
+        "UPDATE patients
+         SET allergies = ?2, medical_background = ?3, family_background = ?4,
+             birth_date = ?5, updated_at = ?6
+         WHERE id = ?1",
+        params![
+            patient_id,
+            input.allergies,
+            input.medical_background,
+            input.family_background,
+            input.birth_date,
+            now()
+        ],
+    )?;
+
+    if changed == 0 {
+        return Err(ClinicalError::NotFound);
+    }
+
+    audit(conn, "patient", patient_id, "background-updated", None)?;
+    Ok(())
+}
+
+/* ---------- Firma y cierre ---------- */
+
+/// Firma y cierra el encuentro. El hash SHA-256 del contenido final (nota +
+/// receta) queda guardado como evidencia de integridad: cualquier alteracion
+/// posterior del contenido ya no coincide con la firma.
+pub fn sign_encounter(conn: &Connection, encounter_id: &str) -> Result<Encounter, ClinicalError> {
+    let encounter = read_encounter(conn, encounter_id)?;
+    ensure_open(&encounter)?;
+
+    let detail = get_encounter_detail(conn, encounter_id)?;
+    let note = detail
+        .note
+        .ok_or_else(|| ClinicalError::Invalid("no se puede firmar un encuentro sin nota".into()))?;
+
+    let hash = signature_hash(encounter_id, &encounter.patient_id, &note, &detail.prescription);
+
+    conn.execute(
+        "UPDATE encounters SET status = 'SIGNED', signed_at = ?2, signed_hash = ?3 WHERE id = ?1",
+        params![encounter_id, now(), hash],
+    )?;
+
+    audit(conn, "encounter", encounter_id, "signed", Some(&hash))?;
+    read_encounter(conn, encounter_id)
+}
+
+/// Recalcula el hash de un encuentro firmado y lo compara con la firma
+/// guardada. `true` = el contenido no ha sido alterado desde la firma.
+pub fn verify_signature(conn: &Connection, encounter_id: &str) -> Result<bool, ClinicalError> {
+    let encounter = read_encounter(conn, encounter_id)?;
+    let Some(stored_hash) = encounter.signed_hash.clone() else {
+        return Ok(false);
+    };
+
+    let detail = get_encounter_detail(conn, encounter_id)?;
+    let Some(note) = detail.note else {
+        return Ok(false);
+    };
+
+    let hash = signature_hash(encounter_id, &encounter.patient_id, &note, &detail.prescription);
+
+    Ok(hash == stored_hash)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::open_encrypted;
+    use rusqlite::params;
+
+    fn test_conn(name: &str) -> Connection {
+        let dir = std::env::temp_dir().join("midoc-clinical-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{name}-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        open_encrypted(&path, "clave-de-prueba").unwrap()
+    }
+
+    fn seed_appointment(conn: &Connection, appointment_id: &str, patient_id: &str) {
+        conn.execute(
+            "INSERT INTO appointments (id, status, scheduled_start, scheduled_end,
+                service_name, reason, patient_id, patient_first_name,
+                patient_last_name, patient_phone, updated_at)
+             VALUES (?1, 'CONFIRMED', '2026-06-22T15:00:00Z', '2026-06-22T15:30:00Z',
+                'Consulta', 'Dolor lumbar', ?2, 'Hugo', 'Paz', '6140001111', '0')",
+            params![appointment_id, patient_id],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn opens_encounter_once_per_appointment_and_creates_patient() {
+        let conn = test_conn("open");
+        seed_appointment(&conn, "appt-1", "pat-1");
+
+        let first = open_encounter_for_appointment(&conn, "appt-1").unwrap();
+        let second = open_encounter_for_appointment(&conn, "appt-1").unwrap();
+        assert_eq!(first.id, second.id);
+        assert_eq!(first.status, "OPEN");
+
+        let detail = get_encounter_detail(&conn, &first.id).unwrap();
+        assert_eq!(detail.patient.first_name, "Hugo");
+        assert_eq!(detail.appointment_reason.as_deref(), Some("Dolor lumbar"));
+    }
+
+    #[test]
+    fn note_versions_increment_and_latest_wins() {
+        let conn = test_conn("versions");
+        seed_appointment(&conn, "appt-2", "pat-2");
+        let encounter = open_encounter_for_appointment(&conn, "appt-2").unwrap();
+
+        let v1 = save_note(
+            &conn,
+            &encounter.id,
+            &NoteContent {
+                subjective: "Dolor".into(),
+                diagnosis: "Lumbalgia".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let v2 = save_note(
+            &conn,
+            &encounter.id,
+            &NoteContent {
+                subjective: "Dolor irradiado".into(),
+                diagnosis: "Lumbalgia mecanica".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!((v1, v2), (1, 2));
+
+        let detail = get_encounter_detail(&conn, &encounter.id).unwrap();
+        assert_eq!(detail.note.as_ref().unwrap().version, 2);
+        assert_eq!(detail.note.unwrap().content.diagnosis, "Lumbalgia mecanica");
+        assert_eq!(detail.note_version_count, 2);
+    }
+
+    #[test]
+    fn signing_freezes_the_encounter_and_verifies_integrity() {
+        let conn = test_conn("sign");
+        seed_appointment(&conn, "appt-3", "pat-3");
+        let encounter = open_encounter_for_appointment(&conn, "appt-3").unwrap();
+
+        // No se firma sin nota.
+        assert!(matches!(
+            sign_encounter(&conn, &encounter.id),
+            Err(ClinicalError::Invalid(_))
+        ));
+
+        save_note(
+            &conn,
+            &encounter.id,
+            &NoteContent {
+                diagnosis: "Lumbalgia".into(),
+                plan: "AINEs 5 dias".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        save_prescription(&conn, &encounter.id, "Naproxeno 250mg c/12h x5d").unwrap();
+
+        let signed = sign_encounter(&conn, &encounter.id).unwrap();
+        assert_eq!(signed.status, "SIGNED");
+        assert!(signed.signed_hash.is_some());
+
+        // Congelado: nota y receta rechazadas tras la firma.
+        assert!(matches!(
+            save_note(&conn, &encounter.id, &NoteContent::default()),
+            Err(ClinicalError::AlreadySigned)
+        ));
+        assert!(matches!(
+            save_prescription(&conn, &encounter.id, "otra"),
+            Err(ClinicalError::AlreadySigned)
+        ));
+
+        // La firma verifica; si alguien altera el contenido, deja de verificar.
+        assert!(verify_signature(&conn, &encounter.id).unwrap());
+        conn.execute(
+            "UPDATE note_versions SET diagnosis = 'alterado' WHERE encounter_id = ?1",
+            params![encounter.id],
+        )
+        .unwrap();
+        assert!(!verify_signature(&conn, &encounter.id).unwrap());
+    }
+
+    #[test]
+    fn patient_background_updates_and_history_lists_other_encounters() {
+        let conn = test_conn("history");
+        seed_appointment(&conn, "appt-4", "pat-4");
+        seed_appointment(&conn, "appt-5", "pat-4");
+
+        let first = open_encounter_for_appointment(&conn, "appt-4").unwrap();
+        save_note(
+            &conn,
+            &first.id,
+            &NoteContent {
+                diagnosis: "Gastritis".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        sign_encounter(&conn, &first.id).unwrap();
+
+        let second = open_encounter_for_appointment(&conn, "appt-5").unwrap();
+
+        update_patient_background(
+            &conn,
+            "pat-4",
+            &PatientBackgroundInput {
+                allergies: Some("Penicilina".into()),
+                medical_background: Some("HTA en tratamiento".into()),
+                family_background: None,
+                birth_date: Some("1980-04-12".into()),
+            },
+        )
+        .unwrap();
+
+        let detail = get_encounter_detail(&conn, &second.id).unwrap();
+        assert_eq!(detail.patient.allergies.as_deref(), Some("Penicilina"));
+        assert_eq!(detail.history.len(), 1);
+        assert_eq!(detail.history[0].diagnosis, "Gastritis");
+        assert_eq!(detail.history[0].status, "SIGNED");
+
+        // La auditoria registro los eventos criticos.
+        let audit_count: i64 = conn
+            .query_row("SELECT count(*) FROM clinical_audit", [], |row| row.get(0))
+            .unwrap();
+        assert!(audit_count >= 5, "se esperaban >=5 eventos, hubo {audit_count}");
+    }
+}
