@@ -116,7 +116,8 @@ export default async function PublicDoctorProfilePage({
                   <li key={block.id}>
                     {new Intl.DateTimeFormat("es-MX", {
                       dateStyle: "medium",
-                      timeStyle: "short"
+                      timeStyle: "short",
+                      timeZone: profile.doctor.timeZone
                     }).format(new Date(block.startsAt))}
                     {block.reason ? ` · ${block.reason}` : ""}
                   </li>

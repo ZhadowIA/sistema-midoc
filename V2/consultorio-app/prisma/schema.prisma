@@ -305,6 +305,8 @@ model User {
   documentLinksAsDoctor  DocumentUploadLink[] @relation("DoctorDocumentUploadLinks")
   notificationsAsDoctor  Notification[]       @relation("DoctorNotifications")
   shortLinksAsDoctor     ShortLink[]          @relation("DoctorShortLinks")
+  syncDevicesAsDoctor    SyncDevice[]         @relation("DoctorSyncDevices")
+  syncEventsAsDoctor     SyncEvent[]          @relation("DoctorSyncEvents")
   createdShortLinks      ShortLink[]          @relation("ShortLinkCreator")
   legalAcceptances       LegalAcceptance[]
   passwordResetTokens    PasswordResetToken[]
@@ -337,6 +339,8 @@ model DoctorProfile {
   country              String?
   isPublic             Boolean                 @default(false)
   consultationDuration Int                     @default(30)
+  // Zona horaria IANA en la que se interpretan las reglas de disponibilidad.
+  timeZone             String                  @default("America/Chihuahua")
   createdAt            DateTime                @default(now())
   updatedAt            DateTime                @updatedAt
   user                 User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1041,4 +1045,51 @@ model PeriodontalChartEntry {
   dentalChart     DentalChart @relation(fields: [dentalChartId], references: [id], onDelete: Cascade)
 
   @@index([dentalChartId, toothNumber, site])
+}
+
+// ---------- Sincronizacion con la app de escritorio (13_contrato_sincronizacion.md) ----------
+
+enum SyncDeviceStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum SyncEventType {
+  APPOINTMENT_BOOKED
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_RESCHEDULED
+  PRECHECKIN_SUBMITTED
+}
+
+model SyncDevice {
+  id         String           @id @default(cuid())
+  doctorId   String
+  doctor     User             @relation("DoctorSyncDevices", fields: [doctorId], references: [id], onDelete: Cascade)
+  tokenHash  String           @unique
+  deviceName String?
+  status     SyncDeviceStatus @default(ACTIVE)
+  cursor     Int              @default(0)
+  lastSyncAt DateTime?
+  createdAt  DateTime         @default(now())
+  revokedAt  DateTime?
+
+  @@index([doctorId, status])
+}
+
+model SyncEvent {
+  id          String        @id @default(cuid())
+  doctorId    String
+  doctor      User          @relation("DoctorSyncEvents", fields: [doctorId], references: [id], onDelete: Cascade)
+  seq         Int
+  type        SyncEventType
+  // CLINICO en transito para PRECHECKIN_SUBMITTED; se purga tras ACK.
+  // CONTACTO/OPERATIVO para eventos de cita.
+  payload     Json?
+  createdAt   DateTime      @default(now())
+  deliveredAt DateTime?
+  purgedAt    DateTime?
+
+  @@unique([doctorId, seq])
+  @@index([doctorId, deliveredAt])
 }

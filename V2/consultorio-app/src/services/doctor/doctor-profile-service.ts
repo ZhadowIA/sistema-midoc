@@ -8,6 +8,7 @@ import {
 import { writeAuditLog } from "../../lib/audit";
 import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
+import { isValidTimeZone } from "../../lib/timezone";
 
 class DoctorProfileServiceError extends ServiceError {}
 
@@ -88,10 +89,15 @@ export async function updateDoctorProfile(
     postalCode?: string | null;
     country?: string | null;
     consultationDuration?: number;
+    timeZone?: string;
     isPublic?: boolean;
   }
 ) {
   const { doctor, doctorProfile } = await getDoctorProfileOrThrow(userId);
+
+  if (input.timeZone !== undefined && !isValidTimeZone(input.timeZone)) {
+    throw new DoctorProfileServiceError("Zona horaria no valida.");
+  }
 
   if (input.publicSlug) {
     const slug = input.publicSlug.trim();
@@ -132,6 +138,7 @@ export async function updateDoctorProfile(
       postalCode: input.postalCode?.trim() ?? input.postalCode,
       country: input.country?.trim() ?? input.country,
       consultationDuration: input.consultationDuration,
+      timeZone: input.timeZone,
       isPublic: input.isPublic
     }
   });
@@ -523,7 +530,8 @@ export async function getPublicDoctorProfile(slug: string) {
       state: profile.state,
       postalCode: profile.postalCode,
       country: profile.country,
-      consultationDuration: profile.consultationDuration
+      consultationDuration: profile.consultationDuration,
+      timeZone: profile.timeZone
     },
     services: profile.services.map((service) => ({
       id: service.id,

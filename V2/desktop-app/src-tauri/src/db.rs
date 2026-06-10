@@ -28,6 +28,35 @@ const MIGRATIONS: &[&str] = &[
         value TEXT NOT NULL
     );
     INSERT INTO app_meta (key, value) VALUES ('created_with_schema', '1');",
+    // v2: sincronizacion fase A (13_contrato_sincronizacion.md).
+    // sync_state: OPERATIVO (token de dispositivo, cursor, servidor).
+    // appointments: CONTACTO/OPERATIVO (datos de cita y contacto, no clinicos).
+    // precheckins: CLINICO (vive solo aqui; la nube lo purga tras el ACK).
+    "CREATE TABLE sync_state (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL
+    );
+    CREATE TABLE appointments (
+        id TEXT PRIMARY KEY NOT NULL,
+        status TEXT NOT NULL,
+        scheduled_start TEXT NOT NULL,
+        scheduled_end TEXT NOT NULL,
+        service_name TEXT,
+        reason TEXT,
+        patient_id TEXT,
+        patient_first_name TEXT NOT NULL DEFAULT '',
+        patient_last_name TEXT NOT NULL DEFAULT '',
+        patient_phone TEXT,
+        patient_email TEXT,
+        cancellation_reason TEXT,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_appointments_start ON appointments (scheduled_start);
+    CREATE TABLE precheckins (
+        appointment_id TEXT PRIMARY KEY NOT NULL,
+        responses_json TEXT NOT NULL,
+        received_at TEXT NOT NULL
+    );",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

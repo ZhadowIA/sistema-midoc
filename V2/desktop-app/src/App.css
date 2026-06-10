@@ -117,3 +117,19 @@ button {
 
 .error { color: #c0392b; }
 .meta { font-size: 0.85em; opacity: 0.7; }
+
+.container.wide { max-width: 760px; }
+.workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.workspace-header h1 { margin: 0; }
+.card { border: 1px solid #d8dce3; border-radius: 10px; padding: 20px; text-align: left; margin-top: 16px; }
+.stack { display: grid; gap: 10px; margin-top: 12px; }
+.stack input { width: 100%; }
+.success { color: #1f7a4d; }
+.appointment-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 10px; }
+.appointment-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #d8dce3; border-radius: 8px; padding: 10px 14px; text-align: left; }
+.status { font-size: 0.82em; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: #eef0f4; }
+.status-confirmed { background: #e2f3e9; color: #1f7a4d; }
+.status-pending { background: #eaf0fb; color: #2c5cc5; }
+.status-cancelled { background: #fbeaea; color: #b3403a; }
+.footer-meta { margin-top: 20px; }
+button.secondary { background: transparent; border: 1px solid #d8dce3; color: inherit; }
