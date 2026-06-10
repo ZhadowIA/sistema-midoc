@@ -1,3 +1,4 @@
+mod clinical;
 mod db;
 mod sync;
 
@@ -200,6 +201,84 @@ fn list_appointments(state: tauri::State<'_, AppDb>) -> Result<Vec<AppointmentRo
     Ok(rows)
 }
 
+/* ---------- Atencion clinica (paso 4) ---------- */
+
+fn with_conn<T>(
+    state: &tauri::State<'_, AppDb>,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, clinical::ClinicalError>,
+) -> Result<T, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    f(conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn open_encounter(
+    state: tauri::State<'_, AppDb>,
+    appointment_id: String,
+) -> Result<clinical::Encounter, String> {
+    with_conn(&state, |conn| {
+        clinical::open_encounter_for_appointment(conn, &appointment_id)
+    })
+}
+
+#[tauri::command]
+fn get_encounter(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+) -> Result<clinical::EncounterDetail, String> {
+    with_conn(&state, |conn| {
+        clinical::get_encounter_detail(conn, &encounter_id)
+    })
+}
+
+#[tauri::command]
+fn save_note(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    note: clinical::NoteContent,
+) -> Result<i64, String> {
+    with_conn(&state, |conn| clinical::save_note(conn, &encounter_id, &note))
+}
+
+#[tauri::command]
+fn save_prescription(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    content: String,
+) -> Result<(), String> {
+    with_conn(&state, |conn| {
+        clinical::save_prescription(conn, &encounter_id, &content)
+    })
+}
+
+#[tauri::command]
+fn update_patient_background(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+    background: clinical::PatientBackgroundInput,
+) -> Result<(), String> {
+    with_conn(&state, |conn| {
+        clinical::update_patient_background(conn, &patient_id, &background)
+    })
+}
+
+#[tauri::command]
+fn sign_encounter(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+) -> Result<clinical::Encounter, String> {
+    with_conn(&state, |conn| clinical::sign_encounter(conn, &encounter_id))
+}
+
+#[tauri::command]
+fn verify_signature(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+) -> Result<bool, String> {
+    with_conn(&state, |conn| clinical::verify_signature(conn, &encounter_id))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -211,7 +290,14 @@ pub fn run() {
             sync_status,
             link_account,
             sync_now,
-            list_appointments
+            list_appointments,
+            open_encounter,
+            get_encounter,
+            save_note,
+            save_prescription,
+            update_patient_background,
+            sign_encounter,
+            verify_signature
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
