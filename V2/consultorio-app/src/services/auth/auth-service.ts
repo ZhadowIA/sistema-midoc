@@ -14,6 +14,8 @@ import {
 } from "@prisma/client";
 
 import { writeAuditLog } from "../../lib/audit";
+import { env } from "../../lib/env";
+import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { assertRateLimit } from "../../lib/rate-limit";
 import { hashPassword, verifyPassword } from "../../lib/security/password";
@@ -30,14 +32,7 @@ const SUBSCRIPTION_READY_STATUSES = [
 
 type DoctorSpecialtyInput = "GENERAL_MEDICINE" | "ODONTOLOGY";
 
-class AuthServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly status = 400
-  ) {
-    super(message);
-  }
-}
+class AuthServiceError extends ServiceError {}
 
 function mapSpecialty(specialty: DoctorSpecialtyInput): ClinicalProfile {
   return specialty === "ODONTOLOGY"
@@ -67,12 +62,20 @@ export async function createDoctorAccount(input: {
   specialty: DoctorSpecialtyInput;
   termsVersion: string;
   privacyVersion: string;
+  requestIp?: string;
 }) {
   assertRateLimit({
     key: `register:${input.email.toLowerCase()}`,
     limit: 5,
     windowMs: 1000 * 60 * 15
   });
+  if (input.requestIp) {
+    assertRateLimit({
+      key: `register-ip:${input.requestIp}`,
+      limit: 10,
+      windowMs: 1000 * 60 * 15
+    });
+  }
 
   ensureStrongPassword(input.password);
 
@@ -137,12 +140,23 @@ export async function createDoctorAccount(input: {
   return { user };
 }
 
-export async function signInDoctor(input: { email: string; password: string }) {
+export async function signInDoctor(input: {
+  email: string;
+  password: string;
+  requestIp?: string;
+}) {
   assertRateLimit({
     key: `login:${input.email.toLowerCase()}`,
     limit: 10,
     windowMs: 1000 * 60 * 15
   });
+  if (input.requestIp) {
+    assertRateLimit({
+      key: `login-ip:${input.requestIp}`,
+      limit: 30,
+      windowMs: 1000 * 60 * 15
+    });
+  }
 
   const email = input.email.trim().toLowerCase();
   const user = await prisma.user.findUnique({
@@ -257,6 +271,13 @@ export async function requestPasswordReset(input: {
     limit: 5,
     windowMs: 1000 * 60 * 15
   });
+  if (input.requestIp) {
+    assertRateLimit({
+      key: `password-reset-ip:${input.requestIp}`,
+      limit: 15,
+      windowMs: 1000 * 60 * 15
+    });
+  }
 
   const email = input.email.trim().toLowerCase();
   const user = await prisma.user.findUnique({
@@ -294,6 +315,10 @@ export async function requestPasswordReset(input: {
     }
   });
 
+  // The queued email must carry the link with the raw token; exposure is
+  // bounded by the 15-minute TTL and single use.
+  const resetUrl = `${env.APP_BASE_URL}/recuperar?token=${resetToken}`;
+
   await prisma.notification.create({
     data: {
       doctorId: user.id,
@@ -301,10 +326,11 @@ export async function requestPasswordReset(input: {
       kind: NotificationKind.PASSWORD_RESET,
       destination: user.email,
       subject: "Restablece tu contrasena",
-      body: `Usa el token de restablecimiento generado para la cuenta ${user.email}.`,
+      body: `Para restablecer la contrasena de tu cuenta MiDoc entra a: ${resetUrl}\nEl enlace vence en 15 minutos y solo puede usarse una vez. Si no solicitaste este cambio, ignora este correo.`,
       status: NotificationStatus.PENDING,
       metadata: {
-        email: user.email
+        email: user.email,
+        resetUrl
       }
     }
   });

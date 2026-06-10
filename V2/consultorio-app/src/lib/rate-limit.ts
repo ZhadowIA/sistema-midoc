@@ -1,3 +1,9 @@
+export class RateLimitError extends Error {
+  constructor() {
+    super("Too many attempts.");
+  }
+}
+
 type RateLimitEntry = {
   count: number;
   expiresAt: number;
@@ -22,7 +28,7 @@ export function assertRateLimit(options: {
   }
 
   if (current.count >= options.limit) {
-    throw new Error("Rate limit exceeded");
+    throw new RateLimitError();
   }
 
   current.count += 1;
