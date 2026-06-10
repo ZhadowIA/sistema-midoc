@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Atencion } from "./Atencion";
 import "./App.css";
 
 interface UnlockResult {
@@ -154,6 +155,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [activeEncounter, setActiveEncounter] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -194,6 +196,28 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   async function lock() {
     await invoke("lock_database");
     onLock();
+  }
+
+  async function attend(appointmentId: string) {
+    setError("");
+    try {
+      const encounter = await invoke<{ id: string }>("open_encounter", { appointmentId });
+      setActiveEncounter(encounter.id);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  if (activeEncounter) {
+    return (
+      <Atencion
+        encounterId={activeEncounter}
+        onBack={() => {
+          setActiveEncounter(null);
+          void refresh();
+        }}
+      />
+    );
   }
 
   if (!status) {
@@ -251,9 +275,14 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                       {appointment.reason ? ` · ${appointment.reason}` : ""}
                     </span>
                   </div>
-                  <span className={`status status-${appointment.status.toLowerCase()}`}>
-                    {STATUS_LABELS[appointment.status] ?? appointment.status}
-                  </span>
+                  <div className="row">
+                    <span className={`status status-${appointment.status.toLowerCase()}`}>
+                      {STATUS_LABELS[appointment.status] ?? appointment.status}
+                    </span>
+                    {appointment.status !== "CANCELLED" ? (
+                      <button onClick={() => void attend(appointment.id)}>Atender</button>
+                    ) : null}
+                  </div>
                 </li>
               ))}
             </ul>

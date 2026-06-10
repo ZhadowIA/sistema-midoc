@@ -54,6 +54,10 @@ Reserva una cita en el portal por HTTP, la baja a una base cifrada temporal, y v
 4. Reservar una cita en el portal (`/perfil/<slug>/agenda`).
 5. En la app, "Sincronizar ahora": la cita aparece en la agenda.
 
+## Atencion clinica (paso 4)
+
+`src-tauri/src/clinical.rs`: la cita abre el encuentro (uno por cita), con expediente del paciente (antecedentes, alergias, historial de encuentros previos), nota SOAP **versionada** (cada guardado crea una version), receta e indicaciones. **Firmar y cerrar** congela el encuentro y guarda un hash SHA-256 del contenido final como evidencia de integridad (`verify_signature` lo recalcula y detecta alteraciones). Todos los cambios criticos quedan en `clinical_audit`. Nada de este modulo toca la red.
+
 ## Estado (paso 0)
 
-Compuerta del paso 0: la app crea y abre su base cifrada, rechaza llaves incorrectas y el archivo en disco no es SQLite en claro (verificado por pruebas en `db.rs`). El modelo clinico completo llega en el paso 4.
+Compuerta del paso 0: la app crea y abre su base cifrada, rechaza llaves incorrectas y el archivo en disco no es SQLite en claro (verificado por pruebas en `db.rs`).
