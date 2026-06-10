@@ -16,8 +16,9 @@ Este directorio contiene la documentacion base para iniciar MiDoc V2. El conteni
 10. `10_linea_de_desarrollo.md`
 11. `11_recomendaciones_ia_medica.md`
 12. `12_inventario_funcional_v1.md`
-13. `anexos/01_factibilidad_resumen.md`
-14. `anexos/02_ieee_830_resumen.md`
+13. `13_contrato_sincronizacion.md`
+14. `anexos/01_factibilidad_resumen.md`
+15. `anexos/02_ieee_830_resumen.md`
 
 Reglas obligatorias de trabajo: `REGLAS_DESARROLLO.md`.
 

@@ -40,6 +40,32 @@ function isSerializationFailure(error: unknown) {
   );
 }
 
+/**
+ * Runs a serializable transaction, retrying on serialization aborts (P2034).
+ * Postgres can abort serializable transactions even without a real slot
+ * conflict; the retry re-runs the inner conflict check, which is what decides
+ * the genuine 409.
+ */
+async function runSerializable<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  const maxAttempts = 3;
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await prisma.$transaction(fn, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable
+      });
+    } catch (error) {
+      if (isSerializationFailure(error) && attempt < maxAttempts) {
+        continue;
+      }
+      if (isSerializationFailure(error)) {
+        throw new PublicBookingServiceError(SLOT_TAKEN_MESSAGE, 409);
+      }
+      throw error;
+    }
+  }
+}
+
 function startOfUtcDay(date: Date) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
@@ -310,14 +336,11 @@ export async function createAppointmentHold(input: {
   }
 
   const token = generateOpaqueToken(20);
-  let hold;
 
-  try {
-    // Transaccion serializable: dos pacientes pidiendo el mismo horario a la
-    // vez no pueden crear dos holds activos; Postgres aborta uno (P2034).
-    hold = await prisma.$transaction(
-      async (tx) => {
-        const conflictingHold = await tx.appointmentHold.findFirst({
+  // Transaccion serializable: dos pacientes pidiendo el mismo horario a la
+  // vez no pueden crear dos holds activos.
+  const hold = await runSerializable(async (tx) => {
+    const conflictingHold = await tx.appointmentHold.findFirst({
           where: {
             doctorId: profile.userId,
             status: HoldStatus.ACTIVE,
@@ -342,26 +365,18 @@ export async function createAppointmentHold(input: {
           throw new PublicBookingServiceError(SLOT_TAKEN_MESSAGE, 409);
         }
 
-        return tx.appointmentHold.create({
-          data: {
-            doctorId: profile.userId,
-            serviceId: service.id,
-            token,
-            status: HoldStatus.ACTIVE,
-            slotStart,
-            slotEnd,
-            expiresAt: new Date(Date.now() + HOLD_TTL_MS)
-          }
-        });
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-    );
-  } catch (error) {
-    if (isSerializationFailure(error)) {
-      throw new PublicBookingServiceError(SLOT_TAKEN_MESSAGE, 409);
-    }
-    throw error;
-  }
+    return tx.appointmentHold.create({
+      data: {
+        doctorId: profile.userId,
+        serviceId: service.id,
+        token,
+        status: HoldStatus.ACTIVE,
+        slotStart,
+        slotEnd,
+        expiresAt: new Date(Date.now() + HOLD_TTL_MS)
+      }
+    });
+  });
 
   await writeAuditLog({
     entityType: "AppointmentHold",
@@ -473,75 +488,64 @@ export async function bookPublicAppointment(input: {
   });
 
   const confirmationToken = generateOpaqueToken(18);
-  let appointment;
 
-  try {
-    // La verificacion de conflictos, la cita y la conversion del hold viajan
-    // en una sola transaccion serializable: sin ventana para doble reserva.
-    appointment = await prisma.$transaction(
-      async (tx) => {
-        const conflictingAppointment = await tx.appointment.findFirst({
-          where: {
-            doctorId: hold.doctorId,
-            status: { not: AppointmentStatus.CANCELLED },
-            scheduledStart: { lt: hold.slotEnd },
-            scheduledEnd: { gt: hold.slotStart }
-          },
-          select: { id: true }
-        });
-
-        const otherActiveHold = await tx.appointmentHold.findFirst({
-          where: {
-            id: { not: hold.id },
-            doctorId: hold.doctorId,
-            status: HoldStatus.ACTIVE,
-            expiresAt: { gt: new Date() },
-            slotStart: { lt: hold.slotEnd },
-            slotEnd: { gt: hold.slotStart }
-          },
-          select: { id: true }
-        });
-
-        if (conflictingAppointment || otherActiveHold) {
-          throw new PublicBookingServiceError(SLOT_TAKEN_MESSAGE, 409);
-        }
-
-        const created = await tx.appointment.create({
-          data: {
-            doctorId: hold.doctorId,
-            patientId: patient.id,
-            serviceId: hold.serviceId,
-            status: AppointmentStatus.PENDING,
-            source: AppointmentSource.PATIENT,
-            scheduledStart: hold.slotStart,
-            scheduledEnd: hold.slotEnd,
-            reason: input.reason?.trim(),
-            confirmationToken,
-            timeZone: "America/Chihuahua"
-          }
-        });
-
-        await tx.appointmentHold.update({
-          where: {
-            id: hold.id
-          },
-          data: {
-            status: HoldStatus.CONVERTED,
-            appointmentId: created.id,
-            patientId: patient.id
-          }
-        });
-
-        return created;
+  // La verificacion de conflictos, la cita y la conversion del hold viajan
+  // en una sola transaccion serializable: sin ventana para doble reserva.
+  const appointment = await runSerializable(async (tx) => {
+    const conflictingAppointment = await tx.appointment.findFirst({
+      where: {
+        doctorId: hold.doctorId,
+        status: { not: AppointmentStatus.CANCELLED },
+        scheduledStart: { lt: hold.slotEnd },
+        scheduledEnd: { gt: hold.slotStart }
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-    );
-  } catch (error) {
-    if (isSerializationFailure(error)) {
+      select: { id: true }
+    });
+
+    const otherActiveHold = await tx.appointmentHold.findFirst({
+      where: {
+        id: { not: hold.id },
+        doctorId: hold.doctorId,
+        status: HoldStatus.ACTIVE,
+        expiresAt: { gt: new Date() },
+        slotStart: { lt: hold.slotEnd },
+        slotEnd: { gt: hold.slotStart }
+      },
+      select: { id: true }
+    });
+
+    if (conflictingAppointment || otherActiveHold) {
       throw new PublicBookingServiceError(SLOT_TAKEN_MESSAGE, 409);
     }
-    throw error;
-  }
+
+    const created = await tx.appointment.create({
+      data: {
+        doctorId: hold.doctorId,
+        patientId: patient.id,
+        serviceId: hold.serviceId,
+        status: AppointmentStatus.PENDING,
+        source: AppointmentSource.PATIENT,
+        scheduledStart: hold.slotStart,
+        scheduledEnd: hold.slotEnd,
+        reason: input.reason?.trim(),
+        confirmationToken,
+        timeZone: "America/Chihuahua"
+      }
+    });
+
+    await tx.appointmentHold.update({
+      where: {
+        id: hold.id
+      },
+      data: {
+        status: HoldStatus.CONVERTED,
+        appointmentId: created.id,
+        patientId: patient.id
+      }
+    });
+
+    return created;
+  });
 
   await prisma.precheckinSubmission.create({
     data: {
@@ -814,56 +818,44 @@ export async function reschedulePublicAppointment(input: {
   const durationMs = appointment.scheduledEnd.getTime() - appointment.scheduledStart.getTime();
   const newSlotEnd = new Date(newSlotStart.getTime() + durationMs);
 
-  let updated;
-
-  try {
-    updated = await prisma.$transaction(
-      async (tx) => {
-        const conflictingAppointment = await tx.appointment.findFirst({
-          where: {
-            id: { not: appointment.id },
-            doctorId: appointment.doctorId,
-            status: { not: AppointmentStatus.CANCELLED },
-            scheduledStart: { lt: newSlotEnd },
-            scheduledEnd: { gt: newSlotStart }
-          },
-          select: { id: true }
-        });
-
-        const conflictingHold = await tx.appointmentHold.findFirst({
-          where: {
-            doctorId: appointment.doctorId,
-            status: HoldStatus.ACTIVE,
-            expiresAt: { gt: new Date() },
-            slotStart: { lt: newSlotEnd },
-            slotEnd: { gt: newSlotStart }
-          },
-          select: { id: true }
-        });
-
-        if (conflictingAppointment || conflictingHold) {
-          throw new PublicBookingServiceError(SLOT_TAKEN_MESSAGE, 409);
-        }
-
-        return tx.appointment.update({
-          where: { id: appointment.id },
-          data: {
-            scheduledStart: newSlotStart,
-            scheduledEnd: newSlotEnd,
-            // La cita reagendada vuelve a requerir confirmacion del paciente.
-            status: AppointmentStatus.PENDING,
-            confirmedAt: null
-          }
-        });
+  const updated = await runSerializable(async (tx) => {
+    const conflictingAppointment = await tx.appointment.findFirst({
+      where: {
+        id: { not: appointment.id },
+        doctorId: appointment.doctorId,
+        status: { not: AppointmentStatus.CANCELLED },
+        scheduledStart: { lt: newSlotEnd },
+        scheduledEnd: { gt: newSlotStart }
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-    );
-  } catch (error) {
-    if (isSerializationFailure(error)) {
+      select: { id: true }
+    });
+
+    const conflictingHold = await tx.appointmentHold.findFirst({
+      where: {
+        doctorId: appointment.doctorId,
+        status: HoldStatus.ACTIVE,
+        expiresAt: { gt: new Date() },
+        slotStart: { lt: newSlotEnd },
+        slotEnd: { gt: newSlotStart }
+      },
+      select: { id: true }
+    });
+
+    if (conflictingAppointment || conflictingHold) {
       throw new PublicBookingServiceError(SLOT_TAKEN_MESSAGE, 409);
     }
-    throw error;
-  }
+
+    return tx.appointment.update({
+      where: { id: appointment.id },
+      data: {
+        scheduledStart: newSlotStart,
+        scheduledEnd: newSlotEnd,
+        // La cita reagendada vuelve a requerir confirmacion del paciente.
+        status: AppointmentStatus.PENDING,
+        confirmedAt: null
+      }
+    });
+  });
 
   await writeAuditLog({
     entityType: "Appointment",
