@@ -1,16 +1,39 @@
+/* MiDoc V2 — sistema visual. Fuente de verdad: DESIGN.md (raiz del repo). */
+
 :root {
   color-scheme: light;
-  --bg: #f3efe7;
-  --surface: rgba(255, 255, 255, 0.84);
-  --surface-strong: #fffdf8;
-  --text: #18211d;
-  --muted: #58655d;
-  --line: rgba(24, 33, 29, 0.08);
-  --accent: #1f6a52;
-  --accent-soft: #d8efe2;
-  --accent-strong: #0d3f31;
-  --shadow: 0 24px 60px rgba(20, 35, 29, 0.1);
-  font-family: "Segoe UI", "Aptos", sans-serif;
+
+  --bg: oklch(1 0 0);
+  --surface: oklch(0.974 0.004 250);
+  --ink: oklch(0.24 0.022 250);
+  --muted: oklch(0.49 0.02 250);
+  --line: oklch(0.9 0.008 250);
+
+  --primary: oklch(0.49 0.143 250);
+  --primary-hover: oklch(0.43 0.143 250);
+  --primary-soft: oklch(0.95 0.025 250);
+
+  --accent: oklch(0.58 0.105 195);
+  --accent-soft: oklch(0.96 0.018 195);
+
+  --success: oklch(0.55 0.12 155);
+  --success-soft: oklch(0.96 0.02 155);
+  --warning: oklch(0.66 0.13 70);
+  --warning-soft: oklch(0.97 0.025 70);
+  --danger: oklch(0.51 0.17 25);
+  --danger-soft: oklch(0.96 0.02 25);
+
+  --radius-control: 6px;
+  --radius-panel: 10px;
+
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal-backdrop: 300;
+  --z-modal: 310;
+  --z-toast: 400;
+
+  --speed: 160ms;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * {
@@ -18,16 +41,42 @@
 }
 
 html {
-  background:
-    radial-gradient(circle at top left, rgba(207, 235, 220, 0.9), transparent 34%),
-    linear-gradient(180deg, #f8f4ed 0%, #f3efe7 45%, #ece4d7 100%);
+  background: var(--bg);
   min-height: 100%;
 }
 
 body {
   margin: 0;
-  color: var(--text);
+  color: var(--ink);
   min-height: 100vh;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+  line-height: 1.2;
+}
+
+h1 {
+  font-size: 1.72rem;
+  font-weight: 700;
+}
+
+h2 {
+  font-size: 1.44rem;
+  font-weight: 650;
+}
+
+h3 {
+  font-size: 1.07rem;
+  font-weight: 600;
+}
+
+p {
+  max-width: 70ch;
 }
 
 a {
@@ -36,35 +85,127 @@ a {
 }
 
 main {
-  width: min(1180px, calc(100% - 32px));
+  width: min(1080px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 32px 0 56px;
+  padding: 28px 0 56px;
 }
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* ---------- Barra superior del medico ---------- */
+
+.app-topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  /* Full-bleed: el topbar vive dentro de <main> (ancho limitado) pero debe
+     ocupar todo el viewport y pegarse al borde superior. */
+  margin: -28px calc(50% - 50vw) 24px;
+}
+
+.medico-content {
+  display: grid;
+  gap: 20px;
+}
+
+.app-topbar-inner {
+  width: min(1080px, calc(100% - 32px));
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: 56px;
+}
+
+.brand-mark {
+  font-weight: 700;
+  font-size: 1.07rem;
+  color: var(--primary);
+  letter-spacing: -0.01em;
+}
+
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.topbar-link {
+  padding: 6px 12px;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.92rem;
+  transition: background var(--speed) var(--ease), color var(--speed) var(--ease);
+}
+
+.topbar-link:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.topbar-link[aria-current="page"] {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+/* ---------- Estructura ---------- */
 
 .home-shell,
-.public-shell {
+.public-shell,
+.booking-shell,
+.profile-grid,
+.app-grid,
+.settings-stack {
   display: grid;
-  gap: 24px;
+  gap: 20px;
 }
 
-.hero-card,
 .panel,
-.app-card {
+.hero-card,
+.app-card,
+.auth-card {
+  background: var(--bg);
   border: 1px solid var(--line);
-  background: var(--surface);
-  backdrop-filter: blur(14px);
-  box-shadow: var(--shadow);
-  border-radius: 28px;
+  border-radius: var(--radius-panel);
 }
 
-.home-shell {
-  padding-top: 18px;
+.panel {
+  padding: 24px;
 }
+
+.panel-header {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.panel-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.section-kicker,
+.eyebrow {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+/* ---------- Home / perfil publico ---------- */
 
 .hero-card {
   display: grid;
   gap: 20px;
   padding: 28px;
+  background: var(--surface);
 }
 
 .hero-copy h1,
@@ -80,32 +221,20 @@ main {
   color: var(--muted);
 }
 
-.eyebrow,
-.section-kicker {
-  display: inline-flex;
-  width: fit-content;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .hero-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 18px;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 .hero-meta span,
 .app-chip {
-  padding: 10px 14px;
+  padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.75);
+  background: var(--bg);
   border: 1px solid var(--line);
+  font-size: 0.92rem;
 }
 
 .hero-panel {
@@ -116,7 +245,13 @@ main {
 
 .hero-panel div,
 .app-card {
-  padding: 18px;
+  padding: 16px;
+}
+
+.hero-panel div {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
 }
 
 .hero-actions {
@@ -127,141 +262,78 @@ main {
 .hero-panel strong,
 .app-card strong {
   display: block;
-  font-size: 1.4rem;
+  font-size: 1.2rem;
+  font-weight: 650;
 }
 
 .hero-panel span,
 .app-card span {
   color: var(--muted);
+  font-size: 0.92rem;
 }
 
-.profile-grid,
-.app-grid {
+.app-hero {
   display: grid;
-  gap: 24px;
+  gap: 16px;
 }
 
-.panel {
-  padding: 24px;
+.app-title {
+  font-size: 2.07rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
-.panel-header {
+.app-lead {
+  max-width: 60ch;
+  font-size: 1.07rem;
+}
+
+.app-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.app-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cta-card {
   display: grid;
   gap: 10px;
-  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 16px;
+  background: var(--surface);
 }
+
+.cta-card code {
+  background: var(--ink);
+  color: var(--bg);
+  border-radius: var(--radius-control);
+  padding: 8px 10px;
+  font-size: 0.92rem;
+}
+
+/* ---------- Listas de servicios / disponibilidad ---------- */
 
 .service-list,
 .availability-list {
   display: grid;
-  gap: 14px;
-}
-
-.service-card,
-.availability-row,
-.cta-card {
-  border: 1px solid var(--line);
-  background: var(--surface-strong);
-  border-radius: 22px;
-  padding: 18px;
-}
-
-.booking-shell {
-  display: grid;
-  gap: 24px;
-}
-
-.booking-shell-inline {
-  margin-top: 4px;
-}
-
-.booking-toolbar,
-.booking-form {
-  display: grid;
-  gap: 14px;
-}
-
-.field {
-  display: grid;
-  gap: 8px;
-}
-
-.field span {
-  font-size: 0.92rem;
-  color: var(--muted);
-}
-
-.field input,
-.field select,
-.field textarea {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.94);
-  padding: 12px 14px;
-  font: inherit;
-  color: var(--text);
-}
-
-.action-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: fit-content;
-  min-height: 46px;
-  border: none;
-  border-radius: 999px;
-  background: var(--accent);
-  color: white;
-  font: inherit;
-  padding: 0 18px;
-  cursor: pointer;
-}
-
-.panel > .booking-shell .panel {
-  padding: 0;
-  border: none;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-}
-
-.action-button:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
-
-.slot-grid {
-  display: flex;
-  flex-wrap: wrap;
   gap: 10px;
 }
 
-.slot-button {
+.service-card,
+.availability-row {
   border: 1px solid var(--line);
-  border-radius: 999px;
-  background: white;
-  color: var(--text);
-  padding: 10px 14px;
-  font: inherit;
-  cursor: pointer;
+  background: var(--bg);
+  border-radius: var(--radius-panel);
+  padding: 14px 16px;
+  transition: border-color var(--speed) var(--ease);
 }
 
-.slot-button.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
-.status-copy {
-  color: var(--accent-strong);
-  margin: 14px 0 0;
-}
-
-.appointment-summary {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 18px;
+a.service-card:hover {
+  border-color: var(--primary);
 }
 
 .service-card-top {
@@ -277,54 +349,420 @@ main {
 }
 
 .blocks-box {
-  margin-top: 18px;
-  padding-top: 18px;
+  margin-top: 16px;
+  padding-top: 16px;
   border-top: 1px solid var(--line);
 }
 
 .blocks-box ul {
-  margin: 12px 0 0;
+  margin: 10px 0 0;
   padding-left: 18px;
   color: var(--muted);
 }
 
-.app-hero {
-  display: grid;
+/* ---------- Formularios ---------- */
+
+.booking-shell {
   gap: 20px;
 }
 
-.app-title {
-  font-size: clamp(2rem, 5vw, 4rem);
-  line-height: 0.95;
-  max-width: 10ch;
+.booking-shell-inline {
+  margin-top: 4px;
 }
 
-.app-lead {
-  max-width: 56ch;
-  font-size: 1.05rem;
+.booking-toolbar,
+.booking-form,
+.settings-form {
+  display: grid;
+  gap: 14px;
+  align-items: start;
 }
 
-.app-chip-row {
+.check-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.92rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.check-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field > span,
+.field > label {
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+  transition: border-color var(--speed) var(--ease), box-shadow var(--speed) var(--ease);
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--muted);
+}
+
+.field input:focus-visible,
+.field select:focus-visible,
+.field textarea:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.field.has-error input,
+.field.has-error select,
+.field.has-error textarea {
+  border-color: var(--danger);
+}
+
+.field-error {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--danger);
+}
+
+.field-hint {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.form-error,
+.form-success {
+  margin: 0;
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  font-size: 0.92rem;
+}
+
+.form-error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.form-success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+/* ---------- Botones ---------- */
+
+.action-button,
+.ghost-button,
+.danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 40px;
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-weight: 550;
+  padding: 0 16px;
+  cursor: pointer;
+  transition: background var(--speed) var(--ease), border-color var(--speed) var(--ease), color var(--speed) var(--ease);
+}
+
+.action-button {
+  border: none;
+  background: var(--primary);
+  color: white;
+}
+
+.action-button:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.ghost-button {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.ghost-button:hover:not(:disabled) {
+  border-color: var(--ink);
+}
+
+.danger-button {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--danger);
+}
+
+.danger-button:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+.action-button:disabled,
+.ghost-button:disabled,
+.danger-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.button-row {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  align-items: center;
 }
 
-.app-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.link-button {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--primary);
+  font-weight: 500;
+  cursor: pointer;
 }
 
-.cta-card {
+.link-button:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Slots de agenda publica ---------- */
+
+.slot-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.slot-button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  color: var(--ink);
+  padding: 8px 14px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: border-color var(--speed) var(--ease), background var(--speed) var(--ease);
+}
+
+.slot-button:hover {
+  border-color: var(--primary);
+}
+
+.slot-button.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.status-copy {
+  color: var(--primary);
+  margin: 14px 0 0;
+}
+
+.appointment-summary {
   display: grid;
-  gap: 10px;
+  gap: 8px;
+  margin-bottom: 18px;
 }
 
-.cta-card code {
-  background: #12241d;
-  color: #f5f5f2;
-  border-radius: 12px;
-  padding: 10px 12px;
+.panel > .booking-shell .panel {
+  padding: 0;
+  border: none;
+  background: transparent;
 }
+
+/* ---------- Auth ---------- */
+
+.auth-shell {
+  min-height: calc(100vh - 120px);
+  display: grid;
+  place-items: center;
+  padding: 32px 0;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  padding: 32px;
+  display: grid;
+  gap: 18px;
+}
+
+.auth-card header {
+  display: grid;
+  gap: 6px;
+}
+
+.auth-card h1 {
+  margin: 0;
+  font-size: 1.44rem;
+}
+
+.auth-card header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-footer {
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.auth-footer a {
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.auth-footer a:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Configuracion del medico ---------- */
+
+.settings-stack {
+  gap: 24px;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 12px 16px;
+}
+
+.list-row-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.list-row-main strong {
+  font-weight: 600;
+}
+
+.list-row-main small {
+  color: var(--muted);
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.row-actions .ghost-button,
+.row-actions .danger-button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 0.86rem;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.pill-primary {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.pill-accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.pill-success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.pill-muted {
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.pill-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.empty-state {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-panel);
+  padding: 24px;
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.inline-form {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.skeleton-row {
+  height: 56px;
+  border-radius: var(--radius-panel);
+  background: linear-gradient(90deg, var(--surface) 25%, oklch(0.95 0.004 250) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+
+@keyframes skeleton-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ---------- Responsive ---------- */
 
 @media (min-width: 860px) {
   .hero-card {
@@ -345,7 +783,8 @@ main {
     align-items: end;
   }
 
-  .booking-form {
+  .booking-form,
+  .settings-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -358,5 +797,24 @@ main {
   .hero-panel,
   .app-grid {
     grid-template-columns: 1fr;
+  }
+
+  .list-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .row-actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
