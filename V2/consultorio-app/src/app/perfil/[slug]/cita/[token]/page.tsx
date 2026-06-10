@@ -8,12 +8,19 @@ export default async function PublicAppointmentPage({
 }: {
   params: Promise<{ slug: string; token: string }>;
 }) {
-  const { token } = await params;
+  const { slug, token } = await params;
   const details = await getPublicAppointmentByToken(token);
 
   if (!details) {
     notFound();
   }
 
-  return <AppointmentClient token={token} details={details} />;
+  return (
+    <AppointmentClient
+      token={token}
+      slug={slug}
+      serviceId={details.appointment.serviceId}
+      details={details}
+    />
+  );
 }
