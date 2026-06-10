@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requestIpFrom, toErrorResponse } from "../../../../lib/api-error";
 import { createSessionCookieOptions, SESSION_COOKIE_NAME } from "../../../../lib/auth/session-cookie";
 import { signInDoctor } from "../../../../services/auth/auth-service";
 
@@ -12,7 +13,10 @@ const loginSchema = z.object({
 export async function POST(request: Request) {
   try {
     const payload = loginSchema.parse(await request.json());
-    const result = await signInDoctor(payload);
+    const result = await signInDoctor({
+      ...payload,
+      requestIp: requestIpFrom(request)
+    });
 
     const response = NextResponse.json({
       user: {
@@ -32,11 +36,6 @@ export async function POST(request: Request) {
 
     return response;
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Invalid credentials."
-      },
-      { status: 401 }
-    );
+    return toErrorResponse(error, "No se pudo iniciar sesion.");
   }
 }

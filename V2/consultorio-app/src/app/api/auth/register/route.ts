@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requestIpFrom, toErrorResponse } from "../../../../lib/api-error";
 import { env } from "../../../../lib/env";
 import { createDoctorAccount } from "../../../../services/auth/auth-service";
 
@@ -21,7 +22,8 @@ export async function POST(request: Request) {
     const result = await createDoctorAccount({
       ...payload,
       termsVersion: env.TERMS_VERSION,
-      privacyVersion: env.PRIVACY_VERSION
+      privacyVersion: env.PRIVACY_VERSION,
+      requestIp: requestIpFrom(request)
     });
 
     return NextResponse.json(
@@ -34,11 +36,6 @@ export async function POST(request: Request) {
       { status: 201 }
     );
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unable to register account."
-      },
-      { status: 400 }
-    );
+    return toErrorResponse(error, "No se pudo crear la cuenta.");
   }
 }

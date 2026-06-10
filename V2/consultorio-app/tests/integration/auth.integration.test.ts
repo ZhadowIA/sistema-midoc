@@ -133,6 +133,16 @@ describe("auth service", () => {
       expect(requestResult.message).toMatch(/si existe/i);
       expect(requestResult.resetToken).toBeTruthy();
 
+      const queuedEmail = await prisma.notification.findFirst({
+        where: {
+          destination: email,
+          kind: "PASSWORD_RESET"
+        },
+        orderBy: { createdAt: "desc" }
+      });
+
+      expect(queuedEmail?.body).toContain(`/recuperar?token=${requestResult.resetToken}`);
+
       await resetPassword({
         token: requestResult.resetToken!,
         newPassword: "N3wPass!4567"
