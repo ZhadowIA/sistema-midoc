@@ -12,6 +12,16 @@ const DAY_NAMES = [
   "Sabado"
 ];
 
+// Zonas horarias de Mexico (IANA) cubriendo los husos del pais.
+const TIME_ZONES: Array<{ value: string; label: string }> = [
+  { value: "America/Mexico_City", label: "Centro (Ciudad de Mexico, Guadalajara, Monterrey)" },
+  { value: "America/Cancun", label: "Sureste (Cancun, Quintana Roo)" },
+  { value: "America/Chihuahua", label: "Pacifico (Chihuahua)" },
+  { value: "America/Mazatlan", label: "Pacifico (Mazatlan, Sinaloa, Nayarit)" },
+  { value: "America/Hermosillo", label: "Pacifico sin horario de verano (Hermosillo, Sonora)" },
+  { value: "America/Tijuana", label: "Noroeste (Tijuana, Baja California)" }
+];
+
 type Workspace = {
   professionalName: string;
   publicSlug: string;
@@ -23,6 +33,7 @@ type Workspace = {
   city: string | null;
   state: string | null;
   consultationDuration: number;
+  timeZone: string;
   isPublic: boolean;
   services: Array<{
     id: string;
@@ -96,6 +107,7 @@ function ProfilePanel({
     city: workspace.city ?? "",
     state: workspace.state ?? "",
     consultationDuration: workspace.consultationDuration,
+    timeZone: workspace.timeZone,
     isPublic: workspace.isPublic
   });
   const [error, setError] = useState("");
@@ -218,6 +230,28 @@ function ProfilePanel({
               update("consultationDuration", Number(event.currentTarget.value))
             }
           />
+        </div>
+
+        <div className="field">
+          <label htmlFor="profile-timezone">Zona horaria</label>
+          <select
+            id="profile-timezone"
+            value={form.timeZone}
+            aria-describedby="profile-timezone-hint"
+            onChange={(event) => update("timeZone", event.currentTarget.value)}
+          >
+            {TIME_ZONES.some((zone) => zone.value === form.timeZone) ? null : (
+              <option value={form.timeZone}>{form.timeZone}</option>
+            )}
+            {TIME_ZONES.map((zone) => (
+              <option key={zone.value} value={zone.value}>
+                {zone.label}
+              </option>
+            ))}
+          </select>
+          <p className="field-hint" id="profile-timezone-hint">
+            Tus horarios de atencion se interpretan en esta zona horaria.
+          </p>
         </div>
 
         <div className="field">

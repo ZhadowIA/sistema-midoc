@@ -16,6 +16,15 @@ import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { generateOpaqueToken } from "../../lib/security/token";
 import { writeAuditLog } from "../../lib/audit";
+import {
+  addDaysToLocalDate,
+  formatLocalDate,
+  getLocalDayOfWeek,
+  getLocalDate,
+  localDateTimeToUtc,
+  parseLocalDate,
+  type LocalDate
+} from "../../lib/timezone";
 import { emitSyncEvent } from "../sync/sync-service";
 
 const HOLD_TTL_MS = 1000 * 60 * 10;
@@ -67,25 +76,12 @@ async function runSerializable<T>(fn: (tx: Prisma.TransactionClient) => Promise<
   }
 }
 
-function startOfUtcDay(date: Date) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-}
-
 function addMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() + minutes * 60_000);
 }
 
-function buildDateTime(date: Date, time: string) {
-  const [hours, minutes] = time.split(":").map(Number);
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hours, minutes, 0, 0));
-}
-
-function sameUtcDate(left: Date, right: Date) {
-  return (
-    left.getUTCFullYear() === right.getUTCFullYear() &&
-    left.getUTCMonth() === right.getUTCMonth() &&
-    left.getUTCDate() === right.getUTCDate()
-  );
+function sameLocalDate(left: LocalDate, right: LocalDate) {
+  return left.year === right.year && left.month === right.month && left.day === right.day;
 }
 
 function overlaps(rangeAStart: Date, rangeAEnd: Date, rangeBStart: Date, rangeBEnd: Date) {
@@ -144,7 +140,8 @@ async function getPublicDoctorOrThrow(slug: string) {
 }
 
 function getRuleSlots(input: {
-  date: Date;
+  date: LocalDate;
+  timeZone: string;
   ruleStartTime: string;
   ruleEndTime: string;
   slotInterval: number;
@@ -152,8 +149,10 @@ function getRuleSlots(input: {
   minAdvanceHours?: number | null;
   maxAdvanceDays?: number | null;
 }) {
-  const ruleStart = buildDateTime(input.date, input.ruleStartTime);
-  const ruleEnd = buildDateTime(input.date, input.ruleEndTime);
+  // Las horas "de pared" de la regla se anclan a la fecha local del medico y
+  // se convierten a instantes UTC (respetando horario de verano).
+  const ruleStart = localDateTimeToUtc(input.date, input.ruleStartTime, input.timeZone);
+  const ruleEnd = localDateTimeToUtc(input.date, input.ruleEndTime, input.timeZone);
   const slots: Array<{ slotStart: Date; slotEnd: Date }> = [];
   const now = new Date();
 
@@ -197,14 +196,17 @@ export async function listPublicAvailability(input: {
     throw new PublicBookingServiceError("Service not found for this doctor.", 404);
   }
 
-  const dateFrom = new Date(`${input.dateFrom}T00:00:00.000Z`);
+  const timeZone = profile.timeZone;
+  const fromLocalDate = parseLocalDate(input.dateFrom);
 
-  if (Number.isNaN(dateFrom.getTime())) {
+  if (!fromLocalDate) {
     throw new PublicBookingServiceError("Invalid start date.");
   }
 
   const days = Math.min(Math.max(input.days ?? 7, 1), 30);
-  const until = addMinutes(startOfUtcDay(dateFrom), days * 24 * 60);
+  // La ventana [dateFrom, until) se ancla a medianoche local del medico, no UTC.
+  const dateFrom = localDateTimeToUtc(fromLocalDate, "00:00", timeZone);
+  const until = localDateTimeToUtc(addDaysToLocalDate(fromLocalDate, days), "00:00", timeZone);
 
   const [appointments, holds] = await Promise.all([
     prisma.appointment.findMany({
@@ -245,18 +247,21 @@ export async function listPublicAvailability(input: {
   const slots: SlotRecord[] = [];
 
   for (let dayOffset = 0; dayOffset < days; dayOffset += 1) {
-    const date = startOfUtcDay(addMinutes(dateFrom, dayOffset * 24 * 60));
+    const date = addDaysToLocalDate(fromLocalDate, dayOffset);
+    const dayOfWeek = getLocalDayOfWeek(date);
     const matchingRules = profile.availabilityRules.filter((rule) => {
       if (rule.ruleType === "DATE_OVERRIDE" && rule.specificDate) {
-        return sameUtcDate(rule.specificDate, date);
+        // specificDate se almacena como fecha de calendario (medianoche UTC).
+        return sameLocalDate(getLocalDate(rule.specificDate, "UTC"), date);
       }
 
-      return rule.ruleType === "WEEKLY" && rule.dayOfWeek === date.getUTCDay();
+      return rule.ruleType === "WEEKLY" && rule.dayOfWeek === dayOfWeek;
     });
 
     for (const rule of matchingRules) {
       const ruleSlots = getRuleSlots({
         date,
+        timeZone,
         ruleStartTime: rule.startTime,
         ruleEndTime: rule.endTime,
         slotInterval: rule.slotInterval,
@@ -323,10 +328,11 @@ export async function createAppointmentHold(input: {
     throw new PublicBookingServiceError("Invalid slot start.");
   }
 
+  // La fecha de busqueda es la fecha local del medico para ese instante.
   const availability = await listPublicAvailability({
     slug: input.slug,
     serviceId: input.serviceId,
-    dateFrom: slotStart.toISOString().slice(0, 10),
+    dateFrom: formatLocalDate(getLocalDate(slotStart, profile.timeZone)),
     days: 1
   });
 
@@ -488,6 +494,11 @@ export async function bookPublicAppointment(input: {
     patient: input.patient
   });
 
+  const doctorProfileTz = await prisma.doctorProfile.findUnique({
+    where: { userId: hold.doctorId },
+    select: { timeZone: true }
+  });
+
   const confirmationToken = generateOpaqueToken(18);
 
   // La verificacion de conflictos, la cita y la conversion del hold viajan
@@ -530,7 +541,7 @@ export async function bookPublicAppointment(input: {
         scheduledEnd: hold.slotEnd,
         reason: input.reason?.trim(),
         confirmationToken,
-        timeZone: "America/Chihuahua"
+        timeZone: doctorProfileTz?.timeZone ?? "America/Chihuahua"
       }
     });
 
@@ -814,7 +825,7 @@ export async function reschedulePublicAppointment(input: {
 
   const doctorProfile = await prisma.doctorProfile.findUnique({
     where: { userId: appointment.doctorId },
-    select: { publicSlug: true }
+    select: { publicSlug: true, timeZone: true }
   });
 
   if (!doctorProfile || !appointment.serviceId) {
@@ -832,7 +843,7 @@ export async function reschedulePublicAppointment(input: {
   const availability = await listPublicAvailability({
     slug: doctorProfile.publicSlug,
     serviceId: appointment.serviceId,
-    dateFrom: newSlotStart.toISOString().slice(0, 10),
+    dateFrom: formatLocalDate(getLocalDate(newSlotStart, doctorProfile.timeZone)),
     days: 1
   });
 
