@@ -74,6 +74,12 @@ h3 {
   font-weight: 600;
 }
 
+h4 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
 p {
   margin: 0;
 }
@@ -456,9 +462,165 @@ textarea:disabled {
   color: var(--danger);
 }
 
+.dental-section {
+  display: grid;
+  gap: 14px;
+}
+
+.odontogram-arches {
+  display: grid;
+  gap: 18px;
+}
+
+.tooth-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.tooth-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: linear-gradient(180deg, var(--bg), var(--surface));
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.tooth-card-header {
+  display: grid;
+  gap: 2px;
+}
+
+.compact-field {
+  gap: 4px;
+}
+
+.compact-field > span {
+  font-size: 0.82rem;
+}
+
+.surface-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.periodontogram-block {
+  display: grid;
+  gap: 8px;
+}
+
+.periodontogram-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+
+.periodontogram-table {
+  width: 100%;
+  min-width: 1050px;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.periodontogram-table th,
+.periodontogram-table td {
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  padding: 6px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.periodontogram-table th {
+  background: var(--surface);
+  font-weight: 650;
+}
+
+.periodontogram-table tr:last-child td,
+.periodontogram-table tr:last-child th {
+  border-bottom: none;
+}
+
+.periodontogram-table td:last-child,
+.periodontogram-table th:last-child {
+  border-right: none;
+}
+
+.periodontal-input {
+  min-width: 52px;
+  padding: 6px 8px;
+  text-align: center;
+}
+
+.periodontal-checkbox {
+  width: 16px;
+  height: 16px;
+}
+
+.dental-inline-card {
+  align-items: start;
+  flex-direction: column;
+}
+
+.dental-inline-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.plan-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.grow-field {
+  width: 100%;
+}
+
+.dental-summary-grid {
+  display: grid;
+  grid-template-columns: 1.3fr 0.7fr;
+  gap: 14px;
+}
+
 .footer-meta {
   color: var(--muted);
   font-size: 0.86rem;
+}
+
+@media (max-width: 900px) {
+  .dental-inline-grid,
+  .plan-grid,
+  .dental-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .surface-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .app-topbar,
+  .list-row {
+    flex-wrap: wrap;
+  }
+
+  .content {
+    width: min(100%, calc(100% - 24px));
+    padding-top: 16px;
+  }
+
+  .panel,
+  .auth-card {
+    padding: 16px;
+  }
+
+  .tooth-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
