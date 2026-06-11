@@ -4,6 +4,8 @@
 //! monotono, los aplica de forma idempotente a la base local cifrada y
 //! confirma con ACK (momento en el que la nube purga el contenido clinico).
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
@@ -308,6 +310,43 @@ pub async fn fetch_document(
         .and_then(|v| v.as_str())
         .map(String::from)
         .ok_or_else(|| SyncError::Server("respuesta sin ciphertext".into()))
+}
+
+/// Publica un resumen autorizado cifrado al portal (app -> nube). El payload es
+/// `nonce||mac||ciphertext`; la nube lo guarda sin poder abrirlo. Devuelve la
+/// URL de descarga (sin la llave, que el llamador agrega en el fragmento).
+pub async fn publish_summary(
+    server_url: &str,
+    device_token: &str,
+    patient_id: &str,
+    appointment_id: Option<&str>,
+    title: Option<&str>,
+    payload: &[u8],
+) -> Result<String, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+
+    let response = client
+        .post(format!("{base}/api/sync/summaries"))
+        .bearer_auth(device_token)
+        .json(&serde_json::json!({
+            "patientId": patient_id,
+            "appointmentId": appointment_id,
+            "title": title,
+            "ciphertext": BASE64.encode(payload)
+        }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+
+    let body: serde_json::Value = response.json().await?;
+    body.get("downloadUrl")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| SyncError::Server("respuesta sin downloadUrl".into()))
 }
 
 /// Sobre [metaLen u32 BE | metaJSON | bytes]. El metaJSON lleva nombre y tipo

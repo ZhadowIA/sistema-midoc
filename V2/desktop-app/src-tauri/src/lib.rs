@@ -217,6 +217,51 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
     })
 }
 
+/// Publica un resumen autorizado para el paciente: cifra el contenido con una
+/// llave nueva (secretbox), lo sube al portal y devuelve el enlace temporal con
+/// la llave en el fragmento. La llave nunca llega al servidor.
+#[tauri::command]
+async fn publish_authorized_summary(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+    appointment_id: Option<String>,
+    title: Option<String>,
+    content_base64: String,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+    let content = B64
+        .decode(content_base64.trim())
+        .map_err(|_| "contenido del resumen invalido".to_string())?;
+    let (key_b64url, payload) = crypto::seal_summary(&content);
+
+    let (server_url, token) = {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let server_url = sync::get_state(conn, "server_url")
+            .map_err(|e| e.to_string())?
+            .ok_or("la app no esta vinculada a una cuenta")?;
+        let token = sync::get_state(conn, "device_token")
+            .map_err(|e| e.to_string())?
+            .ok_or("la app no esta vinculada a una cuenta")?;
+        (server_url, token)
+    };
+
+    let download_url = sync::publish_summary(
+        &server_url,
+        &token,
+        &patient_id,
+        appointment_id.as_deref(),
+        title.as_deref(),
+        &payload,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // La llave viaja en el fragmento (#k=...): nunca se envia al servidor.
+    Ok(format!("{download_url}#k={key_b64url}"))
+}
+
 #[tauri::command]
 fn list_appointments(state: tauri::State<'_, AppDb>) -> Result<Vec<AppointmentRow>, String> {
     let guard = state.0.lock().unwrap();
@@ -343,6 +388,7 @@ pub fn run() {
             sync_status,
             link_account,
             sync_now,
+            publish_authorized_summary,
             list_appointments,
             open_encounter,
             get_encounter,

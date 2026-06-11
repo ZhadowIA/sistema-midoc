@@ -12,9 +12,11 @@
 //! corre en la pagina de carga del paciente.
 
 use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64URL;
 use base64::Engine;
 use dryoc::dryocbox::{DryocBox, KeyPair};
-use dryoc::types::StackByteArray;
+use dryoc::dryocsecretbox::{DryocSecretBox, Key as SummaryKey, Nonce as SummaryNonce};
+use dryoc::types::{NewByteArray, StackByteArray};
 use rusqlite::Connection;
 
 use crate::sync::{get_state, set_state, SyncError};
@@ -89,6 +91,23 @@ pub fn unseal_document(conn: &Connection, sealed_b64: &str) -> Result<Vec<u8>, C
         .map_err(|_| CryptoError::Decrypt)
 }
 
+/// Cifra un resumen para el paciente con secretbox. La llave es nueva por
+/// resumen y viaja SOLO en el fragmento del enlace; el servidor nunca la ve.
+/// Devuelve (llave base64url, payload = nonce(24) || mac(16) || ciphertext).
+/// El navegador del paciente abre el payload con `crypto_secretbox_open_easy`.
+pub fn seal_summary(content: &[u8]) -> (String, Vec<u8>) {
+    let key = SummaryKey::gen();
+    let nonce = SummaryNonce::gen();
+    let sbox = DryocSecretBox::encrypt_to_vecbox(content, &nonce, &key);
+    let combined = sbox.to_vec(); // mac || ciphertext (formato libsodium "easy")
+
+    let mut payload = Vec::with_capacity(nonce.len() + combined.len());
+    payload.extend_from_slice(&nonce[..]);
+    payload.extend_from_slice(&combined);
+
+    (BASE64URL.encode(&key[..]), payload)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +155,27 @@ mod tests {
 
         let decrypted = unseal_document(&conn, &sealed_b64).unwrap();
         assert_eq!(decrypted, message);
+    }
+
+    #[test]
+    fn summary_payload_decrypts_with_key_and_nonce() {
+        // Verifica el formato que abrira el navegador del paciente: la llave
+        // (base64url) + nonce||mac||ciphertext descifra al contenido original.
+        let content = b"%PDF-1.4 resumen autorizado";
+        let (key_b64, payload) = seal_summary(content);
+
+        let key = BASE64URL.decode(key_b64).unwrap();
+        let nonce = &payload[..24];
+        let combined = &payload[24..];
+
+        let sbox = DryocSecretBox::from_bytes(combined).unwrap();
+        let decrypted = sbox
+            .decrypt_to_vec(
+                &SummaryNonce::try_from(nonce).unwrap(),
+                &SummaryKey::try_from(key.as_slice()).unwrap()
+            )
+            .unwrap();
+        assert_eq!(decrypted, content);
     }
 
     #[test]
