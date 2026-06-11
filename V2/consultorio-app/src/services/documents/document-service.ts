@@ -206,10 +206,7 @@ export async function getUploadLinkForUpload(token: string) {
  * el buzon. El contenido es opaco para la nube. Emite un evento de sync para
  * que la app del medico lo descargue, descifre y luego se purgue (Fase B).
  */
-export async function submitMailboxDocument(
-  token: string,
-  input: { ciphertext: Buffer; category?: DocumentCategory }
-) {
+export async function submitMailboxDocument(token: string, input: { ciphertext: Buffer }) {
   if (input.ciphertext.length < MIN_CIPHERTEXT_BYTES) {
     throw new DocumentServiceError("Documento cifrado invalido.", 400);
   }
@@ -218,7 +215,6 @@ export async function submitMailboxDocument(
   }
 
   const sizeBytes = input.ciphertext.length;
-  const category = input.category ?? DocumentCategory.OTHER;
 
   // Transaccion serializable: dos subidas concurrentes no pueden rebasar el
   // tope del enlace (uploadCount no excede maxUploads).
@@ -237,7 +233,9 @@ export async function submitMailboxDocument(
         patientId: link.patientId,
         appointmentId: link.appointmentId,
         uploadLinkId: link.id,
-        category,
+        // La categoria real viaja cifrada dentro del sealed box; la nube solo
+        // guarda un marcador. El medico la reclasifica al descargar en su app.
+        category: DocumentCategory.OTHER,
         // Copia a un Uint8Array respaldado por ArrayBuffer (tipo que espera
         // Prisma para Bytes); el contenido sigue siendo opaco.
         ciphertext: new Uint8Array(input.ciphertext),
@@ -264,12 +262,12 @@ export async function submitMailboxDocument(
     };
   });
 
-  // Evento de sync: solo referencias y tamaño, nunca contenido clinico.
+  // Evento de sync: solo referencias y tamaño, nunca contenido clinico (la
+  // categoria y el nombre del archivo viajan cifrados dentro del sealed box).
   await emitSyncEvent(doctorId, "DOCUMENT_UPLOADED", {
     mailboxDocumentId: document.id,
     patientId,
     appointmentId: appointmentId ?? null,
-    category,
     sizeBytes
   });
 

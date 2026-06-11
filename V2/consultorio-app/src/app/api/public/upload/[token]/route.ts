@@ -1,4 +1,3 @@
-import { DocumentCategory } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -11,8 +10,8 @@ import {
 
 const uploadSchema = z.object({
   // Sealed box (X25519) en base64. La nube no lo descifra: lo reenvia al medico.
-  ciphertext: z.string().min(1).max(20_000_000),
-  category: z.nativeEnum(DocumentCategory).optional()
+  // El nombre, tipo y categoria del archivo viajan cifrados dentro del box.
+  ciphertext: z.string().min(1).max(20_000_000)
 });
 
 export async function GET(
@@ -39,10 +38,7 @@ export async function POST(
 
     const payload = uploadSchema.parse(await request.json());
     const ciphertext = Buffer.from(payload.ciphertext, "base64");
-    const result = await submitMailboxDocument(token, {
-      ciphertext,
-      category: payload.category
-    });
+    const result = await submitMailboxDocument(token, { ciphertext });
 
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
