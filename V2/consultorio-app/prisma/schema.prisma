@@ -307,6 +307,7 @@ model User {
   shortLinksAsDoctor     ShortLink[]          @relation("DoctorShortLinks")
   syncDevicesAsDoctor    SyncDevice[]         @relation("DoctorSyncDevices")
   syncEventsAsDoctor     SyncEvent[]          @relation("DoctorSyncEvents")
+  mailboxDocumentsAsDoctor MailboxDocument[]  @relation("DoctorMailboxDocuments")
   createdShortLinks      ShortLink[]          @relation("ShortLinkCreator")
   legalAcceptances       LegalAcceptance[]
   passwordResetTokens    PasswordResetToken[]
@@ -424,6 +425,7 @@ model Patient {
   precheckinSubmissions PrecheckinSubmission[]
   documents             ClinicalDocument[]
   uploadLinks           DocumentUploadLink[]
+  mailboxDocuments      MailboxDocument[]
   notifications         Notification[]
   shortLinks            ShortLink[]
   legalAcceptances      LegalAcceptance[]
@@ -474,6 +476,7 @@ model Appointment {
   precheckins        PrecheckinSubmission[]
   documents          ClinicalDocument[]
   uploadLinks        DocumentUploadLink[]
+  mailboxDocuments   MailboxDocument[]
   notifications      Notification[]
   shortLinks         ShortLink[]
   resourceBookings   ResourceBooking[]
@@ -690,6 +693,7 @@ model DocumentUploadLink {
   appointment    Appointment?     @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
   encounter      Encounter?       @relation(fields: [encounterId], references: [id], onDelete: SetNull)
   documents      ClinicalDocument[]
+  mailboxDocuments MailboxDocument[]
 
   @@index([patientId, expiresAt, status])
 }
@@ -1060,6 +1064,12 @@ enum SyncEventType {
   APPOINTMENT_CANCELLED
   APPOINTMENT_RESCHEDULED
   PRECHECKIN_SUBMITTED
+  DOCUMENT_UPLOADED
+}
+
+enum MailboxDocumentStatus {
+  PENDING
+  PURGED
 }
 
 model SyncDevice {
@@ -1095,4 +1105,30 @@ model SyncEvent {
 
   @@unique([doctorId, seq])
   @@index([doctorId, deliveredAt])
+}
+
+// Buzon temporal de documentos del paciente (paso 6, Fase B). El ciphertext es
+// un sealed box (X25519) que la nube NO puede leer; se entrega a la app del
+// medico via sync y se purga tras el ACK (frontera legal de residencia).
+model MailboxDocument {
+  id            String                @id @default(cuid())
+  doctorId      String
+  patientId     String
+  appointmentId String?
+  uploadLinkId  String
+  category      DocumentCategory      @default(OTHER)
+  // CLINICO en transito. Nulo tras la purga; metadatos (nombre, tipo) viajan
+  // dentro del sealed box, nunca en claro en la nube.
+  ciphertext    Bytes?
+  sizeBytes     Int
+  status        MailboxDocumentStatus @default(PENDING)
+  createdAt     DateTime              @default(now())
+  deliveredAt   DateTime?
+  purgedAt      DateTime?
+  doctor        User                  @relation("DoctorMailboxDocuments", fields: [doctorId], references: [id], onDelete: Cascade)
+  patient       Patient               @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment   Appointment?          @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  uploadLink    DocumentUploadLink    @relation(fields: [uploadLinkId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, status])
 }
