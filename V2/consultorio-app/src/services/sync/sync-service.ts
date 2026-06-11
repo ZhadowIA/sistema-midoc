@@ -1,4 +1,5 @@
 import {
+  MailboxDocumentStatus,
   Prisma,
   SyncDeviceStatus,
   SyncEventType,
@@ -185,22 +186,34 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
 
   const now = new Date();
 
+  // Eventos con contenido clinico en transito que deben purgarse al confirmar:
+  // preconsultas y documentos del buzon.
   const clinicalEvents = await prisma.syncEvent.findMany({
     where: {
       doctorId: device.doctorId,
       seq: { lte: cursor },
-      type: SyncEventType.PRECHECKIN_SUBMITTED,
+      type: { in: [SyncEventType.PRECHECKIN_SUBMITTED, SyncEventType.DOCUMENT_UPLOADED] },
       purgedAt: null
     },
-    select: { id: true, payload: true }
+    select: { id: true, type: true, payload: true }
   });
 
-  const precheckinIds = clinicalEvents
-    .map((event) => {
+  const precheckinIds: string[] = [];
+  const mailboxDocumentIds: string[] = [];
+
+  for (const event of clinicalEvents) {
+    if (event.type === SyncEventType.PRECHECKIN_SUBMITTED) {
       const payload = event.payload as { precheckinId?: string } | null;
-      return payload?.precheckinId;
-    })
-    .filter((id): id is string => Boolean(id));
+      if (payload?.precheckinId) {
+        precheckinIds.push(payload.precheckinId);
+      }
+    } else if (event.type === SyncEventType.DOCUMENT_UPLOADED) {
+      const payload = event.payload as { mailboxDocumentId?: string } | null;
+      if (payload?.mailboxDocumentId) {
+        mailboxDocumentIds.push(payload.mailboxDocumentId);
+      }
+    }
+  }
 
   await prisma.$transaction([
     prisma.syncEvent.updateMany({
@@ -218,10 +231,21 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
       },
       data: { payload: Prisma.DbNull, purgedAt: now }
     }),
-    // ...y del buzon (las respuestas de preconsulta se vacian en nube).
+    // ...y del buzon (las respuestas de preconsulta se vacian en nube)...
     prisma.precheckinSubmission.updateMany({
       where: { id: { in: precheckinIds } },
       data: { responses: {} }
+    }),
+    // ...y el ciphertext de los documentos se elimina (frontera legal: tras el
+    // ACK el documento solo existe en el equipo del medico).
+    prisma.mailboxDocument.updateMany({
+      where: { id: { in: mailboxDocumentIds } },
+      data: {
+        ciphertext: null,
+        status: MailboxDocumentStatus.PURGED,
+        deliveredAt: now,
+        purgedAt: now
+      }
     }),
     prisma.syncDevice.update({
       where: { id: device.id },
@@ -232,16 +256,47 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
     })
   ]);
 
-  if (precheckinIds.length > 0) {
+  if (precheckinIds.length > 0 || mailboxDocumentIds.length > 0) {
     await writeAuditLog({
       actorUserId: device.doctorId,
       entityType: "SyncEvent",
       entityId: device.id,
       action: "sync.clinical-content-purged",
       source: "sync-service",
-      metadata: { purgedPrecheckins: precheckinIds.length, cursor }
+      metadata: {
+        purgedPrecheckins: precheckinIds.length,
+        purgedDocuments: mailboxDocumentIds.length,
+        cursor
+      }
     });
   }
 
   return { acknowledged: cursor, purgedClinicalEvents: clinicalEvents.length };
+}
+
+/**
+ * Devuelve el ciphertext (sealed box) de un documento del buzon para el
+ * dispositivo del medico. Solo el dueño del documento puede descargarlo, y solo
+ * mientras no se haya purgado. La nube no puede descifrarlo.
+ */
+export async function getMailboxDocumentForDevice(device: SyncDevice, documentId: string) {
+  const document = await prisma.mailboxDocument.findFirst({
+    where: { id: documentId, doctorId: device.doctorId },
+    select: { id: true, ciphertext: true, sizeBytes: true, status: true }
+  });
+
+  if (!document) {
+    throw new SyncServiceError("Documento no encontrado.", 404);
+  }
+
+  if (!document.ciphertext || document.status === MailboxDocumentStatus.PURGED) {
+    // Ya entregado y purgado: el dispositivo lo re-pide tras un ACK perdido.
+    throw new SyncServiceError("Documento ya entregado.", 410);
+  }
+
+  return {
+    id: document.id,
+    sizeBytes: document.sizeBytes,
+    ciphertext: Buffer.from(document.ciphertext).toString("base64")
+  };
 }

@@ -10,12 +10,24 @@ import {
   revokeUploadLink,
   submitMailboxDocument
 } from "../../src/services/documents/document-service";
-import { linkSyncDevice } from "../../src/services/sync/sync-service";
+import {
+  ackSyncEvents,
+  authenticateSyncDevice,
+  getMailboxDocumentForDevice,
+  getSyncInbox,
+  linkSyncDevice
+} from "../../src/services/sync/sync-service";
 
 const prisma = new PrismaClient();
 
 function uniqueEmail(label: string) {
   return `${label}-${randomUUID()}@example.com`;
+}
+
+function bearerRequest(token: string) {
+  return new Request("http://localhost/api/sync/documents", {
+    headers: { authorization: `Bearer ${token}` }
+  });
 }
 
 async function createPatientFor(doctorId: string) {
@@ -43,9 +55,9 @@ async function seedDoctorWithDevice(label: string) {
     privacyVersion: "2026-05"
   });
   const publicKey = randomBytes(32).toString("base64");
-  await linkSyncDevice(account.user.id, "PC consultorio", publicKey);
+  const { deviceToken } = await linkSyncDevice(account.user.id, "PC consultorio", publicKey);
   const patient = await createPatientFor(account.user.id);
-  return { email, doctorId: account.user.id, patient, publicKey };
+  return { email, doctorId: account.user.id, patient, publicKey, deviceToken };
 }
 
 async function cleanupUserByEmail(email: string) {
@@ -173,6 +185,64 @@ describe("document upload links + mailbox (paso 6, fase B)", () => {
       await expect(getUploadLinkForUpload(link.token)).rejects.toMatchObject({ status: 409 });
     } finally {
       await cleanupUserByEmail(email);
+    }
+  });
+
+  it("delivers the ciphertext to the device and purges it on ack (fase B)", async () => {
+    const ctx = await seedDoctorWithDevice("doctor-syncdoc");
+
+    try {
+      const { link } = await createUploadLink(ctx.doctorId, { patientId: ctx.patient.id });
+      const ciphertext = randomBytes(300);
+      const { id: documentId } = await submitMailboxDocument(link.token, { ciphertext });
+
+      const device = await authenticateSyncDevice(bearerRequest(ctx.deviceToken));
+
+      // El dispositivo descarga el ciphertext (la nube no puede leerlo).
+      const download = await getMailboxDocumentForDevice(device, documentId);
+      expect(Buffer.from(download.ciphertext, "base64").equals(ciphertext)).toBe(true);
+
+      // ACK hasta el evento del documento: purga el ciphertext en la nube.
+      const inbox = await getSyncInbox(device, 0);
+      const ack = await ackSyncEvents(device, inbox.nextCursor);
+      expect(ack.purgedClinicalEvents).toBeGreaterThanOrEqual(1);
+
+      const purged = await prisma.mailboxDocument.findUnique({ where: { id: documentId } });
+      expect(purged?.status).toBe("PURGED");
+      expect(purged?.ciphertext).toBeNull();
+      expect(purged?.purgedAt).not.toBeNull();
+
+      const purgedEvent = await prisma.syncEvent.findFirst({
+        where: { doctorId: ctx.doctorId, type: "DOCUMENT_UPLOADED" }
+      });
+      expect(purgedEvent?.payload).toBeNull();
+
+      // Tras la purga, re-descargar devuelve 410 (ya entregado).
+      await expect(getMailboxDocumentForDevice(device, documentId)).rejects.toMatchObject({
+        status: 410
+      });
+    } finally {
+      await cleanupUserByEmail(ctx.email);
+    }
+  });
+
+  it("does not let another doctor's device download the ciphertext", async () => {
+    const owner = await seedDoctorWithDevice("doctor-owner");
+    const intruder = await seedDoctorWithDevice("doctor-intruder");
+
+    try {
+      const { link } = await createUploadLink(owner.doctorId, { patientId: owner.patient.id });
+      const { id: documentId } = await submitMailboxDocument(link.token, {
+        ciphertext: randomBytes(120)
+      });
+
+      const intruderDevice = await authenticateSyncDevice(bearerRequest(intruder.deviceToken));
+      await expect(getMailboxDocumentForDevice(intruderDevice, documentId)).rejects.toMatchObject({
+        status: 404
+      });
+    } finally {
+      await cleanupUserByEmail(owner.email);
+      await cleanupUserByEmail(intruder.email);
     }
   });
 

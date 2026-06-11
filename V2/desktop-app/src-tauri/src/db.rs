@@ -122,6 +122,22 @@ const MIGRATIONS: &[&str] = &[
     // la estructura (medicina general/familiar, luego odontologia) vive en
     // el frontend. Se versiona y firma junto con la nota. Clase: CLINICO.
     "ALTER TABLE note_versions ADD COLUMN specialty_payload TEXT NOT NULL DEFAULT '{}';",
+    // v5: documentos del buzon (paso 6, Fase B). Llegan cifrados de la nube,
+    // se descifran con la llave del medico y se guardan aqui en claro. El id
+    // es el del MailboxDocument en el portal (idempotencia ante re-entrega).
+    // Clase: CLINICO (vive solo en este equipo).
+    "CREATE TABLE documents (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT,
+        appointment_id TEXT,
+        file_name TEXT NOT NULL DEFAULT '',
+        mime_type TEXT NOT NULL DEFAULT '',
+        category TEXT,
+        content BLOB NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        received_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_documents_patient ON documents (patient_id);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
