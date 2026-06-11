@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
 import { Atencion } from "./Atencion";
+import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
 import "./App.css";
 
 interface UnlockResult {
   schema_version: number;
   db_path: string;
+  backup_path: string;
 }
 
 interface SyncStatus {
   linked: boolean;
   server_url: string | null;
   cursor: number;
+  clinical_profile: ClinicalProfile | null;
 }
 
 interface AppointmentRow {
@@ -199,6 +202,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [activeEncounter, setActiveEncounter] = useState<string | null>(null);
+  const [clinicalProfile, setClinicalProfile] = useState<ClinicalProfile>("GENERAL_MEDICINE");
 
   const refresh = useCallback(async () => {
     try {
@@ -207,6 +211,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
         call<AppointmentRow[]>("list_appointments")
       ]);
       setStatus(nextStatus);
+      setClinicalProfile(coerceClinicalProfile(nextStatus.clinical_profile));
       setAppointments(rows);
     } catch (e) {
       setError(String(e));
@@ -255,6 +260,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     return (
       <Atencion
         encounterId={activeEncounter}
+        clinicalProfile={clinicalProfile}
         onBack={() => {
           setActiveEncounter(null);
           void refresh();
@@ -302,7 +308,10 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
           <section className="panel">
             <div className="panel-header">
               <h2>Agenda</h2>
-              <p>Citas sincronizadas desde tu portal publico.</p>
+              <p>
+                Citas sincronizadas desde tu portal publico · perfil{" "}
+                {clinicalProfile === "ODONTOLOGY" ? "odontologia" : "medicina general"}
+              </p>
             </div>
             {appointments.length === 0 ? (
               <div className="empty-state">
@@ -347,7 +356,11 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
           </section>
         )}
 
-        <p className="footer-meta">{unlocked.db_path}</p>
+        <p className="footer-meta">
+          Base: {unlocked.db_path}
+          <br />
+          Respaldo: {unlocked.backup_path}
+        </p>
       </div>
     </>
   );

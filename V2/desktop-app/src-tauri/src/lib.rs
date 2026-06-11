@@ -14,6 +14,7 @@ struct AppDb(Mutex<Option<rusqlite::Connection>>);
 struct UnlockResult {
     schema_version: i64,
     db_path: String,
+    backup_path: String,
 }
 
 #[derive(serde::Serialize)]
@@ -21,6 +22,7 @@ struct SyncStatus {
     linked: bool,
     server_url: Option<String>,
     cursor: i64,
+    clinical_profile: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -41,6 +43,12 @@ fn database_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("midoc.db"))
 }
 
+fn backup_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    Ok(dir.join("backups").join(format!("midoc-{stamp}.db")))
+}
+
 /// Opens (or creates) the encrypted clinical database with the doctor's
 /// passphrase. The passphrase only lives in memory for the duration of the
 /// call; SQLCipher keeps the derived key inside the connection.
@@ -56,10 +64,13 @@ fn unlock_database(
     let path = database_path(&app)?;
     let conn = db::open_encrypted(&path, &passphrase).map_err(|e| e.to_string())?;
     let schema_version = db::schema_version(&conn).map_err(|e| e.to_string())?;
+    let backup_path = backup_path(&app)?;
+    db::create_encrypted_backup(&conn, &backup_path).map_err(|e| e.to_string())?;
     *state.0.lock().unwrap() = Some(conn);
     Ok(UnlockResult {
         schema_version,
         db_path: path.display().to_string(),
+        backup_path: backup_path.display().to_string(),
     })
 }
 
@@ -78,11 +89,13 @@ fn sync_status(state: tauri::State<'_, AppDb>) -> Result<SyncStatus, String> {
         .map_err(|e| e.to_string())?
         .is_some();
     let cursor = sync::get_cursor(conn).map_err(|e| e.to_string())?;
+    let clinical_profile = sync::get_state(conn, "clinical_profile").map_err(|e| e.to_string())?;
 
     Ok(SyncStatus {
         linked,
         server_url,
         cursor,
+        clinical_profile,
     })
 }
 
@@ -108,7 +121,7 @@ async fn link_account(
         crypto::ensure_keypair(conn).map_err(|e| e.to_string())?
     };
 
-    let token = sync::link_account(
+    let link = sync::link_account(
         &server_url,
         &email,
         &password,
@@ -122,8 +135,11 @@ async fn link_account(
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
     sync::set_state(conn, "server_url", server_url.trim_end_matches('/'))
         .map_err(|e| e.to_string())?;
-    sync::set_state(conn, "device_token", &token).map_err(|e| e.to_string())?;
+    sync::set_state(conn, "device_token", &link.device_token).map_err(|e| e.to_string())?;
     sync::set_state(conn, "cursor", "0").map_err(|e| e.to_string())?;
+    if let Some(clinical_profile) = link.clinical_profile.as_deref() {
+        sync::set_state(conn, "clinical_profile", clinical_profile).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

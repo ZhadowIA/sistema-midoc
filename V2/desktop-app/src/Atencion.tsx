@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
+import { DentalNoteEditor } from "./DentalNoteEditor";
+import {
+  coerceClinicalProfile,
+  coerceDentalPayload,
+  coerceGeneralMedicinePayload,
+  type ClinicalProfile,
+  EMPTY_DENTAL_PAYLOAD,
+  EMPTY_GENERAL_MEDICINE_PAYLOAD,
+  GENERAL_MEDICINE_FIELDS,
+  type DentalPayload,
+  type GeneralMedicinePayload
+} from "./clinicalProfiles";
 import { call } from "./ipc";
 
-interface GeneralMedicinePayload {
-  riskFactors: string;
-  reviewOfSystems: string;
-  physicalExam: string;
-  labs: string;
-  screenings: string;
-  preventivePlan: string;
-  followUp: string;
-}
+type SpecialtyPayload = GeneralMedicinePayload | DentalPayload;
 
 interface NoteContent {
   subjective: string;
@@ -18,7 +22,7 @@ interface NoteContent {
   plan: string;
   diagnosis: string;
   instructions: string;
-  specialty: GeneralMedicinePayload;
+  specialty: SpecialtyPayload;
 }
 
 interface EncounterDetail {
@@ -42,7 +46,11 @@ interface EncounterDetail {
   appointment_reason: string | null;
   appointment_start: string | null;
   precheckin: string | null;
-  note: (NoteContent & { version: number; created_at: string }) | null;
+  note: (Omit<NoteContent, "specialty"> & {
+    specialty: unknown;
+    version: number;
+    created_at: string;
+  }) | null;
   note_version_count: number;
   prescription: string | null;
   history: Array<{
@@ -53,16 +61,6 @@ interface EncounterDetail {
   }>;
 }
 
-const EMPTY_SPECIALTY: GeneralMedicinePayload = {
-  riskFactors: "",
-  reviewOfSystems: "",
-  physicalExam: "",
-  labs: "",
-  screenings: "",
-  preventivePlan: "",
-  followUp: ""
-};
-
 const EMPTY_NOTE: NoteContent = {
   subjective: "",
   objective: "",
@@ -70,7 +68,7 @@ const EMPTY_NOTE: NoteContent = {
   plan: "",
   diagnosis: "",
   instructions: "",
-  specialty: EMPTY_SPECIALTY
+  specialty: EMPTY_GENERAL_MEDICINE_PAYLOAD
 };
 
 const NOTE_FIELDS: Array<{ key: keyof Omit<NoteContent, "specialty">; label: string; rows: number }> = [
@@ -82,30 +80,23 @@ const NOTE_FIELDS: Array<{ key: keyof Omit<NoteContent, "specialty">; label: str
   { key: "instructions", label: "Indicaciones al paciente", rows: 3 }
 ];
 
-// Plantilla de medicina general/familiar (paso 5). Se guarda como el payload
-// de especialidad de la nota, versionado y firmado junto con ella.
-const SPECIALTY_FIELDS: Array<{ key: keyof GeneralMedicinePayload; label: string; rows: number }> = [
-  { key: "riskFactors", label: "Factores de riesgo", rows: 2 },
-  { key: "reviewOfSystems", label: "Revision por sistemas", rows: 3 },
-  { key: "physicalExam", label: "Exploracion fisica", rows: 3 },
-  { key: "labs", label: "Laboratorios y estudios", rows: 2 },
-  { key: "screenings", label: "Tamizajes", rows: 2 },
-  { key: "preventivePlan", label: "Plan preventivo", rows: 2 },
-  { key: "followUp", label: "Seguimiento / proxima cita", rows: 2 }
-];
-
-/** Normaliza el payload de especialidad cargado (puede venir vacio o parcial). */
-function coerceSpecialty(value: unknown): GeneralMedicinePayload {
-  const source = (value ?? {}) as Partial<GeneralMedicinePayload>;
+function createEmptyNote(clinicalProfile: ClinicalProfile): NoteContent {
   return {
-    riskFactors: source.riskFactors ?? "",
-    reviewOfSystems: source.reviewOfSystems ?? "",
-    physicalExam: source.physicalExam ?? "",
-    labs: source.labs ?? "",
-    screenings: source.screenings ?? "",
-    preventivePlan: source.preventivePlan ?? "",
-    followUp: source.followUp ?? ""
+    ...EMPTY_NOTE,
+    specialty:
+      clinicalProfile === "ODONTOLOGY"
+        ? structuredClone(EMPTY_DENTAL_PAYLOAD)
+        : structuredClone(EMPTY_GENERAL_MEDICINE_PAYLOAD)
   };
+}
+
+function coerceSpecialtyPayload(
+  clinicalProfile: ClinicalProfile,
+  value: unknown
+): SpecialtyPayload {
+  return clinicalProfile === "ODONTOLOGY"
+    ? coerceDentalPayload(value)
+    : coerceGeneralMedicinePayload(value);
 }
 
 const dateTimeFormatter = new Intl.DateTimeFormat("es-MX", {
@@ -126,13 +117,16 @@ function formatPrecheckin(raw: string): Array<[string, string]> {
 
 export function Atencion({
   encounterId,
+  clinicalProfile,
   onBack
 }: {
   encounterId: string;
+  clinicalProfile: ClinicalProfile;
   onBack: () => void;
 }) {
+  const resolvedProfile = coerceClinicalProfile(clinicalProfile);
   const [detail, setDetail] = useState<EncounterDetail | null>(null);
-  const [note, setNote] = useState<NoteContent>(EMPTY_NOTE);
+  const [note, setNote] = useState<NoteContent>(createEmptyNote(resolvedProfile));
   const [prescription, setPrescription] = useState("");
   const [background, setBackground] = useState({
     allergies: "",
@@ -151,8 +145,11 @@ export function Atencion({
         setDetail(data);
         setNote(
           data.note
-            ? { ...data.note, specialty: coerceSpecialty(data.note.specialty) }
-            : EMPTY_NOTE
+            ? {
+                ...data.note,
+                specialty: coerceSpecialtyPayload(resolvedProfile, data.note.specialty)
+              }
+            : createEmptyNote(resolvedProfile)
         );
         setPrescription(data.prescription ?? "");
         setBackground({
@@ -165,14 +162,23 @@ export function Atencion({
           call<boolean>("verify_signature", { encounterId })
             .then(setSignatureValid)
             .catch(() => setSignatureValid(null));
+        } else {
+          setSignatureValid(null);
         }
       })
       .catch((e: unknown) => setError(String(e)));
-  }, [encounterId]);
+  }, [encounterId, resolvedProfile]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setNote((current) => ({
+      ...current,
+      specialty: coerceSpecialtyPayload(resolvedProfile, current.specialty)
+    }));
+  }, [resolvedProfile]);
 
   if (!detail) {
     return (
@@ -189,6 +195,7 @@ export function Atencion({
   }
 
   const signed = detail.encounter.status === "SIGNED";
+  const patientId = detail.patient.id;
 
   async function run(label: string, action: () => Promise<unknown>) {
     setBusy(true);
@@ -206,9 +213,7 @@ export function Atencion({
   }
 
   function saveNote() {
-    void run("Nota guardada (nueva version).", () =>
-      call("save_note", { encounterId, note })
-    );
+    void run("Nota guardada (nueva version).", () => call("save_note", { encounterId, note }));
   }
 
   function savePrescription() {
@@ -220,7 +225,7 @@ export function Atencion({
   function saveBackground() {
     void run("Antecedentes actualizados.", () =>
       call("update_patient_background", {
-        patientId: detail!.patient.id,
+        patientId,
         background: {
           allergies: background.allergies || null,
           medical_background: background.medical_background || null,
@@ -245,7 +250,9 @@ export function Atencion({
         <button className="ghost-button" onClick={onBack}>
           ← Agenda
         </button>
-        <span className="topbar-context">Consulta en curso</span>
+        <span className="topbar-context">
+          {resolvedProfile === "ODONTOLOGY" ? "Consulta odontologica" : "Consulta en curso"}
+        </span>
         {signed ? (
           <span
             className={
@@ -268,150 +275,179 @@ export function Atencion({
       </header>
 
       <div className="content">
-      <section className="panel">
-        <div className="panel-header">
-          <h2>
-            {detail.patient.first_name} {detail.patient.last_name}
-          </h2>
-          <p>
-            {detail.appointment_start
-              ? dateTimeFormatter.format(new Date(detail.appointment_start))
-              : "Sin cita asociada"}
-            {detail.appointment_reason ? ` · Motivo: ${detail.appointment_reason}` : ""}
-            {detail.patient.phone ? ` · Tel: ${detail.patient.phone}` : ""}
-          </p>
-        </div>
-        {detail.patient.allergies ? (
-          <p className="alert-allergies">⚠ Alergias: {detail.patient.allergies}</p>
-        ) : null}
-      </section>
-
-      {detail.precheckin ? (
         <section className="panel">
-          <h3>Preconsulta del paciente</h3>
-          <dl className="precheckin-list">
-            {formatPrecheckin(detail.precheckin).map(([key, value]) => (
-              <div key={key}>
-                <dt>{key}</dt>
-                <dd>{value}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      ) : null}
-
-      {detail.history.length > 0 ? (
-        <section className="panel">
-          <h3>Historial del paciente</h3>
-          <ul className="history-list">
-            {detail.history.map((entry) => (
-              <li key={entry.encounter_id}>
-                <span className="meta">
-                  {entry.signed_at
-                    ? dateTimeFormatter.format(new Date(entry.signed_at))
-                    : "(sin firmar)"}
-                </span>{" "}
-                {entry.diagnosis || "Sin diagnostico registrado"}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      <section className="panel">
-        <h3>Antecedentes</h3>
-        <div className="stack">
-          <label className="field">
-            <span>Alergias</span>
-            <input
-              value={background.allergies}
-              disabled={busy}
-              onChange={(e) => setBackground((c) => ({ ...c, allergies: e.target.value }))}
-            />
-          </label>
-          <label className="field">
-            <span>Antecedentes personales patologicos</span>
-            <textarea
-              rows={2}
-              value={background.medical_background}
-              disabled={busy}
-              onChange={(e) =>
-                setBackground((c) => ({ ...c, medical_background: e.target.value }))
-              }
-            />
-          </label>
-          <label className="field">
-            <span>Antecedentes familiares</span>
-            <textarea
-              rows={2}
-              value={background.family_background}
-              disabled={busy}
-              onChange={(e) =>
-                setBackground((c) => ({ ...c, family_background: e.target.value }))
-              }
-            />
-          </label>
-          <label className="field">
-            <span>Fecha de nacimiento</span>
-            <input
-              type="date"
-              value={background.birth_date}
-              disabled={busy}
-              onChange={(e) => setBackground((c) => ({ ...c, birth_date: e.target.value }))}
-            />
-          </label>
-          <div className="button-row">
-            <button className="ghost-button" onClick={saveBackground} disabled={busy}>
-              Guardar antecedentes
-            </button>
+          <div className="panel-header">
+            <h2>
+              {detail.patient.first_name} {detail.patient.last_name}
+            </h2>
+            <p>
+              {detail.appointment_start
+                ? dateTimeFormatter.format(new Date(detail.appointment_start))
+                : "Sin cita asociada"}
+              {detail.appointment_reason ? ` · Motivo: ${detail.appointment_reason}` : ""}
+              {detail.patient.phone ? ` · Tel: ${detail.patient.phone}` : ""}
+            </p>
           </div>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h3>
-          Nota clinica (SOAP)
-          {detail.note ? (
-            <span className="meta"> · version {detail.note.version}</span>
+          <div className="button-row">
+            <span className="pill pill-warning">
+              {resolvedProfile === "ODONTOLOGY"
+                ? "Perfil odontologia"
+                : "Perfil medicina general"}
+            </span>
+            {detail.note ? <span className="meta">Version actual: {detail.note.version}</span> : null}
+          </div>
+          {detail.patient.allergies ? (
+            <p className="alert-allergies">Alergias: {detail.patient.allergies}</p>
           ) : null}
-        </h3>
-        <div className="stack">
-          {NOTE_FIELDS.map(({ key, label, rows }) => (
-            <label className="field" key={key}>
-              <span>{label}</span>
-              <textarea
-                rows={rows}
-                value={note[key]}
-                disabled={busy || signed}
-                onChange={(e) => setNote((c) => ({ ...c, [key]: e.target.value }))}
+        </section>
+
+        {detail.precheckin ? (
+          <section className="panel">
+            <h3>Preconsulta del paciente</h3>
+            <dl className="precheckin-list">
+              {formatPrecheckin(detail.precheckin).map(([key, value]) => (
+                <div key={key}>
+                  <dt>{key}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ) : null}
+
+        {detail.history.length > 0 ? (
+          <section className="panel">
+            <h3>Historial del paciente</h3>
+            <ul className="history-list">
+              {detail.history.map((entry) => (
+                <li key={entry.encounter_id}>
+                  <span className="meta">
+                    {entry.signed_at
+                      ? dateTimeFormatter.format(new Date(entry.signed_at))
+                      : "(sin firmar)"}
+                  </span>{" "}
+                  {entry.diagnosis || "Sin diagnostico registrado"}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        <section className="panel">
+          <h3>Antecedentes</h3>
+          <div className="stack">
+            <label className="field">
+              <span>Alergias</span>
+              <input
+                value={background.allergies}
+                disabled={busy}
+                onChange={(e) => setBackground((current) => ({ ...current, allergies: e.target.value }))}
               />
             </label>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <h3>Medicina general / familiar</h3>
-          <p>Plantilla de consulta general. Se guarda y firma junto con la nota.</p>
-        </div>
-        <div className="stack">
-          {SPECIALTY_FIELDS.map(({ key, label, rows }) => (
-            <label className="field" key={key}>
-              <span>{label}</span>
+            <label className="field">
+              <span>Antecedentes personales patologicos</span>
               <textarea
-                rows={rows}
-                value={note.specialty[key]}
-                disabled={busy || signed}
+                rows={2}
+                value={background.medical_background}
+                disabled={busy}
                 onChange={(e) =>
-                  setNote((c) => ({
-                    ...c,
-                    specialty: { ...c.specialty, [key]: e.target.value }
+                  setBackground((current) => ({
+                    ...current,
+                    medical_background: e.target.value
                   }))
                 }
               />
             </label>
-          ))}
+            <label className="field">
+              <span>Antecedentes familiares</span>
+              <textarea
+                rows={2}
+                value={background.family_background}
+                disabled={busy}
+                onChange={(e) =>
+                  setBackground((current) => ({
+                    ...current,
+                    family_background: e.target.value
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span>Fecha de nacimiento</span>
+              <input
+                type="date"
+                value={background.birth_date}
+                disabled={busy}
+                onChange={(e) => setBackground((current) => ({ ...current, birth_date: e.target.value }))}
+              />
+            </label>
+            <div className="button-row">
+              <button className="ghost-button" onClick={saveBackground} disabled={busy}>
+                Guardar antecedentes
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel">
+          <h3>Nota clinica (SOAP)</h3>
+          <div className="stack">
+            {NOTE_FIELDS.map(({ key, label, rows }) => (
+              <label className="field" key={key}>
+                <span>{label}</span>
+                <textarea
+                  rows={rows}
+                  value={note[key]}
+                  disabled={busy || signed}
+                  onChange={(e) => setNote((current) => ({ ...current, [key]: e.target.value }))}
+                />
+              </label>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <h3>
+              {resolvedProfile === "ODONTOLOGY"
+                ? "Modulo odontologico"
+                : "Medicina general / familiar"}
+            </h3>
+            <p>
+              {resolvedProfile === "ODONTOLOGY"
+                ? "Odontograma, periodontograma, condiciones bucales, plan dental e higiene."
+                : "Plantilla de consulta general. Se guarda y firma junto con la nota."}
+            </p>
+          </div>
+          {resolvedProfile === "ODONTOLOGY" ? (
+            <DentalNoteEditor
+              payload={coerceDentalPayload(note.specialty)}
+              disabled={busy || signed}
+              onChange={(specialty) => setNote((current) => ({ ...current, specialty }))}
+            />
+          ) : (
+            <div className="stack">
+              {GENERAL_MEDICINE_FIELDS.map(({ key, label, rows }) => (
+                <label className="field" key={key}>
+                  <span>{label}</span>
+                  <textarea
+                    rows={rows}
+                    value={coerceGeneralMedicinePayload(note.specialty)[key]}
+                    disabled={busy || signed}
+                    onChange={(e) =>
+                      setNote((current) => ({
+                        ...current,
+                        specialty: {
+                          ...coerceGeneralMedicinePayload(current.specialty),
+                          [key]: e.target.value
+                        }
+                      }))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          )}
           {!signed ? (
             <div className="button-row">
               <button className="action-button" onClick={saveNote} disabled={busy}>
@@ -419,49 +455,48 @@ export function Atencion({
               </button>
             </div>
           ) : null}
-        </div>
-      </section>
+        </section>
 
-      <section className="panel">
-        <h3>Receta</h3>
-        <div className="stack">
-          <textarea
-            rows={4}
-            placeholder="Medicamento, dosis, via, frecuencia y duracion…"
-            value={prescription}
-            disabled={busy || signed}
-            onChange={(e) => setPrescription(e.target.value)}
-          />
-          {!signed ? (
-            <div className="button-row">
-              <button className="action-button" onClick={savePrescription} disabled={busy}>
-                Guardar receta
-              </button>
-            </div>
-          ) : null}
-        </div>
-      </section>
+        <section className="panel">
+          <h3>Receta</h3>
+          <div className="stack">
+            <textarea
+              rows={4}
+              placeholder="Medicamento, dosis, via, frecuencia y duracion…"
+              value={prescription}
+              disabled={busy || signed}
+              onChange={(e) => setPrescription(e.target.value)}
+            />
+            {!signed ? (
+              <div className="button-row">
+                <button className="action-button" onClick={savePrescription} disabled={busy}>
+                  Guardar receta
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </section>
 
-      {message && (
-        <p className="form-success" role="status">
-          {message}
-        </p>
-      )}
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      )}
+        {message && (
+          <p className="form-success" role="status">
+            {message}
+          </p>
+        )}
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
 
-      {signed ? (
-        <p className="footer-meta">
-          Firmada el{" "}
-          {detail.encounter.signed_at
-            ? dateTimeFormatter.format(new Date(detail.encounter.signed_at))
-            : ""}{" "}
-          · huella {detail.encounter.signed_hash?.slice(0, 16)}…
-        </p>
-      ) : null}
+        {signed ? (
+          <p className="footer-meta">
+            Firmada el{" "}
+            {detail.encounter.signed_at
+              ? dateTimeFormatter.format(new Date(detail.encounter.signed_at))
+              : ""}{" "}
+            · huella {detail.encounter.signed_hash?.slice(0, 16)}…
+          </p>
+        ) : null}
       </div>
     </>
   );
