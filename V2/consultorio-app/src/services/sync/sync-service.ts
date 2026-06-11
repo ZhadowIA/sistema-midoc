@@ -54,16 +54,38 @@ export async function emitSyncEvent(
 }
 
 /**
+ * Valida una llave publica X25519 en base64 (32 bytes). El portal nunca la usa
+ * para descifrar (no puede): solo la reenvia a la pagina de carga del paciente.
+ */
+function normalizeDocumentPublicKey(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  const decoded = Buffer.from(trimmed, "base64");
+  // Re-encode y compara para rechazar base64 mal formado o longitud incorrecta.
+  if (decoded.length !== 32 || decoded.toString("base64") !== trimmed) {
+    throw new SyncServiceError("Llave publica de documentos invalida.", 400);
+  }
+  return trimmed;
+}
+
+/**
  * Vincula (o re-vincula) la app de escritorio del medico. Un dispositivo
  * activo por medico: vincular uno nuevo revoca el anterior.
  */
-export async function linkSyncDevice(doctorUserId: string, deviceName?: string) {
+export async function linkSyncDevice(
+  doctorUserId: string,
+  deviceName?: string,
+  documentPublicKey?: string
+) {
   const doctor = await prisma.user.findUnique({ where: { id: doctorUserId } });
 
   if (!doctor || doctor.role !== UserRole.DOCTOR) {
     throw new SyncServiceError("Doctor account not found.", 404);
   }
 
+  const normalizedKey = normalizeDocumentPublicKey(documentPublicKey);
   const deviceToken = generateOpaqueToken();
 
   const device = await prisma.$transaction(async (tx) => {
@@ -76,7 +98,8 @@ export async function linkSyncDevice(doctorUserId: string, deviceName?: string) 
       data: {
         doctorId: doctorUserId,
         tokenHash: hashOpaqueToken(deviceToken),
-        deviceName: deviceName?.trim()
+        deviceName: deviceName?.trim(),
+        documentPublicKey: normalizedKey
       }
     });
   });
@@ -87,10 +110,25 @@ export async function linkSyncDevice(doctorUserId: string, deviceName?: string) 
     entityId: device.id,
     action: "sync.device-linked",
     source: "sync-service",
-    metadata: { deviceName: device.deviceName }
+    metadata: { deviceName: device.deviceName, hasDocumentKey: Boolean(normalizedKey) }
   });
 
   return { device, deviceToken };
+}
+
+/**
+ * Llave publica de documentos del dispositivo activo del medico (null si no hay
+ * dispositivo vinculado o aun no publico una llave). La usa la carga de
+ * documentos del paciente para cifrar con sealed box.
+ */
+export async function getActiveDeviceDocumentKey(doctorId: string): Promise<string | null> {
+  const device = await prisma.syncDevice.findFirst({
+    where: { doctorId, status: SyncDeviceStatus.ACTIVE },
+    orderBy: { createdAt: "desc" },
+    select: { documentPublicKey: true }
+  });
+
+  return device?.documentPublicKey ?? null;
 }
 
 /** Resuelve el dispositivo activo a partir del header Authorization. */

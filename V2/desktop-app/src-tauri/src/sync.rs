@@ -203,6 +203,7 @@ pub async fn link_account(
     email: &str,
     password: &str,
     device_name: &str,
+    document_public_key: &str,
 ) -> Result<String, SyncError> {
     let client = reqwest::Client::builder().cookie_store(true).build()?;
     let base = server_url.trim_end_matches('/');
@@ -217,9 +218,14 @@ pub async fn link_account(
         return Err(error_from_response(login).await);
     }
 
+    // La llave publica del medico viaja al vincular: el portal la entrega a la
+    // pagina de carga del paciente para cifrar documentos (sealed box).
     let device = client
         .post(format!("{base}/api/sync/devices"))
-        .json(&serde_json::json!({ "deviceName": device_name }))
+        .json(&serde_json::json!({
+            "deviceName": device_name,
+            "documentPublicKey": document_public_key
+        }))
         .send()
         .await?;
 
@@ -551,8 +557,11 @@ mod tests {
         .await;
 
         // 4) Vincular la app y sincronizar contra la base cifrada local.
-        let device_token = link_account(&base, &email, password, "PC e2e").await.unwrap();
         let mut conn = test_conn("e2e");
+        let public_key = crate::crypto::ensure_keypair(&conn).unwrap();
+        let device_token = link_account(&base, &email, password, "PC e2e", &public_key)
+            .await
+            .unwrap();
         let mut cursor = 0i64;
         loop {
             let inbox = fetch_inbox(&base, &device_token, cursor).await.unwrap();

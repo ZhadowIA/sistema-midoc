@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ClinicalProfile, PrismaClient } from "@prisma/client";
@@ -18,6 +18,7 @@ import {
 import {
   ackSyncEvents,
   authenticateSyncDevice,
+  getActiveDeviceDocumentKey,
   getSyncInbox,
   linkSyncDevice
 } from "../../src/services/sync/sync-service";
@@ -179,6 +180,66 @@ describe("desktop sync (fase A)", () => {
 
       const drained = await getSyncInbox(device, inbox.nextCursor);
       expect(drained.events).toHaveLength(0);
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+});
+
+describe("device document public key (paso 6, fase B)", () => {
+  it("stores a valid X25519 public key and exposes it for the active device", async () => {
+    const email = uniqueEmail("doctor-key");
+    const publicKey = randomBytes(32).toString("base64");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Nora",
+        lastName: "Vela",
+        professionalName: "Dra. Nora Vela",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      // Sin dispositivo vinculado aun no hay llave publicada.
+      expect(await getActiveDeviceDocumentKey(account.user.id)).toBeNull();
+
+      await linkSyncDevice(account.user.id, "PC consultorio", publicKey);
+      expect(await getActiveDeviceDocumentKey(account.user.id)).toBe(publicKey);
+
+      // Re-vincular con otra llave reemplaza la publicada (un dispositivo activo).
+      const rotatedKey = randomBytes(32).toString("base64");
+      await linkSyncDevice(account.user.id, "PC nueva", rotatedKey);
+      expect(await getActiveDeviceDocumentKey(account.user.id)).toBe(rotatedKey);
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("rejects a malformed or wrong-length public key", async () => {
+    const email = uniqueEmail("doctor-badkey");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Iris",
+        lastName: "Lara",
+        professionalName: "Dra. Iris Lara",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      // 16 bytes (longitud incorrecta) y base64 invalido deben rechazarse.
+      await expect(
+        linkSyncDevice(account.user.id, "PC", randomBytes(16).toString("base64"))
+      ).rejects.toMatchObject({ status: 400 });
+      await expect(
+        linkSyncDevice(account.user.id, "PC", "no-es-base64-valido!!!")
+      ).rejects.toMatchObject({ status: 400 });
     } finally {
       await cleanupUserByEmail(email);
     }
