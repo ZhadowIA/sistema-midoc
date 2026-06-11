@@ -40,7 +40,7 @@ function mapSpecialty(specialty: DoctorSpecialtyInput): ClinicalProfile {
     : ClinicalProfile.GENERAL_MEDICINE;
 }
 
-function ensureStrongPassword(password: string) {
+export function ensureStrongPassword(password: string) {
   const meetsLength = password.length >= 12;
   const hasUpper = /[A-Z]/.test(password);
   const hasLower = /[a-z]/.test(password);
