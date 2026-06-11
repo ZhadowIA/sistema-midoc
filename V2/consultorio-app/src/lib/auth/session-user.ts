@@ -31,3 +31,13 @@ export async function requireDoctorUser(request: Request): Promise<User> {
 
   return user;
 }
+
+export async function requirePatientUser(request: Request): Promise<User> {
+  const user = await getSessionUserFromRequest(request);
+
+  if (!user || user.role !== UserRole.PATIENT) {
+    throw new ServiceError("No autorizado.", 401);
+  }
+
+  return user;
+}
