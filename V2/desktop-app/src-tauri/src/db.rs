@@ -171,6 +171,26 @@ pub fn schema_version(conn: &Connection) -> Result<i64, DbError> {
     Ok(conn.query_row("PRAGMA user_version", [], |r| r.get(0))?)
 }
 
+/// Creates a consistent encrypted backup of the currently unlocked database.
+///
+/// SQLCipher applies the active connection key to the `VACUUM INTO` output, so
+/// the backup remains unreadable without the same passphrase. The caller should
+/// still store the file outside sync folders unless the doctor explicitly chose
+/// that destination.
+pub fn create_encrypted_backup(conn: &Connection, backup_path: &Path) -> Result<(), DbError> {
+    if let Some(parent) = backup_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    if backup_path.exists() {
+        std::fs::remove_file(backup_path)?;
+    }
+
+    let path = backup_path.to_string_lossy().to_string();
+    conn.execute("VACUUM INTO ?1", [&path])?;
+    Ok(())
+}
+
 fn apply_migrations(conn: &Connection) -> Result<(), DbError> {
     let current = schema_version(conn)?;
     for (idx, sql) in MIGRATIONS.iter().enumerate() {
@@ -251,5 +271,49 @@ mod tests {
             &header, b"SQLite format 3\0",
             "el archivo en disco no debe ser SQLite en claro"
         );
+    }
+
+    #[test]
+    fn backup_is_encrypted_and_restorable_with_correct_key() {
+        let path = temp_db_path("backup-source");
+        let backup = temp_db_path("backup-copy");
+        let _ = std::fs::remove_file(&backup);
+
+        let conn = open_encrypted(&path, "clave-correcta").unwrap();
+        conn.execute(
+            "INSERT INTO app_meta (key, value) VALUES ('backup_probe', 'valor-clinico-local')",
+            [],
+        )
+        .unwrap();
+
+        create_encrypted_backup(&conn, &backup).unwrap();
+
+        let restored = open_encrypted(&backup, "clave-correcta").unwrap();
+        let value: String = restored
+            .query_row("SELECT value FROM app_meta WHERE key = 'backup_probe'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(value, "valor-clinico-local");
+
+        let mut header = [0u8; 16];
+        std::fs::File::open(&backup)
+            .unwrap()
+            .read_exact(&mut header)
+            .unwrap();
+        assert_ne!(&header, b"SQLite format 3\0");
+    }
+
+    #[test]
+    fn backup_rejects_wrong_restore_key() {
+        let path = temp_db_path("backup-wrong-source");
+        let backup = temp_db_path("backup-wrong-copy");
+        let _ = std::fs::remove_file(&backup);
+
+        let conn = open_encrypted(&path, "clave-correcta").unwrap();
+        create_encrypted_backup(&conn, &backup).unwrap();
+
+        let err = open_encrypted(&backup, "clave-incorrecta").unwrap_err();
+        assert!(matches!(err, DbError::InvalidKey), "got: {err:?}");
     }
 }

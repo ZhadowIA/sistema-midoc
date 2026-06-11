@@ -30,6 +30,13 @@ Requisitos de build en Windows: Rust (rustup, toolchain MSVC), VS Build Tools 20
 - Migraciones versionadas con `PRAGMA user_version` en `src-tauri/src/db.rs`, siempre dentro de transaccion (regla 6).
 - Toda tabla nueva declara su clase de residencia (CLINICO / CONTACTO / OPERATIVO) en un comentario junto a la migracion (regla 4).
 
+## Respaldo y restauracion (paso 9)
+
+- Cada desbloqueo crea un respaldo cifrado automatico en `%APPDATA%/com.midoc.app/backups/midoc-<timestamp>.db`.
+- El respaldo se genera con `VACUUM INTO` desde la conexion SQLCipher abierta, por lo que conserva el mismo cifrado de la base principal.
+- Restauracion manual controlada: cerrar MiDoc, copiar el respaldo elegido como `midoc.db`, abrir la app con la misma frase de seguridad y verificar que la base desbloquee.
+- Prueba automatizada de restauracion: `cd src-tauri && cargo test db::tests::backup -- --nocapture`. Cubre apertura con llave correcta, rechazo con llave incorrecta y que el archivo no sea SQLite en claro.
+
 ## Sincronizacion (paso 3, fase A)
 
 La app descarga citas y preconsultas del portal a la base cifrada (contrato en `../13_contrato_sincronizacion.md`). Modulo `src-tauri/src/sync.rs`; comandos Tauri `link_account`, `sync_now`, `list_appointments`.
@@ -58,7 +65,10 @@ Reserva una cita en el portal por HTTP, la baja a una base cifrada temporal, y v
 
 `src-tauri/src/clinical.rs`: la cita abre el encuentro (uno por cita), con expediente del paciente (antecedentes, alergias, historial de encuentros previos), nota SOAP **versionada** (cada guardado crea una version), receta e indicaciones. **Firmar y cerrar** congela el encuentro y guarda un hash SHA-256 del contenido final como evidencia de integridad (`verify_signature` lo recalcula y detecta alteraciones). Todos los cambios criticos quedan en `clinical_audit`. Nada de este modulo toca la red.
 
-**Plantilla de especialidad (paso 5):** la nota lleva un payload JSON de especialidad (`note_versions.specialty_payload`) que Rust trata como blob opaco — la estructura vive en el frontend. Hoy contiene la plantilla de medicina general/familiar (factores de riesgo, revision por sistemas, exploracion, laboratorios, tamizajes, plan preventivo, seguimiento); odontologia (paso 8) reusara el mismo mecanismo. Se versiona y firma junto con la nota: alterarlo rompe la firma.
+**Plantilla de especialidad:** la nota lleva un payload JSON de especialidad (`note_versions.specialty_payload`) que Rust trata como blob opaco — la estructura vive en el frontend. Se versiona y firma junto con la nota: alterarlo rompe la firma.
+
+- **Paso 5 — medicina general/familiar:** factores de riesgo, revision por sistemas, exploracion, laboratorios, tamizajes, plan preventivo y seguimiento.
+- **Paso 8 — odontologia:** el escritorio toma la especialidad del medico desde el portal al vincularse (`/api/admin/profile`) y activa el modulo dental local: odontograma por pieza/superficie, periodontograma por seis sitios, condiciones bucales, plan dental, higiene y proxima revision. Todo sigue viviendo y firmandose solo en la base cifrada local.
 
 ## Estado (paso 0)
 

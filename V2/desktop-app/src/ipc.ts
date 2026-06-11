@@ -26,19 +26,20 @@ interface MockNote {
   plan: string;
   diagnosis: string;
   instructions: string;
-  specialty: Record<string, string>;
+  specialty: unknown;
 }
 
 const mockState = {
   linked: true,
+  clinicalProfile: "ODONTOLOGY",
   appointments: [
     {
       id: "appt-1",
       status: "CONFIRMED",
       scheduled_start: new Date(Date.now() + 3 * 3600_000).toISOString(),
       scheduled_end: new Date(Date.now() + 3.5 * 3600_000).toISOString(),
-      service_name: "Consulta general",
-      reason: "Dolor lumbar de dos semanas",
+      service_name: "Valoracion dental",
+      reason: "Dolor en molar superior derecho",
       patient_name: "Hugo Paz Olivares",
       patient_phone: "614 000 1111",
       has_precheckin: true
@@ -98,12 +99,12 @@ function mockDetail() {
       signed_hash: e.signed_hash
     },
     patient: e.patient,
-    appointment_reason: "Dolor lumbar de dos semanas",
+    appointment_reason: "Dolor en molar superior derecho",
     appointment_start: mockState.appointments[0].scheduled_start,
     precheckin: JSON.stringify({
-      motivo: "Dolor lumbar que empeora al estar sentado",
-      antecedentes: "Hipertension, toma losartan",
-      sintomas: "Dolor 6/10, sin irradiacion, sin fiebre"
+      motivo: "Dolor al masticar y sensibilidad al frio",
+      antecedentes: "Bruxismo nocturno",
+      sintomas: "Molestia 6/10, sin fiebre"
     }),
     note: e.notes.length > 0 ? e.notes[e.notes.length - 1] : null,
     note_version_count: e.notes.length,
@@ -128,11 +129,20 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       if (String(args?.passphrase ?? "").length < 8) {
         throw "la frase de seguridad debe tener al menos 8 caracteres";
       }
-      return { schema_version: 3, db_path: "C:\\…\\midoc.db (demo)" } as T;
+      return {
+        schema_version: 3,
+        db_path: "C:\\…\\midoc.db (demo)",
+        backup_path: "C:\\…\\backups\\midoc-demo.db"
+      } as T;
     case "lock_database":
       return undefined as T;
     case "sync_status":
-      return { linked: mockState.linked, server_url: "http://localhost:3000", cursor: 7 } as T;
+      return {
+        linked: mockState.linked,
+        server_url: "http://localhost:3000",
+        cursor: 7,
+        clinical_profile: mockState.clinicalProfile
+      } as T;
     case "link_account":
       mockState.linked = true;
       return undefined as T;
