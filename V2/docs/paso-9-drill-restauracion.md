@@ -27,11 +27,11 @@ cd V2/desktop-app/src-tauri
 cargo test --lib restore_drill -- --nocapture
 ```
 
-### Evidencia capturada (2026-06-11)
+### Evidencia capturada (2026-06-11 18:56:18 UTC)
 
 ```text
 ===== DRILL DE RESTAURACION (paso 9) =====
-fecha (UTC):       2026-06-11T18:36:14.558339200+00:00
+fecha (UTC):       2026-06-11T18:56:18.228874400+00:00
 1) base de origen creada y poblada
    esquema:        v5
    citas:          1
@@ -40,7 +40,7 @@ fecha (UTC):       2026-06-11T18:36:14.558339200+00:00
    notas:          1
 2) respaldo cifrado creado
    tamano:         110592 bytes
-   cabecera (hex): 4133fb9e662951a6832de856e203d326
+   cabecera (hex): 71c5f39bbd83d5f53597c57a33ee02f9
    (no es 'SQLite format 3\0' => cifrado en disco)
 3) perdida simulada: base de origen eliminada
 4) restauracion verificada desde el respaldo
@@ -48,13 +48,18 @@ fecha (UTC):       2026-06-11T18:36:14.558339200+00:00
    citas:          1
    encuentros:     1
    notas:          1
-   encuentro:      5f9bec71-9a67-41f2-9a4a-1bbae93116f0
+   encuentro:      29e5ff46-adaa-45e0-add6-03a1b7bffb65
    estado nota:    SIGNED
    diagnostico:    Lumbalgia
 5) frase incorrecta rechazada: true
 ===== DRILL OK: contenido clinico recuperado =====
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 27 filtered out
+
+Stderr (expected SQLCipher rejection on wrong key):
+2026-06-11 11:56:18.665: ERROR CORE sqlcipher_page_cipher: hmac check failed for pgno=1
+2026-06-11 11:56:18.666: ERROR CORE sqlite3Codec: error decrypting page 1 data: 1
+2026-06-11 11:56:18.666: ERROR CORE sqlcipher_codec_ctx_set_error 1
 ```
 
 Interpretación de la evidencia:
