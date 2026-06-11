@@ -31,17 +31,19 @@ Estado inicial implementado el 2026-06-11.
 ## Smoke E2E del portal (live HTTP)
 
 - Suite `tests/e2e/pilot-smoke.e2e.test.ts`, ejecutada con `npm run test:e2e`.
-- Arranca `next dev` en un puerto aislado y verifica sobre HTTP real:
+- Arranca `next dev` una vez en un puerto aislado y verifica sobre HTTP real:
   - `GET /api/health` responde `200` sin exponer datos clinicos;
   - `GET /api/readiness` responde `200` con `checks.database = ok`;
   - una pagina de perfil publico sembrada renderiza nombre y servicio;
-  - un slug inexistente responde `404`.
-- El perfil de prueba se siembra y se purga via servicios de dominio; no deja datos residuales.
+  - un slug inexistente responde `404`;
+  - **agenda end-to-end**: lista de horarios, hold, reserva (`201`, `PENDING`), confirmacion y consulta de la cita (`CONFIRMED`);
+  - **recuperacion de cuenta**: la solicitud devuelve la misma respuesta no enumerable para un correo existente y uno inexistente.
+- Todo lo sembrado (medico, servicio, disponibilidad, cita, paciente, holds y notificaciones encoladas) se purga en el teardown; no deja datos residuales.
 - Config separada (`vitest.e2e.config.ts`) para no arrancar el servidor en `npm run test`.
 - `tests/setup-env.ts` carga `.env`/`.env.local` y aplica defaults mock de proveedor (SMS/correo) para que la suite corra de forma hermetica; esto tambien repara los tests de integracion que importan `src/lib/env.ts`.
 
 ## Pendiente antes de piloto real
 
 - Canal de auto-actualizacion Tauri con rollback documentado.
-- E2E de staging ampliado: registro, agenda, sincronizacion, consulta, documentos, notificaciones y recuperacion (el smoke actual cubre liveness/readiness y perfil publico).
+- E2E de staging restante: sincronizacion app-portal, consulta clinica y carga/descarga de documentos (el smoke ya cubre liveness/readiness, perfil publico, agenda completa, notificaciones encoladas y recuperacion).
 - Drill manual de restauracion con una base de staging y evidencia capturada.

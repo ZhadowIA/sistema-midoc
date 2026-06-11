@@ -25,9 +25,14 @@ const prisma = new PrismaClient();
 const ownerEmail = `e2e-pilot-${randomUUID()}@example.com`;
 const slug = `e2e-pilot-${randomUUID().slice(0, 8)}`;
 const professionalName = "Dra. Sara Nava (E2E)";
+const serviceName = "Consulta general";
 
 let serverProcess: ChildProcess | undefined;
 let serverLog = "";
+let serviceId = "";
+// The seeded availability rule is on Tuesday (dayOfWeek 2); bookings target the
+// next Tuesday so a slot is always in range of the rule's advance window.
+const bookingWeekday = 2;
 
 async function seedPublicDoctor() {
   const account = await createDoctorAccount({
@@ -60,16 +65,17 @@ async function seedPublicDoctor() {
     isPublic: true
   });
 
-  await createDoctorService(account.user.id, {
-    name: "Consulta general",
+  const service = await createDoctorService(account.user.id, {
+    name: serviceName,
     description: "Valoracion medica de prueba.",
     priceCents: 80000,
     durationMinutes: 30,
     displayOrder: 1
   });
+  serviceId = service.id;
 
   await createAvailabilityRule(account.user.id, {
-    dayOfWeek: 2,
+    dayOfWeek: bookingWeekday,
     startTime: "09:00",
     endTime: "12:00",
     slotInterval: 30,
@@ -94,9 +100,17 @@ async function cleanupSeed() {
     });
   }
 
-  // AuditLog.actorUserId is SetNull and there is no clinical data for a
-  // freshly seeded doctor, so deleting the user cascades the profile,
-  // services and availability rules created above.
+  // The booking flow below creates holds, appointments, patients and queued
+  // notifications/short links. Notifications and short links reference the
+  // doctor via SetNull, but holds/appointments/patients use Restrict, so they
+  // must be removed before the user. Deleting patients cascades their
+  // precheckin submissions; deleting the user cascades the profile, services,
+  // availability rules and password reset tokens.
+  await prisma.notification.deleteMany({ where: { doctorId: user.id } });
+  await prisma.shortLink.deleteMany({ where: { doctorId: user.id } });
+  await prisma.appointmentHold.deleteMany({ where: { doctorId: user.id } });
+  await prisma.appointment.deleteMany({ where: { doctorId: user.id } });
+  await prisma.patient.deleteMany({ where: { ownerDoctorId: user.id } });
   await prisma.user.delete({ where: { id: user.id } });
 }
 
@@ -205,5 +219,98 @@ describe("pilot smoke (paso 9, step 2)", () => {
   it("returns 404 for an unknown public profile slug", async () => {
     const response = await fetch(`${BASE_URL}/perfil/no-existe-${randomUUID().slice(0, 8)}`);
     expect(response.status).toBe(404);
+  });
+});
+
+function nextWeekdayDateString(targetDay: number) {
+  const now = new Date();
+  const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  let diff = (targetDay - date.getUTCDay() + 7) % 7;
+  if (diff === 0) {
+    diff = 7;
+  }
+  date.setUTCDate(date.getUTCDate() + diff);
+  return date.toISOString().slice(0, 10);
+}
+
+async function postJson(path: string, body?: unknown) {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  const parsed = await response.json().catch(() => null);
+  return { status: response.status, body: parsed as Record<string, unknown> | null };
+}
+
+describe("patient booking flow (paso 9, step 2)", () => {
+  it("lists slots, holds, books and confirms an appointment over HTTP", async () => {
+    const dateFrom = nextWeekdayDateString(bookingWeekday);
+
+    const availabilityResponse = await fetch(
+      `${BASE_URL}/api/public/doctors/${slug}/availability?serviceId=${serviceId}&dateFrom=${dateFrom}&days=1`
+    );
+    expect(availabilityResponse.status).toBe(200);
+
+    const availability = (await availabilityResponse.json()) as {
+      slots: Array<{ slotStart: string }>;
+    };
+    expect(availability.slots.length).toBeGreaterThan(0);
+
+    // Normalize to a Z-suffixed UTC string so the hold route's
+    // z.string().datetime() validation accepts the slot start.
+    const slotStart = new Date(availability.slots[0]!.slotStart).toISOString();
+
+    const hold = await postJson(`/api/public/doctors/${slug}/holds`, {
+      serviceId,
+      slotStart
+    });
+    expect(hold.status).toBe(200);
+    const holdToken = (hold.body?.hold as { token?: string } | undefined)?.token;
+    expect(holdToken).toBeTruthy();
+
+    const booking = await postJson("/api/public/appointments", {
+      holdToken,
+      patient: {
+        firstName: "Mario",
+        lastName: "Lopez",
+        phone: "6141234567"
+      },
+      reason: "Control anual",
+      legal: { acceptedTerms: true, acceptedPrivacy: true }
+    });
+    expect(booking.status).toBe(201);
+    const appointment = booking.body?.appointment as
+      | { status?: string; confirmationToken?: string }
+      | undefined;
+    expect(appointment?.status).toBe("PENDING");
+    const confirmationToken = appointment?.confirmationToken;
+    expect(confirmationToken).toBeTruthy();
+
+    const confirm = await postJson(`/api/public/appointments/${confirmationToken}/confirm`);
+    expect(confirm.status).toBe(200);
+
+    const detailsResponse = await fetch(`${BASE_URL}/api/public/appointments/${confirmationToken}`);
+    expect(detailsResponse.status).toBe(200);
+    const details = (await detailsResponse.json()) as {
+      appointment: { status: string };
+      patient: { firstName: string };
+    };
+    expect(details.appointment.status).toBe("CONFIRMED");
+    expect(details.patient.firstName).toBe("Mario");
+  });
+});
+
+describe("account recovery (paso 9, step 2)", () => {
+  it("returns the same non-enumerable response for known and unknown emails", async () => {
+    const known = await postJson("/api/auth/password-recovery/request", { email: ownerEmail });
+    const unknown = await postJson("/api/auth/password-recovery/request", {
+      email: `nadie-${randomUUID()}@example.com`
+    });
+
+    expect(known.status).toBe(200);
+    expect(unknown.status).toBe(200);
+    // Anti-enumeration: the response must not reveal whether the account exists.
+    expect(known.body).toEqual(unknown.body);
   });
 });
