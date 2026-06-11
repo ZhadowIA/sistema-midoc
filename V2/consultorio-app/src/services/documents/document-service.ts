@@ -11,6 +11,7 @@ import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { generateOpaqueToken } from "../../lib/security/token";
 import { emitSyncEvent, getActiveDeviceDocumentKey } from "../sync/sync-service";
+import { queueNotification } from "../notifications/notification-service";
 
 class DocumentServiceError extends ServiceError {}
 
@@ -47,12 +48,14 @@ async function runSerializable<T>(fn: (tx: Prisma.TransactionClient) => Promise<
 async function assertPatientOwnedByDoctor(doctorUserId: string, patientId: string) {
   const patient = await prisma.patient.findFirst({
     where: { id: patientId, ownerDoctorId: doctorUserId },
-    select: { id: true }
+    select: { id: true, firstName: true, phone: true, email: true }
   });
 
   if (!patient) {
     throw new DocumentServiceError("Paciente no encontrado.", 404);
   }
+
+  return patient;
 }
 
 /**
@@ -68,7 +71,7 @@ export async function createUploadLink(
     maxUploads?: number;
   }
 ) {
-  await assertPatientOwnedByDoctor(doctorUserId, input.patientId);
+  const patient = await assertPatientOwnedByDoctor(doctorUserId, input.patientId);
 
   if (input.appointmentId) {
     const appointment = await prisma.appointment.findFirst({
@@ -108,9 +111,41 @@ export async function createUploadLink(
     metadata: { patientId: input.patientId, appointmentId: input.appointmentId ?? null, maxUploads }
   });
 
+  const uploadUrl = `${env.APP_BASE_URL}/carga/${token}`;
+
+  for (const contact of [
+    patient.phone ? { channel: "SMS" as const, destination: patient.phone } : null,
+    patient.email ? { channel: "EMAIL" as const, destination: patient.email } : null
+  ]) {
+    if (!contact) {
+      continue;
+    }
+
+    await queueNotification({
+      doctorId: doctorUserId,
+      patientId: input.patientId,
+      appointmentId: input.appointmentId,
+      channel: contact.channel,
+      kind: "DOCUMENT_UPLOAD",
+      destination: contact.destination,
+      actionUrl: uploadUrl,
+      shortLink: {
+        expiresAt: link.expiresAt,
+        maxUses: maxUploads
+      },
+      template: {
+        patientFirstName: patient.firstName,
+        expiresAt: link.expiresAt
+      },
+      metadata: {
+        uploadUrl
+      }
+    });
+  }
+
   return {
     link,
-    uploadUrl: `${env.APP_BASE_URL}/carga/${token}`
+    uploadUrl
   };
 }
 

@@ -433,14 +433,16 @@ describe("public booking flow", () => {
         legal: { acceptedTerms: true, acceptedPrivacy: true }
       });
 
-      // El SMS encolado lleva el enlace de accion con el token.
+      // El SMS encolado usa enlace corto hacia la accion publica.
       const queuedSms = await prisma.notification.findFirst({
         where: {
           appointmentId: booking.appointment.id,
-          channel: "SMS"
+          channel: "SMS",
+          kind: "APPOINTMENT_CONFIRMATION"
         }
       });
-      expect(queuedSms?.body).toContain(`/perfil/${slug}/cita/${booking.confirmationToken}`);
+      expect(queuedSms?.body).toContain("/s/");
+      expect(queuedSms?.shortLinkId).toBeTruthy();
 
       await confirmPublicAppointment({ confirmationToken: booking.confirmationToken });
 
