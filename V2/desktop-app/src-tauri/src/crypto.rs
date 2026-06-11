@@ -26,23 +26,17 @@ const PUBLIC_KEY_STATE: &str = "document_public_key";
 pub enum CryptoError {
     #[error("error de base de datos: {0}")]
     State(#[from] SyncError),
-    // InvalidKey/Decrypt los construye el descifrado (rebanada 3, sync Fase B);
-    // ya cubiertos por pruebas, aun sin cableado de produccion.
-    #[allow(dead_code)]
     #[error("material de llave invalido")]
     InvalidKey,
-    #[allow(dead_code)]
     #[error("no se pudo descifrar el documento")]
     Decrypt,
 }
 
-#[allow(dead_code)] // usado por unseal_document (rebanada 3) y pruebas.
 fn decode_key(value: &str) -> Result<[u8; 32], CryptoError> {
     let bytes = BASE64.decode(value).map_err(|_| CryptoError::InvalidKey)?;
     bytes.try_into().map_err(|_| CryptoError::InvalidKey)
 }
 
-#[allow(dead_code)] // usado por unseal_document (rebanada 3) y pruebas.
 fn keypair_from(secret_b64: &str, public_b64: &str) -> Result<KeyPair, CryptoError> {
     let secret = decode_key(secret_b64)?;
     let public = decode_key(public_b64)?;
@@ -81,7 +75,6 @@ pub fn document_public_key(conn: &Connection) -> Result<Option<String>, CryptoEr
 
 /// Descifra un documento del buzon (sealed box base64) con el par de llaves
 /// del medico. Usado por la sincronizacion Fase B.
-#[allow(dead_code)] // cableado en la rebanada 3 (sync Fase B); ya con pruebas.
 pub fn unseal_document(conn: &Connection, sealed_b64: &str) -> Result<Vec<u8>, CryptoError> {
     let secret = get_state(conn, SECRET_KEY_STATE)?.ok_or(CryptoError::InvalidKey)?;
     let public = get_state(conn, PUBLIC_KEY_STATE)?.ok_or(CryptoError::InvalidKey)?;

@@ -283,6 +283,84 @@ pub async fn send_ack(
     Ok(())
 }
 
+/// Descarga el ciphertext (sealed box, base64) de un documento del buzon. Se
+/// descifra localmente con la llave del medico (`crypto::unseal_document`).
+pub async fn fetch_document(
+    server_url: &str,
+    device_token: &str,
+    document_id: &str,
+) -> Result<String, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+
+    let response = client
+        .get(format!("{base}/api/sync/documents/{document_id}"))
+        .bearer_auth(device_token)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+
+    let body: serde_json::Value = response.json().await?;
+    body.get("ciphertext")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| SyncError::Server("respuesta sin ciphertext".into()))
+}
+
+/// Sobre [metaLen u32 BE | metaJSON | bytes]. El metaJSON lleva nombre y tipo
+/// del archivo; el contenido es el resto. Mismo formato que cifra el navegador
+/// del paciente.
+fn parse_envelope(bytes: &[u8]) -> Result<(String, String, Option<String>, Vec<u8>), SyncError> {
+    if bytes.len() < 4 {
+        return Err(SyncError::Server("documento corrupto".into()));
+    }
+    let meta_len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    if bytes.len() < 4 + meta_len {
+        return Err(SyncError::Server("documento corrupto".into()));
+    }
+    let meta: serde_json::Value = serde_json::from_slice(&bytes[4..4 + meta_len])
+        .map_err(|e| SyncError::Server(format!("metadatos invalidos: {e}")))?;
+    let file_name = text(&meta, "fileName").unwrap_or_default();
+    let mime_type = text(&meta, "mimeType").unwrap_or_default();
+    let category = text(&meta, "category");
+    let content = bytes[4 + meta_len..].to_vec();
+    Ok((file_name, mime_type, category, content))
+}
+
+/// Guarda un documento ya descifrado en la base local. Idempotente por id
+/// (re-entrega tras un ACK perdido no duplica).
+pub fn store_mailbox_document(
+    conn: &Connection,
+    id: &str,
+    patient_id: Option<&str>,
+    appointment_id: Option<&str>,
+    plaintext: &[u8],
+) -> Result<(), SyncError> {
+    let (file_name, mime_type, category, content) = parse_envelope(plaintext)?;
+    conn.execute(
+        "INSERT INTO documents (
+            id, patient_id, appointment_id, file_name, mime_type, category,
+            content, size_bytes, received_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(id) DO NOTHING",
+        params![
+            id,
+            patient_id,
+            appointment_id,
+            file_name,
+            mime_type,
+            category,
+            content,
+            content.len() as i64,
+            chrono_now()
+        ],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,6 +485,49 @@ mod tests {
             )
             .unwrap();
         assert_eq!(start, "2026-06-29T16:00:00.000Z");
+    }
+
+    fn envelope(file_name: &str, mime: &str, content: &[u8]) -> Vec<u8> {
+        let meta = serde_json::json!({ "fileName": file_name, "mimeType": mime }).to_string();
+        let meta_bytes = meta.as_bytes();
+        let mut out = Vec::new();
+        out.extend_from_slice(&(meta_bytes.len() as u32).to_be_bytes());
+        out.extend_from_slice(meta_bytes);
+        out.extend_from_slice(content);
+        out
+    }
+
+    #[test]
+    fn stores_mailbox_document_and_is_idempotent() {
+        let conn = test_conn("documents");
+        let content = b"%PDF-1.4 contenido del estudio";
+        let plaintext = envelope("estudio.pdf", "application/pdf", content);
+
+        store_mailbox_document(&conn, "doc-1", Some("pat-1"), Some("appt-1"), &plaintext).unwrap();
+        // Re-entrega tras un ACK perdido: no duplica ni cambia el contenido.
+        store_mailbox_document(&conn, "doc-1", Some("pat-1"), Some("appt-1"), &plaintext).unwrap();
+
+        let (count, file_name, mime, size, stored): (i64, String, String, i64, Vec<u8>) = conn
+            .query_row(
+                "SELECT count(*), max(file_name), max(mime_type), max(size_bytes), max(content)
+                 FROM documents WHERE id = 'doc-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(file_name, "estudio.pdf");
+        assert_eq!(mime, "application/pdf");
+        assert_eq!(size, content.len() as i64);
+        assert_eq!(stored, content);
+    }
+
+    #[test]
+    fn rejects_corrupt_envelope() {
+        let conn = test_conn("corrupt-envelope");
+        // metaLen mayor que el buffer disponible.
+        let bad = vec![0u8, 0, 1, 0, 1, 2];
+        assert!(store_mailbox_document(&conn, "doc-x", None, None, &bad).is_err());
     }
 
     #[test]
