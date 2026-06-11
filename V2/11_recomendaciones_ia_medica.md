@@ -6,6 +6,24 @@ No se recomienda reemplazar de inmediato el stack actual basado en GPT/OpenAI y 
 
 El objetivo no es elegir el proveedor mas famoso, sino el mejor proveedor por tarea clinica: transcripcion, generacion SOAP, resumen longitudinal, instrucciones al paciente, costos, latencia, cumplimiento y facilidad de auditoria.
 
+## Cruce de modelos Anthropic y OpenAI
+
+Cuando este documento mencione una recomendacion de Anthropic, este es el equivalente sugerido de OpenAI para comparar por tarea:
+
+| Uso | Anthropic | OpenAI sugerido |
+|---|---|---|
+| Maximo razonamiento, arquitectura, seguridad y decisiones delicadas | Opus 4.8 | `gpt-5.5` |
+| Implementacion cuidadosa, revision tecnica y trabajo complejo con codigo o docs | Sonnet 4.6 | `gpt-5.4` |
+| Exploracion amplia, borradores, soporte mecanico y bajo costo/latencia | Haiku 4.5 | `gpt-5-mini` |
+
+Esfuerzo recomendado por modelo:
+
+| Modelo Anthropic | Esfuerzo recomendado | Equivalente OpenAI | Esfuerzo recomendado |
+|---|---|---|---|
+| Opus 4.8 | Alto | `gpt-5.5` | Alto |
+| Sonnet 4.6 | Medio | `gpt-5.4` | Medio |
+| Haiku 4.5 | Bajo | `gpt-5-mini` | Bajo |
+
 ## Arquitectura recomendada
 
 | Capa | Responsabilidad |
@@ -39,6 +57,17 @@ El objetivo no es elegir el proveedor mas famoso, sino el mejor proveedor por ta
 | Instrucciones al paciente | OpenAI API | Google MedLM | Lenguaje claro, seguridad, no inventar indicaciones y adaptacion a paciente. |
 | Transcripcion de consulta | Deepgram | AssemblyAI, Nabla, AWS HealthScribe | Precision medica, diarizacion, latencia, costo, ruido, acentos y manejo de PHI. |
 | Gobernanza/costos IA | Capa propia MiDoc | Servicios cloud complementarios | Costo por consulta, creditos, auditoria y fallback. |
+
+## Equivalencia por tarea
+
+| Tarea clinica | Recomendacion Anthropic | Equivalente OpenAI | Motivo |
+|---|---|---|---|
+| Generacion SOAP | Opus 4.8 | `gpt-5.5` | Requiere estructura, criterio clinico y bajo margen de error. |
+| Resumen longitudinal | Opus 4.8 | `gpt-5.5` | Importa la fidelidad al expediente y la persistencia en contexto largo. |
+| Instrucciones al paciente | Sonnet 4.6 | `gpt-5.4` | Hay que redactar con claridad, seguridad y buena adaptacion al lenguaje del paciente. |
+| Transcripcion de consulta | Haiku 4.5 / Sonnet 4.6 | `gpt-5-mini` / `gpt-5.4` | Parte del trabajo es mecanico, pero la validacion del resultado necesita buen criterio. |
+| Clasificacion, triage interno y reglas de seguridad | Opus 4.8 | `gpt-5.5` | Mejor usar el modelo mas fuerte cuando una mala decision puede afectar seguridad clinica. |
+| Documentacion y reportes | Haiku 4.5 | `gpt-5-mini` | Bajo riesgo y alta tolerancia a iteracion. |
 
 ## Benchmark clinico obligatorio
 
