@@ -23,9 +23,12 @@ Implementado y verificado:
 
 Implementado también:
 - **E2E de sincronización y documentos** (`pilot-sync-documents.e2e.test.ts`): inbox de sync entrega eventos y purga en ack, rechazo de dispositivo desconocido (401), y round-trip de documento del buzón (carga cifrada → descarga por dispositivo con ciphertext intacto).
+- **E2E de auth del médico** (`pilot-auth.e2e.test.ts`): registro → login (cookie `med_token`) → sesión usada en ruta protegida `admin/profile`; rechazos sin cookie (401) y login con contraseña incorrecta.
+
+Cobertura E2E del checklist de paso 9: registro ✓, agenda ✓, sincronización ✓, documentos ✓, notificaciones (encoladas) ✓, recuperación ✓. Falta **consulta clínica**.
 
 Pendiente (orden sugerido):
-1. Consulta clínica end-to-end en staging (atención: encounter, SOAP, firma).
+1. Consulta clínica E2E. **Ojo de arquitectura**: lo clínico (encounter/SOAP/firma) es responsabilidad de la **app de escritorio** (Tauri/SQLite local), no del portal. El portal sí tiene rutas `admin/encounters` (transicionales, con test de integración), pero el E2E de consulta de verdad debería ir contra la app desktop (tests Rust) o, si se hace en el portal, dejar claro que es del tramo transicional. Decidir alcance antes de implementar.
 2. Auto-actualización Tauri con rollback documentado.
 3. Drill manual de restauración con evidencia capturada.
 
@@ -65,4 +68,4 @@ Siempre, sin importar el modelo:
 
 ## Bitácora de sesiones
 
-- 2026-06-11: paso 9 portal/desktop + E2E smoke base; extendido con agenda y recuperación. Refactor a `globalSetup` (un solo server entre archivos E2E) y añadido E2E de sync + documentos. Suite E2E: 9 tests en 2 archivos, todo en verde; default 44/44; lint y tsc limpios. **Siguiente sugerido:** E2E de consulta clínica (encounter/SOAP/firma) o auto-actualización Tauri.
+- 2026-06-11: paso 9 portal/desktop + E2E smoke base; extendido con agenda y recuperación. Refactor a `globalSetup` (un solo server entre archivos E2E) y añadido E2E de sync + documentos. Luego añadido E2E de auth del médico (registro/login/sesión/admin). Suite E2E: **13 tests en 3 archivos**, todo en verde; default 44/44; lint y tsc limpios. Rama pusheada a `origin/v2/paso6-llaves-e2e`. **Siguiente sugerido:** decidir alcance de la consulta clínica E2E (ver nota de arquitectura arriba) o auto-actualización Tauri.

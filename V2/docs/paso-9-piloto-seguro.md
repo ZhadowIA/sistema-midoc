@@ -41,6 +41,9 @@ Estado inicial implementado el 2026-06-11.
 - `pilot-sync-documents.e2e.test.ts` verifica el contrato local-first sobre HTTP:
   - **sync del dispositivo**: el inbox entrega `APPOINTMENT_BOOKED` y `PRECHECKIN_SUBMITTED`, el `ack` purga el contenido clinico (`purgedClinicalEvents`) y el inbox queda vacio tras el cursor; un token de dispositivo desconocido responde `401`;
   - **documentos del buzon**: el enlace de carga expone la llave publica del medico, acepta una subida cifrada (`201`) y el dispositivo la descarga por sync con el `ciphertext` intacto.
+- `pilot-auth.e2e.test.ts` verifica el acceso del medico sobre HTTP:
+  - **registro y sesion**: registro (`201`), login (`200`) que emite la cookie `med_token`, y la sesion usada en `GET /api/auth/session` y en una ruta protegida `GET /api/admin/profile`;
+  - **rechazos**: acceso sin cookie a sesion y a `admin/profile` responde `401`, y el login con contrasena incorrecta no emite cookie.
 - Todo lo sembrado (medico, dispositivo, servicio, disponibilidad, cita, paciente, holds, eventos de sync, enlace de carga y documento) se purga en el teardown; no deja datos residuales.
 - `tests/setup-env.ts` (via `tests/load-test-env.ts`) carga `.env`/`.env.local` y aplica defaults mock de proveedor (SMS/correo) para que la suite corra de forma hermetica; esto tambien repara los tests de integracion que importan `src/lib/env.ts`.
 
