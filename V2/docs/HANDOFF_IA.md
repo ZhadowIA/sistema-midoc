@@ -25,12 +25,21 @@ Implementado también:
 - **E2E de sincronización y documentos** (`pilot-sync-documents.e2e.test.ts`): inbox de sync entrega eventos y purga en ack, rechazo de dispositivo desconocido (401), y round-trip de documento del buzón (carga cifrada → descarga por dispositivo con ciphertext intacto).
 - **E2E de auth del médico** (`pilot-auth.e2e.test.ts`): registro → login (cookie `med_token`) → sesión usada en ruta protegida `admin/profile`; rechazos sin cookie (401) y login con contraseña incorrecta.
 
-Cobertura E2E del checklist de paso 9: registro ✓, agenda ✓, sincronización ✓, documentos ✓, notificaciones (encoladas) ✓, recuperación ✓. Falta **consulta clínica**.
+- **E2E de consulta clínica local-first** (`desktop-app/src-tauri/src/consultation_e2e.rs`, `cargo test --lib consultation_e2e`): cita + preconsulta llegan por `sync::apply_batch` → abrir encuentro → antecedentes → SOAP con plantilla → receta → firma → verificación de integridad; segundo caso con cita reagendada. Cruza `sync` → `clinical` sobre SQLite cifrado. Se hizo en la app de escritorio (donde vive lo clínico), no en el portal.
 
-Pendiente (orden sugerido):
-1. Consulta clínica E2E. **Ojo de arquitectura**: lo clínico (encounter/SOAP/firma) es responsabilidad de la **app de escritorio** (Tauri/SQLite local), no del portal. El portal sí tiene rutas `admin/encounters` (transicionales, con test de integración), pero el E2E de consulta de verdad debería ir contra la app desktop (tests Rust) o, si se hace en el portal, dejar claro que es del tramo transicional. Decidir alcance antes de implementar.
-2. Auto-actualización Tauri con rollback documentado.
-3. Drill manual de restauración con evidencia capturada.
+Cobertura E2E del checklist de paso 9: registro ✓, agenda ✓, sincronización ✓, consulta ✓, documentos ✓, notificaciones (encoladas) ✓, recuperación ✓. **Checklist E2E completo.**
+
+Pendiente del paso 9 (no-E2E):
+1. Auto-actualización Tauri con rollback documentado.
+2. Drill manual de restauración con evidencia capturada.
+
+## Tests de la app de escritorio (Rust)
+
+- `cargo` no está en PATH de PowerShell; usar `& "$env:USERPROFILE\.cargo\bin\cargo.exe"`. Desde `V2/desktop-app/src-tauri`.
+- Correr: `cargo test --lib` (26 tests). Clippy: `cargo clippy --lib --tests` (limpio).
+- **`cargo fmt` NO es gate**: todo el código existente (clinical.rs, sync.rs, db.rs…) difiere de rustfmt-default. El estilo del repo usa one-liners largos en tests; sigue ese estilo, no corras rustfmt suelto (haría tu archivo divergir de los vecinos).
+- Los tests `db::tests::rejects_wrong_key` imprimen `ERROR ... hmac check failed` — es **esperado** (prueban llave incorrecta), el test pasa.
+- Módulos `clinical`/`sync` son privados del crate (`mod`, no `pub mod`): los tests E2E que los cruzan deben vivir **dentro del crate** (ej. `mod consultation_e2e;` con `#[cfg(test)]` en lib.rs), no en un `tests/` externo.
 
 ## Arquitectura de los tests E2E (importante)
 
@@ -68,4 +77,4 @@ Siempre, sin importar el modelo:
 
 ## Bitácora de sesiones
 
-- 2026-06-11: paso 9 portal/desktop + E2E smoke base; extendido con agenda y recuperación. Refactor a `globalSetup` (un solo server entre archivos E2E) y añadido E2E de sync + documentos. Luego añadido E2E de auth del médico (registro/login/sesión/admin). Suite E2E: **13 tests en 3 archivos**, todo en verde; default 44/44; lint y tsc limpios. Rama pusheada a `origin/v2/paso6-llaves-e2e`. **Siguiente sugerido:** decidir alcance de la consulta clínica E2E (ver nota de arquitectura arriba) o auto-actualización Tauri.
+- 2026-06-11: paso 9 portal/desktop + E2E smoke base; extendido con agenda y recuperación. Refactor a `globalSetup` (un solo server entre archivos E2E) y añadido E2E de sync + documentos. Luego añadido E2E de auth del médico (registro/login/sesión/admin). Portal: **13 tests E2E en 3 archivos**, default 44/44, lint y tsc limpios. Desktop: añadido **E2E de consulta clínica** (`consultation_e2e.rs`, 2 tests); suite Rust 26 tests, clippy limpio. Con esto el **checklist E2E del paso 9 queda completo**. Rama pusheada a `origin/v2/paso6-llaves-e2e`. **Siguiente sugerido:** auto-actualización Tauri con rollback o drill de restauración.

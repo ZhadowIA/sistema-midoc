@@ -21,6 +21,7 @@ Estado inicial implementado el 2026-06-11.
 - Al desbloquear la base local, la app crea un respaldo cifrado automatico en `app_data/backups/`.
 - La restauracion se prueba con `cargo test db::tests::backup -- --nocapture`.
 - La prueba verifica llave correcta, llave incorrecta y ausencia de encabezado SQLite en claro.
+- **E2E de consulta clinica local-first** (`src-tauri/src/consultation_e2e.rs`, `cargo test --lib consultation_e2e`): una cita y su preconsulta llegan por `sync::apply_batch` (como las entrega el inbox del portal), el medico abre el encuentro desde la cita, documenta antecedentes y nota SOAP con plantilla de especialidad, receta, firma y verifica la integridad del hash; un segundo caso cubre una cita reagendada por sync. Cruza `sync` -> `clinical` sobre la base cifrada, sin tocar la red. Es el flujo de consulta del checklist de paso 9, cubierto donde vive lo clinico (la app de escritorio).
 - La firma de instalador Windows se hace con un PFX y `signtool.exe`; para el piloto se puede usar un certificado de desarrollo, pero para distribucion externa se necesita un certificado emitido por una CA confiable.
 - Flujo operativo:
   1. Generar o importar el certificado PFX.

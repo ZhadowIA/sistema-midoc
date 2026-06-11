@@ -3,6 +3,9 @@ mod crypto;
 mod db;
 mod sync;
 
+#[cfg(test)]
+mod consultation_e2e;
+
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::Manager;
