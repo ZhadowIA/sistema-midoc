@@ -1,4 +1,5 @@
 mod clinical;
+mod crypto;
 mod db;
 mod sync;
 
@@ -98,9 +99,24 @@ async fn link_account(
         "Escritorio {}",
         std::env::var("COMPUTERNAME").unwrap_or_else(|_| "MiDoc".into())
     );
-    let token = sync::link_account(&server_url, &email, &password, &device_name)
-        .await
-        .map_err(|e| e.to_string())?;
+
+    // Generar (si no existe) el par de llaves del medico y publicar la publica
+    // sin retener el lock durante la llamada de red.
+    let document_public_key = {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        crypto::ensure_keypair(conn).map_err(|e| e.to_string())?
+    };
+
+    let token = sync::link_account(
+        &server_url,
+        &email,
+        &password,
+        &device_name,
+        &document_public_key,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
