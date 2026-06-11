@@ -10,6 +10,10 @@ const envSchema = z.object({
   SMS_PROVIDER: z.string().min(1),
   SMS_BASE_URL: z.url(),
   SMS_API_KEY: z.string().min(1),
+  EMAIL_PROVIDER: z.string().min(1),
+  EMAIL_BASE_URL: z.url(),
+  EMAIL_API_KEY: z.string().min(1),
+  EMAIL_FROM: z.string().email(),
   NOTIFICATION_CRON_SECRET: z.string().min(1),
   PAYMENTS_PROVIDER: z.enum(["MOCK", "STRIPE", "CONEKTA", "OPENPAY"]),
   PAYMENTS_WEBHOOK_SECRET: z.string().min(1)

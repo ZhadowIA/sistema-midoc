@@ -3,9 +3,7 @@ import {
   AppointmentStatus,
   HoldStatus,
   LegalDocumentType,
-  NotificationChannel,
   NotificationKind,
-  NotificationStatus,
   PatientStatus,
   PrecheckinStatus
 } from "@prisma/client";
@@ -26,6 +24,7 @@ import {
   type LocalDate
 } from "../../lib/timezone";
 import { emitSyncEvent } from "../sync/sync-service";
+import { queueNotification } from "../notifications/notification-service";
 
 const HOLD_TTL_MS = 1000 * 60 * 10;
 const SLOT_TAKEN_MESSAGE = "El horario seleccionado ya no esta disponible.";
@@ -78,6 +77,10 @@ async function runSerializable<T>(fn: (tx: Prisma.TransactionClient) => Promise<
 
 function addMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() + minutes * 60_000);
+}
+
+function subtractHours(date: Date, hours: number) {
+  return new Date(date.getTime() - hours * 3_600_000);
 }
 
 function sameLocalDate(left: LocalDate, right: LocalDate) {
@@ -607,44 +610,74 @@ export async function bookPublicAppointment(input: {
     select: { publicSlug: true }
   });
   const appointmentUrl = `${env.APP_BASE_URL}/perfil/${doctorProfile?.publicSlug}/cita/${confirmationToken}`;
+  const reminderAt = subtractHours(appointment.scheduledStart, 24);
+  const reminderShouldQueue = reminderAt > new Date();
+  const appointmentLabel = appointment.scheduledStart.toISOString();
 
-  if (patient.phone) {
-    await prisma.notification.create({
-      data: {
+  for (const contact of [
+    patient.phone ? { channel: "SMS" as const, destination: patient.phone } : null,
+    patient.email ? { channel: "EMAIL" as const, destination: patient.email } : null
+  ]) {
+    if (!contact) {
+      continue;
+    }
+
+    await queueNotification({
+      doctorId: hold.doctorId,
+      patientId: patient.id,
+      appointmentId: appointment.id,
+      channel: contact.channel,
+      kind: NotificationKind.APPOINTMENT_CONFIRMATION,
+      destination: contact.destination,
+      actionUrl: appointmentUrl,
+      template: {
+        patientFirstName: patient.firstName,
+        appointmentLabel
+      },
+      metadata: {
+        confirmationToken,
+        appointmentUrl
+      }
+    });
+
+    await queueNotification({
+      doctorId: hold.doctorId,
+      patientId: patient.id,
+      appointmentId: appointment.id,
+      channel: contact.channel,
+      kind: NotificationKind.PRECHECKIN,
+      destination: contact.destination,
+      actionUrl: appointmentUrl,
+      template: {
+        patientFirstName: patient.firstName,
+        appointmentLabel
+      },
+      metadata: {
+        confirmationToken,
+        appointmentUrl
+      }
+    });
+
+    if (reminderShouldQueue) {
+      await queueNotification({
         doctorId: hold.doctorId,
         patientId: patient.id,
         appointmentId: appointment.id,
-        channel: NotificationChannel.SMS,
-        kind: NotificationKind.APPOINTMENT_CONFIRMATION,
-        destination: patient.phone,
-        body: `Tu cita quedo registrada. Confirma o haz cambios aqui: ${appointmentUrl}`,
-        status: NotificationStatus.PENDING,
+        channel: contact.channel,
+        kind: NotificationKind.APPOINTMENT_REMINDER,
+        destination: contact.destination,
+        scheduledFor: reminderAt,
+        actionUrl: appointmentUrl,
+        template: {
+          patientFirstName: patient.firstName,
+          appointmentLabel
+        },
         metadata: {
           confirmationToken,
           appointmentUrl
         }
-      }
-    });
-  }
-
-  if (patient.email) {
-    await prisma.notification.create({
-      data: {
-        doctorId: hold.doctorId,
-        patientId: patient.id,
-        appointmentId: appointment.id,
-        channel: NotificationChannel.EMAIL,
-        kind: NotificationKind.APPOINTMENT_CONFIRMATION,
-        destination: patient.email,
-        subject: "Confirma tu cita",
-        body: `Tu cita quedo registrada. Confirma tu asistencia o haz cambios desde este enlace: ${appointmentUrl}`,
-        status: NotificationStatus.PENDING,
-        metadata: {
-          confirmationToken,
-          appointmentUrl
-        }
-      }
-    });
+      });
+    }
   }
 
   await writeAuditLog({
