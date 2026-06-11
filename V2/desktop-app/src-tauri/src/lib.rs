@@ -6,6 +6,9 @@ mod sync;
 #[cfg(test)]
 mod consultation_e2e;
 
+#[cfg(test)]
+mod restore_drill;
+
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::Manager;
