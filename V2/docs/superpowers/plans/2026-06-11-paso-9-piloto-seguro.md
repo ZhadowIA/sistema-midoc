@@ -57,3 +57,13 @@
 
 - [x] **Step 1: Document staging checklist** for registration, booking, sync, consultation, documents, notifications, recovery, backup, restore.
 - [ ] **Step 2: Use Playwright CLI** against the local portal for at least liveness/readiness and a public profile smoke path once the dev server is running.
+
+### Task 5: Windows Installer Signing
+
+**Files:**
+- Create: `V2/desktop-app/scripts/sign-windows-installer.ps1`
+- Modify: `V2/docs/paso-9-piloto-seguro.md`
+
+- [x] **Step 1: Add a repeatable signing script** that validates prereqs and invokes `signtool.exe`.
+- [x] **Step 2: Document the exact build/sign/verify flow** for the Windows installer.
+- [ ] **Step 3: Obtain or import a real code-signing certificate** for release distribution.
