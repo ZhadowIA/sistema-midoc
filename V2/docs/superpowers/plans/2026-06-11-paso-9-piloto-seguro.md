@@ -53,10 +53,10 @@
 
 **Files:**
 - Create: `V2/docs/paso-9-piloto-seguro.md`
-- Optional create: `V2/consultorio-app/tests/e2e/pilot-critical-flows.spec.ts`
+- Create: `V2/consultorio-app/tests/e2e/pilot-smoke.e2e.test.ts`
 
 - [x] **Step 1: Document staging checklist** for registration, booking, sync, consultation, documents, notifications, recovery, backup, restore.
-- [ ] **Step 2: Use Playwright CLI** against the local portal for at least liveness/readiness and a public profile smoke path once the dev server is running.
+- [x] **Step 2: Live HTTP smoke** (`tests/e2e/pilot-smoke.e2e.test.ts`, `npm run test:e2e`) boots `next dev` and verifies liveness, DB readiness, a seeded public profile render, and a 404 for an unknown slug. Implemented as a Vitest HTTP suite (no browser engine) to match the existing test stack; a dedicated `vitest.e2e.config.ts` keeps it out of the default `npm run test`.
 
 ### Task 5: Windows Installer Signing
 

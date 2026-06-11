@@ -6,6 +6,7 @@
     "build": "next build",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "env:check": "tsx src/lib/env.ts",
     "db:migrate:dev": "prisma migrate dev",
     "db:generate:no-engine": "prisma generate --no-engine"
