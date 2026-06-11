@@ -92,10 +92,15 @@ El portal aplica las no procesadas, ignora las repetidas y responde el resultado
 ## Implementacion por fases
 
 1. **Fase A (cierra paso 3):** `SyncEvent` + device token + `GET inbox` + `POST ack` con purga de preconsultas, y emision de eventos desde el booking publico. Cliente Rust minimo en la app que descarga citas y las guarda en SQLite.
-2. **Fase B (paso 6):** documentos del buzon (archivos cifrados) y resumen autorizado.
-3. **Fase C (paso 6-7):** `PUT availability` y `appointment-actions` (mientras tanto, el medico gestiona disponibilidad en el portal).
+2. **Fase B (paso 6 — IMPLEMENTADA):** documentos del buzon (archivos cifrados E2E) y resumen autorizado. Detalle abajo.
+3. **Fase C (paso 6-7):** `PUT availability` y `appointment-actions` (mientras tanto, el medico gestiona disponibilidad en el portal). Pendiente.
 
-## Preguntas abiertas (decidir antes de Fase B)
+### Fase B implementada (paso 6)
 
-- Cifrado de archivos del buzon: ¿llave por-medico derivada en el portal (mas simple, el portal puede leer durante el TTL) o cifrado del lado del paciente con llave publica del medico (la nube nunca puede leer, mas complejo)? Inclinacion: lo segundo, alineado con la promesa local-first.
-- Tamaño maximo de archivo y formatos aceptados en el buzon.
+- **Documentos del paciente → medico (buzon):** el paciente cifra cada archivo en su navegador con un *sealed box* (X25519) usando la llave publica del medico (publicada en `SyncDevice.documentPublicKey` al vincular). La nube guarda solo ciphertext en `MailboxDocument` y jamas puede leerlo. La app descarga via `GET /api/sync/documents/[id]`, descifra con `crypto_box_seal`/`dryoc`, y el `POST ack` purga el ciphertext (frontera legal). El nombre y tipo del archivo viajan dentro del sobre cifrado `[metaLen|metaJSON|bytes]`.
+- **Resumen autorizado medico → paciente:** la app cifra el PDF con *secretbox* (llave nueva por resumen), lo publica via `POST /api/sync/summaries`, y arma un enlace temporal `/resumen/[token]#k=<llave>`. La llave viaja **solo en el fragmento del enlace**, nunca al servidor: la nube guarda ciphertext que no puede abrir. Enlace con expiracion y purga; acceso auditado.
+
+## Preguntas abiertas — RESUELTAS (2026-06-10)
+
+- **Cifrado de archivos del buzon:** se eligio **cifrado del lado del paciente con la llave publica del medico** (sealed box E2E): la nube nunca puede leer, alineado con la promesa local-first. (La alternativa de llave por-medico derivada en el portal se descarto.)
+- **Tamaño y formatos:** archivo en claro ≤ 8 MB (ciphertext ≤ 12 MB en el servidor); formatos sugeridos en la carga del paciente: pdf, jpg/jpeg, png, webp, heic. El resumen autorizado usa el mismo tope de ciphertext.
