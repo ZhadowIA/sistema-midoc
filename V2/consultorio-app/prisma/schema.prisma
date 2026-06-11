@@ -308,6 +308,7 @@ model User {
   syncDevicesAsDoctor    SyncDevice[]         @relation("DoctorSyncDevices")
   syncEventsAsDoctor     SyncEvent[]          @relation("DoctorSyncEvents")
   mailboxDocumentsAsDoctor MailboxDocument[]  @relation("DoctorMailboxDocuments")
+  authorizedSummariesAsDoctor AuthorizedSummary[] @relation("DoctorAuthorizedSummaries")
   createdShortLinks      ShortLink[]          @relation("ShortLinkCreator")
   legalAcceptances       LegalAcceptance[]
   passwordResetTokens    PasswordResetToken[]
@@ -426,6 +427,7 @@ model Patient {
   documents             ClinicalDocument[]
   uploadLinks           DocumentUploadLink[]
   mailboxDocuments      MailboxDocument[]
+  authorizedSummaries   AuthorizedSummary[]
   notifications         Notification[]
   shortLinks            ShortLink[]
   legalAcceptances      LegalAcceptance[]
@@ -477,6 +479,7 @@ model Appointment {
   documents          ClinicalDocument[]
   uploadLinks        DocumentUploadLink[]
   mailboxDocuments   MailboxDocument[]
+  authorizedSummaries AuthorizedSummary[]
   notifications      Notification[]
   shortLinks         ShortLink[]
   resourceBookings   ResourceBooking[]
@@ -1072,6 +1075,13 @@ enum MailboxDocumentStatus {
   PURGED
 }
 
+enum AuthorizedSummaryStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  PURGED
+}
+
 model SyncDevice {
   id         String           @id @default(cuid())
   doctorId   String
@@ -1131,4 +1141,33 @@ model MailboxDocument {
   uploadLink    DocumentUploadLink    @relation(fields: [uploadLinkId], references: [id], onDelete: Cascade)
 
   @@index([doctorId, status])
+}
+
+// Resumen clinico que el medico autoriza explicitamente al paciente (paso 6).
+// Va app -> nube cifrado con secretbox; la llave viaja SOLO en el fragmento del
+// enlace (#k=...), nunca al servidor: la nube guarda ciphertext que no puede
+// abrir. Enlace temporal con expiracion; se purga al expirar/revocar.
+model AuthorizedSummary {
+  id            String                  @id @default(cuid())
+  doctorId      String
+  patientId     String
+  appointmentId String?
+  token         String                  @unique
+  // CLINICO en transito. Nulo tras la purga.
+  ciphertext    Bytes?
+  mimeType      String                  @default("application/pdf")
+  title         String?
+  sizeBytes     Int
+  status        AuthorizedSummaryStatus @default(ACTIVE)
+  downloadCount Int                     @default(0)
+  expiresAt     DateTime
+  createdAt     DateTime                @default(now())
+  revokedAt     DateTime?
+  purgedAt      DateTime?
+  doctor        User                    @relation("DoctorAuthorizedSummaries", fields: [doctorId], references: [id], onDelete: Cascade)
+  patient       Patient                 @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment   Appointment?            @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  @@index([doctorId, status])
+  @@index([patientId, status])
 }
