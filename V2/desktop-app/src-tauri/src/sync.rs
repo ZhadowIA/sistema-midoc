@@ -43,6 +43,12 @@ pub struct SyncSummary {
     pub cursor: i64,
 }
 
+#[derive(Debug)]
+pub struct LinkAccountResult {
+    pub device_token: String,
+    pub clinical_profile: Option<String>,
+}
+
 /* ---------- Estado local ---------- */
 
 pub fn get_state(conn: &Connection, key: &str) -> Result<Option<String>, SyncError> {
@@ -198,6 +204,18 @@ async fn error_from_response(response: reqwest::Response) -> SyncError {
     SyncError::Server(message)
 }
 
+fn extract_clinical_profile(body: &serde_json::Value) -> Option<String> {
+    let specialty = body
+        .get("profile")
+        .and_then(|profile| profile.get("specialty"))
+        .and_then(|value| value.as_str())?;
+
+    match specialty {
+        "GENERAL_MEDICINE" | "ODONTOLOGY" => Some(specialty.to_string()),
+        _ => None,
+    }
+}
+
 /// Inicia sesion en el portal y registra este equipo como dispositivo de
 /// sincronizacion. Devuelve el device token (se guarda en la base cifrada).
 pub async fn link_account(
@@ -206,7 +224,7 @@ pub async fn link_account(
     password: &str,
     device_name: &str,
     document_public_key: &str,
-) -> Result<String, SyncError> {
+) -> Result<LinkAccountResult, SyncError> {
     let client = reqwest::Client::builder().cookie_store(true).build()?;
     let base = server_url.trim_end_matches('/');
 
@@ -219,6 +237,17 @@ pub async fn link_account(
     if !login.status().is_success() {
         return Err(error_from_response(login).await);
     }
+
+    let profile = client
+        .get(format!("{base}/api/admin/profile"))
+        .send()
+        .await?;
+
+    if !profile.status().is_success() {
+        return Err(error_from_response(profile).await);
+    }
+
+    let clinical_profile = extract_clinical_profile(&profile.json().await?);
 
     // La llave publica del medico viaja al vincular: el portal la entrega a la
     // pagina de carga del paciente para cifrar documentos (sealed box).
@@ -236,10 +265,16 @@ pub async fn link_account(
     }
 
     let body: serde_json::Value = device.json().await?;
-    body.get("deviceToken")
+    let device_token = body
+        .get("deviceToken")
         .and_then(|v| v.as_str())
         .map(String::from)
-        .ok_or_else(|| SyncError::Server("respuesta sin deviceToken".into()))
+        .ok_or_else(|| SyncError::Server("respuesta sin deviceToken".into()))?;
+
+    Ok(LinkAccountResult {
+        device_token,
+        clinical_profile,
+    })
 }
 
 pub async fn fetch_inbox(
@@ -580,6 +615,30 @@ mod tests {
         assert_eq!(get_cursor(&conn).unwrap(), 43);
     }
 
+    #[test]
+    fn extracts_clinical_profile_from_portal_workspace_response() {
+        let body = serde_json::json!({
+            "profile": {
+                "specialty": "ODONTOLOGY"
+            }
+        });
+
+        assert_eq!(extract_clinical_profile(&body).as_deref(), Some("ODONTOLOGY"));
+    }
+
+    #[test]
+    fn ignores_unknown_or_missing_clinical_profile_values() {
+        let missing = serde_json::json!({ "profile": {} });
+        let invalid = serde_json::json!({
+            "profile": {
+                "specialty": "CARDIOLOGY"
+            }
+        });
+
+        assert_eq!(extract_clinical_profile(&missing), None);
+        assert_eq!(extract_clinical_profile(&invalid), None);
+    }
+
     // ---------- E2E contra portal vivo (Capa 2) ----------
     //
     // Requiere el portal corriendo en SERVER (por defecto http://localhost:3000)
@@ -719,9 +778,10 @@ mod tests {
         // 4) Vincular la app y sincronizar contra la base cifrada local.
         let mut conn = test_conn("e2e");
         let public_key = crate::crypto::ensure_keypair(&conn).unwrap();
-        let device_token = link_account(&base, &email, password, "PC e2e", &public_key)
+        let link = link_account(&base, &email, password, "PC e2e", &public_key)
             .await
             .unwrap();
+        let device_token = link.device_token;
         let mut cursor = 0i64;
         loop {
             let inbox = fetch_inbox(&base, &device_token, cursor).await.unwrap();
