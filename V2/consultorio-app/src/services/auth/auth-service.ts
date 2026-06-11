@@ -3,9 +3,7 @@ import {
   AuthSessionStatus,
   ClinicalProfile,
   LegalDocumentType,
-  NotificationChannel,
   NotificationKind,
-  NotificationStatus,
   PasswordResetStatus,
   SubscriptionStatus,
   UserRole,
@@ -20,6 +18,7 @@ import { prisma } from "../../lib/prisma";
 import { assertRateLimit } from "../../lib/rate-limit";
 import { hashPassword, verifyPassword } from "../../lib/security/password";
 import { generateOpaqueToken, hashOpaqueToken } from "../../lib/security/token";
+import { queueNotification } from "../notifications/notification-service";
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const PASSWORD_RESET_TTL_MS = 1000 * 60 * 15;
@@ -319,19 +318,22 @@ export async function requestPasswordReset(input: {
   // bounded by the 15-minute TTL and single use.
   const resetUrl = `${env.APP_BASE_URL}/recuperar?token=${resetToken}`;
 
-  await prisma.notification.create({
-    data: {
-      doctorId: user.id,
-      channel: NotificationChannel.EMAIL,
-      kind: NotificationKind.PASSWORD_RESET,
-      destination: user.email,
-      subject: "Restablece tu contrasena",
-      body: `Para restablecer la contrasena de tu cuenta MiDoc entra a: ${resetUrl}\nEl enlace vence en 15 minutos y solo puede usarse una vez. Si no solicitaste este cambio, ignora este correo.`,
-      status: NotificationStatus.PENDING,
-      metadata: {
-        email: user.email,
-        resetUrl
-      }
+  await queueNotification({
+    doctorId: user.id,
+    channel: "EMAIL",
+    kind: NotificationKind.PASSWORD_RESET,
+    destination: user.email,
+    actionUrl: resetUrl,
+    template: {
+      expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS)
+    },
+    shortLink: {
+      expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+      maxUses: 1
+    },
+    metadata: {
+      email: user.email,
+      resetUrl
     }
   });
 
