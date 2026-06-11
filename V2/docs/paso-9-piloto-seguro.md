@@ -21,6 +21,8 @@ Estado inicial implementado el 2026-06-11.
 - Al desbloquear la base local, la app crea un respaldo cifrado automatico en `app_data/backups/`.
 - La restauracion se prueba con `cargo test db::tests::backup -- --nocapture`.
 - La prueba verifica llave correcta, llave incorrecta y ausencia de encabezado SQLite en claro.
+- **Drill de restauracion con evidencia capturada**: `cargo test --lib restore_drill -- --nocapture` reproduce una perdida total y recupera el expediente firmado desde el respaldo. Procedimiento, evidencia y drill manual en `paso-9-drill-restauracion.md`.
+- **Auto-actualizacion y rollback**: canal `tauri-plugin-updater` con firma minisign y procedimiento de rollback (hotfix hacia adelante / reinstalacion del instalador firmado previo) documentados en `paso-9-actualizacion-tauri.md`. El diseño esta listo para aplicar; falta la llave de firma real y el servidor de releases.
 - **E2E de consulta clinica local-first** (`src-tauri/src/consultation_e2e.rs`, `cargo test --lib consultation_e2e`): una cita y su preconsulta llegan por `sync::apply_batch` (como las entrega el inbox del portal), el medico abre el encuentro desde la cita, documenta antecedentes y nota SOAP con plantilla de especialidad, receta, firma y verifica la integridad del hash; un segundo caso cubre una cita reagendada por sync. Cruza `sync` -> `clinical` sobre la base cifrada, sin tocar la red. Es el flujo de consulta del checklist de paso 9, cubierto donde vive lo clinico (la app de escritorio).
 - La firma de instalador Windows se hace con un PFX y `signtool.exe`; para el piloto se puede usar un certificado de desarrollo, pero para distribucion externa se necesita un certificado emitido por una CA confiable.
 - Flujo operativo:
@@ -50,6 +52,11 @@ Estado inicial implementado el 2026-06-11.
 
 ## Pendiente antes de piloto real
 
-- Canal de auto-actualizacion Tauri con rollback documentado.
-- Consulta clinica end-to-end en staging (el E2E ya cubre liveness/readiness, perfil publico, agenda completa, recuperacion, sincronizacion y carga/descarga de documentos).
-- Drill manual de restauracion con una base de staging y evidencia capturada.
+Todo el contenido de la compuerta del paso 9 esta cubierto (healthchecks,
+limpieza/purga, respaldo+restauracion probada, E2E de los flujos criticos,
+firma de instalador, auto-actualizacion y rollback documentados). Lo que resta
+es **ejecucion de infraestructura**, no diseño:
+
+- Provisionar la llave de firma del updater (publica al config, privada al gestor de secretos) y el servidor de releases; luego aplicar los cambios de `paso-9-actualizacion-tauri.md`.
+- Obtener el certificado de firma de codigo para distribucion externa (CA confiable).
+- Ejecutar el drill de restauracion contra una base de staging real y archivar la evidencia (procedimiento en `paso-9-drill-restauracion.md`).

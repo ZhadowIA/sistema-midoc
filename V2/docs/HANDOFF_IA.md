@@ -29,9 +29,10 @@ Implementado también:
 
 Cobertura E2E del checklist de paso 9: registro ✓, agenda ✓, sincronización ✓, consulta ✓, documentos ✓, notificaciones (encoladas) ✓, recuperación ✓. **Checklist E2E completo.**
 
-Pendiente del paso 9 (no-E2E):
-1. Auto-actualización Tauri con rollback documentado.
-2. Drill manual de restauración con evidencia capturada.
+- **Drill de restauración con evidencia** (`desktop-app/src-tauri/src/restore_drill.rs`, `cargo test --lib restore_drill -- --nocapture`): siembra expediente firmado → respaldo → pérdida → restauración, imprime evidencia. Doc + evidencia capturada en `V2/docs/paso-9-drill-restauracion.md`.
+- **Auto-actualización Tauri + rollback documentado** en `V2/docs/paso-9-actualizacion-tauri.md`: diseño listo para aplicar (cambios exactos a Cargo.toml/lib.rs/capabilities/tauri.conf.json), manejo de llave minisign, flujo de release y rollback (hotfix-forward / reinstalar instalador firmado previo). **No se activó en el repo** porque una `pubkey` inválida rompe `tauri build` y la llave privada no se commitea.
+
+**Diseño del paso 9 completo.** Lo que resta es ejecución de infra (llave de firma updater, servidor de releases, certificado CA, correr el drill contra staging real) — no diseño.
 
 ## Tests de la app de escritorio (Rust)
 
@@ -77,4 +78,4 @@ Siempre, sin importar el modelo:
 
 ## Bitácora de sesiones
 
-- 2026-06-11: paso 9 portal/desktop + E2E smoke base; extendido con agenda y recuperación. Refactor a `globalSetup` (un solo server entre archivos E2E) y añadido E2E de sync + documentos. Luego añadido E2E de auth del médico (registro/login/sesión/admin). Portal: **13 tests E2E en 3 archivos**, default 44/44, lint y tsc limpios. Desktop: añadido **E2E de consulta clínica** (`consultation_e2e.rs`, 2 tests); suite Rust 26 tests, clippy limpio. Con esto el **checklist E2E del paso 9 queda completo**. Rama pusheada a `origin/v2/paso6-llaves-e2e`. **Siguiente sugerido:** auto-actualización Tauri con rollback o drill de restauración.
+- 2026-06-11: paso 9 portal/desktop + E2E smoke base; extendido con agenda y recuperación. Refactor a `globalSetup` (un solo server entre archivos E2E) y añadido E2E de sync + documentos. Luego añadido E2E de auth del médico (registro/login/sesión/admin). Portal: **13 tests E2E en 3 archivos**, default 44/44, lint y tsc limpios. Desktop: añadido **E2E de consulta clínica** (`consultation_e2e.rs`, 2 tests). Luego añadido **drill de restauración con evidencia** (`restore_drill.rs`) + docs `paso-9-drill-restauracion.md` y `paso-9-actualizacion-tauri.md` (auto-update + rollback documentado). Suite Rust **27 tests**, clippy limpio. Con esto el **diseño del paso 9 queda completo** (solo resta ejecución de infra). Rama pusheada a `origin/v2/paso6-llaves-e2e`. **Siguiente sugerido:** abrir PR a `dev`, o iniciar paso 10 (operación presencial) / paso 8 (odontología).
