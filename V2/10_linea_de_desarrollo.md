@@ -391,7 +391,7 @@ Pendiente registrado (no implementado; mejora futura del paso):
 | Compuerta de avance | Ninguna salida IA se guarda como clinica sin revision humana. |
 | Push recomendado | Hacer push cuando IA tenga capa multi-proveedor, benchmark documentado, consentimiento, revision humana, trazas, feedback y control de costo. |
 
-Estado: 🚧 EN PROGRESO — fundacion + SOAP asistido (rebanada 1) y resumen/instrucciones/brechas (rebanada 2) entregados (2026-06-11). Construido sobre el paso 10.
+Estado: 🚧 EN PROGRESO — rebanada 1 (fundacion + SOAP asistido), rebanada 2 (resumen/instrucciones/brechas) y rebanada 3 (control de costo y creditos) entregadas (2026-06-11). Construido sobre el paso 10.
 
 Entregado (rebanada 1 — fundacion + SOAP asistido):
 
@@ -413,7 +413,15 @@ Entregado (rebanada 2 — mas casos de texto, 2026-06-11):
 
 Verificacion (rebanada 2): 43 pruebas de Rust en verde (incluye los tres asistentes de texto bajo gobernanza, versiones de prompt por uso y sin autoguardado), `cargo clippy` limpio, `tsc + vite build` ok y prueba manual en navegador (generar instrucciones → aplicar al editor; generar resumen → referencia).
 
-Pendiente (rebanadas posteriores del paso 11): transcripcion de consulta por audio/voz (con consentimiento propio), benchmark clinico, creditos/control de costo, reporte de metadatos de uso al portal y adaptador de proveedor real en staging.
+Entregado (rebanada 3 — control de costo y creditos, RF29, 2026-06-11):
+
+- **Presupuesto mensual de IA.** Limite configurable en centavos (en `app_meta`, sin migracion nueva; 0 = sin limite). `set_budget_cents`/`get_budget_cents`.
+- **Gasto agregado y bloqueo.** `usage_summary` reporta gasto del mes (UTC) y desglose por tipo de uso a partir de las trazas. `run_assist` verifica el presupuesto antes de ejecutar y bloquea con `BudgetExceeded` cuando el mes alcanza el limite. Generar consume, se apruebe o se descarte el borrador.
+- **UI.** El panel de Atencion muestra "Uso de IA en YYYY-MM: $gastado de $presupuesto · N ejecuciones" y permite fijar el presupuesto mensual. El bloqueo se surface como error claro.
+
+Verificacion (rebanada 3): 46 pruebas de Rust en verde (incluye bloqueo al alcanzar el limite, reapertura al subir el presupuesto, agregacion de uso y rechazo de presupuesto negativo), `cargo clippy` limpio, `tsc + vite build` ok y prueba manual en navegador (presupuesto $0.01 → primera ejecucion pasa y deja el mes en el limite → segunda bloqueada).
+
+Pendiente (rebanadas posteriores del paso 11): transcripcion de consulta por audio/voz (con consentimiento propio), benchmark clinico, reporte de metadatos de uso al portal y adaptador de proveedor real en staging.
 
 ## Paso 12 - SaaS y compliance avanzado
 

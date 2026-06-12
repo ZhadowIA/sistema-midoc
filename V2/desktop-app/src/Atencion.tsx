@@ -80,7 +80,16 @@ interface TextDraft {
   text: string;
 }
 
+interface UsageSummary {
+  month: string;
+  budget_cents: number;
+  spent_cents: number;
+  run_count: number;
+  by_usage: Array<{ usage_type: string; run_count: number; cost_cents: number }>;
+}
+
 const TEXT_ASSIST_LABELS: Record<string, string> = {
+  SOAP_ASSIST: "Borrador SOAP",
   LONGITUDINAL_SUMMARY: "Resumen longitudinal",
   PATIENT_INSTRUCTIONS: "Instrucciones al paciente",
   CLINICAL_GAPS: "Brechas clinicas"
@@ -171,6 +180,8 @@ export function Atencion({
   const [aiConsent, setAiConsent] = useState(false);
   const [aiDraft, setAiDraft] = useState<SoapDraft | null>(null);
   const [aiText, setAiText] = useState<TextDraft | null>(null);
+  const [aiUsage, setAiUsage] = useState<UsageSummary | null>(null);
+  const [budgetInput, setBudgetInput] = useState("");
 
   const load = useCallback(() => {
     call<EncounterDetail>("get_encounter", { encounterId })
@@ -201,9 +212,16 @@ export function Atencion({
         call<boolean>("ai_consent_status", { patientId: data.patient.id })
           .then(setAiConsent)
           .catch(() => setAiConsent(false));
+        call<UsageSummary>("ai_usage_summary")
+          .then(setAiUsage)
+          .catch(() => setAiUsage(null));
       })
       .catch((e: unknown) => setError(String(e)));
   }, [encounterId, resolvedProfile]);
+
+  const refreshUsage = useCallback(() => {
+    call<UsageSummary>("ai_usage_summary").then(setAiUsage).catch(() => {});
+  }, []);
 
   useEffect(() => {
     load();
@@ -289,6 +307,7 @@ export function Atencion({
       .then((draft) => {
         setAiDraft(draft);
         setMessage("Borrador IA generado. Revisalo antes de usarlo.");
+        refreshUsage();
       })
       .catch((e: unknown) => setError(String(e)))
       .finally(() => setBusy(false));
@@ -335,6 +354,7 @@ export function Atencion({
       .then((draft) => {
         setAiText(draft);
         setMessage(`${TEXT_ASSIST_LABELS[usageType] ?? "Borrador"} generado. Revisalo antes de usarlo.`);
+        refreshUsage();
       })
       .catch((e: unknown) => setError(String(e)))
       .finally(() => setBusy(false));
@@ -360,6 +380,17 @@ export function Atencion({
     void run("Borrador IA descartado.", () =>
       call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
     );
+  }
+
+  function saveBudget() {
+    const pesos = Number(budgetInput);
+    if (!Number.isFinite(pesos) || pesos < 0) return;
+    const budgetCents = Math.round(pesos * 100);
+    setBudgetInput("");
+    void run("Presupuesto mensual de IA actualizado.", async () => {
+      await call("ai_set_budget", { budgetCents });
+      refreshUsage();
+    });
   }
 
   function sign() {
@@ -533,6 +564,33 @@ export function Atencion({
                 {aiConsent ? "Revocar consentimiento" : "Registrar consentimiento del paciente"}
               </button>
             </div>
+
+            {aiUsage ? (
+              <p className="meta">
+                Uso de IA en {aiUsage.month}: {centsFormatter.format(aiUsage.spent_cents / 100)}
+                {aiUsage.budget_cents > 0
+                  ? ` de ${centsFormatter.format(aiUsage.budget_cents / 100)}`
+                  : " · sin limite mensual"}{" "}
+                · {aiUsage.run_count} ejecucion(es)
+              </p>
+            ) : null}
+            <div className="button-row">
+              <label className="field">
+                <span>Presupuesto mensual (MXN, 0 = sin limite)</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={budgetInput}
+                  disabled={busy}
+                  onChange={(e) => setBudgetInput(e.currentTarget.value)}
+                />
+              </label>
+              <button className="ghost-button" onClick={saveBudget} disabled={busy || budgetInput === ""}>
+                Guardar presupuesto
+              </button>
+            </div>
+
             <div className="button-row">
               <button
                 className="action-button"
