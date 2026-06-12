@@ -203,6 +203,42 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_payments_session ON payments (cash_session_id);
     CREATE UNIQUE INDEX idx_payments_receipt ON payments (receipt_number);",
+    // v7: IA clinica gobernada (paso 11). El procesamiento de contenido clinico
+    // con IA ocurre AQUI (residencia local): el contenido nunca sale a la nube
+    // sin seudonimizacion y consentimiento. Toda salida de IA es BORRADOR hasta
+    // que el medico la revisa y aprueba (regla: la IA no reemplaza el criterio
+    // medico). Clase: CLINICO (input/output) + OPERATIVO (trazas de costo).
+    //
+    // ai_consents: consentimiento por paciente y alcance, con expiracion/revoca.
+    // ai_runs: traza completa de cada ejecucion — proveedor, modelo, version de
+    // prompt, costo, latencia, consentimiento, estado de revision y feedback.
+    "CREATE TABLE ai_consents (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        scope TEXT NOT NULL,
+        granted_at TEXT NOT NULL,
+        revoked_at TEXT
+    );
+    CREATE INDEX idx_ai_consents_patient ON ai_consents (patient_id, scope);
+    CREATE TABLE ai_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        encounter_id TEXT REFERENCES encounters (id),
+        patient_id TEXT REFERENCES patients (id),
+        usage_type TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model_version TEXT,
+        prompt_version TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'DRAFT',
+        input_redacted TEXT,
+        output TEXT,
+        estimated_cost_cents INTEGER,
+        latency_ms INTEGER,
+        consent_id TEXT REFERENCES ai_consents (id),
+        feedback TEXT,
+        reviewed_at TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_ai_runs_encounter ON ai_runs (encounter_id);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

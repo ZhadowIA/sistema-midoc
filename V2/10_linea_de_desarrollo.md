@@ -64,7 +64,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 8 | Odontologia | `ui-ux-pro-max` | Consulta dental con odontograma, periodontograma y plan. | ✅ DONE |
 | 9 | Piloto seguro | `playwright` | Version lista para piloto real controlado. | ✅ DONE |
 | 10 | Operacion presencial | `impeccable` | Recepcion, caja, lista de espera y consulta sin cita. | ✅ DONE |
-| 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 📋 PENDING |
+| 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 🚧 IN PROGRESS (fundacion + SOAP asistido) |
 | 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | 📋 PENDING |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
@@ -390,6 +390,21 @@ Pendiente registrado (no implementado; mejora futura del paso):
 | Se valida con | Medico revisa y aprueba salidas IA; el sistema registra consentimiento, proveedor, entrada, salida, version, costo, latencia y resultado de benchmark. |
 | Compuerta de avance | Ninguna salida IA se guarda como clinica sin revision humana. |
 | Push recomendado | Hacer push cuando IA tenga capa multi-proveedor, benchmark documentado, consentimiento, revision humana, trazas, feedback y control de costo. |
+
+Estado: 🚧 EN PROGRESO — fundacion + SOAP asistido entregados (2026-06-11). Rebanada construida sobre el paso 10.
+
+Entregado (rebanada 1 — fundacion + SOAP asistido):
+
+- **Arquitectura de residencia.** El procesamiento de contenido clinico con IA ocurre en la **app del medico** (local). El portal solo guarda gobernanza/creditos por referencia (`AiUsageLog` con `inputReference`/`outputReference`, nunca contenido). En esta rebanada todo es local; el reporte de uso al portal queda para una rebanada posterior.
+- **Capa multi-proveedor con fallback (`ai.rs`).** Trait `AiProvider`, `ProviderRegistry` que intenta proveedores en orden y registra el ganador. `FakeProvider` determinista para fundacion/pruebas. El proveedor real (OpenAI, MedLM, …) se cablea en staging con BAA; no se cablea aqui para no enviar PHI sin acuerdo (regla 4 y politicas de IA).
+- **Consentimiento (migracion v7, `ai_consents`).** Consentimiento por paciente y alcance (`SOAP_ASSIST`), con revocacion. Sin consentimiento vigente no se ejecuta IA.
+- **Seudonimizacion.** El contexto clinico se redacta (sin nombre del paciente) antes de enviarse al proveedor; se guarda redactado en la traza.
+- **Trazas completas (`ai_runs`).** Proveedor, modelo, version de prompt, costo estimado, latencia, consentimiento, estado de revision y feedback por cada ejecucion.
+- **Compuerta de revision humana.** La salida IA es BORRADOR: `assist_soap` genera y registra el borrador pero **no** guarda nota. La UI lo muestra para revision; "Usar borrador" precarga el editor SOAP (el medico edita y guarda con el flujo manual existente) y "Descartar" cierra la traza. `review_run` registra APPROVED/DISCARDED. Ninguna salida se persiste como clinica sin revision.
+
+Verificacion: 42 pruebas de Rust en verde (incluye consentimiento requerido, revocacion bloquea, fallback de proveedor, traza completa y sin autoguardado, revision idempotente), `cargo clippy` limpio, `tsc + vite build` ok y prueba manual en navegador (consentimiento → generar borrador con traza visible → aplicar al editor SOAP sin guardar).
+
+Pendiente (rebanadas posteriores del paso 11): resumen longitudinal, brechas clinicas, instrucciones al paciente, transcripcion de consulta por audio/voz, benchmark clinico, creditos/control de costo, reporte de metadatos de uso al portal y adaptador de proveedor real en staging.
 
 ## Paso 12 - SaaS y compliance avanzado
 
