@@ -352,7 +352,20 @@ model DoctorProfile {
   availabilityRules    DoctorAvailability[]
   availabilityBlocks   DoctorAvailabilityBlock[]
   reviews              DoctorReview[]
+  galleryImages        DoctorGalleryImage[]
   subscriptions        DoctorSubscription[]
+}
+
+model DoctorGalleryImage {
+  id              String        @id @default(cuid())
+  doctorProfileId String
+  url             String
+  caption         String?
+  displayOrder    Int           @default(0)
+  createdAt       DateTime      @default(now())
+  doctorProfile   DoctorProfile @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
+
+  @@index([doctorProfileId, displayOrder])
 }
 
 model DoctorReview {
