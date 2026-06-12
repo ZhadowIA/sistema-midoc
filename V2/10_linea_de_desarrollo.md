@@ -174,6 +174,17 @@ Checklist de salida:
 - Perfil clinico seleccionado: medicina familiar/general u odontologia.
 - Vista publica clara en desktop y movil.
 
+Entregado adicionalmente (2026-06-12):
+
+- Rediseno editorial del perfil publico (tipografia serif, iconos SVG, sin emojis).
+- Opiniones de pacientes con valoracion promedio y distribucion (modelo `DoctorReview`).
+- Galeria del consultorio: modelo `DoctorGalleryImage`, render en perfil publico y panel de gestion por URL en configuracion del medico (`/api/admin/gallery`).
+
+Pendientes registrados (no implementados; entran en paso futuro):
+
+- **Subida de archivos binarios para la galeria y fotos de perfil/portada.** Hoy se gestionan por URL (consistente con `profilePhoto`/`coverPhoto`). La carga real de imagenes requiere almacenamiento blob (S3/Azure Blob) y endpoint de subida con validacion de tipo/tamano. Pertenece a la infraestructura del **Paso 9 (piloto seguro)**; no se implementa antes de tener storage definido.
+- **Reordenar imagenes de galeria por arrastre.** El modelo ya tiene `displayOrder`; falta endpoint `PATCH` y UI de orden. Mejora de bajo riesgo del Paso 2; se difiere por prioridad, no por dependencia.
+
 ## Paso 3 - Agenda publica integrada
 
 | Campo | Definicion |
