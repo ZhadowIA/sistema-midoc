@@ -29,9 +29,32 @@ pub enum AiError {
     AllProvidersFailed,
 }
 
-/// Alcance de consentimiento de IA. En esta rebanada solo SOAP asistido.
-pub const SCOPE_SOAP_ASSIST: &str = "SOAP_ASSIST";
+/// Alcance unico de consentimiento para asistencia de IA basada en el TEXTO del
+/// expediente (SOAP, resumen, instrucciones, brechas). La transcripcion por
+/// audio exige su propio consentimiento explicito y entra en otra rebanada.
+pub const SCOPE_TEXT_ASSIST: &str = "TEXT_ASSIST";
+
+/// Tipos de uso de IA de texto. El proveedor adapta su salida a cada uno.
+pub const USAGE_SOAP_ASSIST: &str = "SOAP_ASSIST";
+pub const USAGE_SUMMARY: &str = "LONGITUDINAL_SUMMARY";
+pub const USAGE_INSTRUCTIONS: &str = "PATIENT_INSTRUCTIONS";
+pub const USAGE_GAPS: &str = "CLINICAL_GAPS";
+
+const TEXT_USAGES: &[&str] = &[USAGE_SUMMARY, USAGE_INSTRUCTIONS, USAGE_GAPS];
+
 const PROMPT_VERSION_SOAP: &str = "soap-assist/v1";
+const PROMPT_VERSION_SUMMARY: &str = "summary/v1";
+const PROMPT_VERSION_INSTRUCTIONS: &str = "instructions/v1";
+const PROMPT_VERSION_GAPS: &str = "gaps/v1";
+
+fn prompt_version_for(usage_type: &str) -> &'static str {
+    match usage_type {
+        USAGE_SUMMARY => PROMPT_VERSION_SUMMARY,
+        USAGE_INSTRUCTIONS => PROMPT_VERSION_INSTRUCTIONS,
+        USAGE_GAPS => PROMPT_VERSION_GAPS,
+        _ => PROMPT_VERSION_SOAP,
+    }
+}
 
 fn now() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -108,26 +131,36 @@ impl AiProvider for FakeProvider {
 
     fn generate(&self, request: &AiRequest) -> Result<AiResponse, AiError> {
         let start = std::time::Instant::now();
-        if request.usage_type != SCOPE_SOAP_ASSIST {
-            return Err(AiError::Invalid("tipo de uso no soportado por el proveedor".into()));
-        }
-
-        // Borrador SOAP: estructura determinista a partir del contexto. No
-        // inventa diagnosticos; deja secciones para que el medico complete.
         let context = request.redacted_input.trim();
-        let draft = NoteContent {
-            subjective: format!(
-                "Borrador IA a partir del contexto disponible:\n{context}"
+
+        // Cada tipo de uso produce una salida determinista. El SOAP es JSON
+        // estructurado (precarga el editor); los demas son texto. Ninguna
+        // salida inventa hechos: deja marcadores para que el medico complete.
+        let output = match request.usage_type.as_str() {
+            USAGE_SOAP_ASSIST => {
+                let draft = NoteContent {
+                    subjective: format!("Borrador IA a partir del contexto disponible:\n{context}"),
+                    objective: "Exploracion fisica: (a completar por el medico).".into(),
+                    assessment: "Impresion diagnostica: (a confirmar por el medico).".into(),
+                    plan: "Plan sugerido: (revisar y ajustar).".into(),
+                    diagnosis: String::new(),
+                    instructions: "Indicaciones al paciente: (a definir por el medico).".into(),
+                    specialty: serde_json::Value::Null,
+                };
+                serde_json::to_string(&draft)
+                    .map_err(|e| AiError::Invalid(format!("no se pudo serializar el borrador: {e}")))?
+            }
+            USAGE_SUMMARY => format!(
+                "Resumen longitudinal (borrador):\nCon base en el expediente disponible:\n{context}\n\n(Revisar fidelidad antes de compartir.)"
             ),
-            objective: "Exploracion fisica: (a completar por el medico).".into(),
-            assessment: "Impresion diagnostica: (a confirmar por el medico).".into(),
-            plan: "Plan sugerido: (revisar y ajustar).".into(),
-            diagnosis: String::new(),
-            instructions: "Indicaciones al paciente: (a definir por el medico).".into(),
-            specialty: serde_json::Value::Null,
+            USAGE_INSTRUCTIONS => format!(
+                "Indicaciones para el paciente (borrador):\n- Sigue el plan acordado en consulta.\n- Acude a tu proxima cita.\n- Contexto considerado:\n{context}\n\n(Ajustar a lenguaje del paciente y confirmar.)"
+            ),
+            USAGE_GAPS => format!(
+                "Posibles brechas clinicas a revisar (borrador):\n- Verifica antecedentes y alergias.\n- Confirma seguimiento de diagnosticos previos.\n- Contexto considerado:\n{context}\n\n(Estas son sugerencias; el criterio es del medico.)"
+            ),
+            _ => return Err(AiError::Invalid("tipo de uso no soportado por el proveedor".into())),
         };
-        let output = serde_json::to_string(&draft)
-            .map_err(|e| AiError::Invalid(format!("no se pudo serializar el borrador: {e}")))?;
 
         // Costo estimado proporcional al tamano del contexto (modelo de la
         // fundacion; el proveedor real reporta el costo verdadero).
@@ -317,11 +350,11 @@ pub fn list_runs(conn: &Connection, encounter_id: &str) -> Result<Vec<AiRun>, Ai
     Ok(rows)
 }
 
-/* ---------- SOAP asistido ---------- */
+/* ---------- Asistencia de IA sobre texto del expediente ---------- */
 
-/// Construye el contexto clinico (seudonimizado) a partir del expediente:
-/// motivo de cita, preconsulta, diagnosticos previos y nota actual.
-fn build_soap_context(detail: &clinical::EncounterDetail) -> String {
+/// Construye el contexto clinico a partir del expediente: motivo de cita,
+/// preconsulta, diagnosticos previos y nota actual. Comun a todos los usos.
+fn build_context(detail: &clinical::EncounterDetail) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(reason) = &detail.appointment_reason {
         parts.push(format!("Motivo de consulta: {reason}"));
@@ -352,36 +385,48 @@ fn build_soap_context(detail: &clinical::EncounterDetail) -> String {
     parts.join("\n")
 }
 
-/// Genera un borrador SOAP asistido por IA. Requiere consentimiento vigente.
-/// Registra la traza completa y devuelve el borrador SIN guardarlo como nota.
-pub fn assist_soap(
+/// Borrador de texto libre (resumen, instrucciones, brechas). Como el SOAP, es
+/// solo un punto de partida para revision humana; nada se guarda automaticamente.
+#[derive(Debug, Serialize)]
+pub struct TextDraft {
+    pub run_id: String,
+    pub usage_type: String,
+    pub provider: String,
+    pub model_version: String,
+    pub estimated_cost_cents: i64,
+    pub latency_ms: i64,
+    pub text: String,
+}
+
+/// Nucleo comun de toda asistencia de IA sobre el expediente: valida encuentro
+/// abierto, exige consentimiento de texto vigente, seudonimiza el contexto,
+/// invoca el orquestador (con fallback) y registra la traza en estado DRAFT.
+/// Devuelve el id de la traza, el proveedor ganador y la respuesta cruda.
+fn run_assist(
     conn: &Connection,
     encounter_id: &str,
+    usage_type: &str,
     registry: &ProviderRegistry,
-) -> Result<SoapDraft, AiError> {
-    let detail = clinical::get_encounter_detail(conn, encounter_id)
-        .map_err(|_| AiError::NotFound)?;
-
+) -> Result<(String, String, AiResponse), AiError> {
+    let detail =
+        clinical::get_encounter_detail(conn, encounter_id).map_err(|_| AiError::NotFound)?;
     if detail.encounter.status == "SIGNED" {
         return Err(AiError::Invalid("el encuentro ya fue firmado".into()));
     }
 
     let patient_id = detail.encounter.patient_id.clone();
-    let consent_id = active_consent(conn, &patient_id, SCOPE_SOAP_ASSIST)?
+    let consent_id = active_consent(conn, &patient_id, SCOPE_TEXT_ASSIST)?
         .ok_or(AiError::ConsentMissing)?;
 
-    let context = build_soap_context(&detail);
+    let context = build_context(&detail);
     let redacted = redact(&context, &detail.patient.first_name, &detail.patient.last_name);
 
     let request = AiRequest {
-        usage_type: SCOPE_SOAP_ASSIST.into(),
-        prompt_version: PROMPT_VERSION_SOAP.into(),
+        usage_type: usage_type.into(),
+        prompt_version: prompt_version_for(usage_type).into(),
         redacted_input: redacted.clone(),
     };
     let (provider, response) = registry.generate(&request)?;
-
-    let draft: NoteContent = serde_json::from_str(&response.output)
-        .map_err(|e| AiError::Invalid(format!("borrador IA invalido: {e}")))?;
 
     let run_id = uuid::Uuid::new_v4().to_string();
     conn.execute(
@@ -394,7 +439,7 @@ pub fn assist_soap(
             run_id,
             encounter_id,
             patient_id,
-            SCOPE_SOAP_ASSIST,
+            usage_type,
             provider,
             response.model_version,
             request.prompt_version,
@@ -406,8 +451,20 @@ pub fn assist_soap(
             now()
         ],
     )?;
-    audit(conn, "ai_run", &run_id, "draft-generated", Some(&provider))?;
+    audit(conn, "ai_run", &run_id, "draft-generated", Some(usage_type))?;
+    Ok((run_id, provider, response))
+}
 
+/// Genera un borrador SOAP asistido (estructurado). No guarda nota.
+pub fn assist_soap(
+    conn: &Connection,
+    encounter_id: &str,
+    registry: &ProviderRegistry,
+) -> Result<SoapDraft, AiError> {
+    let (run_id, provider, response) =
+        run_assist(conn, encounter_id, USAGE_SOAP_ASSIST, registry)?;
+    let draft: NoteContent = serde_json::from_str(&response.output)
+        .map_err(|e| AiError::Invalid(format!("borrador IA invalido: {e}")))?;
     Ok(SoapDraft {
         run_id,
         provider,
@@ -415,6 +472,29 @@ pub fn assist_soap(
         estimated_cost_cents: response.estimated_cost_cents,
         latency_ms: response.latency_ms,
         draft,
+    })
+}
+
+/// Genera un borrador de texto (resumen longitudinal, instrucciones al paciente
+/// o brechas clinicas). Misma gobernanza que el SOAP; no guarda nada.
+pub fn assist_text(
+    conn: &Connection,
+    encounter_id: &str,
+    usage_type: &str,
+    registry: &ProviderRegistry,
+) -> Result<TextDraft, AiError> {
+    if !TEXT_USAGES.contains(&usage_type) {
+        return Err(AiError::Invalid("tipo de asistencia de texto invalido".into()));
+    }
+    let (run_id, provider, response) = run_assist(conn, encounter_id, usage_type, registry)?;
+    Ok(TextDraft {
+        run_id,
+        usage_type: usage_type.into(),
+        provider,
+        model_version: response.model_version,
+        estimated_cost_cents: response.estimated_cost_cents,
+        latency_ms: response.latency_ms,
+        text: response.output,
     })
 }
 
@@ -509,7 +589,7 @@ mod tests {
     fn assist_generates_draft_with_full_trace_and_no_autosave() {
         let conn = test_conn("draft");
         let (encounter_id, patient_id) = seed_encounter(&conn);
-        grant_consent(&conn, &patient_id, SCOPE_SOAP_ASSIST).unwrap();
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
 
         let registry = ProviderRegistry::default_local();
         let draft = assist_soap(&conn, &encounter_id, &registry).unwrap();
@@ -548,7 +628,7 @@ mod tests {
     fn provider_fallback_picks_next_on_failure() {
         let conn = test_conn("fallback");
         let (encounter_id, patient_id) = seed_encounter(&conn);
-        grant_consent(&conn, &patient_id, SCOPE_SOAP_ASSIST).unwrap();
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
 
         let registry = ProviderRegistry::new(vec![
             Box::new(FailingProvider),
@@ -562,7 +642,7 @@ mod tests {
     fn all_providers_failing_surfaces_error() {
         let conn = test_conn("all-fail");
         let (encounter_id, patient_id) = seed_encounter(&conn);
-        grant_consent(&conn, &patient_id, SCOPE_SOAP_ASSIST).unwrap();
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
 
         let registry = ProviderRegistry::new(vec![Box::new(FailingProvider)]);
         assert!(matches!(
@@ -575,8 +655,8 @@ mod tests {
     fn consent_revocation_blocks_new_runs() {
         let conn = test_conn("revoke");
         let (encounter_id, patient_id) = seed_encounter(&conn);
-        grant_consent(&conn, &patient_id, SCOPE_SOAP_ASSIST).unwrap();
-        revoke_consent(&conn, &patient_id, SCOPE_SOAP_ASSIST).unwrap();
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+        revoke_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
 
         let registry = ProviderRegistry::default_local();
         assert!(matches!(
@@ -589,7 +669,7 @@ mod tests {
     fn review_closes_trace_and_is_idempotent() {
         let conn = test_conn("review");
         let (encounter_id, patient_id) = seed_encounter(&conn);
-        grant_consent(&conn, &patient_id, SCOPE_SOAP_ASSIST).unwrap();
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
         let registry = ProviderRegistry::default_local();
         let draft = assist_soap(&conn, &encounter_id, &registry).unwrap();
 
@@ -606,5 +686,58 @@ mod tests {
 
         let runs = list_runs(&conn, &encounter_id).unwrap();
         assert_eq!(runs.len(), 1);
+    }
+
+    #[test]
+    fn text_assists_generate_drafts_under_same_governance() {
+        let conn = test_conn("text");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        let registry = ProviderRegistry::default_local();
+
+        // Sin consentimiento: rechazado igual que el SOAP.
+        assert!(matches!(
+            assist_text(&conn, &encounter_id, USAGE_SUMMARY, &registry),
+            Err(AiError::ConsentMissing)
+        ));
+
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+
+        for usage in [USAGE_SUMMARY, USAGE_INSTRUCTIONS, USAGE_GAPS] {
+            let draft = assist_text(&conn, &encounter_id, usage, &registry).unwrap();
+            assert_eq!(draft.usage_type, usage);
+            assert!(!draft.text.is_empty());
+            // El contexto enviado al proveedor no lleva el nombre del paciente.
+            let stored: String = conn
+                .query_row(
+                    "SELECT input_redacted FROM ai_runs WHERE id = ?1",
+                    params![draft.run_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(!stored.contains("Hugo"));
+        }
+
+        // Tipo de texto invalido se rechaza (SOAP no es un assist de texto libre).
+        assert!(matches!(
+            assist_text(&conn, &encounter_id, USAGE_SOAP_ASSIST, &registry),
+            Err(AiError::Invalid(_))
+        ));
+
+        // Cada ejecucion dejo su traza con la version de prompt correcta.
+        let runs = list_runs(&conn, &encounter_id).unwrap();
+        assert_eq!(runs.len(), 3);
+        assert!(runs.iter().any(|r| r.prompt_version == "summary/v1"));
+        assert!(runs.iter().any(|r| r.prompt_version == "instructions/v1"));
+        assert!(runs.iter().any(|r| r.prompt_version == "gaps/v1"));
+
+        // No se guardo ninguna nota automaticamente.
+        let note_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM note_versions WHERE encounter_id = ?1",
+                params![encounter_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(note_count, 0);
     }
 }

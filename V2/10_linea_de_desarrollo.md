@@ -391,7 +391,7 @@ Pendiente registrado (no implementado; mejora futura del paso):
 | Compuerta de avance | Ninguna salida IA se guarda como clinica sin revision humana. |
 | Push recomendado | Hacer push cuando IA tenga capa multi-proveedor, benchmark documentado, consentimiento, revision humana, trazas, feedback y control de costo. |
 
-Estado: 🚧 EN PROGRESO — fundacion + SOAP asistido entregados (2026-06-11). Rebanada construida sobre el paso 10.
+Estado: 🚧 EN PROGRESO — fundacion + SOAP asistido (rebanada 1) y resumen/instrucciones/brechas (rebanada 2) entregados (2026-06-11). Construido sobre el paso 10.
 
 Entregado (rebanada 1 — fundacion + SOAP asistido):
 
@@ -402,9 +402,18 @@ Entregado (rebanada 1 — fundacion + SOAP asistido):
 - **Trazas completas (`ai_runs`).** Proveedor, modelo, version de prompt, costo estimado, latencia, consentimiento, estado de revision y feedback por cada ejecucion.
 - **Compuerta de revision humana.** La salida IA es BORRADOR: `assist_soap` genera y registra el borrador pero **no** guarda nota. La UI lo muestra para revision; "Usar borrador" precarga el editor SOAP (el medico edita y guarda con el flujo manual existente) y "Descartar" cierra la traza. `review_run` registra APPROVED/DISCARDED. Ninguna salida se persiste como clinica sin revision.
 
-Verificacion: 42 pruebas de Rust en verde (incluye consentimiento requerido, revocacion bloquea, fallback de proveedor, traza completa y sin autoguardado, revision idempotente), `cargo clippy` limpio, `tsc + vite build` ok y prueba manual en navegador (consentimiento → generar borrador con traza visible → aplicar al editor SOAP sin guardar).
+Verificacion (rebanada 1): 42 pruebas de Rust en verde (consentimiento requerido, revocacion bloquea, fallback de proveedor, traza completa y sin autoguardado, revision idempotente), `cargo clippy` limpio, `tsc + vite build` ok y prueba manual en navegador.
 
-Pendiente (rebanadas posteriores del paso 11): resumen longitudinal, brechas clinicas, instrucciones al paciente, transcripcion de consulta por audio/voz, benchmark clinico, creditos/control de costo, reporte de metadatos de uso al portal y adaptador de proveedor real en staging.
+Entregado (rebanada 2 — mas casos de texto, 2026-06-11):
+
+- **Resumen longitudinal, instrucciones al paciente y brechas clinicas.** Tres tipos de uso nuevos (`LONGITUDINAL_SUMMARY`, `PATIENT_INSTRUCTIONS`, `CLINICAL_GAPS`) bajo la misma gobernanza: consentimiento, seudonimizacion, fallback, traza completa y revision humana. El `FakeProvider` adapta su salida a cada uso, con su propia version de prompt.
+- **Consentimiento unificado de texto (`TEXT_ASSIST`).** Un solo alcance cubre los cuatro asistentes de texto (SOAP, resumen, instrucciones, brechas). La transcripcion por audio tendra su propio consentimiento explicito en una rebanada futura.
+- **Nucleo compartido `run_assist`.** Centraliza validacion de encuentro abierto, consentimiento, seudonimizacion, orquestacion y registro de traza; `assist_soap` y `assist_text` lo reusan.
+- **UI.** El panel de Atencion ofrece los cuatro asistentes. Las instrucciones se aplican al campo de indicaciones del editor (revision humana, sin guardar); resumen y brechas se muestran como referencia. Cada resultado cierra su traza con APPROVED/DISCARDED.
+
+Verificacion (rebanada 2): 43 pruebas de Rust en verde (incluye los tres asistentes de texto bajo gobernanza, versiones de prompt por uso y sin autoguardado), `cargo clippy` limpio, `tsc + vite build` ok y prueba manual en navegador (generar instrucciones → aplicar al editor; generar resumen → referencia).
+
+Pendiente (rebanadas posteriores del paso 11): transcripcion de consulta por audio/voz (con consentimiento propio), benchmark clinico, creditos/control de costo, reporte de metadatos de uso al portal y adaptador de proveedor real en staging.
 
 ## Paso 12 - SaaS y compliance avanzado
 
