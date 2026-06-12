@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Calendar } from "./calendar";
+import { IconCalendar } from "../icons";
 
 type PublicProfile = {
   doctor: {
@@ -197,8 +198,8 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
         </div>
 
         {searchError ? (
-          <div className="search-error">
-            <span>⚠️</span>
+          <div className="search-error" role="alert">
+            <span aria-hidden>!</span>
             <span>{searchError}</span>
           </div>
         ) : null}
@@ -224,7 +225,10 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
           </div>
         ) : !busy ? (
           <div className="no-slots">
-            <p>📅 Selecciona una fecha para ver horarios disponibles</p>
+            <p>
+              <IconCalendar className="dp-inline-icon" /> Selecciona una fecha para ver horarios
+              disponibles
+            </p>
           </div>
         ) : null}
       </div>
