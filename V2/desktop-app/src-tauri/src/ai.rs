@@ -32,15 +32,18 @@ pub enum AiError {
 }
 
 /// Alcance unico de consentimiento para asistencia de IA basada en el TEXTO del
-/// expediente (SOAP, resumen, instrucciones, brechas). La transcripcion por
-/// audio exige su propio consentimiento explicito y entra en otra rebanada.
+/// expediente (SOAP, resumen, instrucciones, brechas). La transcripcion de voz
+/// exige su propio consentimiento explicito.
 pub const SCOPE_TEXT_ASSIST: &str = "TEXT_ASSIST";
+pub const SCOPE_VOICE_TRANSCRIPTION: &str = "VOICE_TRANSCRIPTION";
 
 /// Tipos de uso de IA de texto. El proveedor adapta su salida a cada uno.
 pub const USAGE_SOAP_ASSIST: &str = "SOAP_ASSIST";
 pub const USAGE_SUMMARY: &str = "LONGITUDINAL_SUMMARY";
 pub const USAGE_INSTRUCTIONS: &str = "PATIENT_INSTRUCTIONS";
 pub const USAGE_GAPS: &str = "CLINICAL_GAPS";
+pub const USAGE_TRANSCRIPTION: &str = "TRANSCRIPTION";
+pub const AUDIO_RETENTION_DISCARD: &str = "discarded_after_transcription";
 
 const TEXT_USAGES: &[&str] = &[USAGE_SUMMARY, USAGE_INSTRUCTIONS, USAGE_GAPS];
 
@@ -48,6 +51,8 @@ const PROMPT_VERSION_SOAP: &str = "soap-assist/v1";
 const PROMPT_VERSION_SUMMARY: &str = "summary/v1";
 const PROMPT_VERSION_INSTRUCTIONS: &str = "instructions/v1";
 const PROMPT_VERSION_GAPS: &str = "gaps/v1";
+const PROMPT_VERSION_TRANSCRIPTION: &str = "transcription/v1";
+const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
 
 fn prompt_version_for(usage_type: &str) -> &'static str {
     match usage_type {
@@ -185,6 +190,44 @@ impl AiProvider for FakeProvider {
             output,
             model_version: "fake-1".into(),
             estimated_cost_cents,
+            latency_ms: start.elapsed().as_millis() as i64,
+        })
+    }
+}
+
+pub struct FakeTranscriptionProvider {
+    name: String,
+}
+
+impl FakeTranscriptionProvider {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+        }
+    }
+}
+
+impl TranscriptionProvider for FakeTranscriptionProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn transcribe(&self, request: &TranscriptionRequest) -> Result<AiResponse, AiError> {
+        let start = std::time::Instant::now();
+        let duration = request
+            .duration_seconds
+            .map(|seconds| format!("{seconds} segundos"))
+            .unwrap_or_else(|| "duracion no especificada".into());
+        let output = format!(
+            "Transcripcion (borrador): audio {media_type}, {duration}. \
+            Revise terminos clinicos, medicamentos, dosis y hablantes antes de usarla.",
+            media_type = request.media_type
+        );
+
+        Ok(AiResponse {
+            output,
+            model_version: "fake-transcription-1".into(),
+            estimated_cost_cents: 1 + (request.byte_len as i64 / 1_000_000),
             latency_ms: start.elapsed().as_millis() as i64,
         })
     }
@@ -492,14 +535,24 @@ pub fn pending_usage_reports(conn: &Connection, limit: i64) -> Result<Vec<AiUsag
             let run_id: String = row.get(0)?;
             let encounter_id: Option<String> = row.get(1)?;
             let patient_id: Option<String> = row.get(2)?;
+            let usage_type: String = row.get(3)?;
+            let (provider_type, input_kind, output_kind) = if usage_type == USAGE_TRANSCRIPTION {
+                (
+                    "TRANSCRIPTION",
+                    "LOCAL_AI_AUDIO_INPUT",
+                    "LOCAL_AI_TRANSCRIPT_OUTPUT",
+                )
+            } else {
+                ("LLM", "LOCAL_AI_RUN_INPUT", "LOCAL_AI_RUN_OUTPUT")
+            };
             let input_reference = usage_reference(
-                "LOCAL_AI_RUN_INPUT",
+                input_kind,
                 &run_id,
                 encounter_id.as_deref(),
                 patient_id.as_deref(),
             );
             let output_reference = usage_reference(
-                "LOCAL_AI_RUN_OUTPUT",
+                output_kind,
                 &run_id,
                 encounter_id.as_deref(),
                 patient_id.as_deref(),
@@ -507,9 +560,9 @@ pub fn pending_usage_reports(conn: &Connection, limit: i64) -> Result<Vec<AiUsag
 
             Ok(AiUsageReport {
                 external_run_id: run_id,
-                usage_type: row.get(3)?,
+                usage_type,
                 provider_name: row.get(4)?,
-                provider_type: "LLM".into(),
+                provider_type: provider_type.into(),
                 model_version: row.get(5)?,
                 prompt_version: row.get(6)?,
                 status: row.get(7)?,
@@ -624,6 +677,18 @@ pub struct TextDraft {
     pub text: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct TranscriptionDraft {
+    pub run_id: String,
+    pub usage_type: String,
+    pub provider: String,
+    pub model_version: String,
+    pub estimated_cost_cents: i64,
+    pub latency_ms: i64,
+    pub transcript_text: String,
+    pub audio_retention_policy: String,
+}
+
 /// Nucleo comun de toda asistencia de IA sobre el expediente: valida encuentro
 /// abierto, exige consentimiento de texto vigente, seudonimiza el contexto,
 /// invoca el orquestador (con fallback) y registra la traza en estado DRAFT.
@@ -729,6 +794,115 @@ pub fn assist_text(
         estimated_cost_cents: response.estimated_cost_cents,
         latency_ms: response.latency_ms,
         text: response.output,
+    })
+}
+
+fn validate_audio_input(audio: &AudioInput) -> Result<(), AiError> {
+    if audio.bytes.is_empty() {
+        return Err(AiError::Invalid("el audio no puede estar vacio".into()));
+    }
+    if audio.bytes.len() > MAX_AUDIO_BYTES {
+        return Err(AiError::Invalid(
+            "el audio excede el tamano permitido".into(),
+        ));
+    }
+    let supported = matches!(
+        audio.media_type.as_str(),
+        "audio/webm" | "audio/wav" | "audio/mpeg" | "audio/mp4" | "audio/ogg"
+    );
+    if !supported {
+        return Err(AiError::Invalid("formato de audio no soportado".into()));
+    }
+    if matches!(audio.duration_seconds, Some(seconds) if seconds <= 0) {
+        return Err(AiError::Invalid(
+            "la duracion del audio debe ser positiva".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn audio_input_metadata(audio: &AudioInput) -> Result<String, AiError> {
+    serde_json::to_string(&serde_json::json!({
+        "kind": "AUDIO_TRANSIENT",
+        "fileName": audio.file_name,
+        "mediaType": audio.media_type,
+        "byteLength": audio.bytes.len(),
+        "durationSeconds": audio.duration_seconds,
+        "retention": AUDIO_RETENTION_DISCARD
+    }))
+    .map_err(|e| AiError::Invalid(format!("metadatos de audio invalidos: {e}")))
+}
+
+/// Transcribe audio de consulta con consentimiento explicito separado. El audio
+/// se usa de forma transitoria y no se persiste; solo queda metadata operativa
+/// y la transcripcion borrador en la base local cifrada para revision humana.
+pub fn transcribe_audio(
+    conn: &Connection,
+    encounter_id: &str,
+    audio: AudioInput,
+    provider: &dyn TranscriptionProvider,
+) -> Result<TranscriptionDraft, AiError> {
+    validate_audio_input(&audio)?;
+
+    let detail =
+        clinical::get_encounter_detail(conn, encounter_id).map_err(|_| AiError::NotFound)?;
+    if detail.encounter.status == "SIGNED" {
+        return Err(AiError::Invalid("el encuentro ya fue firmado".into()));
+    }
+
+    let patient_id = detail.encounter.patient_id.clone();
+    let consent_id = active_consent(conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION)?
+        .ok_or(AiError::ConsentMissing)?;
+    ensure_within_budget(conn)?;
+
+    let request = TranscriptionRequest {
+        media_type: audio.media_type.clone(),
+        byte_len: audio.bytes.len(),
+        duration_seconds: audio.duration_seconds,
+    };
+    let input_metadata = audio_input_metadata(&audio)?;
+    let response = provider.transcribe(&request)?;
+
+    let run_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO ai_runs
+            (id, encounter_id, patient_id, usage_type, provider, model_version,
+             prompt_version, status, input_redacted, output, estimated_cost_cents,
+             latency_ms, consent_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'DRAFT', ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            run_id,
+            encounter_id,
+            patient_id,
+            USAGE_TRANSCRIPTION,
+            provider.name(),
+            response.model_version,
+            PROMPT_VERSION_TRANSCRIPTION,
+            input_metadata,
+            response.output,
+            response.estimated_cost_cents,
+            response.latency_ms,
+            consent_id,
+            now()
+        ],
+    )?;
+    audit(
+        conn,
+        "ai_run",
+        &run_id,
+        "transcription-draft-generated",
+        Some(USAGE_TRANSCRIPTION),
+    )?;
+
+    Ok(TranscriptionDraft {
+        run_id,
+        usage_type: USAGE_TRANSCRIPTION.into(),
+        provider: provider.name().into(),
+        model_version: response.model_version,
+        estimated_cost_cents: response.estimated_cost_cents,
+        latency_ms: response.latency_ms,
+        transcript_text: response.output,
+        audio_retention_policy: AUDIO_RETENTION_DISCARD.into(),
     })
 }
 
@@ -1354,4 +1528,130 @@ mod tests {
         mark_usage_reports_sent(&conn, &[draft.run_id]).unwrap();
         assert!(pending_usage_reports(&conn, 10).unwrap().is_empty());
     }
+
+    #[test]
+    fn transcription_requires_separate_voice_consent() {
+        let conn = test_conn("voice-consent");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+        let audio = AudioInput {
+            file_name: Some("consulta.webm".into()),
+            media_type: "audio/webm".into(),
+            bytes: b"audio bytes only".to_vec(),
+            duration_seconds: Some(42),
+        };
+
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+        assert!(matches!(
+            transcribe_audio(&conn, &encounter_id, audio.clone(), &provider),
+            Err(AiError::ConsentMissing)
+        ));
+
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let draft = transcribe_audio(&conn, &encounter_id, audio, &provider).unwrap();
+        assert_eq!(draft.provider, "fake-transcriptor");
+        assert_eq!(draft.usage_type, USAGE_TRANSCRIPTION);
+    }
+
+    #[test]
+    fn transcription_discards_audio_and_stores_reviewable_draft() {
+        let conn = test_conn("voice-draft");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.webm".into()),
+                media_type: "audio/webm".into(),
+                bytes: b"raw audio should never be stored".to_vec(),
+                duration_seconds: Some(60),
+            },
+            &provider,
+        )
+        .unwrap();
+
+        assert!(draft.transcript_text.contains("Transcripcion"));
+        assert_eq!(draft.audio_retention_policy, AUDIO_RETENTION_DISCARD);
+
+        let (input_meta, stored_output, prompt_version, status): (String, String, String, String) =
+            conn.query_row(
+                "SELECT input_redacted, output, prompt_version, status FROM ai_runs WHERE id = ?1",
+                params![draft.run_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert!(input_meta.contains(AUDIO_RETENTION_DISCARD));
+        assert!(input_meta.contains("\"byteLength\""));
+        assert!(!input_meta.contains("raw audio should never be stored"));
+        assert!(stored_output.contains("Transcripcion"));
+        assert_eq!(prompt_version, PROMPT_VERSION_TRANSCRIPTION);
+        assert_eq!(status, "DRAFT");
+
+        let note_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM note_versions WHERE encounter_id = ?1",
+                params![encounter_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(note_count, 0);
+    }
+
+    #[test]
+    fn transcription_usage_report_is_reference_only_and_transcription_provider() {
+        let conn = test_conn("voice-report");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: b"audio bytes".to_vec(),
+                duration_seconds: Some(30),
+            },
+            &provider,
+        )
+        .unwrap();
+        review_run(&conn, &draft.run_id, "APPROVED", None).unwrap();
+
+        let reports = pending_usage_reports(&conn, 10).unwrap();
+        assert_eq!(reports.len(), 1);
+        let report = &reports[0];
+        assert_eq!(report.usage_type, USAGE_TRANSCRIPTION);
+        assert_eq!(report.provider_type, "TRANSCRIPTION");
+        assert_eq!(report.input_reference["kind"], "LOCAL_AI_AUDIO_INPUT");
+        assert_eq!(
+            report.output_reference["kind"],
+            "LOCAL_AI_TRANSCRIPT_OUTPUT"
+        );
+        let serialized = serde_json::to_string(report).unwrap();
+        assert!(!serialized.contains("audio bytes"));
+        assert!(!serialized.contains("Transcripcion"));
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AudioInput {
+    pub file_name: Option<String>,
+    pub media_type: String,
+    pub bytes: Vec<u8>,
+    pub duration_seconds: Option<i64>,
+}
+
+pub struct TranscriptionRequest {
+    pub media_type: String,
+    pub byte_len: usize,
+    pub duration_seconds: Option<i64>,
+}
+
+pub trait TranscriptionProvider: Send + Sync {
+    fn name(&self) -> &str;
+    fn transcribe(&self, request: &TranscriptionRequest) -> Result<AiResponse, AiError>;
 }
