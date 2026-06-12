@@ -34,6 +34,8 @@ const mockState = {
   clinicalProfile: "ODONTOLOGY",
   aiConsent: false,
   aiRunSeq: 0,
+  aiBudgetCents: 0,
+  aiRuns: [] as Array<{ usage_type: string; cost_cents: number }>,
   appointments: [
     {
       id: "appt-1",
@@ -384,7 +386,12 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return undefined as T;
     case "ai_assist_soap": {
       if (!mockState.aiConsent) throw "falta el consentimiento del paciente para asistencia de IA";
+      const spent = mockState.aiRuns.reduce((s, r) => s + r.cost_cents, 0);
+      if (mockState.aiBudgetCents > 0 && spent >= mockState.aiBudgetCents) {
+        throw "se alcanzo el presupuesto mensual de IA; ajustalo para continuar";
+      }
       mockState.aiRunSeq += 1;
+      mockState.aiRuns.push({ usage_type: "SOAP_ASSIST", cost_cents: 1 });
       const context = "Motivo de consulta: Dolor en molar superior derecho";
       return {
         run_id: `ai-run-${mockState.aiRunSeq}`,
@@ -405,8 +412,13 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     }
     case "ai_assist_text": {
       if (!mockState.aiConsent) throw "falta el consentimiento del paciente para asistencia de IA";
+      const spentText = mockState.aiRuns.reduce((s, r) => s + r.cost_cents, 0);
+      if (mockState.aiBudgetCents > 0 && spentText >= mockState.aiBudgetCents) {
+        throw "se alcanzo el presupuesto mensual de IA; ajustalo para continuar";
+      }
       mockState.aiRunSeq += 1;
       const usageType = String(args?.usageType ?? "");
+      mockState.aiRuns.push({ usage_type: usageType, cost_cents: 1 });
       const context = "Motivo de consulta: Dolor en molar superior derecho";
       const text =
         usageType === "LONGITUDINAL_SUMMARY"
@@ -428,6 +440,25 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return { id: String(args?.runId), status: String(args?.status) } as T;
     case "ai_list_runs":
       return [] as T;
+    case "ai_set_budget":
+      mockState.aiBudgetCents = Number(args?.budgetCents ?? 0);
+      return undefined as T;
+    case "ai_usage_summary": {
+      const byMap = new Map<string, { run_count: number; cost_cents: number }>();
+      for (const r of mockState.aiRuns) {
+        const cur = byMap.get(r.usage_type) ?? { run_count: 0, cost_cents: 0 };
+        cur.run_count += 1;
+        cur.cost_cents += r.cost_cents;
+        byMap.set(r.usage_type, cur);
+      }
+      return {
+        month: new Date().toISOString().slice(0, 7),
+        budget_cents: mockState.aiBudgetCents,
+        spent_cents: mockState.aiRuns.reduce((s, r) => s + r.cost_cents, 0),
+        run_count: mockState.aiRuns.length,
+        by_usage: [...byMap.entries()].map(([usage_type, v]) => ({ usage_type, ...v }))
+      } as T;
+    }
     default:
       throw new Error(`mock sin comando: ${command}`);
   }

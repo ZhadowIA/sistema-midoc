@@ -27,6 +27,8 @@ pub enum AiError {
     ConsentMissing,
     #[error("ningun proveedor de IA pudo completar la solicitud")]
     AllProvidersFailed,
+    #[error("se alcanzo el presupuesto mensual de IA; ajustalo para continuar")]
+    BudgetExceeded,
 }
 
 /// Alcance unico de consentimiento para asistencia de IA basada en el TEXTO del
@@ -350,6 +352,112 @@ pub fn list_runs(conn: &Connection, encounter_id: &str) -> Result<Vec<AiRun>, Ai
     Ok(rows)
 }
 
+/* ---------- Control de costo y creditos (RF29) ---------- */
+
+const BUDGET_KEY: &str = "ai_monthly_budget_cents";
+
+#[derive(Debug, Serialize)]
+pub struct UsageByType {
+    pub usage_type: String,
+    pub run_count: i64,
+    pub cost_cents: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UsageSummary {
+    /// Mes en formato YYYY-MM (UTC) sobre el que se reporta.
+    pub month: String,
+    /// Presupuesto mensual en centavos. 0 = sin limite.
+    pub budget_cents: i64,
+    pub spent_cents: i64,
+    pub run_count: i64,
+    pub by_usage: Vec<UsageByType>,
+}
+
+/// Mes actual en UTC (YYYY-MM). El presupuesto es aproximado a zona UTC; es
+/// suficiente para un control de costo, no para contabilidad fiscal.
+fn current_month() -> String {
+    chrono::Utc::now().format("%Y-%m").to_string()
+}
+
+pub fn get_budget_cents(conn: &Connection) -> Result<i64, AiError> {
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM app_meta WHERE key = ?1",
+            params![BUDGET_KEY],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(value.and_then(|raw| raw.parse().ok()).unwrap_or(0))
+}
+
+pub fn set_budget_cents(conn: &Connection, cents: i64) -> Result<(), AiError> {
+    if cents < 0 {
+        return Err(AiError::Invalid("el presupuesto no puede ser negativo".into()));
+    }
+    conn.execute(
+        "INSERT INTO app_meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = ?2",
+        params![BUDGET_KEY, cents.to_string()],
+    )?;
+    Ok(())
+}
+
+/// Gasto estimado de IA en un mes (YYYY-MM): suma el costo de todas las
+/// ejecuciones, se hayan aprobado o descartado (generar ya consume).
+fn month_spend_cents(conn: &Connection, month: &str) -> Result<i64, AiError> {
+    let like = format!("{month}%");
+    let total: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(estimated_cost_cents), 0) FROM ai_runs WHERE created_at LIKE ?1",
+        params![like],
+        |row| row.get(0),
+    )?;
+    Ok(total)
+}
+
+pub fn usage_summary(conn: &Connection) -> Result<UsageSummary, AiError> {
+    let month = current_month();
+    let like = format!("{month}%");
+
+    let mut statement = conn.prepare(
+        "SELECT usage_type, COUNT(*), COALESCE(SUM(estimated_cost_cents), 0)
+         FROM ai_runs WHERE created_at LIKE ?1 GROUP BY usage_type ORDER BY usage_type",
+    )?;
+    let by_usage = statement
+        .query_map(params![like], |row| {
+            Ok(UsageByType {
+                usage_type: row.get(0)?,
+                run_count: row.get(1)?,
+                cost_cents: row.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let run_count: i64 = by_usage.iter().map(|u| u.run_count).sum();
+    let spent_cents: i64 = by_usage.iter().map(|u| u.cost_cents).sum();
+
+    Ok(UsageSummary {
+        month,
+        budget_cents: get_budget_cents(conn)?,
+        spent_cents,
+        run_count,
+        by_usage,
+    })
+}
+
+/// Verifica el presupuesto antes de ejecutar IA. Bloquea si ya se alcanzo el
+/// limite del mes. Presupuesto 0 = sin limite.
+fn ensure_within_budget(conn: &Connection) -> Result<(), AiError> {
+    let budget = get_budget_cents(conn)?;
+    if budget == 0 {
+        return Ok(());
+    }
+    if month_spend_cents(conn, &current_month())? >= budget {
+        return Err(AiError::BudgetExceeded);
+    }
+    Ok(())
+}
+
 /* ---------- Asistencia de IA sobre texto del expediente ---------- */
 
 /// Construye el contexto clinico a partir del expediente: motivo de cita,
@@ -417,6 +525,9 @@ fn run_assist(
     let patient_id = detail.encounter.patient_id.clone();
     let consent_id = active_consent(conn, &patient_id, SCOPE_TEXT_ASSIST)?
         .ok_or(AiError::ConsentMissing)?;
+
+    // Control de costo: no se ejecuta IA si el mes ya alcanzo su presupuesto.
+    ensure_within_budget(conn)?;
 
     let context = build_context(&detail);
     let redacted = redact(&context, &detail.patient.first_name, &detail.patient.last_name);
@@ -739,5 +850,55 @@ mod tests {
             )
             .unwrap();
         assert_eq!(note_count, 0);
+    }
+
+    #[test]
+    fn unlimited_budget_never_blocks_and_usage_aggregates() {
+        let conn = test_conn("usage");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+        let registry = ProviderRegistry::default_local();
+
+        assert_eq!(get_budget_cents(&conn).unwrap(), 0); // sin limite por defecto
+        assist_soap(&conn, &encounter_id, &registry).unwrap();
+        assist_text(&conn, &encounter_id, USAGE_SUMMARY, &registry).unwrap();
+
+        let summary = usage_summary(&conn).unwrap();
+        assert_eq!(summary.run_count, 2);
+        assert_eq!(summary.budget_cents, 0);
+        assert!(summary.spent_cents >= 2);
+        assert_eq!(summary.by_usage.len(), 2);
+    }
+
+    #[test]
+    fn budget_blocks_ai_once_month_spend_reaches_limit() {
+        let conn = test_conn("budget");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+        let registry = ProviderRegistry::default_local();
+
+        // Presupuesto minimo: la primera ejecucion pasa (aun no hay gasto),
+        // pero deja el mes en el limite y bloquea la siguiente.
+        set_budget_cents(&conn, 1).unwrap();
+        assist_soap(&conn, &encounter_id, &registry).unwrap();
+
+        assert!(matches!(
+            assist_soap(&conn, &encounter_id, &registry),
+            Err(AiError::BudgetExceeded)
+        ));
+        assert!(matches!(
+            assist_text(&conn, &encounter_id, USAGE_GAPS, &registry),
+            Err(AiError::BudgetExceeded)
+        ));
+
+        // Subir el presupuesto reabre la ejecucion.
+        set_budget_cents(&conn, 1_000_000).unwrap();
+        assist_text(&conn, &encounter_id, USAGE_GAPS, &registry).unwrap();
+    }
+
+    #[test]
+    fn negative_budget_is_rejected() {
+        let conn = test_conn("budget-neg");
+        assert!(matches!(set_budget_cents(&conn, -1), Err(AiError::Invalid(_))));
     }
 }

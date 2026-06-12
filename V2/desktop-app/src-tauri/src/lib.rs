@@ -640,6 +640,19 @@ fn ai_list_runs(
     with_ai(&state, |conn| ai::list_runs(conn, &encounter_id))
 }
 
+#[tauri::command]
+fn ai_usage_summary(state: tauri::State<'_, AppDb>) -> Result<ai::UsageSummary, String> {
+    with_ai(&state, ai::usage_summary)
+}
+
+#[tauri::command]
+fn ai_set_budget(
+    state: tauri::State<'_, AppDb>,
+    budget_cents: i64,
+) -> Result<(), String> {
+    with_ai(&state, |conn| ai::set_budget_cents(conn, budget_cents))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -681,7 +694,9 @@ pub fn run() {
             ai_assist_soap,
             ai_assist_text,
             ai_review_run,
-            ai_list_runs
+            ai_list_runs,
+            ai_usage_summary,
+            ai_set_budget
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
