@@ -391,7 +391,7 @@ Pendiente registrado (no implementado; mejora futura del paso):
 | Compuerta de avance | Ninguna salida IA se guarda como clinica sin revision humana. |
 | Push recomendado | Hacer push cuando IA tenga capa multi-proveedor, benchmark documentado, consentimiento, revision humana, trazas, feedback y control de costo. |
 
-Estado: 🚧 EN PROGRESO — rebanadas 1 (fundacion + SOAP), 2 (resumen/instrucciones/brechas), 3 (control de costo) y 4 (benchmark clinico) entregadas (2026-06-11). La compuerta de push del paso esta cubierta; resta transcripcion de audio y reporte de uso al portal (rebanadas futuras). Construido sobre el paso 10.
+Estado: 🚧 EN PROGRESO — rebanadas 1 (fundacion + SOAP), 2 (resumen/instrucciones/brechas), 3 (control de costo), 4 (benchmark clinico) y 5 (reporte de uso al portal por referencia) entregadas (2026-06-11/12). La compuerta de push del paso esta cubierta; resta transcripcion de audio y adaptador real en staging (rebanadas futuras). Construido sobre el paso 10.
 
 Entregado (rebanada 1 — fundacion + SOAP asistido):
 
@@ -429,7 +429,14 @@ Entregado (rebanada 4 — benchmark clinico, RF41, 2026-06-11):
 
 Verificacion (rebanada 4): 48 pruebas de Rust en verde (incluye comparacion de proveedores con recomendacion del mas barato a igual calidad, persistencia/relectura y rechazo de benchmark sin proveedores), `cargo clippy` limpio, `tsc + vite build` ok y prueba manual en navegador (ejecutar benchmark → recomendado openai-fake $0.06 vs medlm-fake $0.18).
 
-Con esto la compuerta de push del paso 11 queda cubierta: capa multi-proveedor, consentimiento, revision humana, trazas, feedback, control de costo y benchmark documentado. Pendiente (no requerido por la compuerta, rebanadas futuras): transcripcion de consulta por audio/voz (con consentimiento propio), reporte de metadatos de uso al portal y adaptador de proveedor real en staging.
+Entregado (rebanada 5 — reporte de metadatos de uso IA al portal, 2026-06-12):
+
+- **Portal nube por referencia.** Nuevo endpoint `POST /api/sync/ai-usage` autenticado por device token. Registra `AiUsageLog` con `doctorId`, `externalRunId`, proveedor, modelo, version de prompt, costo, latencia, estado y `inputReference`/`outputReference`. Las referencias son IDs locales; el portal no recibe `input_redacted`, prompts, salidas, diagnosticos ni texto clinico.
+- **Idempotencia y propiedad SaaS.** Migracion Prisma agrega `doctorId`, `externalRunId`, `reportedAt`, indice por doctor/fecha y unico `(doctorId, externalRunId)`, para que repetir el reporte actualice la misma corrida y soporte creditos/gobernanza por medico.
+- **App del medico.** Migracion SQLite v9 agrega `usage_reported_at` a `ai_runs`. `sync_now` baja el buzon como antes y despues reporta lotes pendientes de uso IA; marca una corrida como enviada solo tras respuesta exitosa del portal. El mock de navegador simula el mismo comportamiento.
+- **Pruebas.** Cobertura en portal para rechazo de referencias con campos extra, ausencia de contenido clinico e idempotencia; cobertura Rust para reportes por referencia y marca local de enviado.
+
+Con esto la compuerta de push del paso 11 queda cubierta: capa multi-proveedor, consentimiento, revision humana, trazas, feedback, control de costo, benchmark documentado y reporte SaaS de uso por referencia. Pendiente (no requerido por la compuerta, rebanadas futuras): transcripcion de consulta por audio/voz (con consentimiento propio) y adaptador de proveedor real en staging.
 
 ## Paso 12 - SaaS y compliance avanzado
 

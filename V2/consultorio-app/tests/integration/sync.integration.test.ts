@@ -20,7 +20,8 @@ import {
   authenticateSyncDevice,
   getActiveDeviceDocumentKey,
   getSyncInbox,
-  linkSyncDevice
+  linkSyncDevice,
+  recordAiUsageBatch
 } from "../../src/services/sync/sync-service";
 
 const prisma = new PrismaClient();
@@ -240,6 +241,82 @@ describe("device document public key (paso 6, fase B)", () => {
       await expect(
         linkSyncDevice(account.user.id, "PC", "no-es-base64-valido!!!")
       ).rejects.toMatchObject({ status: 400 });
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+});
+
+describe("AI usage metadata sync (paso 11)", () => {
+  it("records AI usage by reference only and is idempotent per device doctor", async () => {
+    const email = uniqueEmail("doctor-ai-usage");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Ada",
+        lastName: "Rivas",
+        professionalName: "Dra. Ada Rivas",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+      const { deviceToken } = await linkSyncDevice(account.user.id, "PC IA");
+      const device = await authenticateSyncDevice(bearerRequest(deviceToken));
+
+      const report = {
+        externalRunId: randomUUID(),
+        usageType: "SOAP_ASSIST",
+        status: "APPROVED",
+        providerName: "fake-clinico",
+        providerType: "LLM",
+        modelVersion: "fake-1",
+        promptVersion: "soap-assist/v1",
+        estimatedCostCents: 7,
+        latencyMs: 12,
+        occurredAt: "2026-06-11T12:00:00.000Z",
+        inputReference: {
+          kind: "LOCAL_AI_RUN_INPUT",
+          localRunId: "local-run-1",
+          patientId: "pat-local-1",
+          encounterId: "enc-local-1"
+        },
+        outputReference: {
+          kind: "LOCAL_AI_RUN_OUTPUT",
+          localRunId: "local-run-1",
+          patientId: "pat-local-1",
+          encounterId: "enc-local-1"
+        }
+      };
+
+      await expect(
+        recordAiUsageBatch(device, {
+          runs: [
+            {
+              ...report,
+              inputReference: { ...report.inputReference, clinicalText: "Dolor lumbar" }
+            }
+          ]
+        })
+      ).rejects.toMatchObject({ status: 400 });
+
+      const first = await recordAiUsageBatch(device, { runs: [report] });
+      const second = await recordAiUsageBatch(device, { runs: [report] });
+
+      expect(first.reported).toBe(1);
+      expect(second.reported).toBe(1);
+
+      const logs = await prisma.aiUsageLog.findMany({
+        where: { doctorId: account.user.id, externalRunId: report.externalRunId }
+      });
+      expect(logs).toHaveLength(1);
+      expect(logs[0]?.usageType).toBe("SOAP_SUMMARY");
+      expect(logs[0]?.status).toBe("REVIEWED");
+      expect(logs[0]?.patientId).toBeNull();
+      expect(logs[0]?.encounterId).toBeNull();
+      expect(JSON.stringify(logs[0]?.inputReference)).not.toContain("Dolor lumbar");
+      expect(JSON.stringify(logs[0]?.outputReference)).not.toContain("Dolor lumbar");
     } finally {
       await cleanupUserByEmail(email);
     }

@@ -230,12 +230,19 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     setMessage("");
     setError("");
     try {
-      const summary = await call<{ applied_events: number; cursor: number }>("sync_now");
-      setMessage(
-        summary.applied_events === 0
-          ? "Sin novedades en el portal."
-          : `${summary.applied_events} evento(s) sincronizados.`
-      );
+      const summary = await call<{
+        applied_events: number;
+        cursor: number;
+        ai_usage_reported: number;
+      }>("sync_now");
+      const parts: string[] = [];
+      if (summary.applied_events > 0) {
+        parts.push(`${summary.applied_events} evento(s) sincronizados`);
+      }
+      if (summary.ai_usage_reported > 0) {
+        parts.push(`${summary.ai_usage_reported} reporte(s) de IA enviados`);
+      }
+      setMessage(parts.length > 0 ? `${parts.join(" · ")}.` : "Sin novedades en el portal.");
       await refresh();
     } catch (e) {
       setError(String(e));
