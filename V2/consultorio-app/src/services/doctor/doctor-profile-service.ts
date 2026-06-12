@@ -1,6 +1,7 @@
 import {
   AvailabilityRuleType,
   ClinicalProfile,
+  DoctorReview,
   DoctorServiceStatus,
   UserRole
 } from "@prisma/client";
@@ -511,8 +512,8 @@ export async function getPublicDoctorProfile(slug: string) {
     }
   });
 
-  // Fetch reviews separately in case the relation isn't available yet
-  let reviews: any[] = [];
+  // Las opiniones se consultan aparte para aislar fallos si la tabla aun no existe.
+  let reviews: DoctorReview[] = [];
   if (profile) {
     try {
       reviews = await prisma.doctorReview.findMany({
@@ -525,8 +526,7 @@ export async function getPublicDoctorProfile(slug: string) {
         },
         take: 50
       });
-    } catch (err) {
-      // Reviews table might not exist yet, continue without them
+    } catch {
       reviews = [];
     }
   }

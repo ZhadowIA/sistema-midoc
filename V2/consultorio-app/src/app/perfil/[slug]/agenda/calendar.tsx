@@ -1,5 +1,7 @@
 "use client";
 
+import { IconChevronLeft, IconChevronRight } from "../icons";
+
 interface CalendarProps {
   selectedDate: string;
   onDateSelect: (date: string) => void;
@@ -55,12 +57,12 @@ export function Calendar({ selectedDate, onDateSelect }: CalendarProps) {
   return (
     <div className="calendar-widget">
       <div className="calendar-header">
-        <button className="calendar-nav-btn" onClick={handlePrevMonth} aria-label="Mes anterior">
-          ◀
+        <button className="calendar-nav-btn" onClick={handlePrevMonth} aria-label="Mes anterior" type="button">
+          <IconChevronLeft />
         </button>
         <h3 className="calendar-month">{monthName}</h3>
-        <button className="calendar-nav-btn" onClick={handleNextMonth} aria-label="Próximo mes">
-          ▶
+        <button className="calendar-nav-btn" onClick={handleNextMonth} aria-label="Próximo mes" type="button">
+          <IconChevronRight />
         </button>
       </div>
 

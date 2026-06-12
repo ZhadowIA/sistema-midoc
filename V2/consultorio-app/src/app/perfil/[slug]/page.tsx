@@ -3,8 +3,21 @@ import { notFound } from "next/navigation";
 import { getPublicDoctorProfile } from "../../../services/doctor/doctor-profile-service";
 import { BookingClient } from "./agenda/booking-client";
 import { ReviewsSection } from "./reviews-section";
+import {
+  IconCalendar,
+  IconCertificate,
+  IconChat,
+  IconClock,
+  IconEquipment,
+  IconPhone,
+  IconPin,
+  IconRoom,
+  IconStar,
+  IconStethoscope,
+  IconWaiting
+} from "./icons";
 
-const dayLabels = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"];
+const dayLabels = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
 function formatMoney(priceCents: number, currency: string) {
   return new Intl.NumberFormat("es-MX", {
@@ -21,14 +34,22 @@ function nextDateString() {
 
 function StarRating({ rating }: { rating: number }) {
   return (
-    <div className="star-rating">
+    <div className="dp-stars" role="img" aria-label={`${rating} de 5 estrellas`}>
       {[1, 2, 3, 4, 5].map((star) => (
-        <span key={star} className={star <= Math.round(rating) ? "star filled" : "star"}>
-          ★
-        </span>
+        <IconStar key={star} className={star <= Math.round(rating) ? "dp-star is-on" : "dp-star"} />
       ))}
     </div>
   );
+}
+
+function initials(name: string) {
+  return name
+    .replace(/^Dr\.?\s*/i, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
 }
 
 export default async function PublicDoctorProfilePage({
@@ -48,196 +69,203 @@ export default async function PublicDoctorProfilePage({
     .join(", ");
 
   const specialty = profile.doctor.specialty === "ODONTOLOGY" ? "Odontología" : "Medicina General";
+  const phoneDigits = profile.doctor.phone?.replace(/\D/g, "") ?? "";
+
+  const galleryItems = [
+    { Icon: IconRoom, label: "Consultorio principal" },
+    { Icon: IconWaiting, label: "Sala de espera" },
+    { Icon: IconEquipment, label: "Equipo médico" }
+  ];
 
   return (
-    <section className="public-shell">
-      {/* Cover Photo */}
-      {profile.doctor.coverPhoto && (
+    <section className="public-shell profile-v2">
+      {/* ---------- Encabezado ---------- */}
+      <header className="dp-hero">
         <div
-          className="doctor-cover-photo"
-          style={{
-            backgroundImage: `url(${profile.doctor.coverPhoto})`,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-            height: "240px",
-            borderRadius: "var(--radius-panel)",
-            marginBottom: "-60px",
-            position: "relative",
-            zIndex: 1
-          }}
-        />
-      )}
+          className="dp-cover"
+          style={
+            profile.doctor.coverPhoto
+              ? { backgroundImage: `url(${profile.doctor.coverPhoto})` }
+              : undefined
+          }
+        >
+          <span className="dp-cover-scrim" aria-hidden />
+        </div>
 
-      {/* Doctor Header Card - Premium Doctoralia Style */}
-      <div className="doctor-header-card">
-        <div className="doctor-header-content">
-          {/* Profile Photo */}
-          {profile.doctor.profilePhoto && (
-            <div
-              className="doctor-profile-photo"
-              style={{
-                backgroundImage: `url(${profile.doctor.profilePhoto})`,
-                backgroundSize: "cover",
-                backgroundPosition: "center"
-              }}
-            />
-          )}
-          <div className="doctor-header-info">
-            <div className="specialty-badge">{specialty}</div>
-            <h1 className="doctor-name">Dr(a). {profile.doctor.professionalName}</h1>
+        <div className="dp-hero-body">
+          <div className="dp-avatar-wrap">
+            {profile.doctor.profilePhoto ? (
+              <div
+                className="dp-avatar"
+                style={{ backgroundImage: `url(${profile.doctor.profilePhoto})` }}
+                role="img"
+                aria-label={`Retrato de ${profile.doctor.professionalName}`}
+              />
+            ) : (
+              <div className="dp-avatar dp-avatar-fallback" aria-hidden>
+                {initials(profile.doctor.professionalName)}
+              </div>
+            )}
+          </div>
 
-            {/* Rating Section */}
+          <div className="dp-identity">
+            <p className="dp-eyebrow">
+              <IconStethoscope className="dp-eyebrow-icon" />
+              {specialty}
+            </p>
+            <h1 className="dp-name">Dr(a). {profile.doctor.professionalName}</h1>
+
             {profile.ratings.totalReviews > 0 && (
-              <div className="rating-section">
+              <div className="dp-rating">
                 <StarRating rating={profile.ratings.averageRating} />
-                <span className="rating-value">{profile.ratings.averageRating}</span>
-                <span className="rating-count">({profile.ratings.totalReviews} opiniones)</span>
+                <span className="dp-rating-value">{profile.ratings.averageRating}</span>
+                <span className="dp-rating-count">
+                  · {profile.ratings.totalReviews} opiniones
+                </span>
               </div>
             )}
 
-            {location && (
-              <div className="doctor-location">
-                <span className="location-icon">📍</span>
-                <span>{location}</span>
-              </div>
-            )}
+            <div className="dp-facts">
+              {location && (
+                <span className="dp-fact">
+                  <IconPin className="dp-fact-icon" />
+                  {location}
+                </span>
+              )}
+              {profile.doctor.phone && (
+                <span className="dp-fact">
+                  <IconPhone className="dp-fact-icon" />
+                  {profile.doctor.phone}
+                </span>
+              )}
+              {profile.doctor.licenseNumber && (
+                <span className="dp-fact">
+                  <IconCertificate className="dp-fact-icon" />
+                  Cédula {profile.doctor.licenseNumber}
+                </span>
+              )}
+            </div>
 
             {profile.doctor.phone && (
-              <div className="doctor-phone">
-                <span className="phone-icon">📱</span>
-                <span>{profile.doctor.phone}</span>
+              <div className="dp-actions">
+                <a href={`tel:${profile.doctor.phone}`} className="dp-btn dp-btn-primary">
+                  <IconPhone className="dp-btn-icon" />
+                  Llamar
+                </a>
+                <a
+                  href={`https://wa.me/${phoneDigits}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="dp-btn dp-btn-whatsapp"
+                >
+                  <IconChat className="dp-btn-icon" />
+                  WhatsApp
+                </a>
+                <a href="#agenda" className="dp-btn dp-btn-ghost">
+                  <IconCalendar className="dp-btn-icon" />
+                  Agendar cita
+                </a>
               </div>
             )}
-
-            {profile.doctor.description && (
-              <p className="doctor-bio">{profile.doctor.description}</p>
-            )}
-
-            <div className="doctor-meta-items">
-              {profile.doctor.licenseNumber && (
-                <div className="meta-item">
-                  <span className="meta-label">Cédula Profesional</span>
-                  <span className="meta-value">{profile.doctor.licenseNumber}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Contact Buttons */}
-            <div className="contact-buttons">
-              {profile.doctor.phone && (
-                <>
-                  <a href={`tel:${profile.doctor.phone}`} className="action-button contact-btn">
-                    📞 Llamar
-                  </a>
-                  <a
-                    href={`https://wa.me/${profile.doctor.phone.replace(/\D/g, '')}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="action-button contact-btn whatsapp-btn"
-                  >
-                    💬 WhatsApp
-                  </a>
-                </>
-              )}
-            </div>
           </div>
 
-          <div className="doctor-stats">
-            <div className="stat-item">
-              <div className="stat-number">{profile.services.length}</div>
-              <div className="stat-label">Servicios</div>
+          <dl className="dp-stats">
+            <div className="dp-stat">
+              <dt>Servicios</dt>
+              <dd>{profile.services.length}</dd>
             </div>
-            <div className="stat-item">
-              <div className="stat-number">{profile.availability.length}</div>
-              <div className="stat-label">Horarios</div>
+            <div className="dp-stat">
+              <dt>Días de atención</dt>
+              <dd>{profile.availability.length}</dd>
             </div>
-            <div className="stat-item">
-              <div className="stat-number">{profile.doctor.consultationDuration}</div>
-              <div className="stat-label">Min por cita</div>
+            <div className="dp-stat">
+              <dt>Minutos por cita</dt>
+              <dd>{profile.doctor.consultationDuration}</dd>
             </div>
-          </div>
+          </dl>
         </div>
-      </div>
+      </header>
 
-      {/* About Section */}
-      <section className="about-section">
-        <div className="section-header">
-          <h2>Acerca de mí</h2>
+      {/* ---------- Acerca de ---------- */}
+      <section className="dp-section">
+        <div className="dp-section-head">
+          <p className="dp-kicker">Perfil profesional</p>
+          <h2 className="dp-h2">Acerca de mí</h2>
         </div>
-        <div className="about-card">
-          <p>
-            {profile.doctor.description ||
-              "Profesional con experiencia en atención clínica, dedicado a proporcionar un servicio de calidad con seguimiento integral de los pacientes."}
-          </p>
-        </div>
+        <p className="dp-prose">
+          {profile.doctor.description ||
+            "Profesional con experiencia en atención clínica, dedicado a proporcionar un servicio de calidad con seguimiento integral de los pacientes."}
+        </p>
       </section>
 
-      {/* Services Section */}
+      {/* ---------- Servicios ---------- */}
       {profile.services.length > 0 && (
-        <section className="services-section">
-          <div className="section-header">
-            <h2>Servicios disponibles</h2>
-            <p className="section-subtitle">Consulta el precio y duración de cada servicio</p>
+        <section className="dp-section">
+          <div className="dp-section-head">
+            <p className="dp-kicker">Atención</p>
+            <h2 className="dp-h2">Servicios disponibles</h2>
+            <p className="dp-section-sub">Consulta el precio y la duración de cada servicio.</p>
           </div>
 
-          <div className="services-grid">
+          <div className="dp-services">
             {profile.services.map((service) => (
-              <div className="service-card" key={service.id}>
-                <div className="service-header">
-                  <h3 className="service-name">{service.name}</h3>
-                  <div className="service-price">{formatMoney(service.priceCents, service.currency)}</div>
-                </div>
-                {service.description && <p className="service-description">{service.description}</p>}
-                <div className="service-footer">
-                  <span className="service-duration">⏱️ {service.durationMinutes} minutos</span>
-                </div>
-              </div>
+              <article className="dp-service" key={service.id}>
+                <header className="dp-service-top">
+                  <h3 className="dp-service-name">{service.name}</h3>
+                  <span className="dp-service-price">
+                    {formatMoney(service.priceCents, service.currency)}
+                  </span>
+                </header>
+                {service.description && (
+                  <p className="dp-service-desc">{service.description}</p>
+                )}
+                <footer className="dp-service-foot">
+                  <IconClock className="dp-inline-icon" />
+                  {service.durationMinutes} minutos
+                </footer>
+              </article>
             ))}
           </div>
         </section>
       )}
 
-      {/* Availability Section */}
+      {/* ---------- Horarios ---------- */}
       {profile.availability.length > 0 && (
-        <section className="availability-section">
-          <div className="section-header">
-            <h2>Horarios disponibles</h2>
-            <p className="section-subtitle">Atiende durante estos horarios</p>
+        <section className="dp-section">
+          <div className="dp-section-head">
+            <p className="dp-kicker">Disponibilidad</p>
+            <h2 className="dp-h2">Horarios de atención</h2>
           </div>
 
-          <div className="availability-grid">
+          <ul className="dp-schedule">
             {profile.availability.map((rule) => (
-              <div className="availability-card" key={rule.id}>
-                <div className="availability-day">
+              <li className="dp-schedule-row" key={rule.id}>
+                <span className="dp-schedule-day">
                   {rule.dayOfWeek !== null ? dayLabels[rule.dayOfWeek] : "Fecha especial"}
-                </div>
-                <div className="availability-time">
-                  <span className="time-icon">🕐</span>
-                  <span>{rule.startTime} - {rule.endTime}</span>
-                </div>
-                <div className="availability-details">
-                  <small>Cada {rule.slotInterval} min</small>
-                  {rule.minAdvanceHours && <small>Mín {rule.minAdvanceHours}h antes</small>}
-                  {rule.maxAdvanceDays && <small>Hasta {rule.maxAdvanceDays} días</small>}
-                </div>
-              </div>
+                </span>
+                <span className="dp-schedule-time">
+                  <IconClock className="dp-inline-icon" />
+                  {rule.startTime} – {rule.endTime}
+                </span>
+                <span className="dp-schedule-meta">cada {rule.slotInterval} min</span>
+              </li>
             ))}
-          </div>
+          </ul>
 
           {profile.blocks.length > 0 && (
-            <div className="blocks-notice">
-              <h3>Bloqueos agendados</h3>
-              <ul className="blocks-list">
+            <div className="dp-notice">
+              <h3 className="dp-notice-title">Bloqueos agendados</h3>
+              <ul className="dp-notice-list">
                 {profile.blocks.map((block) => (
                   <li key={block.id}>
-                    <span className="block-date">
+                    <span className="dp-notice-date">
                       {new Intl.DateTimeFormat("es-MX", {
                         dateStyle: "short",
                         timeStyle: "short",
                         timeZone: profile.doctor.timeZone
                       }).format(new Date(block.startsAt))}
                     </span>
-                    {block.reason && <span className="block-reason">{block.reason}</span>}
+                    {block.reason && <span className="dp-notice-reason">{block.reason}</span>}
                   </li>
                 ))}
               </ul>
@@ -246,62 +274,64 @@ export default async function PublicDoctorProfilePage({
         </section>
       )}
 
-      {/* Location/Map Section */}
+      {/* ---------- Ubicación ---------- */}
       {location && (
-        <section className="location-section">
-          <div className="section-header">
-            <h2>Ubicación</h2>
+        <section className="dp-section">
+          <div className="dp-section-head">
+            <p className="dp-kicker">Cómo llegar</p>
+            <h2 className="dp-h2">Ubicación</h2>
           </div>
-          <div className="location-card">
-            <div className="location-info">
-              <p className="location-text">{location}</p>
-            </div>
+          <div className="dp-map-card">
+            <p className="dp-map-address">
+              <IconPin className="dp-inline-icon" />
+              {location}
+            </p>
             <iframe
-              className="location-map"
+              className="dp-map"
+              title={`Mapa de ${location}`}
               src={`https://www.google.com/maps/embed/v1/place?key=AIzaSyDzPvzIi81ZYB2-2KPuYRXLhzG6dHWzc9E&q=${encodeURIComponent(location)}`}
               allowFullScreen={true}
               loading="lazy"
               referrerPolicy="no-referrer-when-downgrade"
-            ></iframe>
+            />
           </div>
         </section>
       )}
 
-      {/* Gallery Section */}
-      <section className="gallery-section">
-        <div className="section-header">
-          <h2>Galería</h2>
-          <p className="section-subtitle">Consultorio y equipo médico</p>
+      {/* ---------- Galería ---------- */}
+      <section className="dp-section">
+        <div className="dp-section-head">
+          <p className="dp-kicker">Instalaciones</p>
+          <h2 className="dp-h2">Galería</h2>
+          <p className="dp-section-sub">Consultorio y equipo médico.</p>
         </div>
-        <div className="gallery-grid">
-          {/* Mock gallery items - En producción vendrían de la BD */}
-          <div className="gallery-item">
-            <div className="gallery-placeholder">📸</div>
-            <p>Consultorio principal</p>
-          </div>
-          <div className="gallery-item">
-            <div className="gallery-placeholder">🏥</div>
-            <p>Sala de espera</p>
-          </div>
-          <div className="gallery-item">
-            <div className="gallery-placeholder">⚕️</div>
-            <p>Equipo médico</p>
-          </div>
+        <div className="dp-gallery">
+          {galleryItems.map(({ Icon, label }) => (
+            <figure className="dp-gallery-item" key={label}>
+              <div className="dp-gallery-frame">
+                <Icon className="dp-gallery-icon" />
+              </div>
+              <figcaption>{label}</figcaption>
+            </figure>
+          ))}
         </div>
       </section>
 
-      {/* Booking Section */}
-      <section className="booking-section">
-        <div className="section-header">
-          <h2>Agenda tu cita</h2>
-          <p className="section-subtitle">Selecciona servicio y horario disponible</p>
+      {/* ---------- Agenda ---------- */}
+      <section className="dp-section" id="agenda">
+        <div className="dp-section-head">
+          <p className="dp-kicker">Reserva en línea</p>
+          <h2 className="dp-h2">Agenda tu cita</h2>
+          <p className="dp-section-sub">Selecciona servicio y horario disponible.</p>
         </div>
 
         <BookingClient profile={profile} initialDate={nextDateString()} />
       </section>
 
-      {/* Reviews Section */}
-      {profile.reviews.length > 0 && <ReviewsSection reviews={profile.reviews} ratings={profile.ratings} />}
+      {/* ---------- Opiniones ---------- */}
+      {profile.reviews.length > 0 && (
+        <ReviewsSection reviews={profile.reviews} ratings={profile.ratings} />
+      )}
     </section>
   );
 }
