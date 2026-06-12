@@ -261,6 +261,19 @@ enum AiProviderType {
   VALIDATION
 }
 
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+}
+
 enum AiUsageType {
   SOAP_SUMMARY
   LONGITUDINAL_SUMMARY
@@ -977,6 +990,25 @@ model DoctorSubscription {
   updatedAt         DateTime           @updatedAt
   doctorProfile     DoctorProfile      @relation(fields: [doctorProfileId], references: [id], onDelete: Restrict)
   plan              SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Restrict)
+}
+
+model SecurityIncident {
+  id          String           @id @default(cuid())
+  // OPERATIVO: registro de incidentes de seguridad/privacidad. Prohibido contenido
+  // clinico: titulo/descripcion describen el evento operativo y referencian IDs.
+  doctorId    String?
+  category    String
+  severity    IncidentSeverity @default(MEDIUM)
+  status      IncidentStatus   @default(OPEN)
+  title       String
+  description String
+  detectedAt  DateTime         @default(now())
+  resolvedAt  DateTime?
+  metadata    Json?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([doctorId, detectedAt])
 }
 
 model TwoFactorCredential {

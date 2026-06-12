@@ -65,7 +65,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 9 | Piloto seguro | `playwright` | Version lista para piloto real controlado. | ✅ DONE |
 | 10 | Operacion presencial | `impeccable` | Recepcion, caja, lista de espera y consulta sin cita. | ✅ DONE |
 | 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 🚧 IN PROGRESS (fundacion + SOAP asistido) |
-| 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | 🚧 IN PROGRESS (suscripcion + gating + 2FA) |
+| 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | 🚧 IN PROGRESS (suscripcion, gating, 2FA, compliance portal) |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -486,7 +486,16 @@ Entregado (rebanada 2 — 2FA + codigos de recuperacion, portal):
 
 Verificacion (rebanada 2): 60 pruebas del portal en verde (+11: vectores RFC de TOTP, roundtrip y deteccion de manipulacion del cifrado, enrolamiento/confirmacion, login que exige 2FA, codigo erroneo y desafio expirado/manipulado, recovery de un solo uso, desactivacion), `eslint`/`tsc` limpios, `env:check` valido y `next build` ok.
 
-Pendiente del paso (rebanada siguiente): ARCO (app local del medico, por decision del inventario), politicas de retencion, registro de incidentes y exportacion de auditoria.
+Entregado (rebanada 3 — compliance del portal: incidentes, exportacion de auditoria, retencion):
+
+- **Registro de incidentes (migracion `security_incidents`).** `SecurityIncident` con categoria, severidad (`IncidentSeverity`), estado (`IncidentStatus`: OPEN/INVESTIGATING/RESOLVED), deteccion y resolucion. Clase OPERATIVO; prohibido contenido clinico (titulo/descripcion describen el evento y referencian IDs). Servicio con alta, listado y cambio de estado, aislado por medico, todo auditado.
+- **Exportacion de auditoria.** `exportAuditLog` entrega las entradas del medico (como actor o sujeto) en un rango de fechas; el endpoint `GET /api/admin/audit/export` las descarga como JSON. Las entradas referencian IDs, nunca contenido clinico (regla 4), asi que la exportacion es segura. La propia exportacion queda auditada.
+- **Resumen de retencion.** `getRetentionSummary` reporta las ventanas de retencion del portal (alineadas con la limpieza del piloto del paso 9) y los elementos purgables pendientes (buzon, holds y enlaces vencidos). Endpoint `GET /api/admin/retention`.
+- **Endpoints.** `GET/POST /api/admin/incidents`, `PATCH /api/admin/incidents/[id]`, `GET /api/admin/audit/export`, `GET /api/admin/retention`.
+
+Verificacion (rebanada 3): 64 pruebas del portal en verde (+4: ciclo de incidente con sello de resolucion, aislamiento por medico, exportacion de solo lo propio sin contenido clinico y por rango, resumen de retencion), `eslint`/`tsc` limpios y `next build` ok.
+
+Pendiente del paso (rebanada siguiente): ARCO en la app local del medico (acceso/portabilidad, rectificacion y cancelacion de datos del paciente), por decision del inventario (los datos clinicos son del medico y residen en su equipo).
 
 ## MVP recomendado
 
