@@ -2,13 +2,14 @@
 
 ## Estado actual (actualizado 2026-06-11)
 
-**Pasos 0-9 completados.** Toda la implementación del MVP + piloto seguro está lista:
+**Pasos 0-10 completados.** Toda la implementación del MVP + piloto seguro + operación presencial está lista:
 - Portal nube (Next.js + PostgreSQL) con identidad, perfil, agenda, documentos, notificaciones
 - App del médico (Tauri 2 + React + SQLite cifrado) con expediente, SOAP, receta, sincronización E2E
 - Cifrado de extremo a extremo en buzón temporal y resúmenes autorizados
 - Pruebas E2E y validación del flujo completo desde registro hasta consulta
+- Operación presencial: recepción, lista de espera, consulta sin cita, recursos, caja diaria, cobros y recibos (todo local, clase OPERATIVO)
 
-**Siguientes prioridades:** Paso 10 (operación presencial), Paso 11 (IA gobernada), Paso 12 (SaaS/compliance).
+**Siguientes prioridades:** Paso 11 (IA gobernada), Paso 12 (SaaS/compliance).
 
 ## Por que usar linea de desarrollo y no roadmap
 
@@ -62,7 +63,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 7 | Comunicaciones | `superpowers:test-driven-development` | SMS, correo, enlaces cortos, reintentos y bitacora. | ✅ DONE |
 | 8 | Odontologia | `ui-ux-pro-max` | Consulta dental con odontograma, periodontograma y plan. | ✅ DONE |
 | 9 | Piloto seguro | `playwright` | Version lista para piloto real controlado. | ✅ DONE |
-| 10 | Operacion presencial | `impeccable` | Recepcion, caja, lista de espera y consulta sin cita. | ⏳ IN PROGRESS |
+| 10 | Operacion presencial | `impeccable` | Recepcion, caja, lista de espera y consulta sin cita. | ✅ DONE |
 | 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 📋 PENDING |
 | 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | 📋 PENDING |
 
@@ -362,6 +363,20 @@ Checklist de salida:
 | Se valida con | Consultorio puede manejar llegada, espera, cobro y cierre de caja. |
 | Compuerta de avance | Operacion presencial no debe cambiar el nucleo cita-expediente; solo extenderlo. |
 | Push recomendado | Hacer push cuando recepcion, caja, lista de espera y consulta sin cita funcionen sin romper agenda-expediente. |
+
+Entregado (2026-06-11):
+
+- **App del medico (`desktop-app`).** Migracion v6, clase OPERATIVO (solo local; nada viaja a la nube). Modulo de dominio `operations.rs` con pruebas unitarias y comandos Tauri en `lib.rs`. Pantalla `Recepcion.tsx` con pestañas Agenda / Recepcion y caja.
+- **Lista de espera / recepcion / estados operativos.** Tabla `visits` que unifica llegada de cita agendada y consulta sin cita. Estados WAITING → IN_PROGRESS → DONE (CANCELLED terminal), con sellos de tiempo. `check_in_appointment` es idempotente por cita.
+- **Consulta sin cita (RF17).** `register_walk_in` crea paciente local minimo + visita; `start_visit_encounter` abre el expediente (helper nuevo `open_encounter_for_patient` con `appointment_id` nulo) y enlaza la visita — extiende el nucleo clinico sin modificarlo.
+- **Recursos fisicos.** Tabla `resources` (consultorios/equipos), alta/activacion y asignacion validada a la visita.
+- **Caja diaria, cobros, recibos y anticipos (RF38).** Una sesion de caja abierta a la vez (indice unico parcial). `payments` con dinero en centavos, metodos CASH/CARD/TRANSFER y tipos PAYMENT/DEPOSIT/REFUND. Folio de recibo monotono (`R-NNNNNN`). Cierre de caja con totales netos por metodo y efectivo esperado. Sin caja abierta no se cobra.
+
+Verificacion: 35 pruebas de Rust en verde (incluye carrera de caja unica, idempotencia de check-in, neto de reembolsos y congelado del dia), `cargo clippy` limpio, `tsc + vite build` ok y prueba manual del flujo recepcion→caja en el navegador (walk-in en sala, cobro con folio, efectivo esperado correcto).
+
+Pendiente registrado (no implementado; mejora futura del paso):
+
+- **Lista de espera por cancelacion (RF de agenda).** El RF "Gestionar lista de espera" con preferencias de horario, oferta de espacio y expiracion (pacientes que esperan que se libere un hueco) es distinto de la sala de espera del dia que aqui se implemento. Pertenece a la agenda publica del portal; se documenta para un paso futuro, no se implementa ahora.
 
 ## Paso 11 - IA clinica gobernada
 
