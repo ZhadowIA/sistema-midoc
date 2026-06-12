@@ -391,7 +391,7 @@ Pendiente registrado (no implementado; mejora futura del paso):
 | Compuerta de avance | Ninguna salida IA se guarda como clinica sin revision humana. |
 | Push recomendado | Hacer push cuando IA tenga capa multi-proveedor, benchmark documentado, consentimiento, revision humana, trazas, feedback y control de costo. |
 
-Estado: 🚧 EN PROGRESO — rebanadas 1 (fundacion + SOAP), 2 (resumen/instrucciones/brechas), 3 (control de costo), 4 (benchmark clinico) y 5 (reporte de uso al portal por referencia) entregadas (2026-06-11/12). La compuerta de push del paso esta cubierta; resta transcripcion de audio y adaptador real en staging (rebanadas futuras). Construido sobre el paso 10.
+Estado: 🚧 EN PROGRESO — rebanadas 1 (fundacion + SOAP), 2 (resumen/instrucciones/brechas), 3 (control de costo), 4 (benchmark clinico), 5 (reporte de uso al portal por referencia) y 6 (transcripcion de voz gobernada con fake local) entregadas (2026-06-11/12). La compuerta de push del paso esta cubierta; resta adaptador real en staging (rebanada futura). Construido sobre el paso 10.
 
 Entregado (rebanada 1 — fundacion + SOAP asistido):
 
@@ -436,7 +436,18 @@ Entregado (rebanada 5 — reporte de metadatos de uso IA al portal, 2026-06-12):
 - **App del medico.** Migracion SQLite v9 agrega `usage_reported_at` a `ai_runs`. `sync_now` baja el buzon como antes y despues reporta lotes pendientes de uso IA; marca una corrida como enviada solo tras respuesta exitosa del portal. El mock de navegador simula el mismo comportamiento.
 - **Pruebas.** Cobertura en portal para rechazo de referencias con campos extra, ausencia de contenido clinico e idempotencia; cobertura Rust para reportes por referencia y marca local de enviado.
 
-Con esto la compuerta de push del paso 11 queda cubierta: capa multi-proveedor, consentimiento, revision humana, trazas, feedback, control de costo, benchmark documentado y reporte SaaS de uso por referencia. Pendiente (no requerido por la compuerta, rebanadas futuras): transcripcion de consulta por audio/voz (con consentimiento propio) y adaptador de proveedor real en staging.
+Con esto la compuerta de push del paso 11 queda cubierta: capa multi-proveedor, consentimiento, revision humana, trazas, feedback, control de costo, benchmark documentado y reporte SaaS de uso por referencia.
+
+Entregado (rebanada 6 — transcripcion de consulta por audio/voz, RF40, 2026-06-12):
+
+- **Consentimiento separado de voz.** La transcripcion usa alcance propio `VOICE_TRANSCRIPTION`, independiente de `TEXT_ASSIST`. Autorizar asistencia de texto no habilita grabar/transcribir audio.
+- **Proveedor fake local de transcripcion.** `FakeTranscriptionProvider` prueba el contrato sin red ni PHI externa. Los adaptadores reales (Deepgram, AssemblyAI, Nabla, AWS HealthScribe, etc.) quedan para staging con BAA/contrato y controles documentados.
+- **Politica de retencion/descarte.** El audio entra como bytes transitorios y no se persiste. La traza local guarda solo metadatos operativos del audio (`mediaType`, `byteLength`, duracion, archivo y `discarded_after_transcription`) y la transcripcion queda como borrador clinico en la base local cifrada.
+- **Revision humana obligatoria.** La transcripcion se muestra como BORRADOR y solo precarga el campo subjetivo del editor cuando el medico la usa; no guarda nota ni firma consulta automaticamente. Puede descartarse y queda trazada.
+- **Costos y reporte SaaS.** La corrida cuenta en `usage_summary`; `pending_usage_reports` la reporta como `TRANSCRIPTION` con referencias `LOCAL_AI_AUDIO_INPUT`/`LOCAL_AI_TRANSCRIPT_OUTPUT`, nunca con audio ni texto transcrito.
+- **UI y mock.** La pantalla de Atencion expone consentimiento de voz, selector de audio y acciones "Usar en subjetivo"/"Descartar"; el mock de navegador simula el mismo comportamiento para verificacion sin Tauri nativo.
+
+Pendiente (no requerido por la compuerta, rebanada futura): adaptador de proveedor real en staging con BAA/contrato, pruebas contra fakes del contrato real y benchmark de audios representativos autorizados o simulados.
 
 ## Paso 12 - SaaS y compliance avanzado
 

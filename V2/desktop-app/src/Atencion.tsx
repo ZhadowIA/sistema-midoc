@@ -80,6 +80,17 @@ interface TextDraft {
   text: string;
 }
 
+interface TranscriptionDraft {
+  run_id: string;
+  usage_type: string;
+  provider: string;
+  model_version: string;
+  estimated_cost_cents: number;
+  latency_ms: number;
+  transcript_text: string;
+  audio_retention_policy: string;
+}
+
 interface UsageSummary {
   month: string;
   budget_cents: number;
@@ -94,6 +105,17 @@ const TEXT_ASSIST_LABELS: Record<string, string> = {
   PATIENT_INSTRUCTIONS: "Instrucciones al paciente",
   CLINICAL_GAPS: "Brechas clinicas"
 };
+
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
 
 const centsFormatter = new Intl.NumberFormat("es-MX", {
   style: "currency",
@@ -178,8 +200,10 @@ export function Atencion({
   const [busy, setBusy] = useState(false);
   const [signatureValid, setSignatureValid] = useState<boolean | null>(null);
   const [aiConsent, setAiConsent] = useState(false);
+  const [aiVoiceConsent, setAiVoiceConsent] = useState(false);
   const [aiDraft, setAiDraft] = useState<SoapDraft | null>(null);
   const [aiText, setAiText] = useState<TextDraft | null>(null);
+  const [aiTranscription, setAiTranscription] = useState<TranscriptionDraft | null>(null);
   const [aiUsage, setAiUsage] = useState<UsageSummary | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
 
@@ -212,6 +236,9 @@ export function Atencion({
         call<boolean>("ai_consent_status", { patientId: data.patient.id })
           .then(setAiConsent)
           .catch(() => setAiConsent(false));
+        call<boolean>("ai_voice_consent_status", { patientId: data.patient.id })
+          .then(setAiVoiceConsent)
+          .catch(() => setAiVoiceConsent(false));
         call<UsageSummary>("ai_usage_summary")
           .then(setAiUsage)
           .catch(() => setAiUsage(null));
@@ -298,6 +325,16 @@ export function Atencion({
     );
   }
 
+  async function toggleVoiceConsent() {
+    const command = aiVoiceConsent ? "ai_revoke_voice_consent" : "ai_grant_voice_consent";
+    await run(
+      aiVoiceConsent
+        ? "Consentimiento de transcripcion revocado."
+        : "Consentimiento de transcripcion registrado.",
+      () => call(command, { patientId })
+    );
+  }
+
   function generateAiDraft() {
     setBusy(true);
     setMessage("");
@@ -378,6 +415,57 @@ export function Atencion({
     const runId = aiText.run_id;
     setAiText(null);
     void run("Borrador IA descartado.", () =>
+      call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
+    );
+  }
+
+  function transcribeAudioFile(file: File | null) {
+    if (!file) return;
+    setBusy(true);
+    setMessage("");
+    setError("");
+    setAiTranscription(null);
+    fileToBase64(file)
+      .then((audioBase64) =>
+        call<TranscriptionDraft>("ai_transcribe_audio", {
+          encounterId,
+          audio: {
+            fileName: file.name,
+            mediaType: file.type || "audio/webm",
+            audioBase64,
+            durationSeconds: null
+          }
+        })
+      )
+      .then((draft) => {
+        setAiTranscription(draft);
+        setMessage("Transcripcion generada. Revisala antes de usarla.");
+        refreshUsage();
+      })
+      .catch((e: unknown) => setError(String(e)))
+      .finally(() => setBusy(false));
+  }
+
+  function useAiTranscription() {
+    if (!aiTranscription) return;
+    const text = `Transcripcion de consulta (borrador IA):\n${aiTranscription.transcript_text}`;
+    setNote((current) => ({
+      ...current,
+      subjective: current.subjective ? `${current.subjective}\n\n${text}` : text
+    }));
+    const runId = aiTranscription.run_id;
+    setAiTranscription(null);
+    setError("");
+    call("ai_review_run", { runId, status: "APPROVED", feedback: null })
+      .then(() => setMessage("Transcripcion aplicada al editor. Revisa, ajusta y guarda la nota."))
+      .catch((e: unknown) => setError(String(e)));
+  }
+
+  function discardAiTranscription() {
+    if (!aiTranscription) return;
+    const runId = aiTranscription.run_id;
+    setAiTranscription(null);
+    void run("Transcripcion descartada.", () =>
       call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
     );
   }
@@ -558,10 +646,16 @@ export function Atencion({
             </div>
             <div className="button-row">
               <span className={aiConsent ? "pill pill-success" : "pill pill-muted"}>
-                {aiConsent ? "Consentimiento registrado" : "Sin consentimiento"}
+                {aiConsent ? "Texto autorizado" : "Texto sin consentimiento"}
               </span>
               <button className="ghost-button" onClick={() => void toggleConsent()} disabled={busy}>
-                {aiConsent ? "Revocar consentimiento" : "Registrar consentimiento del paciente"}
+                {aiConsent ? "Revocar texto" : "Autorizar texto"}
+              </button>
+              <span className={aiVoiceConsent ? "pill pill-success" : "pill pill-muted"}>
+                {aiVoiceConsent ? "Voz autorizada" : "Voz sin consentimiento"}
+              </span>
+              <button className="ghost-button" onClick={() => void toggleVoiceConsent()} disabled={busy}>
+                {aiVoiceConsent ? "Revocar voz" : "Autorizar voz"}
               </button>
             </div>
 
@@ -621,6 +715,42 @@ export function Atencion({
                 Brechas clinicas
               </button>
             </div>
+
+            <div className="button-row">
+              <label className="field">
+                <span>Audio de consulta</span>
+                <input
+                  type="file"
+                  accept="audio/*"
+                  disabled={busy || !aiVoiceConsent}
+                  onChange={(e) => {
+                    transcribeAudioFile(e.currentTarget.files?.[0] ?? null);
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </label>
+              <span className="meta">Retencion: descarte inmediato del audio.</span>
+            </div>
+
+            {aiTranscription ? (
+              <div className="ai-draft">
+                <p className="meta">
+                  Transcripcion · proveedor {aiTranscription.provider} · modelo{" "}
+                  {aiTranscription.model_version} · costo estimado{" "}
+                  {centsFormatter.format(aiTranscription.estimated_cost_cents / 100)} ·{" "}
+                  {aiTranscription.latency_ms} ms
+                </p>
+                <p className="ai-draft-text">{aiTranscription.transcript_text}</p>
+                <div className="button-row">
+                  <button className="action-button" onClick={useAiTranscription} disabled={busy}>
+                    Usar en subjetivo
+                  </button>
+                  <button className="ghost-button" onClick={discardAiTranscription} disabled={busy}>
+                    Descartar
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             {aiText ? (
               <div className="ai-draft">

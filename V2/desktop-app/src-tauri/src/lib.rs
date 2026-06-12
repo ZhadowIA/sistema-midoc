@@ -13,6 +13,8 @@ mod restore_drill;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
+
+use base64::Engine;
 use tauri::Manager;
 
 /// Open database connection, held for the lifetime of the unlocked session.
@@ -628,6 +630,45 @@ fn ai_revoke_consent(state: tauri::State<'_, AppDb>, patient_id: String) -> Resu
 }
 
 #[tauri::command]
+fn ai_voice_consent_status(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<bool, String> {
+    with_ai(&state, |conn| {
+        Ok(ai::active_consent(conn, &patient_id, ai::SCOPE_VOICE_TRANSCRIPTION)?.is_some())
+    })
+}
+
+#[tauri::command]
+fn ai_grant_voice_consent(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<(), String> {
+    with_ai(&state, |conn| {
+        ai::grant_consent(conn, &patient_id, ai::SCOPE_VOICE_TRANSCRIPTION).map(|_| ())
+    })
+}
+
+#[tauri::command]
+fn ai_revoke_voice_consent(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<(), String> {
+    with_ai(&state, |conn| {
+        ai::revoke_consent(conn, &patient_id, ai::SCOPE_VOICE_TRANSCRIPTION)
+    })
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioTranscriptionPayload {
+    file_name: Option<String>,
+    media_type: String,
+    audio_base64: String,
+    duration_seconds: Option<i64>,
+}
+
+#[tauri::command]
 fn ai_assist_soap(
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
@@ -647,6 +688,31 @@ fn ai_assist_text(
     let registry = ai::ProviderRegistry::default_local();
     with_ai(&state, |conn| {
         ai::assist_text(conn, &encounter_id, &usage_type, &registry)
+    })
+}
+
+#[tauri::command]
+fn ai_transcribe_audio(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    audio: AudioTranscriptionPayload,
+) -> Result<ai::TranscriptionDraft, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(audio.audio_base64.as_bytes())
+        .map_err(|_| "audio invalido".to_string())?;
+    let provider = ai::FakeTranscriptionProvider::new("fake-transcriptor");
+    with_ai(&state, |conn| {
+        ai::transcribe_audio(
+            conn,
+            &encounter_id,
+            ai::AudioInput {
+                file_name: audio.file_name,
+                media_type: audio.media_type,
+                bytes,
+                duration_seconds: audio.duration_seconds,
+            },
+            &provider,
+        )
     })
 }
 
@@ -731,8 +797,12 @@ pub fn run() {
             ai_consent_status,
             ai_grant_consent,
             ai_revoke_consent,
+            ai_voice_consent_status,
+            ai_grant_voice_consent,
+            ai_revoke_voice_consent,
             ai_assist_soap,
             ai_assist_text,
+            ai_transcribe_audio,
             ai_review_run,
             ai_list_runs,
             ai_usage_summary,

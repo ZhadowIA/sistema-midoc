@@ -33,6 +33,7 @@ const mockState = {
   linked: true,
   clinicalProfile: "ODONTOLOGY",
   aiConsent: false,
+  aiVoiceConsent: false,
   aiRunSeq: 0,
   aiBudgetCents: 0,
   aiRuns: [] as Array<{ id: string; usage_type: string; cost_cents: number; status: string; reported: boolean }>,
@@ -388,6 +389,14 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     case "ai_revoke_consent":
       mockState.aiConsent = false;
       return undefined as T;
+    case "ai_voice_consent_status":
+      return mockState.aiVoiceConsent as T;
+    case "ai_grant_voice_consent":
+      mockState.aiVoiceConsent = true;
+      return undefined as T;
+    case "ai_revoke_voice_consent":
+      mockState.aiVoiceConsent = false;
+      return undefined as T;
     case "ai_assist_soap": {
       if (!mockState.aiConsent) throw "falta el consentimiento del paciente para asistencia de IA";
       const spent = mockState.aiRuns.reduce((s, r) => s + r.cost_cents, 0);
@@ -452,6 +461,35 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         estimated_cost_cents: 1,
         latency_ms: 2,
         text
+      } as T;
+    }
+    case "ai_transcribe_audio": {
+      if (!mockState.aiVoiceConsent) {
+        throw "falta el consentimiento del paciente para asistencia de IA";
+      }
+      const spentVoice = mockState.aiRuns.reduce((s, r) => s + r.cost_cents, 0);
+      if (mockState.aiBudgetCents > 0 && spentVoice >= mockState.aiBudgetCents) {
+        throw "se alcanzo el presupuesto mensual de IA; ajustalo para continuar";
+      }
+      mockState.aiRunSeq += 1;
+      const voiceRunId = `ai-run-${mockState.aiRunSeq}`;
+      mockState.aiRuns.push({
+        id: voiceRunId,
+        usage_type: "TRANSCRIPTION",
+        cost_cents: 1,
+        status: "DRAFT",
+        reported: false
+      });
+      const audio = args?.audio as { mediaType?: string; fileName?: string } | undefined;
+      return {
+        run_id: voiceRunId,
+        usage_type: "TRANSCRIPTION",
+        provider: "fake-transcriptor",
+        model_version: "fake-transcription-1",
+        estimated_cost_cents: 1,
+        latency_ms: 2,
+        transcript_text: `Transcripcion (borrador): audio ${audio?.mediaType ?? "audio/webm"}${audio?.fileName ? ` · ${audio.fileName}` : ""}. Revise terminos clinicos, medicamentos, dosis y hablantes antes de usarla.`,
+        audio_retention_policy: "discarded_after_transcription"
       } as T;
     }
     case "ai_review_run": {
