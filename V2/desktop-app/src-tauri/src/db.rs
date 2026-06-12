@@ -265,6 +265,22 @@ const MIGRATIONS: &[&str] = &[
     // input_redacted ni output. Clase: OPERATIVO.
     "ALTER TABLE ai_runs ADD COLUMN usage_reported_at TEXT;
     CREATE INDEX idx_ai_runs_usage_reported ON ai_runs (usage_reported_at);",
+    // v10: solicitudes ARCO (paso 12). El medico atiende ARCO localmente porque
+    // los datos clinicos son suyos y residen en este equipo (decision del
+    // inventario funcional). Registro de la solicitud y su atencion. Clase:
+    // OPERATIVO — solo metadatos de la solicitud, sin contenido clinico. La
+    // cancelacion (borrado) opera sobre el expediente clinico de forma separada.
+    "CREATE TABLE arco_requests (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        request_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        notes TEXT,
+        requested_at TEXT NOT NULL,
+        fulfilled_at TEXT,
+        result_summary TEXT
+    );
+    CREATE INDEX idx_arco_requests_patient ON arco_requests (patient_id);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

@@ -3,6 +3,7 @@ import { call } from "./ipc";
 import { Atencion } from "./Atencion";
 import { Recepcion } from "./Recepcion";
 import { Benchmark } from "./Benchmark";
+import { Arco } from "./Arco";
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
 import "./App.css";
 
@@ -205,7 +206,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [busy, setBusy] = useState(false);
   const [activeEncounter, setActiveEncounter] = useState<string | null>(null);
   const [clinicalProfile, setClinicalProfile] = useState<ClinicalProfile>("GENERAL_MEDICINE");
-  const [view, setView] = useState<"agenda" | "reception" | "benchmark">("agenda");
+  const [view, setView] = useState<"agenda" | "reception" | "benchmark" | "arco">("agenda");
 
   const refresh = useCallback(async () => {
     try {
@@ -335,11 +336,19 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
               >
                 Benchmark IA
               </button>
+              <button
+                className={view === "arco" ? "tab tab-active" : "tab"}
+                onClick={() => setView("arco")}
+              >
+                Privacidad (ARCO)
+              </button>
             </nav>
             {view === "reception" ? (
               <Recepcion onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)} />
             ) : view === "benchmark" ? (
               <Benchmark />
+            ) : view === "arco" ? (
+              <Arco />
             ) : (
           <section className="panel">
             <div className="panel-header">

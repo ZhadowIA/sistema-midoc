@@ -1,4 +1,5 @@
 mod ai;
+mod arco;
 mod clinical;
 mod crypto;
 mod db;
@@ -759,6 +760,63 @@ fn ai_list_benchmarks(state: tauri::State<'_, AppDb>) -> Result<Vec<ai::Benchmar
     with_ai(&state, ai::list_benchmarks)
 }
 
+/* ---------- Derechos ARCO (paso 12) ---------- */
+
+fn with_arco<T>(
+    state: &tauri::State<'_, AppDb>,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, arco::ArcoError>,
+) -> Result<T, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    f(conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn arco_list_requests(state: tauri::State<'_, AppDb>) -> Result<Vec<arco::ArcoRequest>, String> {
+    with_arco(&state, arco::list_arco_requests)
+}
+
+#[tauri::command]
+fn arco_record_request(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+    request_type: String,
+    notes: Option<String>,
+) -> Result<arco::ArcoRequest, String> {
+    with_arco(&state, |conn| {
+        arco::record_arco_request(conn, &patient_id, &request_type, notes.as_deref())
+    })
+}
+
+#[tauri::command]
+fn arco_mark_fulfilled(
+    state: tauri::State<'_, AppDb>,
+    request_id: String,
+    result_summary: String,
+) -> Result<arco::ArcoRequest, String> {
+    with_arco(&state, |conn| {
+        arco::mark_fulfilled(conn, &request_id, &result_summary)
+    })
+}
+
+#[tauri::command]
+fn arco_export_patient_data(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<arco::PatientDataExport, String> {
+    with_arco(&state, |conn| arco::export_patient_data(conn, &patient_id))
+}
+
+#[tauri::command]
+fn arco_fulfill_cancellation(
+    state: tauri::State<'_, AppDb>,
+    request_id: String,
+) -> Result<arco::CancellationResult, String> {
+    let mut guard = state.0.lock().unwrap();
+    let conn = guard.as_mut().ok_or("la base esta bloqueada")?;
+    arco::fulfill_cancellation(conn, &request_id).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -808,7 +866,12 @@ pub fn run() {
             ai_usage_summary,
             ai_set_budget,
             ai_run_benchmark,
-            ai_list_benchmarks
+            ai_list_benchmarks,
+            arco_list_requests,
+            arco_record_request,
+            arco_mark_fulfilled,
+            arco_export_patient_data,
+            arco_fulfill_cancellation
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

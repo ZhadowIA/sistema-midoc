@@ -1,15 +1,17 @@
 # 10 - Linea de desarrollo V2
 
-## Estado actual (actualizado 2026-06-11)
+## Estado actual (actualizado 2026-06-12)
 
-**Pasos 0-10 completados.** Toda la implementación del MVP + piloto seguro + operación presencial está lista:
+**Pasos 0-12 completados.** Toda la implementación del MVP + piloto seguro + operación presencial + IA gobernada + SaaS/compliance está lista:
 - Portal nube (Next.js + PostgreSQL) con identidad, perfil, agenda, documentos, notificaciones
 - App del médico (Tauri 2 + React + SQLite cifrado) con expediente, SOAP, receta, sincronización E2E
 - Cifrado de extremo a extremo en buzón temporal y resúmenes autorizados
 - Pruebas E2E y validación del flujo completo desde registro hasta consulta
 - Operación presencial: recepción, lista de espera, consulta sin cita, recursos, caja diaria, cobros y recibos (todo local, clase OPERATIVO)
+- IA gobernada: capa multi-proveedor, consentimiento, seudonimización, trazas, revisión humana, costo/créditos, benchmark, transcripción de voz y reporte de uso al portal por referencia
+- SaaS/compliance: suscripción con gating por capacidad, 2FA con códigos de recuperación, incidentes, exportación de auditoría, retención y derechos ARCO (residencia local)
 
-**Siguientes prioridades:** Paso 11 (IA gobernada), Paso 12 (SaaS/compliance).
+**Línea de desarrollo completa.** Siguientes prioridades fuera de la línea: pasarela de pago real para la suscripción, panel de administración de planes y endurecimiento de producción/staging con proveedores reales (BAA).
 
 ## Por que usar linea de desarrollo y no roadmap
 
@@ -65,7 +67,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 9 | Piloto seguro | `playwright` | Version lista para piloto real controlado. | ✅ DONE |
 | 10 | Operacion presencial | `impeccable` | Recepcion, caja, lista de espera y consulta sin cita. | ✅ DONE |
 | 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 🚧 IN PROGRESS (fundacion + SOAP asistido) |
-| 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | 🚧 IN PROGRESS (suscripcion, gating, 2FA, compliance portal) |
+| 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | ✅ DONE |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -495,7 +497,17 @@ Entregado (rebanada 3 — compliance del portal: incidentes, exportacion de audi
 
 Verificacion (rebanada 3): 64 pruebas del portal en verde (+4: ciclo de incidente con sello de resolucion, aislamiento por medico, exportacion de solo lo propio sin contenido clinico y por rango, resumen de retencion), `eslint`/`tsc` limpios y `next build` ok.
 
-Pendiente del paso (rebanada siguiente): ARCO en la app local del medico (acceso/portabilidad, rectificacion y cancelacion de datos del paciente), por decision del inventario (los datos clinicos son del medico y residen en su equipo).
+Entregado (rebanada 4 — derechos ARCO en la app del medico):
+
+- **Residencia local.** Por decision del inventario funcional, el medico atiende ARCO desde su app porque el expediente clinico es suyo y reside en este equipo cifrado; la nube nunca tuvo el contenido clinico. Migracion SQLite v10 (`arco_requests`, clase OPERATIVO: solo metadatos de la gestion).
+- **Acceso / portabilidad (`export_patient_data`).** Exporta todo el expediente del paciente (datos personales, encuentros, notas versionadas, recetas y metadatos de documentos) como JSON descargable.
+- **Registro y seguimiento de solicitudes.** Acceso, rectificacion, cancelacion y oposicion; alta con validacion de tipo/paciente, listado, marcado de atendida; todo auditado en la bitacora local.
+- **Cancelacion (borrado) gobernada (`fulfill_cancellation`).** En una transaccion elimina el expediente clinico (encuentros, notas, recetas, documentos, consentimientos y trazas de IA, precheckins) y seudonimiza la identidad del paciente, **preservando los registros contables** (cobros/recibos) por obligacion de retencion fiscal — esos solo guardan importes e IDs, sin datos personales.
+- **UI y mock.** Pestaña "Privacidad (ARCO)" en el espacio de trabajo (registrar/listar solicitudes, exportar expediente, atender cancelacion con confirmacion); el mock de navegador simula el mismo comportamiento.
+
+Verificacion (rebanada 4): 57 pruebas de Rust en verde (+5: exportacion completa, paciente inexistente, validacion de tipo/paciente, cancelacion que borra lo clinico y conserva lo contable, rechazo de cancelacion sobre solicitud que no es de cancelacion), `cargo clippy` sin warnings nuevos (los 9 restantes son de `operations.rs`, paso 10), `tsc + vite build` ok.
+
+Con esto la compuerta de push del paso 12 queda cubierta: suscripcion gestionable y gating por capacidad, 2FA con codigos de recuperacion, registro de incidentes, exportacion de auditoria, resumen de retencion y derechos ARCO con residencia local. Pendiente futuro (no requerido por la compuerta): pasarela de pago real para cobro de la suscripcion (hoy el ciclo de vida es interno) y panel de administracion de planes con capacidades personalizadas.
 
 ## MVP recomendado
 

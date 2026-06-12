@@ -38,6 +38,7 @@ const mockState = {
   aiBudgetCents: 0,
   aiRuns: [] as Array<{ id: string; usage_type: string; cost_cents: number; status: string; reported: boolean }>,
   benchmarks: [] as Array<Record<string, unknown>>,
+  arcoRequests: [] as Array<Record<string, unknown>>,
   appointments: [
     {
       id: "appt-1",
@@ -538,6 +539,67 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         spent_cents: mockState.aiRuns.reduce((s, r) => s + r.cost_cents, 0),
         run_count: mockState.aiRuns.length,
         by_usage: [...byMap.entries()].map(([usage_type, v]) => ({ usage_type, ...v }))
+      } as T;
+    }
+    case "arco_list_requests":
+      return mockState.arcoRequests as T;
+    case "arco_record_request": {
+      const req = {
+        id: `arco-${mockState.arcoRequests.length + 1}`,
+        patient_id: String(args?.patientId ?? "pat-1"),
+        request_type: String(args?.requestType ?? "ACCESS"),
+        status: "PENDING",
+        notes: (args?.notes as string | undefined) ?? null,
+        requested_at: new Date().toISOString(),
+        fulfilled_at: null,
+        result_summary: null
+      };
+      mockState.arcoRequests.unshift(req);
+      return req as T;
+    }
+    case "arco_mark_fulfilled": {
+      const req = mockState.arcoRequests.find((r) => r.id === args?.requestId);
+      if (req) {
+        req.status = "FULFILLED";
+        req.fulfilled_at = new Date().toISOString();
+        req.result_summary = String(args?.resultSummary ?? "");
+      }
+      return req as T;
+    }
+    case "arco_export_patient_data":
+      return {
+        patient_id: String(args?.patientId ?? "pat-1"),
+        first_name: "Hugo",
+        last_name: "Paz",
+        phone: "614 000 1111",
+        email: "hugo@example.com",
+        birth_date: null,
+        sex: null,
+        allergies: "ninguna",
+        medical_background: null,
+        family_background: null,
+        encounters: [],
+        documents: [],
+        generated_at: new Date().toISOString()
+      } as T;
+    case "arco_fulfill_cancellation": {
+      const req = mockState.arcoRequests.find((r) => r.id === args?.requestId);
+      if (req) {
+        req.status = "FULFILLED";
+        req.fulfilled_at = new Date().toISOString();
+        req.result_summary = "Expediente clinico eliminado; identidad seudonimizada.";
+      }
+      return {
+        patient_id: String(req?.patient_id ?? "pat-1"),
+        deleted_encounters: 0,
+        deleted_notes: 0,
+        deleted_prescriptions: 0,
+        deleted_documents: 0,
+        deleted_ai_runs: 0,
+        deleted_ai_consents: 0,
+        deleted_precheckins: 0,
+        anonymized_visits: 0,
+        anonymized_appointments: 0
       } as T;
     }
     default:
