@@ -18,6 +18,49 @@ function nextDateString() {
   return date.toISOString().slice(0, 10);
 }
 
+// Mock data para ratings/reviews - En producción vendrían de la BD
+function getMockRatings() {
+  return {
+    averageRating: 4.8,
+    totalReviews: 127,
+    reviews: [
+      {
+        id: "1",
+        patientName: "María García",
+        rating: 5,
+        date: "2024-06-05",
+        text: "Excelente doctor, muy profesional y atento. Recomendado."
+      },
+      {
+        id: "2",
+        patientName: "Carlos Rodríguez",
+        rating: 5,
+        date: "2024-06-03",
+        text: "Muy amable y competente. La cita fue rápida y eficiente."
+      },
+      {
+        id: "3",
+        patientName: "Ana López",
+        rating: 4,
+        date: "2024-05-28",
+        text: "Buen diagnóstico, aunque tardó un poco en la cita."
+      }
+    ]
+  };
+}
+
+function StarRating({ rating }: { rating: number }) {
+  return (
+    <div className="star-rating">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <span key={star} className={star <= Math.round(rating) ? "star filled" : "star"}>
+          ★
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default async function PublicDoctorProfilePage({
   params
 }: {
@@ -30,25 +73,40 @@ export default async function PublicDoctorProfilePage({
     notFound();
   }
 
-  const location = [profile.doctor.city, profile.doctor.state]
+  const location = [profile.doctor.addressLine1, profile.doctor.city, profile.doctor.state]
     .filter(Boolean)
     .join(", ");
 
   const specialty = profile.doctor.specialty === "ODONTOLOGY" ? "Odontología" : "Medicina General";
+  const ratings = getMockRatings();
 
   return (
     <section className="public-shell">
-      {/* Doctor Header Card - Doctoralia Style */}
+      {/* Doctor Header Card - Premium Doctoralia Style */}
       <div className="doctor-header-card">
         <div className="doctor-header-content">
           <div className="doctor-header-info">
             <div className="specialty-badge">{specialty}</div>
             <h1 className="doctor-name">Dr(a). {profile.doctor.professionalName}</h1>
 
+            {/* Rating Section */}
+            <div className="rating-section">
+              <StarRating rating={ratings.averageRating} />
+              <span className="rating-value">{ratings.averageRating}</span>
+              <span className="rating-count">({ratings.totalReviews} opiniones)</span>
+            </div>
+
             {location && (
               <div className="doctor-location">
                 <span className="location-icon">📍</span>
                 <span>{location}</span>
+              </div>
+            )}
+
+            {profile.doctor.phone && (
+              <div className="doctor-phone">
+                <span className="phone-icon">📱</span>
+                <span>{profile.doctor.phone}</span>
               </div>
             )}
 
@@ -63,11 +121,24 @@ export default async function PublicDoctorProfilePage({
                   <span className="meta-value">{profile.doctor.licenseNumber}</span>
                 </div>
               )}
+            </div>
+
+            {/* Contact Buttons */}
+            <div className="contact-buttons">
               {profile.doctor.phone && (
-                <div className="meta-item">
-                  <span className="meta-label">Teléfono</span>
-                  <span className="meta-value">{profile.doctor.phone}</span>
-                </div>
+                <>
+                  <a href={`tel:${profile.doctor.phone}`} className="action-button contact-btn">
+                    📞 Llamar
+                  </a>
+                  <a
+                    href={`https://wa.me/${profile.doctor.phone.replace(/\D/g, '')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="action-button contact-btn whatsapp-btn"
+                  >
+                    💬 WhatsApp
+                  </a>
+                </>
               )}
             </div>
           </div>
@@ -88,6 +159,19 @@ export default async function PublicDoctorProfilePage({
           </div>
         </div>
       </div>
+
+      {/* About Section */}
+      <section className="about-section">
+        <div className="section-header">
+          <h2>Acerca de mí</h2>
+        </div>
+        <div className="about-card">
+          <p>
+            {profile.doctor.description ||
+              "Profesional con experiencia en atención clínica, dedicado a proporcionar un servicio de calidad con seguimiento integral de los pacientes."}
+          </p>
+        </div>
+      </section>
 
       {/* Services Section */}
       {profile.services.length > 0 && (
@@ -163,6 +247,50 @@ export default async function PublicDoctorProfilePage({
         </section>
       )}
 
+      {/* Location/Map Section */}
+      {location && (
+        <section className="location-section">
+          <div className="section-header">
+            <h2>Ubicación</h2>
+          </div>
+          <div className="location-card">
+            <div className="location-info">
+              <p className="location-text">{location}</p>
+            </div>
+            <iframe
+              className="location-map"
+              src={`https://www.google.com/maps/embed/v1/place?key=AIzaSyDzPvzIi81ZYB2-2KPuYRXLhzG6dHWzc9E&q=${encodeURIComponent(location)}`}
+              allowFullScreen={true}
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+            ></iframe>
+          </div>
+        </section>
+      )}
+
+      {/* Gallery Section */}
+      <section className="gallery-section">
+        <div className="section-header">
+          <h2>Galería</h2>
+          <p className="section-subtitle">Consultorio y equipo médico</p>
+        </div>
+        <div className="gallery-grid">
+          {/* Mock gallery items - En producción vendrían de la BD */}
+          <div className="gallery-item">
+            <div className="gallery-placeholder">📸</div>
+            <p>Consultorio principal</p>
+          </div>
+          <div className="gallery-item">
+            <div className="gallery-placeholder">🏥</div>
+            <p>Sala de espera</p>
+          </div>
+          <div className="gallery-item">
+            <div className="gallery-placeholder">⚕️</div>
+            <p>Equipo médico</p>
+          </div>
+        </div>
+      </section>
+
       {/* Booking Section */}
       <section className="booking-section">
         <div className="section-header">
@@ -172,6 +300,35 @@ export default async function PublicDoctorProfilePage({
 
         <BookingClient profile={profile} initialDate={nextDateString()} />
       </section>
+
+      {/* Reviews Section */}
+      {ratings.reviews.length > 0 && (
+        <section className="reviews-section">
+          <div className="section-header">
+            <h2>Opiniones de pacientes</h2>
+            <p className="section-subtitle">{ratings.totalReviews} pacientes han valorado su servicio</p>
+          </div>
+
+          <div className="reviews-grid">
+            {ratings.reviews.map((review) => (
+              <div className="review-card" key={review.id}>
+                <div className="review-header">
+                  <div>
+                    <h4 className="review-author">{review.patientName}</h4>
+                    <p className="review-date">
+                      {new Intl.DateTimeFormat("es-MX", {
+                        dateStyle: "long"
+                      }).format(new Date(review.date))}
+                    </p>
+                  </div>
+                  <StarRating rating={review.rating} />
+                </div>
+                <p className="review-text">{review.text}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </section>
   );
 }
