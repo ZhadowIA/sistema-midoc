@@ -120,9 +120,204 @@ function mockDetail() {
   };
 }
 
+interface MockVisit {
+  id: string;
+  appointment_id: string | null;
+  patient_id: string | null;
+  patient_name: string;
+  patient_phone: string | null;
+  reason: string | null;
+  service_name: string | null;
+  state: string;
+  priority: number;
+  resource_id: string | null;
+  resource_name: string | null;
+  encounter_id: string | null;
+  arrived_at: string;
+  started_at: string | null;
+  ended_at: string | null;
+}
+
+const ops = {
+  resources: [{ id: "res-1", name: "Consultorio 1", kind: "ROOM", active: true }],
+  visits: [] as MockVisit[],
+  session: null as
+    | { id: string; opened_at: string; opening_float_cents: number; closed_at: string | null; closing_counted_cents: number | null; notes: string | null }
+    | null,
+  payments: [] as Array<{
+    id: string;
+    cash_session_id: string;
+    visit_id: string | null;
+    patient_id: string | null;
+    amount_cents: number;
+    method: string;
+    kind: string;
+    concept: string | null;
+    receipt_number: string;
+    created_at: string;
+  }>,
+  receiptSeq: 0
+};
+
+function opsSummary() {
+  const session = ops.session!;
+  const signed = (p: { amount_cents: number; kind: string }) =>
+    p.kind === "REFUND" ? -p.amount_cents : p.amount_cents;
+  const byMethodMap = new Map<string, number>();
+  for (const p of ops.payments) {
+    byMethodMap.set(p.method, (byMethodMap.get(p.method) ?? 0) + signed(p));
+  }
+  const net = ops.payments.reduce((sum, p) => sum + signed(p), 0);
+  const cashNet = ops.payments
+    .filter((p) => p.method === "CASH")
+    .reduce((sum, p) => sum + signed(p), 0);
+  return {
+    session,
+    payment_count: ops.payments.length,
+    net_total_cents: net,
+    by_method: [...byMethodMap.entries()].map(([method, total_cents]) => ({ method, total_cents })),
+    expected_cash_cents: session.opening_float_cents + cashNet
+  };
+}
+
 async function mockCall<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   await new Promise((resolve) => setTimeout(resolve, 120));
   const e = mockState.encounter;
+
+  switch (command) {
+    case "list_resources":
+      return ops.resources as T;
+    case "create_resource": {
+      const input = args?.resource as { name: string; kind: string };
+      const resource = { id: `res-${ops.resources.length + 1}`, name: input.name, kind: input.kind, active: true };
+      ops.resources.push(resource);
+      return resource as T;
+    }
+    case "set_resource_active": {
+      const r = ops.resources.find((x) => x.id === args?.resourceId);
+      if (r) r.active = Boolean(args?.active);
+      return undefined as T;
+    }
+    case "list_active_visits":
+      return ops.visits.filter((v) => v.state === "WAITING" || v.state === "IN_PROGRESS") as T;
+    case "check_in_appointment": {
+      const appt = mockState.appointments.find((a) => a.id === args?.appointmentId);
+      const visit: MockVisit = {
+        id: `visit-${ops.visits.length + 1}`,
+        appointment_id: String(args?.appointmentId),
+        patient_id: "pat-1",
+        patient_name: appt?.patient_name ?? "Paciente",
+        patient_phone: appt?.patient_phone ?? null,
+        reason: appt?.reason ?? null,
+        service_name: appt?.service_name ?? null,
+        state: "WAITING",
+        priority: 0,
+        resource_id: null,
+        resource_name: null,
+        encounter_id: null,
+        arrived_at: new Date().toISOString(),
+        started_at: null,
+        ended_at: null
+      };
+      ops.visits.push(visit);
+      return visit as T;
+    }
+    case "register_walk_in": {
+      const input = args?.walkIn as { patient_name: string; patient_phone: string | null; reason: string | null };
+      const visit: MockVisit = {
+        id: `visit-${ops.visits.length + 1}`,
+        appointment_id: null,
+        patient_id: `pat-walkin-${ops.visits.length + 1}`,
+        patient_name: input.patient_name,
+        patient_phone: input.patient_phone,
+        reason: input.reason,
+        service_name: null,
+        state: "WAITING",
+        priority: 0,
+        resource_id: null,
+        resource_name: null,
+        encounter_id: null,
+        arrived_at: new Date().toISOString(),
+        started_at: null,
+        ended_at: null
+      };
+      ops.visits.push(visit);
+      return visit as T;
+    }
+    case "set_visit_state": {
+      const v = ops.visits.find((x) => x.id === args?.visitId);
+      if (v) v.state = String(args?.visitState);
+      return v as T;
+    }
+    case "assign_resource": {
+      const v = ops.visits.find((x) => x.id === args?.visitId);
+      const r = ops.resources.find((x) => x.id === args?.resourceId);
+      if (v) {
+        v.resource_id = r?.id ?? null;
+        v.resource_name = r?.name ?? null;
+      }
+      return v as T;
+    }
+    case "start_visit_encounter": {
+      const v = ops.visits.find((x) => x.id === args?.visitId);
+      if (v) {
+        v.state = "IN_PROGRESS";
+        v.encounter_id = e.id;
+      }
+      return e.id as T;
+    }
+    case "get_open_cash_session":
+      return ops.session as T;
+    case "open_cash_session":
+      ops.session = {
+        id: "cash-1",
+        opened_at: new Date().toISOString(),
+        opening_float_cents: Number(args?.openingFloatCents ?? 0),
+        closed_at: null,
+        closing_counted_cents: null,
+        notes: null
+      };
+      ops.payments = [];
+      return ops.session as T;
+    case "cash_summary":
+      return opsSummary() as T;
+    case "close_cash_session": {
+      const summary = opsSummary();
+      ops.session!.closed_at = new Date().toISOString();
+      ops.session!.closing_counted_cents = Number(args?.countedCashCents ?? 0);
+      const result = { ...summary, session: ops.session! };
+      ops.session = null;
+      return result as T;
+    }
+    case "register_payment": {
+      if (!ops.session) throw "no hay una caja abierta; abre la caja del dia antes de cobrar";
+      const input = args?.payment as {
+        visit_id: string | null;
+        patient_id: string | null;
+        amount_cents: number;
+        method: string;
+        kind: string;
+        concept: string | null;
+      };
+      ops.receiptSeq += 1;
+      const payment = {
+        id: `pay-${ops.receiptSeq}`,
+        cash_session_id: ops.session.id,
+        visit_id: input.visit_id,
+        patient_id: input.patient_id,
+        amount_cents: input.amount_cents,
+        method: input.method,
+        kind: input.kind,
+        concept: input.concept,
+        receipt_number: `R-${String(ops.receiptSeq).padStart(6, "0")}`,
+        created_at: new Date().toISOString()
+      };
+      ops.payments.push(payment);
+      return payment as T;
+    }
+    case "list_session_payments":
+      return [...ops.payments].reverse() as T;
+  }
 
   switch (command) {
     case "unlock_database":

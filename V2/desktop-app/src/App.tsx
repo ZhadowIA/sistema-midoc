@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
 import { Atencion } from "./Atencion";
+import { Recepcion } from "./Recepcion";
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
 import "./App.css";
 
@@ -203,6 +204,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [busy, setBusy] = useState(false);
   const [activeEncounter, setActiveEncounter] = useState<string | null>(null);
   const [clinicalProfile, setClinicalProfile] = useState<ClinicalProfile>("GENERAL_MEDICINE");
+  const [view, setView] = useState<"agenda" | "reception">("agenda");
 
   const refresh = useCallback(async () => {
     try {
@@ -305,6 +307,24 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
         ) : !status.linked ? (
           <LinkAccountForm onLinked={() => void refresh()} />
         ) : (
+          <>
+            <nav className="tab-row">
+              <button
+                className={view === "agenda" ? "tab tab-active" : "tab"}
+                onClick={() => setView("agenda")}
+              >
+                Agenda
+              </button>
+              <button
+                className={view === "reception" ? "tab tab-active" : "tab"}
+                onClick={() => setView("reception")}
+              >
+                Recepcion y caja
+              </button>
+            </nav>
+            {view === "reception" ? (
+              <Recepcion onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)} />
+            ) : (
           <section className="panel">
             <div className="panel-header">
               <h2>Agenda</h2>
@@ -354,6 +374,8 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
               </ul>
             )}
           </section>
+            )}
+          </>
         )}
 
         <p className="footer-meta">
