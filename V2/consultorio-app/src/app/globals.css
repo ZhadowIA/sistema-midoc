@@ -572,9 +572,147 @@ a.service-card:hover {
 
 .slot-button.active {
   border-color: var(--primary);
-  background: var(--primary-soft);
-  color: var(--primary);
+  background: var(--primary);
+  color: white;
   font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.slot-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Modern booking layout */
+
+.booking-modern {
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.booking-search-panel,
+.booking-form-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.booking-step-title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.booking-search-panel .booking-step-title::before {
+  content: '1';
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--primary);
+  color: white;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.booking-form-panel .booking-step-title::before {
+  content: '2';
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--primary);
+  color: white;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.booking-toolbar {
+  display: grid;
+  gap: 12px;
+}
+
+.search-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-control);
+  color: var(--danger);
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.slots-available {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.slots-info {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 8px;
+}
+
+.slot-button {
+  padding: 10px 8px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.slot-button:hover:not(.active) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.no-slots {
+  text-align: center;
+  padding: 20px;
+  background: var(--surface);
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.no-slots p {
+  margin: 0;
+}
+
+.booking-form {
+  display: grid;
+  gap: 14px;
+}
+
+.form-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.action-button-large {
+  min-height: 48px;
+  font-size: 1rem;
+  font-weight: 600;
+  width: 100%;
 }
 
 .status-copy {
@@ -594,7 +732,295 @@ a.service-card:hover {
   background: transparent;
 }
 
-/* ---------- Auth ---------- */
+/* ---------- Doctoralia-style Doctor Profile ---------- */
+
+.doctor-header-card {
+  background: linear-gradient(135deg, var(--primary-soft) 0%, var(--accent-soft) 100%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 32px;
+  margin-bottom: 4px;
+}
+
+.doctor-header-content {
+  display: grid;
+  gap: 28px;
+}
+
+.doctor-header-info {
+  display: grid;
+  gap: 12px;
+}
+
+.specialty-badge {
+  display: inline-flex;
+  width: fit-content;
+  padding: 6px 12px;
+  background: var(--primary);
+  color: white;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.doctor-name {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.doctor-location {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.location-icon {
+  font-size: 1.2rem;
+}
+
+.doctor-bio {
+  margin: 8px 0 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.doctor-meta-items {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.meta-item {
+  display: grid;
+  gap: 4px;
+}
+
+.meta-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.meta-value {
+  font-size: 0.95rem;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.doctor-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.stat-item {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: var(--radius-control);
+  text-align: center;
+}
+
+.stat-number {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* Services Section */
+
+.services-section,
+.availability-section,
+.booking-section {
+  display: grid;
+  gap: 20px;
+}
+
+.section-header {
+  display: grid;
+  gap: 8px;
+}
+
+.section-header h2 {
+  margin: 0;
+  color: var(--ink);
+}
+
+.section-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.services-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.service-card {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 20px;
+  transition: all var(--speed) var(--ease);
+  display: grid;
+  gap: 12px;
+}
+
+.service-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  transform: translateY(-2px);
+}
+
+.service-header {
+  display: grid;
+  gap: 8px;
+}
+
+.service-name {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.service-price {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.service-description {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.service-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Availability Section */
+
+.availability-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.availability-card {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 16px;
+  transition: border-color var(--speed) var(--ease);
+}
+
+.availability-card:hover {
+  border-color: var(--primary);
+}
+
+.availability-day {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+
+.availability-time {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--primary);
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.time-icon {
+  font-size: 1.2rem;
+}
+
+.availability-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.availability-details small {
+  display: inline-block;
+  padding: 4px 8px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.blocks-notice {
+  margin-top: 20px;
+  padding: 16px;
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-panel);
+}
+
+.blocks-notice h3 {
+  margin: 0 0 12px 0;
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.blocks-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.blocks-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+
+.block-date {
+  font-weight: 600;
+}
+
+.block-reason {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Auth ---------- */
 
 .auth-shell {
   min-height: calc(100vh - 120px);
@@ -765,6 +1191,24 @@ a.service-card:hover {
 /* ---------- Responsive ---------- */
 
 @media (min-width: 860px) {
+  .doctor-header-card {
+    padding: 40px;
+  }
+
+  .doctor-header-content {
+    grid-template-columns: 1.5fr 1fr;
+    align-items: start;
+  }
+
+  .doctor-stats {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .stat-item {
+    padding: 12px;
+  }
+
   .hero-card {
     grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
     align-items: stretch;
@@ -774,13 +1218,25 @@ a.service-card:hover {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .booking-shell {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .services-grid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  }
+
+  .availability-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  }
+
+  .booking-modern {
+    grid-template-columns: 1fr 1fr;
   }
 
   .booking-toolbar {
     grid-template-columns: minmax(0, 1.3fr) minmax(180px, 0.8fr) auto;
     align-items: end;
+  }
+
+  .slot-grid {
+    grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
   }
 
   .booking-form,
@@ -791,9 +1247,49 @@ a.service-card:hover {
   .field-full {
     grid-column: 1 / -1;
   }
+
+  .booking-shell {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 859px) {
+  .doctor-header-content {
+    grid-template-columns: 1fr;
+  }
+
+  .doctor-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .stat-item {
+    padding: 12px;
+  }
+
+  .stat-number {
+    font-size: 1.4rem;
+  }
+
+  .services-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .availability-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .booking-modern {
+    grid-template-columns: 1fr;
+  }
+
+  .booking-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .slot-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
   .hero-panel,
   .app-grid {
     grid-template-columns: 1fr;

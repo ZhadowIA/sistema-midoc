@@ -44,6 +44,7 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
   const [selectedSlot, setSelectedSlot] = useState<string>("");
   const [holdToken, setHoldToken] = useState<string>("");
   const [message, setMessage] = useState<string>("");
+  const [searchError, setSearchError] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [patient, setPatient] = useState({
     firstName: "",
@@ -59,7 +60,7 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
     }
 
     setBusy(true);
-    setMessage("");
+    setSearchError("");
 
     try {
       const response = await fetch(
@@ -74,8 +75,10 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
       setSlots(data.slots);
       setSelectedSlot("");
       setHoldToken("");
+      setSearchError("");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No fue posible consultar horarios.");
+      setSearchError(error instanceof Error ? error.message : "No fue posible consultar horarios.");
+      setSlots([]);
     } finally {
       setBusy(false);
     }
@@ -159,17 +162,18 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
   }
 
   return (
-    <section className="booking-shell booking-shell-inline">
-      <article className="panel">
-        <div className="panel-header">
-          <span className="section-kicker">Agenda publica</span>
-          <h2>Selecciona servicio y horario</h2>
-        </div>
+    <section className="booking-shell booking-modern">
+      <div className="booking-search-panel">
+        <h3 className="booking-step-title">Paso 1: Selecciona horario</h3>
 
         <div className="booking-toolbar">
           <label className="field">
             <span>Servicio</span>
-            <select value={serviceId} onChange={(event) => setServiceId(event.target.value)}>
+            <select value={serviceId} onChange={(event) => {
+              const value = event.currentTarget.value;
+              setServiceId(value);
+              setSearchError("");
+            }}>
               {profile.services.map((service) => (
                 <option key={service.id} value={service.id}>
                   {service.name} · {currency(service.priceCents, service.currency)}
@@ -180,90 +184,123 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
 
           <label className="field">
             <span>Fecha</span>
-            <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
+            <input type="date" value={dateFrom} onChange={(event) => {
+              const value = event.currentTarget.value;
+              setDateFrom(value);
+              setSearchError("");
+            }} />
           </label>
 
           <button className="action-button" onClick={loadSlots} disabled={busy}>
-            {busy ? "Consultando..." : "Buscar horarios"}
+            {busy ? "Buscando..." : "Buscar horarios"}
           </button>
         </div>
 
-        <div className="slot-grid">
-          {slots.map((slot) => (
-            <button
-              className={selectedSlot === slot.slotStart ? "slot-button active" : "slot-button"}
-              key={slot.slotStart}
-              onClick={() => reserveSlot(slot.slotStart)}
-              type="button"
-            >
-              {new Intl.DateTimeFormat("es-MX", {
-                hour: "2-digit",
-                minute: "2-digit"
-              }).format(new Date(slot.slotStart))}
-            </button>
-          ))}
-        </div>
-
-        {!busy && slots.length === 0 ? (
-          <p className="status-copy">Selecciona servicio y fecha para consultar horarios disponibles.</p>
+        {searchError ? (
+          <div className="search-error">
+            <span>⚠️</span>
+            <span>{searchError}</span>
+          </div>
         ) : null}
-      </article>
 
-      <article className="panel">
-        <div className="panel-header">
-          <span className="section-kicker">Paciente</span>
-          <h2>Confirma tu cita</h2>
-        </div>
+        {slots.length > 0 ? (
+          <div className="slots-available">
+            <p className="slots-info">Horarios disponibles ({slots.length})</p>
+            <div className="slot-grid">
+              {slots.map((slot) => (
+                <button
+                  className={selectedSlot === slot.slotStart ? "slot-button active" : "slot-button"}
+                  key={slot.slotStart}
+                  onClick={() => reserveSlot(slot.slotStart)}
+                  type="button"
+                >
+                  {new Intl.DateTimeFormat("es-MX", {
+                    hour: "2-digit",
+                    minute: "2-digit"
+                  }).format(new Date(slot.slotStart))}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : !busy ? (
+          <div className="no-slots">
+            <p>📅 Selecciona una fecha para ver horarios disponibles</p>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="booking-form-panel">
+        <h3 className="booking-step-title">Paso 2: Tus datos</h3>
 
         <form className="booking-form" onSubmit={submitBooking}>
           <label className="field">
-            <span>Nombre</span>
+            <span>Nombre*</span>
             <input
               required
+              placeholder="Tu nombre"
               value={patient.firstName}
               onChange={(event) => setPatient((current) => ({ ...current, firstName: event.target.value }))}
             />
           </label>
+
           <label className="field">
-            <span>Apellidos</span>
+            <span>Apellidos*</span>
             <input
               required
+              placeholder="Tus apellidos"
               value={patient.lastName}
               onChange={(event) => setPatient((current) => ({ ...current, lastName: event.target.value }))}
             />
           </label>
+
           <label className="field">
-            <span>Telefono</span>
+            <span>Teléfono*</span>
             <input
               required
+              type="tel"
+              placeholder="Tu teléfono"
               value={patient.phone}
               onChange={(event) => setPatient((current) => ({ ...current, phone: event.target.value }))}
             />
           </label>
+
           <label className="field">
-            <span>Correo</span>
+            <span>Correo electrónico</span>
             <input
               type="email"
+              placeholder="Tu correo (opcional)"
               value={patient.email}
               onChange={(event) => setPatient((current) => ({ ...current, email: event.target.value }))}
             />
           </label>
+
           <label className="field field-full">
-            <span>Motivo de consulta</span>
+            <span>Motivo de la cita</span>
             <textarea
-              rows={4}
+              rows={3}
+              placeholder="Cuéntanos brevemente qué te trae aquí"
               value={patient.reason}
               onChange={(event) => setPatient((current) => ({ ...current, reason: event.target.value }))}
             />
           </label>
 
-          <button className="action-button" disabled={busy || !holdToken} type="submit">
-            {busy ? "Guardando..." : "Crear cita"}
-          </button>
-        </form>
+          <div className="form-actions">
+            <button
+              className="action-button action-button-large"
+              disabled={busy || !holdToken}
+              type="submit"
+            >
+              {busy ? "Confirmando..." : "Confirmar cita"}
+            </button>
+          </div>
 
-        {message ? <p className="status-copy">{message}</p> : null}
-      </article>
+          {message && (
+            <div className={message.includes("expiro") ? "form-error" : "form-success"}>
+              {message}
+            </div>
+          )}
+        </form>
+      </div>
     </section>
   );
 }
