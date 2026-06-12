@@ -1,5 +1,15 @@
 # 10 - Linea de desarrollo V2
 
+## Estado actual (actualizado 2026-06-11)
+
+**Pasos 0-9 completados.** Toda la implementación del MVP + piloto seguro está lista:
+- Portal nube (Next.js + PostgreSQL) con identidad, perfil, agenda, documentos, notificaciones
+- App del médico (Tauri 2 + React + SQLite cifrado) con expediente, SOAP, receta, sincronización E2E
+- Cifrado de extremo a extremo en buzón temporal y resúmenes autorizados
+- Pruebas E2E y validación del flujo completo desde registro hasta consulta
+
+**Siguientes prioridades:** Paso 10 (operación presencial), Paso 11 (IA gobernada), Paso 12 (SaaS/compliance).
+
 ## Por que usar linea de desarrollo y no roadmap
 
 Un roadmap dice hacia donde va el producto. Para MiDoc V2 conviene una linea de desarrollo por pasos con compuertas, porque el riesgo principal no es perder vision, sino avanzar con funciones incompletas o volver a crecer el sistema sin control.
@@ -40,21 +50,21 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 
 ## Vista general
 
-| Paso | Nombre | Skill principal | Resultado |
-|---|---|---|---|
-| 0 | Preparacion V2 | `learn-codebase` | Base tecnica limpia para construir. |
-| 1 | Identidad y legal | `codex-security:security-scan` | Usuarios seguros, sesiones, recuperacion y aceptacion legal. |
-| 2 | Perfil y disponibilidad | `ui-ux-pro-max` | Medico publica servicios, horarios y perfil clinico. |
-| 3 | Agenda publica | `superpowers:test-driven-development` | Paciente agenda con hold temporal y cita vinculada. |
-| 4 | Atencion integrada | `superpowers:writing-plans` | Medico atiende desde cita con expediente, SOAP y receta. |
-| 5 | Medicina general/familiar | `coding-standards` | Consulta general completa y usable sin IA. |
-| 6 | Paciente y documentos | `codex-security:security-scan` | Precheckin, estudios, portal e historial autorizado. |
-| 7 | Comunicaciones | `superpowers:test-driven-development` | SMS, correo, enlaces cortos, reintentos y bitacora. |
-| 8 | Odontologia | `ui-ux-pro-max` | Consulta dental con odontograma, periodontograma y plan. |
-| 9 | Piloto seguro | `playwright` | Version lista para piloto real controlado. |
-| 10 | Operacion presencial | `impeccable` | Recepcion, caja, lista de espera y consulta sin cita. |
-| 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. |
-| 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. |
+| Paso | Nombre | Skill principal | Resultado | Estado |
+|---|---|---|---|---|
+| 0 | Preparacion V2 | `learn-codebase` | Base tecnica limpia para construir. | ✅ DONE |
+| 1 | Identidad y legal | `codex-security:security-scan` | Usuarios seguros, sesiones, recuperacion y aceptacion legal. | ✅ DONE |
+| 2 | Perfil y disponibilidad | `ui-ux-pro-max` | Medico publica servicios, horarios y perfil clinico. | ✅ DONE |
+| 3 | Agenda publica | `superpowers:test-driven-development` | Paciente agenda con hold temporal y cita vinculada. | ✅ DONE |
+| 4 | Atencion integrada | `superpowers:writing-plans` | Medico atiende desde cita con expediente, SOAP y receta. | ✅ DONE |
+| 5 | Medicina general/familiar | `coding-standards` | Consulta general completa y usable sin IA. | ✅ DONE |
+| 6 | Paciente y documentos | `codex-security:security-scan` | Precheckin, estudios, portal e historial autorizado. | ✅ DONE |
+| 7 | Comunicaciones | `superpowers:test-driven-development` | SMS, correo, enlaces cortos, reintentos y bitacora. | ✅ DONE |
+| 8 | Odontologia | `ui-ux-pro-max` | Consulta dental con odontograma, periodontograma y plan. | ✅ DONE |
+| 9 | Piloto seguro | `playwright` | Version lista para piloto real controlado. | ✅ DONE |
+| 10 | Operacion presencial | `impeccable` | Recepcion, caja, lista de espera y consulta sin cita. | ⏳ IN PROGRESS |
+| 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 📋 PENDING |
+| 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | 📋 PENDING |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
