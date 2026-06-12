@@ -32,6 +32,8 @@ interface MockNote {
 const mockState = {
   linked: true,
   clinicalProfile: "ODONTOLOGY",
+  aiConsent: false,
+  aiRunSeq: 0,
   appointments: [
     {
       id: "appt-1",
@@ -372,6 +374,39 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return mockDetail().encounter as T;
     case "verify_signature":
       return true as T;
+    case "ai_consent_status":
+      return mockState.aiConsent as T;
+    case "ai_grant_consent":
+      mockState.aiConsent = true;
+      return undefined as T;
+    case "ai_revoke_consent":
+      mockState.aiConsent = false;
+      return undefined as T;
+    case "ai_assist_soap": {
+      if (!mockState.aiConsent) throw "falta el consentimiento del paciente para asistencia de IA";
+      mockState.aiRunSeq += 1;
+      const context = "Motivo de consulta: Dolor en molar superior derecho";
+      return {
+        run_id: `ai-run-${mockState.aiRunSeq}`,
+        provider: "fake-clinico",
+        model_version: "fake-1",
+        estimated_cost_cents: 1,
+        latency_ms: 2,
+        draft: {
+          subjective: `Borrador IA a partir del contexto disponible:\n${context}`,
+          objective: "Exploracion fisica: (a completar por el medico).",
+          assessment: "Impresion diagnostica: (a confirmar por el medico).",
+          plan: "Plan sugerido: (revisar y ajustar).",
+          diagnosis: "",
+          instructions: "Indicaciones al paciente: (a definir por el medico).",
+          specialty: null
+        }
+      } as T;
+    }
+    case "ai_review_run":
+      return { id: String(args?.runId), status: String(args?.status) } as T;
+    case "ai_list_runs":
+      return [] as T;
     default:
       throw new Error(`mock sin comando: ${command}`);
   }

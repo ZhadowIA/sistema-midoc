@@ -668,6 +668,22 @@ textarea:disabled {
   gap: 8px 20px;
 }
 
+/* IA gobernada (paso 11): borrador SOAP para revision humana. */
+.ai-draft {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px dashed var(--primary);
+  border-radius: var(--radius-panel);
+  background: var(--primary-soft);
+}
+
+.ai-draft-text {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -61,6 +61,20 @@ interface EncounterDetail {
   }>;
 }
 
+interface SoapDraft {
+  run_id: string;
+  provider: string;
+  model_version: string;
+  estimated_cost_cents: number;
+  latency_ms: number;
+  draft: Omit<NoteContent, "specialty"> & { specialty: unknown };
+}
+
+const centsFormatter = new Intl.NumberFormat("es-MX", {
+  style: "currency",
+  currency: "MXN"
+});
+
 const EMPTY_NOTE: NoteContent = {
   subjective: "",
   objective: "",
@@ -138,6 +152,8 @@ export function Atencion({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [signatureValid, setSignatureValid] = useState<boolean | null>(null);
+  const [aiConsent, setAiConsent] = useState(false);
+  const [aiDraft, setAiDraft] = useState<SoapDraft | null>(null);
 
   const load = useCallback(() => {
     call<EncounterDetail>("get_encounter", { encounterId })
@@ -165,6 +181,9 @@ export function Atencion({
         } else {
           setSignatureValid(null);
         }
+        call<boolean>("ai_consent_status", { patientId: data.patient.id })
+          .then(setAiConsent)
+          .catch(() => setAiConsent(false));
       })
       .catch((e: unknown) => setError(String(e)));
   }, [encounterId, resolvedProfile]);
@@ -233,6 +252,60 @@ export function Atencion({
           birth_date: background.birth_date || null
         }
       })
+    );
+  }
+
+  async function toggleConsent() {
+    const command = aiConsent ? "ai_revoke_consent" : "ai_grant_consent";
+    await run(
+      aiConsent ? "Consentimiento de IA revocado." : "Consentimiento de IA registrado.",
+      () => call(command, { patientId })
+    );
+  }
+
+  function generateAiDraft() {
+    setBusy(true);
+    setMessage("");
+    setError("");
+    setAiDraft(null);
+    call<SoapDraft>("ai_assist_soap", { encounterId })
+      .then((draft) => {
+        setAiDraft(draft);
+        setMessage("Borrador IA generado. Revisalo antes de usarlo.");
+      })
+      .catch((e: unknown) => setError(String(e)))
+      .finally(() => setBusy(false));
+  }
+
+  function useAiDraft() {
+    if (!aiDraft) return;
+    const d = aiDraft.draft;
+    // Precarga el editor SOAP; NO guarda. El medico revisa y guarda manualmente.
+    setNote((current) => ({
+      ...current,
+      subjective: d.subjective,
+      objective: d.objective,
+      assessment: d.assessment,
+      plan: d.plan,
+      diagnosis: d.diagnosis,
+      instructions: d.instructions
+    }));
+    const runId = aiDraft.run_id;
+    setAiDraft(null);
+    setError("");
+    // Cierra la traza sin recargar: el borrador vive en el editor (aun sin
+    // guardar) y una recarga lo sobreescribiria con la nota persistida.
+    call("ai_review_run", { runId, status: "APPROVED", feedback: null })
+      .then(() => setMessage("Borrador aplicado al editor. Revisa, ajusta y guarda la nota."))
+      .catch((e: unknown) => setError(String(e)));
+  }
+
+  function discardAiDraft() {
+    if (!aiDraft) return;
+    const runId = aiDraft.run_id;
+    setAiDraft(null);
+    void run("Borrador IA descartado.", () =>
+      call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
     );
   }
 
@@ -388,6 +461,63 @@ export function Atencion({
             </div>
           </div>
         </section>
+
+        {!signed ? (
+          <section className="panel">
+            <div className="panel-header">
+              <h3>Asistencia de IA (borrador SOAP)</h3>
+              <p>
+                La IA propone un borrador a partir del expediente. Es solo un punto de
+                partida: tu lo revisas, editas y guardas. Nada se guarda como nota sin tu
+                revision, y el contenido se seudonimiza antes de procesarse.
+              </p>
+            </div>
+            <div className="button-row">
+              <span className={aiConsent ? "pill pill-success" : "pill pill-muted"}>
+                {aiConsent ? "Consentimiento registrado" : "Sin consentimiento"}
+              </span>
+              <button className="ghost-button" onClick={() => void toggleConsent()} disabled={busy}>
+                {aiConsent ? "Revocar consentimiento" : "Registrar consentimiento del paciente"}
+              </button>
+              <button
+                className="action-button"
+                onClick={generateAiDraft}
+                disabled={busy || !aiConsent}
+              >
+                Generar borrador SOAP
+              </button>
+            </div>
+
+            {aiDraft ? (
+              <div className="ai-draft">
+                <p className="meta">
+                  Proveedor {aiDraft.provider} · modelo {aiDraft.model_version} · costo estimado{" "}
+                  {centsFormatter.format(aiDraft.estimated_cost_cents / 100)} · {aiDraft.latency_ms} ms
+                </p>
+                <div className="stack">
+                  {NOTE_FIELDS.map(({ key, label }) => {
+                    const value = aiDraft.draft[key];
+                    if (!value) return null;
+                    return (
+                      <div className="field" key={key}>
+                        <span>{label}</span>
+                        <p className="ai-draft-text">{value}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="button-row">
+                  <button className="action-button" onClick={useAiDraft} disabled={busy}>
+                    Usar borrador en el editor
+                  </button>
+                  <button className="ghost-button" onClick={discardAiDraft} disabled={busy}>
+                    Descartar
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         <section className="panel">
           <h3>Nota clinica (SOAP)</h3>

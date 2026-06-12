@@ -1,3 +1,4 @@
+mod ai;
 mod clinical;
 mod crypto;
 mod db;
@@ -557,6 +558,76 @@ fn list_session_payments(
     with_ops(&state, |conn| operations::list_session_payments(conn, &session_id))
 }
 
+/* ---------- IA clinica gobernada (paso 11) ---------- */
+
+fn with_ai<T>(
+    state: &tauri::State<'_, AppDb>,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, ai::AiError>,
+) -> Result<T, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    f(conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_consent_status(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<bool, String> {
+    with_ai(&state, |conn| {
+        Ok(ai::active_consent(conn, &patient_id, ai::SCOPE_SOAP_ASSIST)?.is_some())
+    })
+}
+
+#[tauri::command]
+fn ai_grant_consent(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<(), String> {
+    with_ai(&state, |conn| {
+        ai::grant_consent(conn, &patient_id, ai::SCOPE_SOAP_ASSIST).map(|_| ())
+    })
+}
+
+#[tauri::command]
+fn ai_revoke_consent(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<(), String> {
+    with_ai(&state, |conn| {
+        ai::revoke_consent(conn, &patient_id, ai::SCOPE_SOAP_ASSIST)
+    })
+}
+
+#[tauri::command]
+fn ai_assist_soap(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+) -> Result<ai::SoapDraft, String> {
+    let registry = ai::ProviderRegistry::default_local();
+    with_ai(&state, |conn| ai::assist_soap(conn, &encounter_id, &registry))
+}
+
+#[tauri::command]
+fn ai_review_run(
+    state: tauri::State<'_, AppDb>,
+    run_id: String,
+    status: String,
+    feedback: Option<String>,
+) -> Result<ai::AiRun, String> {
+    with_ai(&state, |conn| {
+        ai::review_run(conn, &run_id, &status, feedback.as_deref())
+    })
+}
+
+#[tauri::command]
+fn ai_list_runs(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+) -> Result<Vec<ai::AiRun>, String> {
+    with_ai(&state, |conn| ai::list_runs(conn, &encounter_id))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -591,7 +662,13 @@ pub fn run() {
             close_cash_session,
             cash_summary,
             register_payment,
-            list_session_payments
+            list_session_payments,
+            ai_consent_status,
+            ai_grant_consent,
+            ai_revoke_consent,
+            ai_assist_soap,
+            ai_review_run,
+            ai_list_runs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
