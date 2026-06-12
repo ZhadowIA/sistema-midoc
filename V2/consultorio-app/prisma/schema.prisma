@@ -313,6 +313,7 @@ model User {
   legalAcceptances       LegalAcceptance[]
   passwordResetTokens    PasswordResetToken[]
   authSessions           AuthSession[]
+  twoFactor              TwoFactorCredential?
   consentsAsDoctor       Consent[]            @relation("DoctorConsents")
   auditLogs              AuditLog[]           @relation("ActorAuditLogs")
   waitlistEntriesAsDoctor WaitlistEntry[]     @relation("DoctorWaitlistEntries")
@@ -976,6 +977,31 @@ model DoctorSubscription {
   updatedAt         DateTime           @updatedAt
   doctorProfile     DoctorProfile      @relation(fields: [doctorProfileId], references: [id], onDelete: Restrict)
   plan              SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Restrict)
+}
+
+model TwoFactorCredential {
+  id              String                  @id @default(cuid())
+  // OPERATIVO: seguridad de cuenta. Secreto TOTP cifrado en reposo; sin contenido clinico.
+  userId          String                  @unique
+  encryptedSecret String
+  enabled         Boolean                 @default(false)
+  confirmedAt     DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  user            User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recoveryCodes   TwoFactorRecoveryCode[]
+}
+
+model TwoFactorRecoveryCode {
+  id           String              @id @default(cuid())
+  // OPERATIVO: codigo de recuperacion de 2FA, almacenado solo como hash; un solo uso.
+  credentialId String
+  codeHash     String              @unique
+  usedAt       DateTime?
+  createdAt    DateTime            @default(now())
+  credential   TwoFactorCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@index([credentialId])
 }
 
 model AiProvider {

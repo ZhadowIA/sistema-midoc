@@ -65,7 +65,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 9 | Piloto seguro | `playwright` | Version lista para piloto real controlado. | ✅ DONE |
 | 10 | Operacion presencial | `impeccable` | Recepcion, caja, lista de espera y consulta sin cita. | ✅ DONE |
 | 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 🚧 IN PROGRESS (fundacion + SOAP asistido) |
-| 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | 🚧 IN PROGRESS (suscripcion + gating) |
+| 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | 🚧 IN PROGRESS (suscripcion + gating + 2FA) |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -476,7 +476,17 @@ Clasificacion de datos: todo OPERATIVO (gobernanza comercial); sin contenido cli
 
 Verificacion (rebanada 1): 49 pruebas del portal en verde (+4: ciclo de vida y derecho por estado, estrechamiento de capacidades al cambiar de plan, rechazo de plan inexistente, gating 200/402/401), `eslint` limpio, `tsc` limpio y `next build` ok.
 
-Pendiente del paso (rebanadas siguientes): 2FA + recovery codes (portal); ARCO (app local del medico, por decision del inventario), retencion, incidentes y exportacion de auditoria.
+Entregado (rebanada 2 — 2FA + codigos de recuperacion, portal):
+
+- **TOTP propio y auditable (`lib/security/totp.ts`).** HOTP/TOTP (RFC 4226/6238) sobre el `crypto` nativo de Node (SHA-1, 6 digitos, paso de 30s), sin dependencia nueva (regla 9). Validado contra los vectores de prueba publicados de ambos RFC.
+- **Secreto cifrado en reposo (`lib/security/secret-box.ts`).** AES-256-GCM con llave derivada de `TWO_FACTOR_ENCRYPTION_KEY` (env nuevo). El secreto TOTP nunca se guarda en claro.
+- **Modelos (migracion `two_factor_auth`).** `TwoFactorCredential` (uno por usuario, `enabled`/`confirmedAt`) y `TwoFactorRecoveryCode` (solo hash, un solo uso). Clase OPERATIVO; sin contenido clinico.
+- **Servicio (`two-factor-service.ts`).** Enrolar (genera secreto + URI otpauth para QR), confirmar (verifica TOTP y emite 10 codigos de recuperacion una sola vez), verificar (TOTP o codigo de recuperacion que se consume), desactivar y regenerar codigos. Todo auditado.
+- **Login en dos pasos.** Si el 2FA esta activo, `signInDoctor` no crea sesion: devuelve un desafio firmado (HMAC, 5 min). `completeTwoFactorLogin` valida el desafio y el segundo factor y crea la sesion. Endpoints `POST /api/auth/login/2fa`, `GET /api/auth/2fa`, `POST /api/auth/2fa/{setup,confirm,disable,recovery-codes}`.
+
+Verificacion (rebanada 2): 60 pruebas del portal en verde (+11: vectores RFC de TOTP, roundtrip y deteccion de manipulacion del cifrado, enrolamiento/confirmacion, login que exige 2FA, codigo erroneo y desafio expirado/manipulado, recovery de un solo uso, desactivacion), `eslint`/`tsc` limpios, `env:check` valido y `next build` ok.
+
+Pendiente del paso (rebanada siguiente): ARCO (app local del medico, por decision del inventario), politicas de retencion, registro de incidentes y exportacion de auditoria.
 
 ## MVP recomendado
 

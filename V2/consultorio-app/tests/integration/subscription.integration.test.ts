@@ -161,8 +161,10 @@ describe("subscription and capability gating (paso 12, rebanada 1)", () => {
     createdEmails.push(email);
 
     const password = "Str0ngPass!123";
-    // Reasignar password no es necesario; signInDoctor usa el de registro.
     const login = await signInDoctor({ email, password });
+    if (login.requiresTwoFactor) {
+      throw new Error("no se esperaba 2FA");
+    }
 
     await createDoctorSubscription({ doctorUserId: userId, planCode: "ESSENTIAL" });
 
