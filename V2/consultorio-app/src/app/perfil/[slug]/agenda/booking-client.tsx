@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Calendar } from "./calendar";
 
 type PublicProfile = {
   doctor: {
@@ -182,14 +183,13 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
             </select>
           </label>
 
-          <label className="field">
+          <div className="field calendar-field">
             <span>Fecha</span>
-            <input type="date" value={dateFrom} onChange={(event) => {
-              const value = event.currentTarget.value;
-              setDateFrom(value);
+            <Calendar selectedDate={dateFrom} onDateSelect={(date) => {
+              setDateFrom(date);
               setSearchError("");
             }} />
-          </label>
+          </div>
 
           <button className="action-button" onClick={loadSlots} disabled={busy}>
             {busy ? "Buscando..." : "Buscar horarios"}
