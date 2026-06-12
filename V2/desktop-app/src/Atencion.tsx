@@ -70,6 +70,22 @@ interface SoapDraft {
   draft: Omit<NoteContent, "specialty"> & { specialty: unknown };
 }
 
+interface TextDraft {
+  run_id: string;
+  usage_type: string;
+  provider: string;
+  model_version: string;
+  estimated_cost_cents: number;
+  latency_ms: number;
+  text: string;
+}
+
+const TEXT_ASSIST_LABELS: Record<string, string> = {
+  LONGITUDINAL_SUMMARY: "Resumen longitudinal",
+  PATIENT_INSTRUCTIONS: "Instrucciones al paciente",
+  CLINICAL_GAPS: "Brechas clinicas"
+};
+
 const centsFormatter = new Intl.NumberFormat("es-MX", {
   style: "currency",
   currency: "MXN"
@@ -154,6 +170,7 @@ export function Atencion({
   const [signatureValid, setSignatureValid] = useState<boolean | null>(null);
   const [aiConsent, setAiConsent] = useState(false);
   const [aiDraft, setAiDraft] = useState<SoapDraft | null>(null);
+  const [aiText, setAiText] = useState<TextDraft | null>(null);
 
   const load = useCallback(() => {
     call<EncounterDetail>("get_encounter", { encounterId })
@@ -304,6 +321,42 @@ export function Atencion({
     if (!aiDraft) return;
     const runId = aiDraft.run_id;
     setAiDraft(null);
+    void run("Borrador IA descartado.", () =>
+      call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
+    );
+  }
+
+  function generateAiText(usageType: string) {
+    setBusy(true);
+    setMessage("");
+    setError("");
+    setAiText(null);
+    call<TextDraft>("ai_assist_text", { encounterId, usageType })
+      .then((draft) => {
+        setAiText(draft);
+        setMessage(`${TEXT_ASSIST_LABELS[usageType] ?? "Borrador"} generado. Revisalo antes de usarlo.`);
+      })
+      .catch((e: unknown) => setError(String(e)))
+      .finally(() => setBusy(false));
+  }
+
+  function useAiInstructions() {
+    if (!aiText) return;
+    const text = aiText.text;
+    // Precarga el campo de indicaciones del editor; NO guarda.
+    setNote((current) => ({ ...current, instructions: text }));
+    const runId = aiText.run_id;
+    setAiText(null);
+    setError("");
+    call("ai_review_run", { runId, status: "APPROVED", feedback: null })
+      .then(() => setMessage("Indicaciones aplicadas al editor. Revisa, ajusta y guarda la nota."))
+      .catch((e: unknown) => setError(String(e)));
+  }
+
+  function discardAiText() {
+    if (!aiText) return;
+    const runId = aiText.run_id;
+    setAiText(null);
     void run("Borrador IA descartado.", () =>
       call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
     );
@@ -465,11 +518,11 @@ export function Atencion({
         {!signed ? (
           <section className="panel">
             <div className="panel-header">
-              <h3>Asistencia de IA (borrador SOAP)</h3>
+              <h3>Asistencia de IA</h3>
               <p>
-                La IA propone un borrador a partir del expediente. Es solo un punto de
-                partida: tu lo revisas, editas y guardas. Nada se guarda como nota sin tu
-                revision, y el contenido se seudonimiza antes de procesarse.
+                La IA propone borradores a partir del expediente. Son solo un punto de
+                partida: tu los revisas, editas y guardas. Nada se guarda sin tu revision,
+                y el contenido se seudonimiza antes de procesarse.
               </p>
             </div>
             <div className="button-row">
@@ -479,14 +532,58 @@ export function Atencion({
               <button className="ghost-button" onClick={() => void toggleConsent()} disabled={busy}>
                 {aiConsent ? "Revocar consentimiento" : "Registrar consentimiento del paciente"}
               </button>
+            </div>
+            <div className="button-row">
               <button
                 className="action-button"
                 onClick={generateAiDraft}
                 disabled={busy || !aiConsent}
               >
-                Generar borrador SOAP
+                Borrador SOAP
+              </button>
+              <button
+                className="ghost-button"
+                onClick={() => generateAiText("LONGITUDINAL_SUMMARY")}
+                disabled={busy || !aiConsent}
+              >
+                Resumen longitudinal
+              </button>
+              <button
+                className="ghost-button"
+                onClick={() => generateAiText("PATIENT_INSTRUCTIONS")}
+                disabled={busy || !aiConsent}
+              >
+                Instrucciones al paciente
+              </button>
+              <button
+                className="ghost-button"
+                onClick={() => generateAiText("CLINICAL_GAPS")}
+                disabled={busy || !aiConsent}
+              >
+                Brechas clinicas
               </button>
             </div>
+
+            {aiText ? (
+              <div className="ai-draft">
+                <p className="meta">
+                  {TEXT_ASSIST_LABELS[aiText.usage_type] ?? "Borrador"} · proveedor{" "}
+                  {aiText.provider} · modelo {aiText.model_version} · costo estimado{" "}
+                  {centsFormatter.format(aiText.estimated_cost_cents / 100)} · {aiText.latency_ms} ms
+                </p>
+                <p className="ai-draft-text">{aiText.text}</p>
+                <div className="button-row">
+                  {aiText.usage_type === "PATIENT_INSTRUCTIONS" ? (
+                    <button className="action-button" onClick={useAiInstructions} disabled={busy}>
+                      Usar en indicaciones
+                    </button>
+                  ) : null}
+                  <button className="ghost-button" onClick={discardAiText} disabled={busy}>
+                    Descartar
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             {aiDraft ? (
               <div className="ai-draft">

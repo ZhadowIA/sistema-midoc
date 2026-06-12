@@ -575,7 +575,7 @@ fn ai_consent_status(
     patient_id: String,
 ) -> Result<bool, String> {
     with_ai(&state, |conn| {
-        Ok(ai::active_consent(conn, &patient_id, ai::SCOPE_SOAP_ASSIST)?.is_some())
+        Ok(ai::active_consent(conn, &patient_id, ai::SCOPE_TEXT_ASSIST)?.is_some())
     })
 }
 
@@ -585,7 +585,7 @@ fn ai_grant_consent(
     patient_id: String,
 ) -> Result<(), String> {
     with_ai(&state, |conn| {
-        ai::grant_consent(conn, &patient_id, ai::SCOPE_SOAP_ASSIST).map(|_| ())
+        ai::grant_consent(conn, &patient_id, ai::SCOPE_TEXT_ASSIST).map(|_| ())
     })
 }
 
@@ -595,7 +595,7 @@ fn ai_revoke_consent(
     patient_id: String,
 ) -> Result<(), String> {
     with_ai(&state, |conn| {
-        ai::revoke_consent(conn, &patient_id, ai::SCOPE_SOAP_ASSIST)
+        ai::revoke_consent(conn, &patient_id, ai::SCOPE_TEXT_ASSIST)
     })
 }
 
@@ -606,6 +606,18 @@ fn ai_assist_soap(
 ) -> Result<ai::SoapDraft, String> {
     let registry = ai::ProviderRegistry::default_local();
     with_ai(&state, |conn| ai::assist_soap(conn, &encounter_id, &registry))
+}
+
+#[tauri::command]
+fn ai_assist_text(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    usage_type: String,
+) -> Result<ai::TextDraft, String> {
+    let registry = ai::ProviderRegistry::default_local();
+    with_ai(&state, |conn| {
+        ai::assist_text(conn, &encounter_id, &usage_type, &registry)
+    })
 }
 
 #[tauri::command]
@@ -667,6 +679,7 @@ pub fn run() {
             ai_grant_consent,
             ai_revoke_consent,
             ai_assist_soap,
+            ai_assist_text,
             ai_review_run,
             ai_list_runs
         ])

@@ -403,6 +403,27 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         }
       } as T;
     }
+    case "ai_assist_text": {
+      if (!mockState.aiConsent) throw "falta el consentimiento del paciente para asistencia de IA";
+      mockState.aiRunSeq += 1;
+      const usageType = String(args?.usageType ?? "");
+      const context = "Motivo de consulta: Dolor en molar superior derecho";
+      const text =
+        usageType === "LONGITUDINAL_SUMMARY"
+          ? `Resumen longitudinal (borrador):\nCon base en el expediente disponible:\n${context}\n\n(Revisar fidelidad antes de compartir.)`
+          : usageType === "PATIENT_INSTRUCTIONS"
+            ? `Indicaciones para el paciente (borrador):\n- Sigue el plan acordado en consulta.\n- Acude a tu proxima cita.\n\n(Ajustar a lenguaje del paciente y confirmar.)`
+            : `Posibles brechas clinicas a revisar (borrador):\n- Verifica antecedentes y alergias.\n- Confirma seguimiento de diagnosticos previos.\n\n(Estas son sugerencias; el criterio es del medico.)`;
+      return {
+        run_id: `ai-run-${mockState.aiRunSeq}`,
+        usage_type: usageType,
+        provider: "fake-clinico",
+        model_version: "fake-1",
+        estimated_cost_cents: 1,
+        latency_ms: 2,
+        text
+      } as T;
+    }
     case "ai_review_run":
       return { id: String(args?.runId), status: String(args?.status) } as T;
     case "ai_list_runs":
