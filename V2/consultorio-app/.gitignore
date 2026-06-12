@@ -1,0 +1,3 @@
+# azd: estado de entorno (puede contener secretos). Se conserva solo el plan.
+.azure/*
+!.azure/deployment-plan.md
