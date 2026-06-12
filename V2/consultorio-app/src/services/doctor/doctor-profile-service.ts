@@ -507,26 +507,37 @@ export async function getPublicDoctorProfile(slug: string) {
           }
         },
         orderBy: [{ startsAt: "asc" }]
-      },
-      reviews: {
+      }
+    }
+  });
+
+  // Fetch reviews separately in case the relation isn't available yet
+  let reviews: any[] = [];
+  if (profile) {
+    try {
+      reviews = await prisma.doctorReview.findMany({
         where: {
+          doctorProfileId: profile.id,
           isVerified: true
         },
         orderBy: {
           createdAt: "desc"
         },
         take: 50
-      }
+      });
+    } catch (err) {
+      // Reviews table might not exist yet, continue without them
+      reviews = [];
     }
-  });
+  }
 
   if (!profile) {
     return null;
   }
 
   // Calcular rating promedio
-  const averageRating = profile.reviews.length > 0
-    ? Math.round((profile.reviews.reduce((sum, r) => sum + r.rating, 0) / profile.reviews.length) * 10) / 10
+  const averageRating = reviews.length > 0
+    ? Math.round((reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length) * 10) / 10
     : 0;
 
   return {
@@ -574,7 +585,7 @@ export async function getPublicDoctorProfile(slug: string) {
       endsAt: block.endsAt,
       reason: block.reason
     })),
-    reviews: profile.reviews.map((review) => ({
+    reviews: reviews.map((review) => ({
       id: review.id,
       patientName: review.patientName,
       rating: review.rating,
@@ -585,13 +596,13 @@ export async function getPublicDoctorProfile(slug: string) {
     })),
     ratings: {
       averageRating,
-      totalReviews: profile.reviews.length,
+      totalReviews: reviews.length,
       distribution: {
-        five: profile.reviews.filter(r => r.rating === 5).length,
-        four: profile.reviews.filter(r => r.rating === 4).length,
-        three: profile.reviews.filter(r => r.rating === 3).length,
-        two: profile.reviews.filter(r => r.rating === 2).length,
-        one: profile.reviews.filter(r => r.rating === 1).length
+        five: reviews.filter(r => r.rating === 5).length,
+        four: reviews.filter(r => r.rating === 4).length,
+        three: reviews.filter(r => r.rating === 3).length,
+        two: reviews.filter(r => r.rating === 2).length,
+        one: reviews.filter(r => r.rating === 1).length
       }
     }
   };
