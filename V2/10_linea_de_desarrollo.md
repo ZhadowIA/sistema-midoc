@@ -65,7 +65,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 9 | Piloto seguro | `playwright` | Version lista para piloto real controlado. | ✅ DONE |
 | 10 | Operacion presencial | `impeccable` | Recepcion, caja, lista de espera y consulta sin cita. | ✅ DONE |
 | 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 🚧 IN PROGRESS (fundacion + SOAP asistido) |
-| 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | 📋 PENDING |
+| 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | 🚧 IN PROGRESS (suscripcion + gating) |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -461,6 +461,22 @@ Pendiente (no requerido por la compuerta, rebanada futura): adaptador de proveed
 | Se valida con | Un cliente puede operar bajo plan definido y el sistema soporta controles de privacidad/seguridad avanzada. |
 | Compuerta de avance | Comercializacion amplia solo despues de seguridad, soporte y compliance minimo. |
 | Push recomendado | Hacer push cuando planes, gating, controles de privacidad y seguridad avanzada esten validados. |
+
+Estado: 🚧 EN PROGRESO — rebanada 1 (suscripcion gestionable + gating de capacidades) entregada (2026-06-12). Construido sobre el paso 11.
+
+Entregado (rebanada 1 — suscripcion gestionable + gating de capacidades, portal):
+
+- **Catalogo de capacidades (`subscription-service.ts`).** Clave por capacidad (`agenda`, `documents`, `notifications`, `ai`, `presential`); el plan las habilita via JSON y el parche de la suscripcion las ajusta. Tolera claves heredadas (`scheduling`→`agenda`, `sms`/`email`→`notifications`).
+- **Resolucion de capacidades efectivas.** `resolveDoctorCapabilities` toma la ultima suscripcion del medico (refleja CANCELLED para la UI), y solo da derecho a las capacidades del plan cuando el estado es TRIAL o ACTIVE; PAST_DUE/PAUSED/CANCELLED gatean todo.
+- **Ciclo de vida comercial.** `cancelSubscription`, `pauseSubscription`, `reactivateSubscription` y `changePlan`, cada uno con traza de auditoria. El plan por defecto (ESSENTIAL) se provisiona con todas las capacidades del MVP.
+- **Gating por capacidad (`require-capability.ts`).** Helper `requireCapability(request, capability)` para route handlers: bloquea con 402 cuando el plan no incluye la capacidad o la suscripcion no esta activa. Aplicado al log de comunicaciones (`GET /api/admin/notifications`, capacidad `notifications`) como demostracion real.
+- **Endpoints.** `GET /api/admin/subscription` (estado + capacidades efectivas), `POST /api/admin/subscription` (cancelar/pausar/reactivar/cambiar plan), `GET /api/admin/plans` (planes activos).
+
+Clasificacion de datos: todo OPERATIVO (gobernanza comercial); sin contenido clinico en nube, logs ni trazas.
+
+Verificacion (rebanada 1): 49 pruebas del portal en verde (+4: ciclo de vida y derecho por estado, estrechamiento de capacidades al cambiar de plan, rechazo de plan inexistente, gating 200/402/401), `eslint` limpio, `tsc` limpio y `next build` ok.
+
+Pendiente del paso (rebanadas siguientes): 2FA + recovery codes (portal); ARCO (app local del medico, por decision del inventario), retencion, incidentes y exportacion de auditoria.
 
 ## MVP recomendado
 

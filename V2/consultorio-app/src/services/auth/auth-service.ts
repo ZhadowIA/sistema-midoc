@@ -424,12 +424,21 @@ export async function createDoctorSubscription(input: {
     throw new AuthServiceError("Doctor account not found.", 404);
   }
 
+  const defaultCapabilities = {
+    agenda: true,
+    documents: true,
+    notifications: true,
+    ai: true,
+    presential: true
+  };
+
   const plan = await prisma.subscriptionPlan.upsert({
     where: {
       code: input.planCode
     },
     update: {
-      status: PlanStatus.ACTIVE
+      status: PlanStatus.ACTIVE,
+      capabilities: defaultCapabilities
     },
     create: {
       code: input.planCode,
@@ -438,10 +447,7 @@ export async function createDoctorSubscription(input: {
       billingInterval: "monthly",
       priceCents: 0,
       currency: "MXN",
-      capabilities: {
-        scheduling: true,
-        sms: true
-      }
+      capabilities: defaultCapabilities
     }
   });
 
