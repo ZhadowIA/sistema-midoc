@@ -65,7 +65,8 @@ export function ReviewsSection({ reviews, ratings }: { reviews: Review[]; rating
         </div>
 
         {[5, 4, 3, 2, 1].map((rating) => {
-          const count = ratings.distribution[rating as keyof typeof ratings.distribution];
+          const ratingKey = ['one', 'two', 'three', 'four', 'five'][5 - rating] as keyof typeof ratings.distribution;
+          const count = ratings.distribution[ratingKey];
           const percentage = ratings.totalReviews > 0 ? (count / ratings.totalReviews) * 100 : 0;
 
           return (
