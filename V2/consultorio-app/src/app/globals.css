@@ -1020,6 +1020,247 @@ a.service-card:hover {
   font-size: 0.9rem;
 }
 
+/* Rating Section */
+
+.rating-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.star-rating {
+  display: flex;
+  gap: 2px;
+}
+
+.star {
+  font-size: 1.2rem;
+  color: var(--muted);
+  transition: color var(--speed) var(--ease);
+}
+
+.star.filled {
+  color: #ffc107;
+  text-shadow: 0 0 2px rgba(255, 193, 7, 0.3);
+}
+
+.rating-value {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.rating-count {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.doctor-phone {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  margin: 8px 0;
+  font-size: 0.95rem;
+}
+
+.phone-icon {
+  font-size: 1.2rem;
+}
+
+/* Contact Buttons */
+
+.contact-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.contact-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px;
+  min-height: 40px;
+  border-radius: var(--radius-control);
+  font-weight: 600;
+  text-decoration: none;
+  transition: all var(--speed) var(--ease);
+}
+
+.contact-btn.whatsapp-btn {
+  background: #25d366;
+  color: white;
+}
+
+.contact-btn.whatsapp-btn:hover {
+  background: #20ba5f;
+  transform: translateY(-2px);
+}
+
+.contact-btn:not(.whatsapp-btn) {
+  background: var(--accent);
+  color: white;
+}
+
+.contact-btn:not(.whatsapp-btn):hover {
+  background: var(--primary);
+  transform: translateY(-2px);
+}
+
+/* About Section */
+
+.about-section {
+  display: grid;
+  gap: 16px;
+}
+
+.about-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 20px;
+}
+
+.about-card p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.7;
+  font-size: 0.95rem;
+}
+
+/* Location Section */
+
+.location-section {
+  display: grid;
+  gap: 16px;
+}
+
+.location-card {
+  display: grid;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.location-info {
+  padding: 20px;
+  background: var(--surface);
+}
+
+.location-text {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.location-map {
+  width: 100%;
+  height: 300px;
+  border: none;
+}
+
+/* Gallery Section */
+
+.gallery-section {
+  display: grid;
+  gap: 16px;
+}
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.gallery-item {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 20px;
+  text-align: center;
+  transition: all var(--speed) var(--ease);
+  cursor: pointer;
+}
+
+.gallery-item:hover {
+  border-color: var(--primary);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+.gallery-placeholder {
+  font-size: 3rem;
+  margin-bottom: 12px;
+}
+
+.gallery-item p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* Reviews Section */
+
+.reviews-section {
+  display: grid;
+  gap: 16px;
+}
+
+.reviews-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.review-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 20px;
+  transition: all var(--speed) var(--ease);
+}
+
+.review-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.review-author {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.review-date {
+  margin: 4px 0 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.review-text {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
 /* Auth ---------- */
 
 .auth-shell {
