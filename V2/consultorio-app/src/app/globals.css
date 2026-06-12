@@ -1397,6 +1397,31 @@ a.service-card:hover {
   stroke-width: 1.2;
 }
 
+/* Variante con foto real: cubre el marco y reacciona al hover. */
+.dp-gallery-photo {
+  position: relative;
+  background-size: cover;
+  background-position: center;
+  background-color: var(--surface);
+  overflow: hidden;
+}
+
+.dp-gallery-photo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 28, 46, 0);
+  transition: background var(--speed) var(--ease);
+}
+
+.dp-gallery-item:hover .dp-gallery-photo {
+  border-color: var(--accent);
+}
+
+.dp-gallery-item:hover .dp-gallery-photo::after {
+  background: rgba(20, 28, 46, 0.08);
+}
+
 .dp-gallery-item figcaption {
   font-size: 0.92rem;
   color: var(--muted);

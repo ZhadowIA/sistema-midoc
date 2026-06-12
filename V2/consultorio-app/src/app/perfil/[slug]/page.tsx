@@ -8,13 +8,10 @@ import {
   IconCertificate,
   IconChat,
   IconClock,
-  IconEquipment,
   IconPhone,
   IconPin,
-  IconRoom,
   IconStar,
-  IconStethoscope,
-  IconWaiting
+  IconStethoscope
 } from "./icons";
 
 const dayLabels = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
@@ -70,12 +67,6 @@ export default async function PublicDoctorProfilePage({
 
   const specialty = profile.doctor.specialty === "ODONTOLOGY" ? "Odontología" : "Medicina General";
   const phoneDigits = profile.doctor.phone?.replace(/\D/g, "") ?? "";
-
-  const galleryItems = [
-    { Icon: IconRoom, label: "Consultorio principal" },
-    { Icon: IconWaiting, label: "Sala de espera" },
-    { Icon: IconEquipment, label: "Equipo médico" }
-  ];
 
   return (
     <section className="public-shell profile-v2">
@@ -299,23 +290,28 @@ export default async function PublicDoctorProfilePage({
       )}
 
       {/* ---------- Galería ---------- */}
-      <section className="dp-section">
-        <div className="dp-section-head">
-          <p className="dp-kicker">Instalaciones</p>
-          <h2 className="dp-h2">Galería</h2>
-          <p className="dp-section-sub">Consultorio y equipo médico.</p>
-        </div>
-        <div className="dp-gallery">
-          {galleryItems.map(({ Icon, label }) => (
-            <figure className="dp-gallery-item" key={label}>
-              <div className="dp-gallery-frame">
-                <Icon className="dp-gallery-icon" />
-              </div>
-              <figcaption>{label}</figcaption>
-            </figure>
-          ))}
-        </div>
-      </section>
+      {profile.gallery.length > 0 && (
+        <section className="dp-section">
+          <div className="dp-section-head">
+            <p className="dp-kicker">Instalaciones</p>
+            <h2 className="dp-h2">Galería</h2>
+            <p className="dp-section-sub">Consultorio y equipo médico.</p>
+          </div>
+          <div className="dp-gallery">
+            {profile.gallery.map((image) => (
+              <figure className="dp-gallery-item" key={image.id}>
+                <div
+                  className="dp-gallery-frame dp-gallery-photo"
+                  style={{ backgroundImage: `url(${image.url})` }}
+                  role="img"
+                  aria-label={image.caption ?? "Imagen del consultorio"}
+                />
+                {image.caption && <figcaption>{image.caption}</figcaption>}
+              </figure>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ---------- Agenda ---------- */}
       <section className="dp-section" id="agenda">

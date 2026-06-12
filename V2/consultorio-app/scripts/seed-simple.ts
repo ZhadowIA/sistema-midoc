@@ -3,6 +3,30 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
+const galleryImages = [
+  { url: "https://picsum.photos/seed/midoc-consultorio/600/450", caption: "Consultorio principal" },
+  { url: "https://picsum.photos/seed/midoc-sala/600/450", caption: "Sala de espera" },
+  { url: "https://picsum.photos/seed/midoc-equipo/600/450", caption: "Equipo médico" },
+  { url: "https://picsum.photos/seed/midoc-recepcion/600/450", caption: "Recepción" }
+];
+
+// Crea las imagenes de galeria solo si el perfil aun no tiene ninguna.
+async function ensureGallery(doctorProfileId: string) {
+  const count = await prisma.doctorGalleryImage.count({ where: { doctorProfileId } });
+  if (count > 0) {
+    return 0;
+  }
+  await prisma.doctorGalleryImage.createMany({
+    data: galleryImages.map((image, index) => ({
+      doctorProfileId,
+      url: image.url,
+      caption: image.caption,
+      displayOrder: index
+    }))
+  });
+  return galleryImages.length;
+}
+
 async function main() {
   try {
     // Check if doctor already exists
@@ -13,10 +37,12 @@ async function main() {
     if (existingUser) {
       console.log("Doctor already exists, updating...");
       // Just update the profile to be public
-      await prisma.doctorProfile.update({
+      const profile = await prisma.doctorProfile.update({
         where: { userId: existingUser.id },
         data: { isPublic: true }
       });
+      const added = await ensureGallery(profile.id);
+      console.log(added > 0 ? `Added ${added} gallery images` : "Gallery already present");
     } else {
       // Create a new test doctor user
       const hashedPassword = await bcrypt.hash("password123", 10);
@@ -139,10 +165,13 @@ async function main() {
         });
       }
 
+      const added = await ensureGallery(profile.id);
+
       console.log("Seed completed successfully!");
       console.log(`Created doctor: ${profile.professionalName}`);
       console.log(`Profile slug: ${profile.publicSlug}`);
       console.log(`Created ${reviews.length} reviews`);
+      console.log(`Created ${added} gallery images`);
     }
   } catch (error) {
     console.error("Seed error:", error);

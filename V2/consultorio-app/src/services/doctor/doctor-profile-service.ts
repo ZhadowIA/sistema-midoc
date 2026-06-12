@@ -508,6 +508,9 @@ export async function getPublicDoctorProfile(slug: string) {
           }
         },
         orderBy: [{ startsAt: "asc" }]
+      },
+      galleryImages: {
+        orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }]
       }
     }
   });
@@ -584,6 +587,11 @@ export async function getPublicDoctorProfile(slug: string) {
       startsAt: block.startsAt,
       endsAt: block.endsAt,
       reason: block.reason
+    })),
+    gallery: profile.galleryImages.map((image) => ({
+      id: image.id,
+      url: image.url,
+      caption: image.caption
     })),
     reviews: reviews.map((review) => ({
       id: review.id,
