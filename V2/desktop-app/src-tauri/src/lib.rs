@@ -197,7 +197,10 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
             let ciphertext = sync::fetch_document(&server_url, &token, doc_id)
                 .await
                 .map_err(|e| e.to_string())?;
-            let patient_id = payload.get("patientId").and_then(|v| v.as_str()).map(String::from);
+            let patient_id = payload
+                .get("patientId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let appointment_id = payload
                 .get("appointmentId")
                 .and_then(|v| v.as_str())
@@ -211,7 +214,8 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
             sync::apply_batch(conn, &inbox.events).map_err(|e| e.to_string())?;
             // Descifrar y guardar los documentos descargados.
             for (doc_id, patient_id, appointment_id, ciphertext) in &documents {
-                let plaintext = crypto::unseal_document(conn, ciphertext).map_err(|e| e.to_string())?;
+                let plaintext =
+                    crypto::unseal_document(conn, ciphertext).map_err(|e| e.to_string())?;
                 sync::store_mailbox_document(
                     conn,
                     doc_id,
@@ -235,9 +239,37 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
         cursor = inbox.next_cursor;
     }
 
+    let mut ai_usage_reported = 0u64;
+    loop {
+        let reports = {
+            let guard = state.0.lock().unwrap();
+            let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+            ai::pending_usage_reports(conn, 100).map_err(|e| e.to_string())?
+        };
+
+        if reports.is_empty() {
+            break;
+        }
+
+        let result = sync::report_ai_usage(&server_url, &token, &reports)
+            .await
+            .map_err(|e| e.to_string())?;
+        let run_ids: Vec<String> = reports
+            .iter()
+            .map(|report| report.external_run_id.clone())
+            .collect();
+        {
+            let guard = state.0.lock().unwrap();
+            let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+            ai::mark_usage_reports_sent(conn, &run_ids).map_err(|e| e.to_string())?;
+        }
+        ai_usage_reported += result.reported;
+    }
+
     Ok(sync::SyncSummary {
         applied_events: applied,
         cursor,
+        ai_usage_reported,
     })
 }
 
@@ -360,7 +392,9 @@ fn save_note(
     encounter_id: String,
     note: clinical::NoteContent,
 ) -> Result<i64, String> {
-    with_conn(&state, |conn| clinical::save_note(conn, &encounter_id, &note))
+    with_conn(&state, |conn| {
+        clinical::save_note(conn, &encounter_id, &note)
+    })
 }
 
 #[tauri::command]
@@ -394,11 +428,10 @@ fn sign_encounter(
 }
 
 #[tauri::command]
-fn verify_signature(
-    state: tauri::State<'_, AppDb>,
-    encounter_id: String,
-) -> Result<bool, String> {
-    with_conn(&state, |conn| clinical::verify_signature(conn, &encounter_id))
+fn verify_signature(state: tauri::State<'_, AppDb>, encounter_id: String) -> Result<bool, String> {
+    with_conn(&state, |conn| {
+        clinical::verify_signature(conn, &encounter_id)
+    })
 }
 
 /* ---------- Operacion presencial (paso 10) ---------- */
@@ -413,9 +446,7 @@ fn with_ops<T>(
 }
 
 #[tauri::command]
-fn list_resources(
-    state: tauri::State<'_, AppDb>,
-) -> Result<Vec<operations::Resource>, String> {
+fn list_resources(state: tauri::State<'_, AppDb>) -> Result<Vec<operations::Resource>, String> {
     with_ops(&state, operations::list_resources)
 }
 
@@ -433,7 +464,9 @@ fn set_resource_active(
     resource_id: String,
     active: bool,
 ) -> Result<(), String> {
-    with_ops(&state, |conn| operations::set_resource_active(conn, &resource_id, active))
+    with_ops(&state, |conn| {
+        operations::set_resource_active(conn, &resource_id, active)
+    })
 }
 
 #[tauri::command]
@@ -466,7 +499,9 @@ fn set_visit_state(
     visit_id: String,
     visit_state: String,
 ) -> Result<operations::Visit, String> {
-    with_ops(&state, |conn| operations::set_visit_state(conn, &visit_id, &visit_state))
+    with_ops(&state, |conn| {
+        operations::set_visit_state(conn, &visit_id, &visit_state)
+    })
 }
 
 #[tauri::command]
@@ -494,9 +529,7 @@ fn start_visit_encounter(
 
     let visit = operations::read_active_visit(conn, &visit_id).map_err(|e| e.to_string())?;
     let encounter = match (&visit.appointment_id, &visit.patient_id) {
-        (Some(appointment_id), _) => {
-            clinical::open_encounter_for_appointment(conn, appointment_id)
-        }
+        (Some(appointment_id), _) => clinical::open_encounter_for_appointment(conn, appointment_id),
         (None, Some(patient_id)) => clinical::open_encounter_for_patient(conn, patient_id),
         (None, None) => {
             return Err("la visita no tiene paciente asociado".into());
@@ -520,7 +553,9 @@ fn open_cash_session(
     state: tauri::State<'_, AppDb>,
     opening_float_cents: i64,
 ) -> Result<operations::CashSession, String> {
-    with_ops(&state, |conn| operations::open_cash_session(conn, opening_float_cents))
+    with_ops(&state, |conn| {
+        operations::open_cash_session(conn, opening_float_cents)
+    })
 }
 
 #[tauri::command]
@@ -555,7 +590,9 @@ fn list_session_payments(
     state: tauri::State<'_, AppDb>,
     session_id: String,
 ) -> Result<Vec<operations::Payment>, String> {
-    with_ops(&state, |conn| operations::list_session_payments(conn, &session_id))
+    with_ops(&state, |conn| {
+        operations::list_session_payments(conn, &session_id)
+    })
 }
 
 /* ---------- IA clinica gobernada (paso 11) ---------- */
@@ -570,30 +607,21 @@ fn with_ai<T>(
 }
 
 #[tauri::command]
-fn ai_consent_status(
-    state: tauri::State<'_, AppDb>,
-    patient_id: String,
-) -> Result<bool, String> {
+fn ai_consent_status(state: tauri::State<'_, AppDb>, patient_id: String) -> Result<bool, String> {
     with_ai(&state, |conn| {
         Ok(ai::active_consent(conn, &patient_id, ai::SCOPE_TEXT_ASSIST)?.is_some())
     })
 }
 
 #[tauri::command]
-fn ai_grant_consent(
-    state: tauri::State<'_, AppDb>,
-    patient_id: String,
-) -> Result<(), String> {
+fn ai_grant_consent(state: tauri::State<'_, AppDb>, patient_id: String) -> Result<(), String> {
     with_ai(&state, |conn| {
         ai::grant_consent(conn, &patient_id, ai::SCOPE_TEXT_ASSIST).map(|_| ())
     })
 }
 
 #[tauri::command]
-fn ai_revoke_consent(
-    state: tauri::State<'_, AppDb>,
-    patient_id: String,
-) -> Result<(), String> {
+fn ai_revoke_consent(state: tauri::State<'_, AppDb>, patient_id: String) -> Result<(), String> {
     with_ai(&state, |conn| {
         ai::revoke_consent(conn, &patient_id, ai::SCOPE_TEXT_ASSIST)
     })
@@ -605,7 +633,9 @@ fn ai_assist_soap(
     encounter_id: String,
 ) -> Result<ai::SoapDraft, String> {
     let registry = ai::ProviderRegistry::default_local();
-    with_ai(&state, |conn| ai::assist_soap(conn, &encounter_id, &registry))
+    with_ai(&state, |conn| {
+        ai::assist_soap(conn, &encounter_id, &registry)
+    })
 }
 
 #[tauri::command]
@@ -646,10 +676,7 @@ fn ai_usage_summary(state: tauri::State<'_, AppDb>) -> Result<ai::UsageSummary, 
 }
 
 #[tauri::command]
-fn ai_set_budget(
-    state: tauri::State<'_, AppDb>,
-    budget_cents: i64,
-) -> Result<(), String> {
+fn ai_set_budget(state: tauri::State<'_, AppDb>, budget_cents: i64) -> Result<(), String> {
     with_ai(&state, |conn| ai::set_budget_cents(conn, budget_cents))
 }
 
@@ -662,9 +689,7 @@ fn ai_run_benchmark(
 }
 
 #[tauri::command]
-fn ai_list_benchmarks(
-    state: tauri::State<'_, AppDb>,
-) -> Result<Vec<ai::BenchmarkRun>, String> {
+fn ai_list_benchmarks(state: tauri::State<'_, AppDb>) -> Result<Vec<ai::BenchmarkRun>, String> {
     with_ai(&state, ai::list_benchmarks)
 }
 

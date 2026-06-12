@@ -123,13 +123,19 @@ pub struct FakeProvider {
 
 impl FakeProvider {
     pub fn new(name: &str) -> Self {
-        Self { name: name.to_string(), cost_factor: 1 }
+        Self {
+            name: name.to_string(),
+            cost_factor: 1,
+        }
     }
 
     /// Variante con multiplicador de costo, para comparar proveedores en el
     /// benchmark (un proveedor mas caro debe quedar peor a igualdad de calidad).
     pub fn with_cost(name: &str, cost_factor: i64) -> Self {
-        Self { name: name.to_string(), cost_factor: cost_factor.max(1) }
+        Self {
+            name: name.to_string(),
+            cost_factor: cost_factor.max(1),
+        }
     }
 }
 
@@ -200,11 +206,7 @@ pub fn redact(context: &str, first_name: &str, last_name: &str) -> String {
 
 /* ---------- Consentimiento ---------- */
 
-pub fn grant_consent(
-    conn: &Connection,
-    patient_id: &str,
-    scope: &str,
-) -> Result<String, AiError> {
+pub fn grant_consent(conn: &Connection, patient_id: &str, scope: &str) -> Result<String, AiError> {
     let exists: bool = conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM patients WHERE id = ?1)",
         params![patient_id],
@@ -381,6 +383,23 @@ pub struct UsageSummary {
     pub by_usage: Vec<UsageByType>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiUsageReport {
+    pub external_run_id: String,
+    pub usage_type: String,
+    pub status: String,
+    pub provider_name: String,
+    pub provider_type: String,
+    pub model_version: Option<String>,
+    pub prompt_version: String,
+    pub estimated_cost_cents: Option<i64>,
+    pub latency_ms: Option<i64>,
+    pub occurred_at: String,
+    pub input_reference: serde_json::Value,
+    pub output_reference: serde_json::Value,
+}
+
 /// Mes actual en UTC (YYYY-MM). El presupuesto es aproximado a zona UTC; es
 /// suficiente para un control de costo, no para contabilidad fiscal.
 fn current_month() -> String {
@@ -400,7 +419,9 @@ pub fn get_budget_cents(conn: &Connection) -> Result<i64, AiError> {
 
 pub fn set_budget_cents(conn: &Connection, cents: i64) -> Result<(), AiError> {
     if cents < 0 {
-        return Err(AiError::Invalid("el presupuesto no puede ser negativo".into()));
+        return Err(AiError::Invalid(
+            "el presupuesto no puede ser negativo".into(),
+        ));
     }
     conn.execute(
         "INSERT INTO app_meta (key, value) VALUES (?1, ?2)
@@ -450,6 +471,96 @@ pub fn usage_summary(conn: &Connection) -> Result<UsageSummary, AiError> {
         run_count,
         by_usage,
     })
+}
+
+pub fn pending_usage_reports(conn: &Connection, limit: i64) -> Result<Vec<AiUsageReport>, AiError> {
+    if limit <= 0 {
+        return Err(AiError::Invalid("el limite debe ser positivo".into()));
+    }
+
+    let mut statement = conn.prepare(
+        "SELECT id, encounter_id, patient_id, usage_type, provider, model_version,
+                prompt_version, status, estimated_cost_cents, latency_ms, created_at
+         FROM ai_runs
+         WHERE usage_reported_at IS NULL
+         ORDER BY created_at ASC
+         LIMIT ?1",
+    )?;
+
+    let reports = statement
+        .query_map(params![limit], |row| {
+            let run_id: String = row.get(0)?;
+            let encounter_id: Option<String> = row.get(1)?;
+            let patient_id: Option<String> = row.get(2)?;
+            let input_reference = usage_reference(
+                "LOCAL_AI_RUN_INPUT",
+                &run_id,
+                encounter_id.as_deref(),
+                patient_id.as_deref(),
+            );
+            let output_reference = usage_reference(
+                "LOCAL_AI_RUN_OUTPUT",
+                &run_id,
+                encounter_id.as_deref(),
+                patient_id.as_deref(),
+            );
+
+            Ok(AiUsageReport {
+                external_run_id: run_id,
+                usage_type: row.get(3)?,
+                provider_name: row.get(4)?,
+                provider_type: "LLM".into(),
+                model_version: row.get(5)?,
+                prompt_version: row.get(6)?,
+                status: row.get(7)?,
+                estimated_cost_cents: row.get(8)?,
+                latency_ms: row.get(9)?,
+                occurred_at: row.get(10)?,
+                input_reference,
+                output_reference,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(reports)
+}
+
+fn usage_reference(
+    kind: &str,
+    run_id: &str,
+    encounter_id: Option<&str>,
+    patient_id: Option<&str>,
+) -> serde_json::Value {
+    let mut value = serde_json::Map::new();
+    value.insert("kind".into(), serde_json::Value::String(kind.into()));
+    value.insert(
+        "localRunId".into(),
+        serde_json::Value::String(run_id.into()),
+    );
+    if let Some(encounter_id) = encounter_id {
+        value.insert(
+            "encounterId".into(),
+            serde_json::Value::String(encounter_id.into()),
+        );
+    }
+    if let Some(patient_id) = patient_id {
+        value.insert(
+            "patientId".into(),
+            serde_json::Value::String(patient_id.into()),
+        );
+    }
+    serde_json::Value::Object(value)
+}
+
+pub fn mark_usage_reports_sent(conn: &Connection, run_ids: &[String]) -> Result<(), AiError> {
+    let reported_at = now();
+    for run_id in run_ids {
+        conn.execute(
+            "UPDATE ai_runs SET usage_reported_at = ?2 WHERE id = ?1",
+            params![run_id, reported_at],
+        )?;
+    }
+    Ok(())
 }
 
 /// Verifica el presupuesto antes de ejecutar IA. Bloquea si ya se alcanzo el
@@ -530,14 +641,18 @@ fn run_assist(
     }
 
     let patient_id = detail.encounter.patient_id.clone();
-    let consent_id = active_consent(conn, &patient_id, SCOPE_TEXT_ASSIST)?
-        .ok_or(AiError::ConsentMissing)?;
+    let consent_id =
+        active_consent(conn, &patient_id, SCOPE_TEXT_ASSIST)?.ok_or(AiError::ConsentMissing)?;
 
     // Control de costo: no se ejecuta IA si el mes ya alcanzo su presupuesto.
     ensure_within_budget(conn)?;
 
     let context = build_context(&detail);
-    let redacted = redact(&context, &detail.patient.first_name, &detail.patient.last_name);
+    let redacted = redact(
+        &context,
+        &detail.patient.first_name,
+        &detail.patient.last_name,
+    );
 
     let request = AiRequest {
         usage_type: usage_type.into(),
@@ -579,8 +694,7 @@ pub fn assist_soap(
     encounter_id: &str,
     registry: &ProviderRegistry,
 ) -> Result<SoapDraft, AiError> {
-    let (run_id, provider, response) =
-        run_assist(conn, encounter_id, USAGE_SOAP_ASSIST, registry)?;
+    let (run_id, provider, response) = run_assist(conn, encounter_id, USAGE_SOAP_ASSIST, registry)?;
     let draft: NoteContent = serde_json::from_str(&response.output)
         .map_err(|e| AiError::Invalid(format!("borrador IA invalido: {e}")))?;
     Ok(SoapDraft {
@@ -602,7 +716,9 @@ pub fn assist_text(
     registry: &ProviderRegistry,
 ) -> Result<TextDraft, AiError> {
     if !TEXT_USAGES.contains(&usage_type) {
-        return Err(AiError::Invalid("tipo de asistencia de texto invalido".into()));
+        return Err(AiError::Invalid(
+            "tipo de asistencia de texto invalido".into(),
+        ));
     }
     let (run_id, provider, response) = run_assist(conn, encounter_id, usage_type, registry)?;
     Ok(TextDraft {
@@ -654,12 +770,30 @@ struct BenchmarkCase {
 /// cuando se cablee un proveedor real con audios/casos autorizados.
 fn benchmark_cases() -> Vec<BenchmarkCase> {
     vec![
-        BenchmarkCase { usage_type: USAGE_SOAP_ASSIST, context: "Tos y fiebre de tres dias." },
-        BenchmarkCase { usage_type: USAGE_SOAP_ASSIST, context: "Dolor abdominal epigastrico." },
-        BenchmarkCase { usage_type: USAGE_SOAP_ASSIST, context: "Dolor dental en molar inferior." },
-        BenchmarkCase { usage_type: USAGE_SUMMARY, context: "Paciente con HTA y DM2 en control." },
-        BenchmarkCase { usage_type: USAGE_INSTRUCTIONS, context: "Post extraccion dental." },
-        BenchmarkCase { usage_type: USAGE_GAPS, context: "Control de paciente cronico." },
+        BenchmarkCase {
+            usage_type: USAGE_SOAP_ASSIST,
+            context: "Tos y fiebre de tres dias.",
+        },
+        BenchmarkCase {
+            usage_type: USAGE_SOAP_ASSIST,
+            context: "Dolor abdominal epigastrico.",
+        },
+        BenchmarkCase {
+            usage_type: USAGE_SOAP_ASSIST,
+            context: "Dolor dental en molar inferior.",
+        },
+        BenchmarkCase {
+            usage_type: USAGE_SUMMARY,
+            context: "Paciente con HTA y DM2 en control.",
+        },
+        BenchmarkCase {
+            usage_type: USAGE_INSTRUCTIONS,
+            context: "Post extraccion dental.",
+        },
+        BenchmarkCase {
+            usage_type: USAGE_GAPS,
+            context: "Control de paciente cronico.",
+        },
     ]
 }
 
@@ -670,7 +804,12 @@ fn completeness_pct(usage_type: &str, output: &str) -> i64 {
         let Ok(note) = serde_json::from_str::<NoteContent>(output) else {
             return 0;
         };
-        let sections = [&note.subjective, &note.objective, &note.assessment, &note.plan];
+        let sections = [
+            &note.subjective,
+            &note.objective,
+            &note.assessment,
+            &note.plan,
+        ];
         let filled = sections.iter().filter(|s| !s.trim().is_empty()).count();
         (filled as i64) * 100 / (sections.len() as i64)
     } else if output.trim().is_empty() {
@@ -725,7 +864,11 @@ fn evaluate_provider(provider: &dyn AiProvider, cases: &[BenchmarkCase]) -> Benc
     BenchmarkResult {
         provider: provider.name().to_string(),
         success_count: success,
-        avg_latency_ms: if success > 0 { latency_sum / success } else { 0 },
+        avg_latency_ms: if success > 0 {
+            latency_sum / success
+        } else {
+            0
+        },
         total_cost_cents: cost,
         completeness_pct: completeness_sum / n,
     }
@@ -756,11 +899,15 @@ pub fn run_benchmark(
     providers: &[Box<dyn AiProvider>],
 ) -> Result<BenchmarkRun, AiError> {
     if providers.is_empty() {
-        return Err(AiError::Invalid("el benchmark necesita al menos un proveedor".into()));
+        return Err(AiError::Invalid(
+            "el benchmark necesita al menos un proveedor".into(),
+        ));
     }
     let cases = benchmark_cases();
-    let results: Vec<BenchmarkResult> =
-        providers.iter().map(|p| evaluate_provider(p.as_ref(), &cases)).collect();
+    let results: Vec<BenchmarkResult> = providers
+        .iter()
+        .map(|p| evaluate_provider(p.as_ref(), &cases))
+        .collect();
 
     let recommendation = recommend(&results);
     let run_id = uuid::Uuid::new_v4().to_string();
@@ -1130,7 +1277,10 @@ mod tests {
     #[test]
     fn negative_budget_is_rejected() {
         let conn = test_conn("budget-neg");
-        assert!(matches!(set_budget_cents(&conn, -1), Err(AiError::Invalid(_))));
+        assert!(matches!(
+            set_budget_cents(&conn, -1),
+            Err(AiError::Invalid(_))
+        ));
     }
 
     #[test]
@@ -1144,8 +1294,16 @@ mod tests {
         assert_eq!(run.recommended_provider.as_deref(), Some("openai-fake"));
         assert!(run.notes.is_some());
 
-        let cheap = run.results.iter().find(|r| r.provider == "openai-fake").unwrap();
-        let pricey = run.results.iter().find(|r| r.provider == "medlm-fake").unwrap();
+        let cheap = run
+            .results
+            .iter()
+            .find(|r| r.provider == "openai-fake")
+            .unwrap();
+        let pricey = run
+            .results
+            .iter()
+            .find(|r| r.provider == "medlm-fake")
+            .unwrap();
         assert_eq!(cheap.success_count, run.case_count);
         assert!(pricey.total_cost_cents > cheap.total_cost_cents);
         // Completitud alta (SOAP llena las 4 secciones clave; textos no vacios).
@@ -1155,7 +1313,10 @@ mod tests {
         let listed = list_benchmarks(&conn).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].results.len(), 2);
-        assert_eq!(listed[0].recommended_provider.as_deref(), Some("openai-fake"));
+        assert_eq!(
+            listed[0].recommended_provider.as_deref(),
+            Some("openai-fake")
+        );
     }
 
     #[test]
@@ -1165,5 +1326,32 @@ mod tests {
             run_benchmark(&conn, "vacio", &[]),
             Err(AiError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn pending_usage_reports_are_references_only_and_mark_reported() {
+        let conn = test_conn("usage-report");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+        let registry = ProviderRegistry::default_local();
+
+        let draft = assist_soap(&conn, &encounter_id, &registry).unwrap();
+        review_run(&conn, &draft.run_id, "APPROVED", None).unwrap();
+
+        let reports = pending_usage_reports(&conn, 10).unwrap();
+        assert_eq!(reports.len(), 1);
+        let report = &reports[0];
+        assert_eq!(report.external_run_id, draft.run_id);
+        assert_eq!(report.usage_type, "SOAP_ASSIST");
+        assert_eq!(report.status, "APPROVED");
+        assert_eq!(report.provider_name, "fake-clinico");
+        assert_eq!(report.input_reference["localRunId"], draft.run_id);
+        assert_eq!(report.output_reference["localRunId"], draft.run_id);
+        let serialized = serde_json::to_string(report).unwrap();
+        assert!(!serialized.contains("Tos persistente"));
+        assert!(!serialized.contains("Borrador IA"));
+
+        mark_usage_reports_sent(&conn, &[draft.run_id]).unwrap();
+        assert!(pending_usage_reports(&conn, 10).unwrap().is_empty());
     }
 }

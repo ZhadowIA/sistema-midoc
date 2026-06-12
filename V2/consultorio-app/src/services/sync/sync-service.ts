@@ -1,4 +1,7 @@
 import {
+  AiProviderType,
+  AiUsageStatus,
+  AiUsageType,
   MailboxDocumentStatus,
   Prisma,
   SyncDeviceStatus,
@@ -6,6 +9,7 @@ import {
   UserRole,
   type SyncDevice
 } from "@prisma/client";
+import { z } from "zod";
 
 import { writeAuditLog } from "../../lib/audit";
 import { ServiceError } from "../../lib/errors";
@@ -13,8 +17,51 @@ import { prisma } from "../../lib/prisma";
 import { generateOpaqueToken, hashOpaqueToken } from "../../lib/security/token";
 
 const INBOX_BATCH_SIZE = 100;
+const AI_USAGE_BATCH_SIZE = 100;
 
 class SyncServiceError extends ServiceError {}
+
+const aiUsageReferenceSchema = z
+  .object({
+    kind: z.enum(["LOCAL_AI_RUN_INPUT", "LOCAL_AI_RUN_OUTPUT"]),
+    localRunId: z.string().min(1).max(100),
+    patientId: z.string().min(1).max(100).optional(),
+    encounterId: z.string().min(1).max(100).optional()
+  })
+  .strict();
+
+const aiUsageReportSchema = z
+  .object({
+    externalRunId: z.string().min(1).max(100),
+    usageType: z.enum([
+      "SOAP_ASSIST",
+      "LONGITUDINAL_SUMMARY",
+      "PATIENT_INSTRUCTIONS",
+      "CLINICAL_GAPS",
+      "TRANSCRIPTION",
+      "VALIDATION",
+      "OTHER"
+    ]),
+    status: z.enum(["DRAFT", "APPROVED", "DISCARDED", "FAILED"]),
+    providerName: z.string().min(1).max(120),
+    providerType: z.enum(["LLM", "TRANSCRIPTION", "SCRIBE", "VALIDATION"]).default("LLM"),
+    modelVersion: z.string().min(1).max(120).optional(),
+    promptVersion: z.string().min(1).max(120).optional(),
+    estimatedCostCents: z.number().int().min(0).optional(),
+    latencyMs: z.number().int().min(0).optional(),
+    occurredAt: z.string().datetime(),
+    inputReference: aiUsageReferenceSchema,
+    outputReference: aiUsageReferenceSchema
+  })
+  .strict();
+
+const aiUsageBatchSchema = z
+  .object({
+    runs: z.array(aiUsageReportSchema).min(1).max(AI_USAGE_BATCH_SIZE)
+  })
+  .strict();
+
+type AiUsageReport = z.infer<typeof aiUsageReportSchema>;
 
 /**
  * Emite un evento de sincronizacion para el medico con `seq` monotono.
@@ -299,4 +346,121 @@ export async function getMailboxDocumentForDevice(device: SyncDevice, documentId
     sizeBytes: document.sizeBytes,
     ciphertext: Buffer.from(document.ciphertext).toString("base64")
   };
+}
+
+function mapAiUsageType(usageType: AiUsageReport["usageType"]): AiUsageType {
+  const mapping: Record<AiUsageReport["usageType"], AiUsageType> = {
+    SOAP_ASSIST: AiUsageType.SOAP_SUMMARY,
+    LONGITUDINAL_SUMMARY: AiUsageType.LONGITUDINAL_SUMMARY,
+    PATIENT_INSTRUCTIONS: AiUsageType.PATIENT_INSTRUCTIONS,
+    CLINICAL_GAPS: AiUsageType.CLINICAL_GAP,
+    TRANSCRIPTION: AiUsageType.TRANSCRIPTION,
+    VALIDATION: AiUsageType.VALIDATION,
+    OTHER: AiUsageType.OTHER
+  };
+  return mapping[usageType];
+}
+
+function mapAiUsageStatus(status: AiUsageReport["status"]): AiUsageStatus {
+  const mapping: Record<AiUsageReport["status"], AiUsageStatus> = {
+    DRAFT: AiUsageStatus.PENDING,
+    APPROVED: AiUsageStatus.REVIEWED,
+    DISCARDED: AiUsageStatus.REJECTED,
+    FAILED: AiUsageStatus.FAILED
+  };
+  return mapping[status];
+}
+
+async function getOrCreateAiProvider(report: AiUsageReport) {
+  const providerType = AiProviderType[report.providerType];
+  const existing = await prisma.aiProvider.findFirst({
+    where: {
+      name: report.providerName,
+      providerType,
+      modelName: report.modelVersion ?? null
+    }
+  });
+
+  if (existing) {
+    return existing;
+  }
+
+  return prisma.aiProvider.create({
+    data: {
+      name: report.providerName,
+      providerType,
+      modelName: report.modelVersion
+    }
+  });
+}
+
+/**
+ * Registra en el portal solo metadatos de uso de IA para gobernanza/creditos.
+ * El contenido clinico, prompts y salidas permanecen en la app local; las
+ * referencias apuntan a IDs locales que el portal no puede resolver.
+ */
+export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
+  const parsedResult = aiUsageBatchSchema.safeParse(payload);
+  if (!parsedResult.success) {
+    throw new SyncServiceError("Datos invalidos.", 400);
+  }
+  const parsed = parsedResult.data;
+  const now = new Date();
+
+  for (const report of parsed.runs) {
+    const provider = await getOrCreateAiProvider(report);
+    const status = mapAiUsageStatus(report.status);
+    const reviewedAt = status === AiUsageStatus.REVIEWED || status === AiUsageStatus.REJECTED
+      ? now
+      : null;
+
+    await prisma.aiUsageLog.upsert({
+      where: {
+        doctorId_externalRunId: {
+          doctorId: device.doctorId,
+          externalRunId: report.externalRunId
+        }
+      },
+      create: {
+        doctorId: device.doctorId,
+        externalRunId: report.externalRunId,
+        providerId: provider.id,
+        usageType: mapAiUsageType(report.usageType),
+        status,
+        inputReference: report.inputReference,
+        outputReference: report.outputReference,
+        promptVersion: report.promptVersion,
+        modelVersion: report.modelVersion,
+        estimatedCostCents: report.estimatedCostCents,
+        latencyMs: report.latencyMs,
+        reviewedAt,
+        reportedAt: now,
+        createdAt: new Date(report.occurredAt)
+      },
+      update: {
+        providerId: provider.id,
+        usageType: mapAiUsageType(report.usageType),
+        status,
+        inputReference: report.inputReference,
+        outputReference: report.outputReference,
+        promptVersion: report.promptVersion,
+        modelVersion: report.modelVersion,
+        estimatedCostCents: report.estimatedCostCents,
+        latencyMs: report.latencyMs,
+        reviewedAt,
+        reportedAt: now
+      }
+    });
+  }
+
+  await writeAuditLog({
+    actorUserId: device.doctorId,
+    entityType: "AiUsageLog",
+    entityId: device.id,
+    action: "sync.ai-usage-reported",
+    source: "sync-service",
+    metadata: { runCount: parsed.runs.length }
+  });
+
+  return { reported: parsed.runs.length };
 }

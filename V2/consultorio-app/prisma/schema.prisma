@@ -322,6 +322,7 @@ model User {
   cashDrawerSessionsAsDoctor CashDrawerSession[] @relation("DoctorCashDrawerSessions")
   cashDrawerSessionsClosed CashDrawerSession[] @relation("CashDrawerCloser")
   aiBenchmarkRuns        AiBenchmarkRun[]     @relation("AiBenchmarkRunner")
+  aiUsageLogsAsDoctor    AiUsageLog[]         @relation("DoctorAiUsageLogs")
 }
 
 model DoctorProfile {
@@ -993,6 +994,10 @@ model AiProvider {
 
 model AiUsageLog {
   id                 String        @id @default(cuid())
+  // OPERATIVO: propiedad SaaS/idempotencia del reporte desde la app local.
+  // No contiene contenido clinico; `externalRunId` apunta a la traza local.
+  doctorId           String?
+  externalRunId      String?
   providerId         String
   patientId          String?
   encounterId        String?
@@ -1007,11 +1012,16 @@ model AiUsageLog {
   latencyMs          Int?
   reviewedAt         DateTime?
   feedback           String?
+  reportedAt         DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
+  doctor             User?         @relation("DoctorAiUsageLogs", fields: [doctorId], references: [id], onDelete: Cascade)
   provider           AiProvider    @relation(fields: [providerId], references: [id], onDelete: Restrict)
   patient            Patient?      @relation(fields: [patientId], references: [id], onDelete: SetNull)
   encounter          Encounter?    @relation(fields: [encounterId], references: [id], onDelete: SetNull)
+
+  @@unique([doctorId, externalRunId])
+  @@index([doctorId, createdAt])
 }
 
 model AiBenchmarkRun {

@@ -35,7 +35,7 @@ const mockState = {
   aiConsent: false,
   aiRunSeq: 0,
   aiBudgetCents: 0,
-  aiRuns: [] as Array<{ usage_type: string; cost_cents: number }>,
+  aiRuns: [] as Array<{ id: string; usage_type: string; cost_cents: number; status: string; reported: boolean }>,
   benchmarks: [] as Array<Record<string, unknown>>,
   appointments: [
     {
@@ -346,8 +346,11 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     case "link_account":
       mockState.linked = true;
       return undefined as T;
-    case "sync_now":
-      return { applied_events: 0, cursor: 7 } as T;
+    case "sync_now": {
+      const pendingAiReports = mockState.aiRuns.filter((run) => !run.reported).length;
+      mockState.aiRuns = mockState.aiRuns.map((run) => ({ ...run, reported: true }));
+      return { applied_events: 0, cursor: 7, ai_usage_reported: pendingAiReports } as T;
+    }
     case "list_appointments":
       return mockState.appointments as T;
     case "open_encounter":
@@ -392,10 +395,17 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         throw "se alcanzo el presupuesto mensual de IA; ajustalo para continuar";
       }
       mockState.aiRunSeq += 1;
-      mockState.aiRuns.push({ usage_type: "SOAP_ASSIST", cost_cents: 1 });
+      const runId = `ai-run-${mockState.aiRunSeq}`;
+      mockState.aiRuns.push({
+        id: runId,
+        usage_type: "SOAP_ASSIST",
+        cost_cents: 1,
+        status: "DRAFT",
+        reported: false
+      });
       const context = "Motivo de consulta: Dolor en molar superior derecho";
       return {
-        run_id: `ai-run-${mockState.aiRunSeq}`,
+        run_id: runId,
         provider: "fake-clinico",
         model_version: "fake-1",
         estimated_cost_cents: 1,
@@ -419,7 +429,14 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       }
       mockState.aiRunSeq += 1;
       const usageType = String(args?.usageType ?? "");
-      mockState.aiRuns.push({ usage_type: usageType, cost_cents: 1 });
+      const textRunId = `ai-run-${mockState.aiRunSeq}`;
+      mockState.aiRuns.push({
+        id: textRunId,
+        usage_type: usageType,
+        cost_cents: 1,
+        status: "DRAFT",
+        reported: false
+      });
       const context = "Motivo de consulta: Dolor en molar superior derecho";
       const text =
         usageType === "LONGITUDINAL_SUMMARY"
@@ -428,7 +445,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
             ? `Indicaciones para el paciente (borrador):\n- Sigue el plan acordado en consulta.\n- Acude a tu proxima cita.\n\n(Ajustar a lenguaje del paciente y confirmar.)`
             : `Posibles brechas clinicas a revisar (borrador):\n- Verifica antecedentes y alergias.\n- Confirma seguimiento de diagnosticos previos.\n\n(Estas son sugerencias; el criterio es del medico.)`;
       return {
-        run_id: `ai-run-${mockState.aiRunSeq}`,
+        run_id: textRunId,
         usage_type: usageType,
         provider: "fake-clinico",
         model_version: "fake-1",
@@ -437,8 +454,14 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         text
       } as T;
     }
-    case "ai_review_run":
+    case "ai_review_run": {
+      const run = mockState.aiRuns.find((item) => item.id === args?.runId);
+      if (run) {
+        run.status = String(args?.status ?? run.status);
+        run.reported = false;
+      }
       return { id: String(args?.runId), status: String(args?.status) } as T;
+    }
     case "ai_list_runs":
       return [] as T;
     case "ai_set_budget":

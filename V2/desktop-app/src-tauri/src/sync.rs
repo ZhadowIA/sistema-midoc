@@ -41,6 +41,12 @@ pub struct InboxResponse {
 pub struct SyncSummary {
     pub applied_events: u64,
     pub cursor: i64,
+    pub ai_usage_reported: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AiUsageReportSummary {
+    pub reported: u64,
 }
 
 #[derive(Debug)]
@@ -298,11 +304,7 @@ pub async fn fetch_inbox(
     Ok(response.json().await?)
 }
 
-pub async fn send_ack(
-    server_url: &str,
-    device_token: &str,
-    cursor: i64,
-) -> Result<(), SyncError> {
+pub async fn send_ack(server_url: &str, device_token: &str, cursor: i64) -> Result<(), SyncError> {
     let client = reqwest::Client::new();
     let base = server_url.trim_end_matches('/');
 
@@ -382,6 +384,30 @@ pub async fn publish_summary(
         .and_then(|v| v.as_str())
         .map(String::from)
         .ok_or_else(|| SyncError::Server("respuesta sin downloadUrl".into()))
+}
+
+/// Reporta al portal solo metadatos/referencias de uso IA. El contenido
+/// clinico, prompts redactados y salidas permanecen en la base local cifrada.
+pub async fn report_ai_usage(
+    server_url: &str,
+    device_token: &str,
+    reports: &[crate::ai::AiUsageReport],
+) -> Result<AiUsageReportSummary, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+
+    let response = client
+        .post(format!("{base}/api/sync/ai-usage"))
+        .bearer_auth(device_token)
+        .json(&serde_json::json!({ "runs": reports }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+
+    Ok(response.json().await?)
 }
 
 /// Sobre [metaLen u32 BE | metaJSON | bytes]. El metaJSON lleva nombre y tipo
@@ -586,7 +612,15 @@ mod tests {
                 "SELECT count(*), max(file_name), max(mime_type), max(size_bytes), max(content)
                  FROM documents WHERE id = 'doc-1'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .unwrap();
         assert_eq!(count, 1);
@@ -623,7 +657,10 @@ mod tests {
             }
         });
 
-        assert_eq!(extract_clinical_profile(&body).as_deref(), Some("ODONTOLOGY"));
+        assert_eq!(
+            extract_clinical_profile(&body).as_deref(),
+            Some("ODONTOLOGY")
+        );
     }
 
     #[test]
@@ -789,7 +826,9 @@ mod tests {
                 break;
             }
             apply_batch(&mut conn, &inbox.events).unwrap();
-            send_ack(&base, &device_token, inbox.next_cursor).await.unwrap();
+            send_ack(&base, &device_token, inbox.next_cursor)
+                .await
+                .unwrap();
             cursor = inbox.next_cursor;
         }
 
@@ -806,9 +845,11 @@ mod tests {
 
         // 6) La preconsulta clinica vive localmente...
         let responses: String = conn
-            .query_row("SELECT responses_json FROM precheckins LIMIT 1", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT responses_json FROM precheckins LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert!(responses.contains("Dolor lumbar e2e"));
 

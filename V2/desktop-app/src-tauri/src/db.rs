@@ -260,6 +260,11 @@ const MIGRATIONS: &[&str] = &[
         completeness_pct INTEGER NOT NULL
     );
     CREATE INDEX idx_ai_benchmark_results_run ON ai_benchmark_results (run_id);",
+    // v9: reporte de metadatos de uso IA al portal (paso 11). Marca local para
+    // idempotencia de envio; el portal recibe solo referencias/costos, nunca
+    // input_redacted ni output. Clase: OPERATIVO.
+    "ALTER TABLE ai_runs ADD COLUMN usage_reported_at TEXT;
+    CREATE INDEX idx_ai_runs_usage_reported ON ai_runs (usage_reported_at);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
@@ -412,9 +417,11 @@ mod tests {
 
         let restored = open_encrypted(&backup, "clave-correcta").unwrap();
         let value: String = restored
-            .query_row("SELECT value FROM app_meta WHERE key = 'backup_probe'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT value FROM app_meta WHERE key = 'backup_probe'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(value, "valor-clinico-local");
 
