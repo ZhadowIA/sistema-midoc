@@ -623,6 +623,51 @@ textarea:disabled {
   }
 }
 
+/* Operacion presencial (paso 10): pestañas y resumen de caja. */
+.tab-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 550;
+  font-size: 0.95rem;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--speed) var(--ease), border-color var(--speed) var(--ease);
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.tab-active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.cash-summary {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.cash-summary-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

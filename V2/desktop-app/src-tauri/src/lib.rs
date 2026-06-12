@@ -1,6 +1,7 @@
 mod clinical;
 mod crypto;
 mod db;
+mod operations;
 mod sync;
 
 #[cfg(test)]
@@ -399,6 +400,163 @@ fn verify_signature(
     with_conn(&state, |conn| clinical::verify_signature(conn, &encounter_id))
 }
 
+/* ---------- Operacion presencial (paso 10) ---------- */
+
+fn with_ops<T>(
+    state: &tauri::State<'_, AppDb>,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, operations::OperationsError>,
+) -> Result<T, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    f(conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_resources(
+    state: tauri::State<'_, AppDb>,
+) -> Result<Vec<operations::Resource>, String> {
+    with_ops(&state, operations::list_resources)
+}
+
+#[tauri::command]
+fn create_resource(
+    state: tauri::State<'_, AppDb>,
+    resource: operations::NewResource,
+) -> Result<operations::Resource, String> {
+    with_ops(&state, |conn| operations::create_resource(conn, &resource))
+}
+
+#[tauri::command]
+fn set_resource_active(
+    state: tauri::State<'_, AppDb>,
+    resource_id: String,
+    active: bool,
+) -> Result<(), String> {
+    with_ops(&state, |conn| operations::set_resource_active(conn, &resource_id, active))
+}
+
+#[tauri::command]
+fn list_active_visits(state: tauri::State<'_, AppDb>) -> Result<Vec<operations::Visit>, String> {
+    with_ops(&state, operations::list_active_visits)
+}
+
+#[tauri::command]
+fn check_in_appointment(
+    state: tauri::State<'_, AppDb>,
+    appointment_id: String,
+    priority: Option<i64>,
+) -> Result<operations::Visit, String> {
+    with_ops(&state, |conn| {
+        operations::check_in_appointment(conn, &appointment_id, priority.unwrap_or(0))
+    })
+}
+
+#[tauri::command]
+fn register_walk_in(
+    state: tauri::State<'_, AppDb>,
+    walk_in: operations::WalkInInput,
+) -> Result<operations::Visit, String> {
+    with_ops(&state, |conn| operations::register_walk_in(conn, &walk_in))
+}
+
+#[tauri::command]
+fn set_visit_state(
+    state: tauri::State<'_, AppDb>,
+    visit_id: String,
+    visit_state: String,
+) -> Result<operations::Visit, String> {
+    with_ops(&state, |conn| operations::set_visit_state(conn, &visit_id, &visit_state))
+}
+
+#[tauri::command]
+fn assign_resource(
+    state: tauri::State<'_, AppDb>,
+    visit_id: String,
+    resource_id: Option<String>,
+) -> Result<operations::Visit, String> {
+    with_ops(&state, |conn| {
+        operations::assign_resource(conn, &visit_id, resource_id.as_deref())
+    })
+}
+
+/// Inicia la consulta de una visita: abre (o reusa) el expediente clinico —
+/// desde la cita si la hay, o como walk-in para el paciente — lo enlaza a la
+/// visita y la marca en consulta. Devuelve el id del encuentro para abrir la
+/// pantalla de atencion existente.
+#[tauri::command]
+fn start_visit_encounter(
+    state: tauri::State<'_, AppDb>,
+    visit_id: String,
+) -> Result<String, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+
+    let visit = operations::read_active_visit(conn, &visit_id).map_err(|e| e.to_string())?;
+    let encounter = match (&visit.appointment_id, &visit.patient_id) {
+        (Some(appointment_id), _) => {
+            clinical::open_encounter_for_appointment(conn, appointment_id)
+        }
+        (None, Some(patient_id)) => clinical::open_encounter_for_patient(conn, patient_id),
+        (None, None) => {
+            return Err("la visita no tiene paciente asociado".into());
+        }
+    }
+    .map_err(|e| e.to_string())?;
+
+    operations::link_visit_encounter(conn, &visit_id, &encounter.id).map_err(|e| e.to_string())?;
+    Ok(encounter.id)
+}
+
+#[tauri::command]
+fn get_open_cash_session(
+    state: tauri::State<'_, AppDb>,
+) -> Result<Option<operations::CashSession>, String> {
+    with_ops(&state, operations::get_open_session)
+}
+
+#[tauri::command]
+fn open_cash_session(
+    state: tauri::State<'_, AppDb>,
+    opening_float_cents: i64,
+) -> Result<operations::CashSession, String> {
+    with_ops(&state, |conn| operations::open_cash_session(conn, opening_float_cents))
+}
+
+#[tauri::command]
+fn close_cash_session(
+    state: tauri::State<'_, AppDb>,
+    counted_cash_cents: i64,
+    notes: Option<String>,
+) -> Result<operations::CashSummary, String> {
+    with_ops(&state, |conn| {
+        operations::close_cash_session(conn, counted_cash_cents, notes.as_deref())
+    })
+}
+
+#[tauri::command]
+fn cash_summary(
+    state: tauri::State<'_, AppDb>,
+    session_id: String,
+) -> Result<operations::CashSummary, String> {
+    with_ops(&state, |conn| operations::cash_summary(conn, &session_id))
+}
+
+#[tauri::command]
+fn register_payment(
+    state: tauri::State<'_, AppDb>,
+    payment: operations::PaymentInput,
+) -> Result<operations::Payment, String> {
+    with_ops(&state, |conn| operations::register_payment(conn, &payment))
+}
+
+#[tauri::command]
+fn list_session_payments(
+    state: tauri::State<'_, AppDb>,
+    session_id: String,
+) -> Result<Vec<operations::Payment>, String> {
+    with_ops(&state, |conn| operations::list_session_payments(conn, &session_id))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -418,7 +576,22 @@ pub fn run() {
             save_prescription,
             update_patient_background,
             sign_encounter,
-            verify_signature
+            verify_signature,
+            list_resources,
+            create_resource,
+            set_resource_active,
+            list_active_visits,
+            check_in_appointment,
+            register_walk_in,
+            set_visit_state,
+            assign_resource,
+            start_visit_encounter,
+            get_open_cash_session,
+            open_cash_session,
+            close_cash_session,
+            cash_summary,
+            register_payment,
+            list_session_payments
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

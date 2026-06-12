@@ -138,6 +138,71 @@ const MIGRATIONS: &[&str] = &[
         received_at TEXT NOT NULL
     );
     CREATE INDEX idx_documents_patient ON documents (patient_id);",
+    // v6: operacion presencial (paso 10). Recepcion, lista de espera, consulta
+    // sin cita, estados operativos, recursos fisicos, caja diaria, cobros,
+    // recibos y anticipos. Clase: OPERATIVO — vive solo en este equipo y nunca
+    // viaja a la nube. El dinero se guarda en centavos (enteros) para evitar
+    // aritmetica de punto flotante.
+    "CREATE TABLE resources (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'ROOM',
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+    );
+    -- Visita operativa: unifica la llegada de una cita agendada y la consulta
+    -- sin cita (walk-in). appointment_id NULL = sin cita. encounter_id enlaza
+    -- con el expediente clinico cuando inicia la consulta.
+    CREATE TABLE visits (
+        id TEXT PRIMARY KEY NOT NULL,
+        appointment_id TEXT,
+        patient_id TEXT,
+        patient_name TEXT NOT NULL DEFAULT '',
+        patient_phone TEXT,
+        reason TEXT,
+        service_name TEXT,
+        state TEXT NOT NULL DEFAULT 'WAITING',
+        priority INTEGER NOT NULL DEFAULT 0,
+        resource_id TEXT REFERENCES resources (id),
+        encounter_id TEXT,
+        arrived_at TEXT NOT NULL,
+        started_at TEXT,
+        ended_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_visits_state ON visits (state);
+    CREATE INDEX idx_visits_arrived ON visits (arrived_at);
+    CREATE UNIQUE INDEX idx_visits_appointment
+        ON visits (appointment_id) WHERE appointment_id IS NOT NULL;
+    -- Caja diaria: una sesion abierta a la vez (indice unico parcial).
+    CREATE TABLE cash_sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        opened_at TEXT NOT NULL,
+        opening_float_cents INTEGER NOT NULL DEFAULT 0,
+        closed_at TEXT,
+        closing_counted_cents INTEGER,
+        notes TEXT
+    );
+    CREATE UNIQUE INDEX idx_cash_sessions_open
+        ON cash_sessions (closed_at) WHERE closed_at IS NULL;
+    -- Cobros, anticipos (DEPOSIT) y reembolsos (REFUND). Cada cobro pertenece a
+    -- la sesion de caja abierta y lleva un folio de recibo monotono.
+    CREATE TABLE payments (
+        id TEXT PRIMARY KEY NOT NULL,
+        cash_session_id TEXT NOT NULL REFERENCES cash_sessions (id),
+        visit_id TEXT REFERENCES visits (id),
+        appointment_id TEXT,
+        patient_id TEXT,
+        amount_cents INTEGER NOT NULL,
+        method TEXT NOT NULL DEFAULT 'CASH',
+        kind TEXT NOT NULL DEFAULT 'PAYMENT',
+        concept TEXT,
+        receipt_number TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_payments_session ON payments (cash_session_id);
+    CREATE UNIQUE INDEX idx_payments_receipt ON payments (receipt_number);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

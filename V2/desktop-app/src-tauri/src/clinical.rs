@@ -216,6 +216,33 @@ pub fn open_encounter_for_appointment(
     read_encounter(conn, &encounter_id)
 }
 
+/// Abre un encuentro clinico para un paciente sin cita previa (consulta
+/// walk-in, paso 10). Extiende el nucleo sin tocarlo: reusa la misma tabla de
+/// encuentros con `appointment_id` nulo. El paciente debe existir ya.
+pub fn open_encounter_for_patient(
+    conn: &Connection,
+    patient_id: &str,
+) -> Result<Encounter, ClinicalError> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM patients WHERE id = ?1)",
+        params![patient_id],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(ClinicalError::NotFound);
+    }
+
+    let encounter_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO encounters (id, appointment_id, patient_id, status, opened_at)
+         VALUES (?1, NULL, ?2, 'OPEN', ?3)",
+        params![encounter_id, patient_id, now()],
+    )?;
+
+    audit(conn, "encounter", &encounter_id, "opened", Some("walk-in"))?;
+    read_encounter(conn, &encounter_id)
+}
+
 pub fn get_encounter_detail(
     conn: &Connection,
     encounter_id: &str,
