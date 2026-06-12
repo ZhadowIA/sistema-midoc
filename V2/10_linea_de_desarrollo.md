@@ -391,7 +391,7 @@ Pendiente registrado (no implementado; mejora futura del paso):
 | Compuerta de avance | Ninguna salida IA se guarda como clinica sin revision humana. |
 | Push recomendado | Hacer push cuando IA tenga capa multi-proveedor, benchmark documentado, consentimiento, revision humana, trazas, feedback y control de costo. |
 
-Estado: 🚧 EN PROGRESO — rebanada 1 (fundacion + SOAP asistido), rebanada 2 (resumen/instrucciones/brechas) y rebanada 3 (control de costo y creditos) entregadas (2026-06-11). Construido sobre el paso 10.
+Estado: 🚧 EN PROGRESO — rebanadas 1 (fundacion + SOAP), 2 (resumen/instrucciones/brechas), 3 (control de costo) y 4 (benchmark clinico) entregadas (2026-06-11). La compuerta de push del paso esta cubierta; resta transcripcion de audio y reporte de uso al portal (rebanadas futuras). Construido sobre el paso 10.
 
 Entregado (rebanada 1 — fundacion + SOAP asistido):
 
@@ -421,7 +421,15 @@ Entregado (rebanada 3 — control de costo y creditos, RF29, 2026-06-11):
 
 Verificacion (rebanada 3): 46 pruebas de Rust en verde (incluye bloqueo al alcanzar el limite, reapertura al subir el presupuesto, agregacion de uso y rechazo de presupuesto negativo), `cargo clippy` limpio, `tsc + vite build` ok y prueba manual en navegador (presupuesto $0.01 → primera ejecucion pasa y deja el mes en el limite → segunda bloqueada).
 
-Pendiente (rebanadas posteriores del paso 11): transcripcion de consulta por audio/voz (con consentimiento propio), benchmark clinico, reporte de metadatos de uso al portal y adaptador de proveedor real en staging.
+Entregado (rebanada 4 — benchmark clinico, RF41, 2026-06-11):
+
+- **Benchmark con datos simulados.** Migracion v8 (`ai_benchmark_runs`, `ai_benchmark_results`, clase OPERATIVO; casos simulados, sin PHI). Set representativo minimo (medicina general y odontologia) sobre el que se evalua cada proveedor.
+- **Comparacion multi-proveedor y decision documentada.** `run_benchmark` evalua cada proveedor por exito, completitud (secciones SOAP no vacias / texto no vacio), costo y latencia, y recomienda con una regla explicita (mayor exito → mayor completitud → menor costo → menor latencia), guardando la justificacion. `run_default_benchmark` compara dos proveedores fake de distinto costo; el real entra en staging con BAA.
+- **UI.** Pestaña "Benchmark IA" en el espacio de trabajo: ejecuta la corrida y muestra el proveedor recomendado, la justificacion y la tabla comparativa por proveedor. Historial de corridas persistido.
+
+Verificacion (rebanada 4): 48 pruebas de Rust en verde (incluye comparacion de proveedores con recomendacion del mas barato a igual calidad, persistencia/relectura y rechazo de benchmark sin proveedores), `cargo clippy` limpio, `tsc + vite build` ok y prueba manual en navegador (ejecutar benchmark → recomendado openai-fake $0.06 vs medlm-fake $0.18).
+
+Con esto la compuerta de push del paso 11 queda cubierta: capa multi-proveedor, consentimiento, revision humana, trazas, feedback, control de costo y benchmark documentado. Pendiente (no requerido por la compuerta, rebanadas futuras): transcripcion de consulta por audio/voz (con consentimiento propio), reporte de metadatos de uso al portal y adaptador de proveedor real en staging.
 
 ## Paso 12 - SaaS y compliance avanzado
 

@@ -653,6 +653,21 @@ fn ai_set_budget(
     with_ai(&state, |conn| ai::set_budget_cents(conn, budget_cents))
 }
 
+#[tauri::command]
+fn ai_run_benchmark(
+    state: tauri::State<'_, AppDb>,
+    name: String,
+) -> Result<ai::BenchmarkRun, String> {
+    with_ai(&state, |conn| ai::run_default_benchmark(conn, &name))
+}
+
+#[tauri::command]
+fn ai_list_benchmarks(
+    state: tauri::State<'_, AppDb>,
+) -> Result<Vec<ai::BenchmarkRun>, String> {
+    with_ai(&state, ai::list_benchmarks)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -696,7 +711,9 @@ pub fn run() {
             ai_review_run,
             ai_list_runs,
             ai_usage_summary,
-            ai_set_budget
+            ai_set_budget,
+            ai_run_benchmark,
+            ai_list_benchmarks
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
