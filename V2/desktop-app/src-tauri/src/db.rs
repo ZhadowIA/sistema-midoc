@@ -239,6 +239,27 @@ const MIGRATIONS: &[&str] = &[
         created_at TEXT NOT NULL
     );
     CREATE INDEX idx_ai_runs_encounter ON ai_runs (encounter_id);",
+    // v8: benchmark clinico de IA (paso 11). Compara proveedores con casos
+    // SIMULADOS (sin PHI) y documenta una decision. Clase: OPERATIVO — solo
+    // local; nunca lleva contenido clinico real.
+    "CREATE TABLE ai_benchmark_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        case_count INTEGER NOT NULL,
+        recommended_provider TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE ai_benchmark_results (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL REFERENCES ai_benchmark_runs (id),
+        provider TEXT NOT NULL,
+        success_count INTEGER NOT NULL,
+        avg_latency_ms INTEGER NOT NULL,
+        total_cost_cents INTEGER NOT NULL,
+        completeness_pct INTEGER NOT NULL
+    );
+    CREATE INDEX idx_ai_benchmark_results_run ON ai_benchmark_results (run_id);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

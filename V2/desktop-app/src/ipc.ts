@@ -36,6 +36,7 @@ const mockState = {
   aiRunSeq: 0,
   aiBudgetCents: 0,
   aiRuns: [] as Array<{ usage_type: string; cost_cents: number }>,
+  benchmarks: [] as Array<Record<string, unknown>>,
   appointments: [
     {
       id: "appt-1",
@@ -443,6 +444,25 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     case "ai_set_budget":
       mockState.aiBudgetCents = Number(args?.budgetCents ?? 0);
       return undefined as T;
+    case "ai_run_benchmark": {
+      const run = {
+        id: `bench-${mockState.benchmarks.length + 1}`,
+        name: String(args?.name ?? "Comparativa"),
+        case_count: 6,
+        recommended_provider: "openai-fake",
+        notes:
+          "Recomendado por mayor exito/completitud y menor costo: 6 exitos, 100% completitud, 6 centavos, 0 ms promedio.",
+        created_at: new Date().toISOString(),
+        results: [
+          { provider: "openai-fake", success_count: 6, avg_latency_ms: 0, total_cost_cents: 6, completeness_pct: 100 },
+          { provider: "medlm-fake", success_count: 6, avg_latency_ms: 0, total_cost_cents: 18, completeness_pct: 100 }
+        ]
+      };
+      mockState.benchmarks.unshift(run);
+      return run as T;
+    }
+    case "ai_list_benchmarks":
+      return mockState.benchmarks as T;
     case "ai_usage_summary": {
       const byMap = new Map<string, { run_count: number; cost_cents: number }>();
       for (const r of mockState.aiRuns) {

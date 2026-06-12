@@ -118,11 +118,18 @@ impl ProviderRegistry {
 /// borrador SOAP estructurado a partir del contexto seudonimizado. No hace red.
 pub struct FakeProvider {
     name: String,
+    cost_factor: i64,
 }
 
 impl FakeProvider {
     pub fn new(name: &str) -> Self {
-        Self { name: name.to_string() }
+        Self { name: name.to_string(), cost_factor: 1 }
+    }
+
+    /// Variante con multiplicador de costo, para comparar proveedores en el
+    /// benchmark (un proveedor mas caro debe quedar peor a igualdad de calidad).
+    pub fn with_cost(name: &str, cost_factor: i64) -> Self {
+        Self { name: name.to_string(), cost_factor: cost_factor.max(1) }
     }
 }
 
@@ -166,7 +173,7 @@ impl AiProvider for FakeProvider {
 
         // Costo estimado proporcional al tamano del contexto (modelo de la
         // fundacion; el proveedor real reporta el costo verdadero).
-        let estimated_cost_cents = 1 + (context.len() as i64) / 500;
+        let estimated_cost_cents = (1 + (context.len() as i64) / 500) * self.cost_factor;
 
         Ok(AiResponse {
             output,
@@ -634,6 +641,230 @@ pub fn review_run(
     read_run(conn, run_id)
 }
 
+/* ---------- Benchmark clinico (RF41) ---------- */
+
+/// Caso de benchmark con datos SIMULADOS (sin PHI). El benchmark se ejecuta
+/// con datos simulados o autorizados con consentimiento; aqui solo simulados.
+struct BenchmarkCase {
+    usage_type: &'static str,
+    context: &'static str,
+}
+
+/// Conjunto representativo minimo (medicina general y odontologia). Se amplia
+/// cuando se cablee un proveedor real con audios/casos autorizados.
+fn benchmark_cases() -> Vec<BenchmarkCase> {
+    vec![
+        BenchmarkCase { usage_type: USAGE_SOAP_ASSIST, context: "Tos y fiebre de tres dias." },
+        BenchmarkCase { usage_type: USAGE_SOAP_ASSIST, context: "Dolor abdominal epigastrico." },
+        BenchmarkCase { usage_type: USAGE_SOAP_ASSIST, context: "Dolor dental en molar inferior." },
+        BenchmarkCase { usage_type: USAGE_SUMMARY, context: "Paciente con HTA y DM2 en control." },
+        BenchmarkCase { usage_type: USAGE_INSTRUCTIONS, context: "Post extraccion dental." },
+        BenchmarkCase { usage_type: USAGE_GAPS, context: "Control de paciente cronico." },
+    ]
+}
+
+/// Completitud de una salida (0-100). Para SOAP cuenta las secciones clave no
+/// vacias; para texto, basta con que la salida no este vacia.
+fn completeness_pct(usage_type: &str, output: &str) -> i64 {
+    if usage_type == USAGE_SOAP_ASSIST {
+        let Ok(note) = serde_json::from_str::<NoteContent>(output) else {
+            return 0;
+        };
+        let sections = [&note.subjective, &note.objective, &note.assessment, &note.plan];
+        let filled = sections.iter().filter(|s| !s.trim().is_empty()).count();
+        (filled as i64) * 100 / (sections.len() as i64)
+    } else if output.trim().is_empty() {
+        0
+    } else {
+        100
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct BenchmarkResult {
+    pub provider: String,
+    pub success_count: i64,
+    pub avg_latency_ms: i64,
+    pub total_cost_cents: i64,
+    pub completeness_pct: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BenchmarkRun {
+    pub id: String,
+    pub name: String,
+    pub case_count: i64,
+    pub recommended_provider: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub results: Vec<BenchmarkResult>,
+}
+
+/// Evalua un proveedor contra el set de casos y agrega sus metricas.
+fn evaluate_provider(provider: &dyn AiProvider, cases: &[BenchmarkCase]) -> BenchmarkResult {
+    let mut success = 0i64;
+    let mut latency_sum = 0i64;
+    let mut cost = 0i64;
+    let mut completeness_sum = 0i64;
+
+    for case in cases {
+        let request = AiRequest {
+            usage_type: case.usage_type.into(),
+            prompt_version: prompt_version_for(case.usage_type).into(),
+            redacted_input: case.context.into(),
+        };
+        if let Ok(response) = provider.generate(&request) {
+            success += 1;
+            latency_sum += response.latency_ms;
+            cost += response.estimated_cost_cents;
+            completeness_sum += completeness_pct(case.usage_type, &response.output);
+        }
+    }
+
+    let n = cases.len().max(1) as i64;
+    BenchmarkResult {
+        provider: provider.name().to_string(),
+        success_count: success,
+        avg_latency_ms: if success > 0 { latency_sum / success } else { 0 },
+        total_cost_cents: cost,
+        completeness_pct: completeness_sum / n,
+    }
+}
+
+/// Elige el proveedor recomendado: mayor exito, luego mayor completitud, luego
+/// menor costo, luego menor latencia. Devuelve nombre y justificacion.
+fn recommend(results: &[BenchmarkResult]) -> Option<(String, String)> {
+    let best = results.iter().max_by(|a, b| {
+        a.success_count
+            .cmp(&b.success_count)
+            .then(a.completeness_pct.cmp(&b.completeness_pct))
+            .then(b.total_cost_cents.cmp(&a.total_cost_cents))
+            .then(b.avg_latency_ms.cmp(&a.avg_latency_ms))
+    })?;
+    let notes = format!(
+        "Recomendado por mayor exito/completitud y menor costo: {} exitos, {}% completitud, {} centavos, {} ms promedio.",
+        best.success_count, best.completeness_pct, best.total_cost_cents, best.avg_latency_ms
+    );
+    Some((best.provider.clone(), notes))
+}
+
+/// Ejecuta el benchmark de los proveedores dados contra el set simulado,
+/// guarda la corrida y los resultados, y documenta la decision.
+pub fn run_benchmark(
+    conn: &Connection,
+    name: &str,
+    providers: &[Box<dyn AiProvider>],
+) -> Result<BenchmarkRun, AiError> {
+    if providers.is_empty() {
+        return Err(AiError::Invalid("el benchmark necesita al menos un proveedor".into()));
+    }
+    let cases = benchmark_cases();
+    let results: Vec<BenchmarkResult> =
+        providers.iter().map(|p| evaluate_provider(p.as_ref(), &cases)).collect();
+
+    let recommendation = recommend(&results);
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let created_at = now();
+    conn.execute(
+        "INSERT INTO ai_benchmark_runs (id, name, case_count, recommended_provider, notes, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            run_id,
+            name,
+            cases.len() as i64,
+            recommendation.as_ref().map(|(p, _)| p.clone()),
+            recommendation.as_ref().map(|(_, n)| n.clone()),
+            created_at
+        ],
+    )?;
+    for result in &results {
+        conn.execute(
+            "INSERT INTO ai_benchmark_results
+                (id, run_id, provider, success_count, avg_latency_ms, total_cost_cents, completeness_pct)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                run_id,
+                result.provider,
+                result.success_count,
+                result.avg_latency_ms,
+                result.total_cost_cents,
+                result.completeness_pct
+            ],
+        )?;
+    }
+    audit(conn, "ai_benchmark", &run_id, "executed", Some(name))?;
+
+    Ok(BenchmarkRun {
+        id: run_id,
+        name: name.into(),
+        case_count: cases.len() as i64,
+        recommended_provider: recommendation.as_ref().map(|(p, _)| p.clone()),
+        notes: recommendation.map(|(_, n)| n),
+        created_at,
+        results,
+    })
+}
+
+/// Ejecuta el benchmark con el set de proveedores por defecto de comparacion:
+/// dos proveedores fake con distinto costo (el real entra en staging con BAA).
+pub fn run_default_benchmark(conn: &Connection, name: &str) -> Result<BenchmarkRun, AiError> {
+    let providers: Vec<Box<dyn AiProvider>> = vec![
+        Box::new(FakeProvider::with_cost("openai-fake", 1)),
+        Box::new(FakeProvider::with_cost("medlm-fake", 3)),
+    ];
+    run_benchmark(conn, name, &providers)
+}
+
+fn read_benchmark_results(
+    conn: &Connection,
+    run_id: &str,
+) -> Result<Vec<BenchmarkResult>, AiError> {
+    let mut statement = conn.prepare(
+        "SELECT provider, success_count, avg_latency_ms, total_cost_cents, completeness_pct
+         FROM ai_benchmark_results WHERE run_id = ?1 ORDER BY total_cost_cents ASC",
+    )?;
+    let rows = statement
+        .query_map(params![run_id], |row| {
+            Ok(BenchmarkResult {
+                provider: row.get(0)?,
+                success_count: row.get(1)?,
+                avg_latency_ms: row.get(2)?,
+                total_cost_cents: row.get(3)?,
+                completeness_pct: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn list_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRun>, AiError> {
+    let mut statement = conn.prepare(
+        "SELECT id, name, case_count, recommended_provider, notes, created_at
+         FROM ai_benchmark_runs ORDER BY created_at DESC",
+    )?;
+    // Cada corrida se materializa con sus resultados vacios; se rellenan en un
+    // segundo paso para no anidar consultas dentro del query_map.
+    let mut runs = statement
+        .query_map([], |row| {
+            Ok(BenchmarkRun {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                case_count: row.get(2)?,
+                recommended_provider: row.get(3)?,
+                notes: row.get(4)?,
+                created_at: row.get(5)?,
+                results: Vec::new(),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for run in &mut runs {
+        run.results = read_benchmark_results(conn, &run.id)?;
+    }
+    Ok(runs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -900,5 +1131,39 @@ mod tests {
     fn negative_budget_is_rejected() {
         let conn = test_conn("budget-neg");
         assert!(matches!(set_budget_cents(&conn, -1), Err(AiError::Invalid(_))));
+    }
+
+    #[test]
+    fn benchmark_compares_providers_and_recommends_cheapest_at_equal_quality() {
+        let conn = test_conn("benchmark");
+        let run = run_default_benchmark(&conn, "comparativa inicial").unwrap();
+
+        assert_eq!(run.results.len(), 2);
+        assert!(run.case_count >= 6);
+        // Ambos fakes tienen igual exito y completitud; el mas barato gana.
+        assert_eq!(run.recommended_provider.as_deref(), Some("openai-fake"));
+        assert!(run.notes.is_some());
+
+        let cheap = run.results.iter().find(|r| r.provider == "openai-fake").unwrap();
+        let pricey = run.results.iter().find(|r| r.provider == "medlm-fake").unwrap();
+        assert_eq!(cheap.success_count, run.case_count);
+        assert!(pricey.total_cost_cents > cheap.total_cost_cents);
+        // Completitud alta (SOAP llena las 4 secciones clave; textos no vacios).
+        assert!(cheap.completeness_pct >= 90);
+
+        // Se persistio y se relee.
+        let listed = list_benchmarks(&conn).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].results.len(), 2);
+        assert_eq!(listed[0].recommended_provider.as_deref(), Some("openai-fake"));
+    }
+
+    #[test]
+    fn benchmark_requires_a_provider() {
+        let conn = test_conn("benchmark-empty");
+        assert!(matches!(
+            run_benchmark(&conn, "vacio", &[]),
+            Err(AiError::Invalid(_))
+        ));
     }
 }
