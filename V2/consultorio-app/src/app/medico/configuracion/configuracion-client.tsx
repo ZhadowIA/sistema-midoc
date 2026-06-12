@@ -435,9 +435,10 @@ function ServicesPanel({
             required
             placeholder="Consulta general"
             value={form.name}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, name: event.currentTarget.value }))
-            }
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setForm((current) => ({ ...current, name: value }));
+            }}
           />
         </div>
 
@@ -451,9 +452,10 @@ function ServicesPanel({
             required
             placeholder="800"
             value={form.price}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, price: event.currentTarget.value }))
-            }
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setForm((current) => ({ ...current, price: value }));
+            }}
           />
         </div>
 
@@ -466,12 +468,10 @@ function ServicesPanel({
             step={5}
             required
             value={form.durationMinutes}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                durationMinutes: event.currentTarget.value
-              }))
-            }
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setForm((current) => ({ ...current, durationMinutes: value }));
+            }}
           />
         </div>
 
@@ -665,9 +665,10 @@ function AvailabilityPanel({
           <select
             id="rule-day"
             value={ruleForm.dayOfWeek}
-            onChange={(event) =>
-              setRuleForm((current) => ({ ...current, dayOfWeek: event.currentTarget.value }))
-            }
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setRuleForm((current) => ({ ...current, dayOfWeek: value }));
+            }}
           >
             {DAY_NAMES.map((day, index) => (
               <option key={day} value={index}>
@@ -684,9 +685,10 @@ function AvailabilityPanel({
             type="time"
             required
             value={ruleForm.startTime}
-            onChange={(event) =>
-              setRuleForm((current) => ({ ...current, startTime: event.currentTarget.value }))
-            }
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setRuleForm((current) => ({ ...current, startTime: value }));
+            }}
           />
         </div>
 
@@ -697,9 +699,10 @@ function AvailabilityPanel({
             type="time"
             required
             value={ruleForm.endTime}
-            onChange={(event) =>
-              setRuleForm((current) => ({ ...current, endTime: event.currentTarget.value }))
-            }
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setRuleForm((current) => ({ ...current, endTime: value }));
+            }}
           />
         </div>
 
@@ -754,9 +757,10 @@ function AvailabilityPanel({
               type="date"
               required
               value={blockForm.date}
-              onChange={(event) =>
-                setBlockForm((current) => ({ ...current, date: event.currentTarget.value }))
-              }
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setBlockForm((current) => ({ ...current, date: value }));
+              }}
             />
           </div>
 
@@ -767,9 +771,10 @@ function AvailabilityPanel({
               type="time"
               required
               value={blockForm.startTime}
-              onChange={(event) =>
-                setBlockForm((current) => ({ ...current, startTime: event.currentTarget.value }))
-              }
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setBlockForm((current) => ({ ...current, startTime: value }));
+              }}
             />
           </div>
 
@@ -780,9 +785,10 @@ function AvailabilityPanel({
               type="time"
               required
               value={blockForm.endTime}
-              onChange={(event) =>
-                setBlockForm((current) => ({ ...current, endTime: event.currentTarget.value }))
-              }
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setBlockForm((current) => ({ ...current, endTime: value }));
+              }}
             />
           </div>
 
@@ -792,9 +798,10 @@ function AvailabilityPanel({
               id="block-reason"
               placeholder="Vacaciones"
               value={blockForm.reason}
-              onChange={(event) =>
-                setBlockForm((current) => ({ ...current, reason: event.currentTarget.value }))
-              }
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setBlockForm((current) => ({ ...current, reason: value }));
+              }}
             />
           </div>
 

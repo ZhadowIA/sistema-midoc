@@ -30,112 +30,148 @@ export default async function PublicDoctorProfilePage({
     notFound();
   }
 
-  const location = [profile.doctor.city, profile.doctor.state, profile.doctor.country]
+  const location = [profile.doctor.city, profile.doctor.state]
     .filter(Boolean)
     .join(", ");
 
+  const specialty = profile.doctor.specialty === "ODONTOLOGY" ? "Odontología" : "Medicina General";
+
   return (
     <section className="public-shell">
-      <div className="hero-card">
-        <div className="hero-copy">
-          <span className="eyebrow">{profile.doctor.specialty === "ODONTOLOGY" ? "Odontologia" : "Medicina general"}</span>
-          <h1>{profile.doctor.professionalName}</h1>
-          <p>{profile.doctor.description || "Atencion clinica con agenda clara, seguimiento y preparacion para expediente integrado."}</p>
-          <div className="hero-meta">
-            {profile.doctor.licenseNumber ? <span>Cedula: {profile.doctor.licenseNumber}</span> : null}
-            {location ? <span>{location}</span> : null}
-            {profile.doctor.phone ? <span>{profile.doctor.phone}</span> : null}
+      {/* Doctor Header Card - Doctoralia Style */}
+      <div className="doctor-header-card">
+        <div className="doctor-header-content">
+          <div className="doctor-header-info">
+            <div className="specialty-badge">{specialty}</div>
+            <h1 className="doctor-name">Dr(a). {profile.doctor.professionalName}</h1>
+
+            {location && (
+              <div className="doctor-location">
+                <span className="location-icon">📍</span>
+                <span>{location}</span>
+              </div>
+            )}
+
+            {profile.doctor.description && (
+              <p className="doctor-bio">{profile.doctor.description}</p>
+            )}
+
+            <div className="doctor-meta-items">
+              {profile.doctor.licenseNumber && (
+                <div className="meta-item">
+                  <span className="meta-label">Cédula Profesional</span>
+                  <span className="meta-value">{profile.doctor.licenseNumber}</span>
+                </div>
+              )}
+              {profile.doctor.phone && (
+                <div className="meta-item">
+                  <span className="meta-label">Teléfono</span>
+                  <span className="meta-value">{profile.doctor.phone}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="doctor-stats">
+            <div className="stat-item">
+              <div className="stat-number">{profile.services.length}</div>
+              <div className="stat-label">Servicios</div>
+            </div>
+            <div className="stat-item">
+              <div className="stat-number">{profile.availability.length}</div>
+              <div className="stat-label">Horarios</div>
+            </div>
+            <div className="stat-item">
+              <div className="stat-number">{profile.doctor.consultationDuration}</div>
+              <div className="stat-label">Min por cita</div>
+            </div>
           </div>
         </div>
-
-        <div className="hero-panel">
-          <div>
-            <strong>{profile.services.length}</strong>
-            <span>servicios activos</span>
-          </div>
-          <div>
-            <strong>{profile.availability.length}</strong>
-            <span>bloques de horario</span>
-          </div>
-          <div>
-            <strong>{profile.doctor.consultationDuration} min</strong>
-            <span>duracion base</span>
-          </div>
-        </div>
-
       </div>
 
-      <div className="profile-grid">
-        <article className="panel">
-          <div className="panel-header">
-            <span className="section-kicker">Servicios</span>
-            <h2>Oferta publicada</h2>
+      {/* Services Section */}
+      {profile.services.length > 0 && (
+        <section className="services-section">
+          <div className="section-header">
+            <h2>Servicios disponibles</h2>
+            <p className="section-subtitle">Consulta el precio y duración de cada servicio</p>
           </div>
 
-          <div className="service-list">
+          <div className="services-grid">
             {profile.services.map((service) => (
               <div className="service-card" key={service.id}>
-                <div className="service-card-top">
-                  <h3>{service.name}</h3>
-                  <span>{formatMoney(service.priceCents, service.currency)}</span>
+                <div className="service-header">
+                  <h3 className="service-name">{service.name}</h3>
+                  <div className="service-price">{formatMoney(service.priceCents, service.currency)}</div>
                 </div>
-                <p>{service.description || "Servicio disponible para agenda publica."}</p>
-                <small>{service.durationMinutes} minutos</small>
+                {service.description && <p className="service-description">{service.description}</p>}
+                <div className="service-footer">
+                  <span className="service-duration">⏱️ {service.durationMinutes} minutos</span>
+                </div>
               </div>
             ))}
           </div>
-        </article>
+        </section>
+      )}
 
-        <article className="panel">
-          <div className="panel-header">
-            <span className="section-kicker">Horarios</span>
-            <h2>Disponibilidad semanal</h2>
+      {/* Availability Section */}
+      {profile.availability.length > 0 && (
+        <section className="availability-section">
+          <div className="section-header">
+            <h2>Horarios disponibles</h2>
+            <p className="section-subtitle">Atiende durante estos horarios</p>
           </div>
 
-          <div className="availability-list">
+          <div className="availability-grid">
             {profile.availability.map((rule) => (
-              <div className="availability-row" key={rule.id}>
-                <strong>{rule.dayOfWeek !== null ? dayLabels[rule.dayOfWeek] : "Fecha especial"}</strong>
-                <span>
-                  {rule.startTime} - {rule.endTime}
-                </span>
-                <small>
-                  Cada {rule.slotInterval} min
-                  {rule.minAdvanceHours ? ` · Min ${rule.minAdvanceHours} h antes` : ""}
-                  {rule.maxAdvanceDays ? ` · Hasta ${rule.maxAdvanceDays} dias` : ""}
-                </small>
+              <div className="availability-card" key={rule.id}>
+                <div className="availability-day">
+                  {rule.dayOfWeek !== null ? dayLabels[rule.dayOfWeek] : "Fecha especial"}
+                </div>
+                <div className="availability-time">
+                  <span className="time-icon">🕐</span>
+                  <span>{rule.startTime} - {rule.endTime}</span>
+                </div>
+                <div className="availability-details">
+                  <small>Cada {rule.slotInterval} min</small>
+                  {rule.minAdvanceHours && <small>Mín {rule.minAdvanceHours}h antes</small>}
+                  {rule.maxAdvanceDays && <small>Hasta {rule.maxAdvanceDays} días</small>}
+                </div>
               </div>
             ))}
           </div>
 
-          {profile.blocks.length > 0 ? (
-            <div className="blocks-box">
-              <h3>Bloqueos proximos</h3>
-              <ul>
+          {profile.blocks.length > 0 && (
+            <div className="blocks-notice">
+              <h3>Bloqueos agendados</h3>
+              <ul className="blocks-list">
                 {profile.blocks.map((block) => (
                   <li key={block.id}>
-                    {new Intl.DateTimeFormat("es-MX", {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                      timeZone: profile.doctor.timeZone
-                    }).format(new Date(block.startsAt))}
-                    {block.reason ? ` · ${block.reason}` : ""}
+                    <span className="block-date">
+                      {new Intl.DateTimeFormat("es-MX", {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                        timeZone: profile.doctor.timeZone
+                      }).format(new Date(block.startsAt))}
+                    </span>
+                    {block.reason && <span className="block-reason">{block.reason}</span>}
                   </li>
                 ))}
               </ul>
             </div>
-          ) : null}
-        </article>
-      </div>
+          )}
+        </section>
+      )}
 
-      <article className="panel">
-        <div className="panel-header">
-          <span className="section-kicker">Reserva online</span>
-          <h2>Agenda tu cita desde este mismo perfil</h2>
+      {/* Booking Section */}
+      <section className="booking-section">
+        <div className="section-header">
+          <h2>Agenda tu cita</h2>
+          <p className="section-subtitle">Selecciona servicio y horario disponible</p>
         </div>
 
         <BookingClient profile={profile} initialDate={nextDateString()} />
-      </article>
+      </section>
     </section>
   );
 }
