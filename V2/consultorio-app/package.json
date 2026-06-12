@@ -9,7 +9,7 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "env:check": "tsx src/lib/env.ts",
     "db:migrate:dev": "prisma migrate dev",
-    "db:generate:no-engine": "prisma generate --no-engine"
+    "db:generate": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^6.8.2",
