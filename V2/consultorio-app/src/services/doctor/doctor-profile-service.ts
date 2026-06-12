@@ -507,6 +507,15 @@ export async function getPublicDoctorProfile(slug: string) {
           }
         },
         orderBy: [{ startsAt: "asc" }]
+      },
+      reviews: {
+        where: {
+          isVerified: true
+        },
+        orderBy: {
+          createdAt: "desc"
+        },
+        take: 50
       }
     }
   });
@@ -514,6 +523,11 @@ export async function getPublicDoctorProfile(slug: string) {
   if (!profile) {
     return null;
   }
+
+  // Calcular rating promedio
+  const averageRating = profile.reviews.length > 0
+    ? Math.round((profile.reviews.reduce((sum, r) => sum + r.rating, 0) / profile.reviews.length) * 10) / 10
+    : 0;
 
   return {
     doctor: {
@@ -524,6 +538,8 @@ export async function getPublicDoctorProfile(slug: string) {
       description: profile.description,
       licenseNumber: profile.licenseNumber,
       phone: profile.phone,
+      profilePhoto: profile.profilePhoto,
+      coverPhoto: profile.coverPhoto,
       addressLine1: profile.addressLine1,
       addressLine2: profile.addressLine2,
       city: profile.city,
@@ -557,6 +573,26 @@ export async function getPublicDoctorProfile(slug: string) {
       startsAt: block.startsAt,
       endsAt: block.endsAt,
       reason: block.reason
-    }))
+    })),
+    reviews: profile.reviews.map((review) => ({
+      id: review.id,
+      patientName: review.patientName,
+      rating: review.rating,
+      title: review.title,
+      text: review.text,
+      date: review.createdAt.toISOString(),
+      isVerified: review.isVerified
+    })),
+    ratings: {
+      averageRating,
+      totalReviews: profile.reviews.length,
+      distribution: {
+        five: profile.reviews.filter(r => r.rating === 5).length,
+        four: profile.reviews.filter(r => r.rating === 4).length,
+        three: profile.reviews.filter(r => r.rating === 3).length,
+        two: profile.reviews.filter(r => r.rating === 2).length,
+        one: profile.reviews.filter(r => r.rating === 1).length
+      }
+    }
   };
 }

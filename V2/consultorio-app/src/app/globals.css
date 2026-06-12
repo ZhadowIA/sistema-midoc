@@ -1020,6 +1020,23 @@ a.service-card:hover {
   font-size: 0.9rem;
 }
 
+/* Doctor Photos */
+
+.doctor-cover-photo {
+  width: 100%;
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+}
+
+.doctor-profile-photo {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 4px solid var(--bg);
+  margin-top: -60px;
+  margin-bottom: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
 /* Rating Section */
 
 .rating-section {
@@ -1259,6 +1276,97 @@ a.service-card:hover {
   color: var(--ink);
   font-size: 0.95rem;
   line-height: 1.6;
+}
+
+/* Rating Distribution */
+
+.rating-distribution {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 24px;
+  background: var(--surface);
+  padding: 20px;
+  border-radius: var(--radius-panel);
+}
+
+.distribution-bar {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all var(--speed) var(--ease);
+  text-align: left;
+}
+
+.distribution-bar:hover {
+  opacity: 0.8;
+}
+
+.distribution-bar.active {
+  opacity: 1;
+}
+
+.distribution-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.distribution-stars {
+  display: flex;
+  gap: 2px;
+}
+
+.label-text {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--ink);
+  min-width: 100px;
+}
+
+.distribution-bar-fill {
+  height: 6px;
+  background: var(--primary);
+  border-radius: 3px;
+  transition: width var(--speed) var(--ease);
+}
+
+.distribution-bar.active .distribution-bar-fill {
+  background: var(--primary);
+  height: 8px;
+}
+
+/* Review Badge */
+
+.review-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  background: var(--success-soft);
+  color: var(--success);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.review-title {
+  margin: 8px 0 4px 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.no-reviews {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--muted);
+}
+
+.no-reviews p {
+  margin: 0;
 }
 
 /* Auth ---------- */

@@ -339,6 +339,8 @@ model DoctorProfile {
   state                String?
   postalCode           String?
   country              String?
+  profilePhoto         String?
+  coverPhoto           String?
   isPublic             Boolean                 @default(false)
   consultationDuration Int                     @default(30)
   // Zona horaria IANA en la que se interpretan las reglas de disponibilidad.
@@ -349,7 +351,23 @@ model DoctorProfile {
   services             DoctorService[]
   availabilityRules    DoctorAvailability[]
   availabilityBlocks   DoctorAvailabilityBlock[]
+  reviews              DoctorReview[]
   subscriptions        DoctorSubscription[]
+}
+
+model DoctorReview {
+  id                String        @id @default(cuid())
+  doctorProfileId   String
+  patientName       String
+  patientEmail      String?
+  rating            Int           @default(5)
+  title             String?
+  text              String
+  isVerified        Boolean       @default(false)
+  createdAt         DateTime      @default(now())
+  doctorProfile     DoctorProfile @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
+
+  @@index([doctorProfileId, createdAt])
 }
 
 model DoctorService {

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { getPublicDoctorProfile } from "../../../services/doctor/doctor-profile-service";
 import { BookingClient } from "./agenda/booking-client";
+import { ReviewsSection } from "./reviews-section";
 
 const dayLabels = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"];
 
@@ -16,37 +17,6 @@ function nextDateString() {
   const date = new Date();
   date.setDate(date.getDate() + 1);
   return date.toISOString().slice(0, 10);
-}
-
-// Mock data para ratings/reviews - En producción vendrían de la BD
-function getMockRatings() {
-  return {
-    averageRating: 4.8,
-    totalReviews: 127,
-    reviews: [
-      {
-        id: "1",
-        patientName: "María García",
-        rating: 5,
-        date: "2024-06-05",
-        text: "Excelente doctor, muy profesional y atento. Recomendado."
-      },
-      {
-        id: "2",
-        patientName: "Carlos Rodríguez",
-        rating: 5,
-        date: "2024-06-03",
-        text: "Muy amable y competente. La cita fue rápida y eficiente."
-      },
-      {
-        id: "3",
-        patientName: "Ana López",
-        rating: 4,
-        date: "2024-05-28",
-        text: "Buen diagnóstico, aunque tardó un poco en la cita."
-      }
-    ]
-  };
 }
 
 function StarRating({ rating }: { rating: number }) {
@@ -78,23 +48,52 @@ export default async function PublicDoctorProfilePage({
     .join(", ");
 
   const specialty = profile.doctor.specialty === "ODONTOLOGY" ? "Odontología" : "Medicina General";
-  const ratings = getMockRatings();
 
   return (
     <section className="public-shell">
+      {/* Cover Photo */}
+      {profile.doctor.coverPhoto && (
+        <div
+          className="doctor-cover-photo"
+          style={{
+            backgroundImage: `url(${profile.doctor.coverPhoto})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            height: "240px",
+            borderRadius: "var(--radius-panel)",
+            marginBottom: "-60px",
+            position: "relative",
+            zIndex: 1
+          }}
+        />
+      )}
+
       {/* Doctor Header Card - Premium Doctoralia Style */}
       <div className="doctor-header-card">
         <div className="doctor-header-content">
+          {/* Profile Photo */}
+          {profile.doctor.profilePhoto && (
+            <div
+              className="doctor-profile-photo"
+              style={{
+                backgroundImage: `url(${profile.doctor.profilePhoto})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center"
+              }}
+            />
+          )}
           <div className="doctor-header-info">
             <div className="specialty-badge">{specialty}</div>
             <h1 className="doctor-name">Dr(a). {profile.doctor.professionalName}</h1>
 
             {/* Rating Section */}
-            <div className="rating-section">
-              <StarRating rating={ratings.averageRating} />
-              <span className="rating-value">{ratings.averageRating}</span>
-              <span className="rating-count">({ratings.totalReviews} opiniones)</span>
-            </div>
+            {profile.ratings.totalReviews > 0 && (
+              <div className="rating-section">
+                <StarRating rating={profile.ratings.averageRating} />
+                <span className="rating-value">{profile.ratings.averageRating}</span>
+                <span className="rating-count">({profile.ratings.totalReviews} opiniones)</span>
+              </div>
+            )}
 
             {location && (
               <div className="doctor-location">
@@ -302,33 +301,7 @@ export default async function PublicDoctorProfilePage({
       </section>
 
       {/* Reviews Section */}
-      {ratings.reviews.length > 0 && (
-        <section className="reviews-section">
-          <div className="section-header">
-            <h2>Opiniones de pacientes</h2>
-            <p className="section-subtitle">{ratings.totalReviews} pacientes han valorado su servicio</p>
-          </div>
-
-          <div className="reviews-grid">
-            {ratings.reviews.map((review) => (
-              <div className="review-card" key={review.id}>
-                <div className="review-header">
-                  <div>
-                    <h4 className="review-author">{review.patientName}</h4>
-                    <p className="review-date">
-                      {new Intl.DateTimeFormat("es-MX", {
-                        dateStyle: "long"
-                      }).format(new Date(review.date))}
-                    </p>
-                  </div>
-                  <StarRating rating={review.rating} />
-                </div>
-                <p className="review-text">{review.text}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      {profile.reviews.length > 0 && <ReviewsSection reviews={profile.reviews} ratings={profile.ratings} />}
     </section>
   );
 }
