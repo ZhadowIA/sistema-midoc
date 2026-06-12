@@ -62,6 +62,9 @@ export async function getDoctorWorkspace(userId: string) {
       availabilityBlocks: {
         orderBy: [{ startsAt: "asc" }]
       },
+      galleryImages: {
+        orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }]
+      },
       subscriptions: {
         include: {
           plan: true
@@ -265,6 +268,80 @@ export async function updateDoctorService(
   });
 
   return service;
+}
+
+/* ---------- Galeria del perfil publico ---------- */
+
+export async function createGalleryImage(
+  userId: string,
+  input: {
+    url: string;
+    caption?: string | null;
+    displayOrder?: number;
+  }
+) {
+  const { doctor, doctorProfile } = await getDoctorProfileOrThrow(userId);
+
+  const url = input.url.trim();
+  if (!/^https:\/\/.+/i.test(url)) {
+    throw new DoctorProfileServiceError("La URL de la imagen debe iniciar con https://");
+  }
+
+  const count = await prisma.doctorGalleryImage.count({
+    where: { doctorProfileId: doctorProfile.id }
+  });
+
+  if (count >= 12) {
+    throw new DoctorProfileServiceError("La galeria admite hasta 12 imagenes.");
+  }
+
+  const image = await prisma.doctorGalleryImage.create({
+    data: {
+      doctorProfileId: doctorProfile.id,
+      url,
+      caption: input.caption?.trim() || null,
+      displayOrder: input.displayOrder ?? count
+    }
+  });
+
+  await writeAuditLog({
+    actorUserId: doctor.id,
+    entityType: "DoctorGalleryImage",
+    entityId: image.id,
+    action: "doctor-gallery-image.created",
+    source: "doctor-profile-service"
+  });
+
+  return image;
+}
+
+export async function deleteGalleryImage(userId: string, imageId: string) {
+  const { doctor, doctorProfile } = await getDoctorProfileOrThrow(userId);
+
+  const existing = await prisma.doctorGalleryImage.findFirst({
+    where: {
+      id: imageId,
+      doctorProfileId: doctorProfile.id
+    }
+  });
+
+  if (!existing) {
+    throw new DoctorProfileServiceError("Imagen no encontrada.", 404);
+  }
+
+  await prisma.doctorGalleryImage.delete({
+    where: { id: existing.id }
+  });
+
+  await writeAuditLog({
+    actorUserId: doctor.id,
+    entityType: "DoctorGalleryImage",
+    entityId: existing.id,
+    action: "doctor-gallery-image.deleted",
+    source: "doctor-profile-service"
+  });
+
+  return { id: existing.id };
 }
 
 export async function createAvailabilityRule(

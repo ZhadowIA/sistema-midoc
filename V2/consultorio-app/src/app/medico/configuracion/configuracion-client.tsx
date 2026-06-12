@@ -59,6 +59,12 @@ type Workspace = {
     endsAt: string;
     reason: string | null;
   }>;
+  galleryImages: Array<{
+    id: string;
+    url: string;
+    caption: string | null;
+    displayOrder: number;
+  }>;
 };
 
 async function requestJson(input: string, init?: RequestInit) {
@@ -822,6 +828,147 @@ function AvailabilityPanel({
   );
 }
 
+/* ---------- Galeria ---------- */
+
+function GalleryPanel({
+  workspace,
+  onChanged
+}: {
+  workspace: Workspace;
+  onChanged: () => void;
+}) {
+  const [form, setForm] = useState({ url: "", caption: "" });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+
+  async function addImage() {
+    setBusy(true);
+    setError("");
+    try {
+      await requestJson("/api/admin/gallery", {
+        method: "POST",
+        body: JSON.stringify({
+          url: form.url.trim(),
+          caption: form.caption.trim() || null
+        })
+      });
+      setForm({ url: "", caption: "" });
+      onChanged();
+    } catch (addError) {
+      setError(addError instanceof Error ? addError.message : "No se pudo agregar la imagen.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeImage(imageId: string) {
+    setError("");
+    setPendingId(imageId);
+    try {
+      await requestJson(`/api/admin/gallery/${imageId}`, { method: "DELETE" });
+      onChanged();
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : "No se pudo eliminar.");
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  return (
+    <article className="panel">
+      <div className="panel-header">
+        <h2>Galeria del consultorio</h2>
+        <p>
+          Fotos de tus instalaciones que se muestran en tu perfil publico. Pega la URL de
+          una imagen (https) y, opcionalmente, un pie de foto. Hasta 12 imagenes.
+        </p>
+      </div>
+
+      {workspace.galleryImages.length === 0 ? (
+        <div className="empty-state">
+          <strong>Tu galeria esta vacia</strong>
+          <p>Agrega la primera foto de tu consultorio para que tus pacientes lo conozcan.</p>
+        </div>
+      ) : (
+        <div className="gallery-admin-grid">
+          {workspace.galleryImages.map((image) => (
+            <figure className="gallery-admin-item" key={image.id}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                className="gallery-admin-thumb"
+                src={image.url}
+                alt={image.caption ?? "Imagen del consultorio"}
+                loading="lazy"
+              />
+              <figcaption className="gallery-admin-caption">
+                {image.caption || <span className="field-hint">Sin pie de foto</span>}
+              </figcaption>
+              <button
+                className="danger-button gallery-admin-remove"
+                type="button"
+                disabled={pendingId === image.id}
+                onClick={() => void removeImage(image.id)}
+              >
+                {pendingId === image.id ? "Eliminando…" : "Eliminar"}
+              </button>
+            </figure>
+          ))}
+        </div>
+      )}
+
+      <form
+        className="inline-form settings-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void addImage();
+        }}
+      >
+        <div className="field field-full">
+          <label htmlFor="gallery-url">URL de la imagen</label>
+          <input
+            id="gallery-url"
+            type="url"
+            required
+            placeholder="https://…/foto-consultorio.jpg"
+            value={form.url}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setForm((current) => ({ ...current, url: value }));
+            }}
+          />
+        </div>
+
+        <div className="field field-full">
+          <label htmlFor="gallery-caption">Pie de foto (opcional)</label>
+          <input
+            id="gallery-caption"
+            maxLength={120}
+            placeholder="Sala de espera"
+            value={form.caption}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setForm((current) => ({ ...current, caption: value }));
+            }}
+          />
+        </div>
+
+        {error ? (
+          <p className="form-error field-full" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        <div className="button-row field-full">
+          <button className="action-button" type="submit" disabled={busy}>
+            {busy ? "Agregando…" : "Agregar imagen"}
+          </button>
+        </div>
+      </form>
+    </article>
+  );
+}
+
 /* ---------- Pagina ---------- */
 
 export function ConfiguracionClient() {
@@ -869,6 +1016,7 @@ export function ConfiguracionClient() {
     <section className="settings-stack">
       <ProfilePanel workspace={workspace} onSaved={load} />
       <ServicesPanel workspace={workspace} onChanged={load} />
+      <GalleryPanel workspace={workspace} onChanged={load} />
       <AvailabilityPanel workspace={workspace} onChanged={load} />
     </section>
   );

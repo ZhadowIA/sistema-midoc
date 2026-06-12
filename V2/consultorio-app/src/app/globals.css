@@ -1651,6 +1651,47 @@ a.service-card:hover {
   margin: 0;
 }
 
+/* ---------- Galeria en configuracion (admin) ---------- */
+
+.gallery-admin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 14px;
+}
+
+.gallery-admin-item {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 10px;
+  background: var(--bg);
+}
+
+.gallery-admin-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  display: block;
+}
+
+.gallery-admin-caption {
+  font-size: 0.88rem;
+  color: var(--ink);
+  min-height: 1.2em;
+}
+
+.gallery-admin-remove {
+  justify-self: start;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 0.86rem;
+}
+
 /* Auth ---------- */
 
 .auth-shell {

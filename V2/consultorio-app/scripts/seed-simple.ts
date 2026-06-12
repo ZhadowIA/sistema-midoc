@@ -1,5 +1,6 @@
 import { PrismaClient, ClinicalProfile, UserRole } from "@prisma/client";
-import bcrypt from "bcryptjs";
+
+import { hashPassword } from "../src/lib/security/password";
 
 const prisma = new PrismaClient();
 
@@ -44,8 +45,8 @@ async function main() {
       const added = await ensureGallery(profile.id);
       console.log(added > 0 ? `Added ${added} gallery images` : "Gallery already present");
     } else {
-      // Create a new test doctor user
-      const hashedPassword = await bcrypt.hash("password123", 10);
+      // Create a new test doctor user (scrypt, igual que el flujo de registro real)
+      const hashedPassword = await hashPassword("password123");
 
       const user = await prisma.user.create({
         data: {
