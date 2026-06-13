@@ -81,7 +81,7 @@ Requisitos por modelo (referencia; no son limites duros):
 | medium | ~5 GB | ~1.5 GB | Recomendado: buen balance para terminos clinicos y acentos |
 | large-v3 | ~10 GB | ~3 GB | Maxima precision; practico con GPU |
 
-Politica de seleccion (sobre RAM total del equipo; la deteccion de GPU se difiere y por defecto es conservadora):
+Politica de seleccion (sobre RAM total del equipo y si hay GPU dedicada acelerable; la deteccion de GPU consulta los adaptadores de video del sistema y es conservadora: GPU integrada o adaptador virtual cuentan como "sin GPU"):
 
 | RAM total | Sin GPU | Con GPU |
 |---|---|---|

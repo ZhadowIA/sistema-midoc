@@ -81,6 +81,10 @@ export function TranscriptionSetup() {
               <dd>{rec.cpuCores}</dd>
             </div>
             <div>
+              <dt>Aceleracion</dt>
+              <dd>{rec.hasGpu ? "GPU compatible detectada" : "Sin GPU dedicada (usa CPU)"}</dd>
+            </div>
+            <div>
               <dt>El modelo usa</dt>
               <dd>
                 ~{gb(rec.modelRamMb)} en memoria · ~{gb(rec.diskMb)} en disco

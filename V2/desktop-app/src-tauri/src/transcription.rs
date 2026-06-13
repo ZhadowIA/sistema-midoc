@@ -8,7 +8,9 @@
 //! sugiere el tamano adecuado para que el medico no tenga que entenderlo.
 //!
 //! Este modulo NO procesa datos clinicos: solo lee caracteristicas de hardware
-//! (RAM total, nucleos de CPU). No toca la base cifrada ni la red.
+//! (RAM total, nucleos de CPU y adaptadores de video). No toca la base cifrada
+//! ni la red; la deteccion de GPU consulta al sistema operativo por sus
+//! adaptadores de video (sin entrada del usuario, sin superficie de inyeccion).
 
 use serde::Serialize;
 
@@ -70,8 +72,10 @@ impl WhisperModel {
 pub struct HardwareSpecs {
     pub total_ram_mb: u64,
     pub cpu_cores: u32,
-    /// GPU dedicada utilizable para acelerar la transcripcion. La deteccion real
-    /// se difiere (ver `detect_specs`); por defecto es conservadora (`false`).
+    /// GPU dedicada utilizable para acelerar la transcripcion (CUDA/Metal/Vulkan
+    /// en whisper.cpp). Las GPU integradas no aceleran Whisper de forma util y se
+    /// reportan como `false`. La deteccion (`detect_has_gpu`) es conservadora:
+    /// ante cualquier duda o fallo, `false`.
     pub has_gpu: bool,
 }
 
@@ -170,10 +174,9 @@ pub fn recommend(specs: HardwareSpecs) -> TranscriptionRecommendation {
     }
 }
 
-/// Lee las caracteristicas del equipo. La deteccion de GPU se difiere (requiere
-/// codigo por plataforma); se reporta `false` de forma conservadora, lo que solo
-/// hace la recomendacion mas prudente. La transcripcion en nube cubre el caso
-/// "lo quiero mas rapido" cuando hay GPU pero aun no se detecta.
+/// Lee las caracteristicas del equipo: RAM, nucleos de CPU y si hay una GPU
+/// dedicada utilizable. No procesa datos clinicos ni usa la red; la deteccion de
+/// GPU consulta al sistema operativo por los adaptadores de video.
 pub fn detect_specs() -> HardwareSpecs {
     let mut system = sysinfo::System::new();
     system.refresh_memory();
@@ -187,8 +190,130 @@ pub fn detect_specs() -> HardwareSpecs {
     HardwareSpecs {
         total_ram_mb,
         cpu_cores,
-        has_gpu: false,
+        has_gpu: detect_has_gpu(),
     }
+}
+
+/* ---------- Deteccion de GPU ---------- */
+
+/// Decide si un nombre de adaptador de video corresponde a una GPU dedicada que
+/// whisper.cpp pueda aprovechar (NVIDIA via CUDA, AMD dedicada via Vulkan, o GPU
+/// de Apple Silicon via Metal). Funcion pura: la clasificacion se prueba sin
+/// hardware. Las GPU integradas (Intel UHD/Iris, APU Radeon Graphics) y los
+/// adaptadores virtuales/basicos se consideran NO acelerables (conservador).
+pub fn looks_like_accelerable_gpu(name: &str) -> bool {
+    let n = name.to_lowercase();
+
+    // Adaptadores que nunca aceleran Whisper de forma util.
+    const EXCLUDED: &[&str] = &[
+        "microsoft basic",
+        "remote display",
+        "vmware",
+        "virtualbox",
+        "qxl",
+        "parsec",
+        "meta virtual",
+    ];
+    if EXCLUDED.iter().any(|m| n.contains(m)) {
+        return false;
+    }
+
+    // Marcadores de GPU dedicada / acelerable. Deliberadamente especificos para
+    // no confundir integradas (p. ej. "radeon graphics" de una APU) con dedicadas.
+    const DEDICATED: &[&str] = &[
+        "nvidia",
+        "geforce",
+        "rtx",
+        "gtx",
+        "quadro",
+        "tesla",
+        "titan",
+        "radeon rx",
+        "radeon pro",
+        "radeon vii",
+        "firepro",
+        "instinct",
+        "arc", // Intel Arc dedicada (las integradas son "uhd"/"iris", no "arc")
+        "apple m", // GPU de Apple Silicon (Metal)
+    ];
+    DEDICATED.iter().any(|m| n.contains(m))
+}
+
+/// Agrega la clasificacion sobre la lista de adaptadores detectados. Pura.
+fn detect_has_gpu_from_names<I>(names: I) -> bool
+where
+    I: IntoIterator<Item = String>,
+{
+    names.into_iter().any(|n| looks_like_accelerable_gpu(&n))
+}
+
+/// Consulta al sistema operativo y devuelve `true` si hay una GPU acelerable.
+/// Best-effort: si la consulta falla o no hay datos, devuelve `false`.
+fn detect_has_gpu() -> bool {
+    detect_has_gpu_from_names(detect_gpu_names())
+}
+
+/// Ejecuta un comando del sistema y captura su salida estandar. En Windows evita
+/// abrir una ventana de consola. Devuelve `None` si el comando falla.
+fn capture_stdout(program: &str, args: &[&str]) -> Option<String> {
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Separa la salida del comando en lineas no vacias.
+fn nonempty_lines(raw: &str) -> Vec<String> {
+    raw.lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+/// Lista los nombres de adaptadores de video del equipo, por plataforma.
+#[cfg(target_os = "windows")]
+fn detect_gpu_names() -> Vec<String> {
+    // CIM es la via soportada en Windows moderno; sin ventana de consola.
+    capture_stdout(
+        "powershell",
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+        ],
+    )
+    .map(|raw| nonempty_lines(&raw))
+    .unwrap_or_default()
+}
+
+#[cfg(target_os = "linux")]
+fn detect_gpu_names() -> Vec<String> {
+    // lspci lista controladores VGA/3D/Display; tolerante a su ausencia.
+    capture_stdout("sh", &["-c", "lspci -mm 2>/dev/null | grep -iE 'vga|3d|display'"])
+        .map(|raw| nonempty_lines(&raw))
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn detect_gpu_names() -> Vec<String> {
+    capture_stdout("system_profiler", &["SPDisplaysDataType"])
+        .map(|raw| nonempty_lines(&raw))
+        .unwrap_or_default()
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+fn detect_gpu_names() -> Vec<String> {
+    Vec::new()
 }
 
 /// Recomendacion lista para el frontend: detecta el equipo y aplica la politica.
@@ -281,5 +406,51 @@ mod tests {
         let specs = detect_specs();
         assert!(specs.cpu_cores >= 1);
         assert!(specs.total_ram_mb >= 1);
+    }
+
+    #[test]
+    fn dedicated_gpus_are_recognized() {
+        for name in [
+            "NVIDIA GeForce RTX 4060 Laptop GPU",
+            "NVIDIA Corporation GA106 [GeForce RTX 3060]",
+            "AMD Radeon RX 6700 XT",
+            "AMD Radeon Pro 5500M",
+            "Intel(R) Arc(TM) A770 Graphics",
+            "Apple M2 Pro",
+        ] {
+            assert!(looks_like_accelerable_gpu(name), "deberia aceptar: {name}");
+        }
+    }
+
+    #[test]
+    fn integrated_and_virtual_adapters_are_rejected() {
+        for name in [
+            "Intel(R) UHD Graphics 630",
+            "Intel(R) Iris(R) Xe Graphics",
+            "AMD Radeon(TM) Graphics", // APU integrada
+            "AMD Radeon(TM) Vega 8 Graphics",
+            "Microsoft Basic Display Adapter",
+            "VMware SVGA 3D",
+            "",
+        ] {
+            assert!(!looks_like_accelerable_gpu(name), "deberia rechazar: {name}");
+        }
+    }
+
+    #[test]
+    fn aggregator_is_true_if_any_adapter_is_dedicated() {
+        // Laptop tipica: integrada + dedicada -> hay aceleracion.
+        let mixed = vec![
+            "Intel(R) UHD Graphics 630".to_string(),
+            "NVIDIA GeForce RTX 3070".to_string(),
+        ];
+        assert!(detect_has_gpu_from_names(mixed));
+
+        // Solo integrada -> sin aceleracion util.
+        let integrated = vec!["Intel(R) Iris(R) Xe Graphics".to_string()];
+        assert!(!detect_has_gpu_from_names(integrated));
+
+        // Sin adaptadores detectados -> conservador: false.
+        assert!(!detect_has_gpu_from_names(Vec::<String>::new()));
     }
 }
