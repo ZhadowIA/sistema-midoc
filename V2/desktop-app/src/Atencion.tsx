@@ -165,6 +165,15 @@ const dateTimeFormatter = new Intl.DateTimeFormat("es-MX", {
   timeStyle: "short"
 });
 
+type SectionId =
+  | "preconsulta"
+  | "historial"
+  | "antecedentes"
+  | "ia"
+  | "nota"
+  | "modulo"
+  | "receta";
+
 function formatPrecheckin(raw: string): Array<[string, string]> {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -206,6 +215,7 @@ export function Atencion({
   const [aiTranscription, setAiTranscription] = useState<TranscriptionDraft | null>(null);
   const [aiUsage, setAiUsage] = useState<UsageSummary | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
+  const [activeSection, setActiveSection] = useState<SectionId>("nota");
 
   const load = useCallback(() => {
     call<EncounterDetail>("get_encounter", { encounterId })
@@ -277,6 +287,24 @@ export function Atencion({
 
   const signed = detail.encounter.status === "SIGNED";
   const patientId = detail.patient.id;
+
+  const moduleLabel =
+    resolvedProfile === "ODONTOLOGY" ? "Modulo odontologico" : "Medicina general / familiar";
+
+  const navItems: Array<{ id: SectionId; label: string }> = [];
+  if (detail.precheckin) navItems.push({ id: "preconsulta", label: "Preconsulta" });
+  if (detail.history.length > 0) navItems.push({ id: "historial", label: "Historial" });
+  navItems.push({ id: "antecedentes", label: "Antecedentes" });
+  if (!signed) navItems.push({ id: "ia", label: "Asistencia de IA" });
+  navItems.push({ id: "nota", label: "Nota clinica (SOAP)" });
+  navItems.push({ id: "modulo", label: moduleLabel });
+  navItems.push({ id: "receta", label: "Receta" });
+
+  // Si la seccion activa ya no existe (p. ej. la consulta se firmo y la IA
+  // desaparecio), recae en la nota, que siempre esta presente.
+  const resolvedSection: SectionId = navItems.some((item) => item.id === activeSection)
+    ? activeSection
+    : "nota";
 
   async function run(label: string, action: () => Promise<unknown>) {
     setBusy(true);
@@ -519,8 +547,8 @@ export function Atencion({
         )}
       </header>
 
-      <div className="content">
-        <section className="panel">
+      <div className="content encounter-content">
+        <section className="panel patient-banner">
           <div className="panel-header">
             <h2>
               {detail.patient.first_name} {detail.patient.last_name}
@@ -546,40 +574,68 @@ export function Atencion({
           ) : null}
         </section>
 
-        {detail.precheckin ? (
-          <section className="panel">
-            <h3>Preconsulta del paciente</h3>
-            <dl className="precheckin-list">
-              {formatPrecheckin(detail.precheckin).map(([key, value]) => (
-                <div key={key}>
-                  <dt>{key}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-        ) : null}
+        <div className="encounter-layout">
+          <nav className="encounter-nav" aria-label="Secciones de la consulta">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={resolvedSection === item.id ? "nav-item nav-item-active" : "nav-item"}
+                aria-current={resolvedSection === item.id ? "page" : undefined}
+                onClick={() => setActiveSection(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
 
-        {detail.history.length > 0 ? (
-          <section className="panel">
-            <h3>Historial del paciente</h3>
-            <ul className="history-list">
-              {detail.history.map((entry) => (
-                <li key={entry.encounter_id}>
-                  <span className="meta">
-                    {entry.signed_at
-                      ? dateTimeFormatter.format(new Date(entry.signed_at))
-                      : "(sin firmar)"}
-                  </span>{" "}
-                  {entry.diagnosis || "Sin diagnostico registrado"}
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
+          <div className="encounter-main">
+            {message && (
+              <p className="form-success" role="status">
+                {message}
+              </p>
+            )}
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
 
-        <section className="panel">
-          <h3>Antecedentes</h3>
+            {resolvedSection === "preconsulta" && detail.precheckin ? (
+              <section className="panel">
+                <h3>Preconsulta del paciente</h3>
+                <dl className="precheckin-list">
+                  {formatPrecheckin(detail.precheckin).map(([key, value]) => (
+                    <div key={key}>
+                      <dt>{key}</dt>
+                      <dd>{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            ) : null}
+
+            {resolvedSection === "historial" && detail.history.length > 0 ? (
+              <section className="panel">
+                <h3>Historial del paciente</h3>
+                <ul className="history-list">
+                  {detail.history.map((entry) => (
+                    <li key={entry.encounter_id}>
+                      <span className="meta">
+                        {entry.signed_at
+                          ? dateTimeFormatter.format(new Date(entry.signed_at))
+                          : "(sin firmar)"}
+                      </span>{" "}
+                      {entry.diagnosis || "Sin diagnostico registrado"}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
+            {resolvedSection === "antecedentes" ? (
+              <section className="panel">
+                <h3>Antecedentes</h3>
           <div className="stack">
             <label className="field">
               <span>Alergias</span>
@@ -632,9 +688,10 @@ export function Atencion({
               </button>
             </div>
           </div>
-        </section>
+              </section>
+            ) : null}
 
-        {!signed ? (
+            {resolvedSection === "ia" && !signed ? (
           <section className="panel">
             <div className="panel-header">
               <h3>Asistencia de IA</h3>
@@ -802,8 +859,9 @@ export function Atencion({
               </div>
             ) : null}
           </section>
-        ) : null}
+            ) : null}
 
+            {resolvedSection === "nota" ? (
         <section className="panel">
           <h3>Nota clinica (SOAP)</h3>
           <div className="stack">
@@ -820,7 +878,9 @@ export function Atencion({
             ))}
           </div>
         </section>
+            ) : null}
 
+            {resolvedSection === "modulo" ? (
         <section className="panel">
           <div className="panel-header">
             <h3>
@@ -871,7 +931,9 @@ export function Atencion({
             </div>
           ) : null}
         </section>
+            ) : null}
 
+            {resolvedSection === "receta" ? (
         <section className="panel">
           <h3>Receta</h3>
           <div className="stack">
@@ -891,27 +953,19 @@ export function Atencion({
             ) : null}
           </div>
         </section>
+            ) : null}
 
-        {message && (
-          <p className="form-success" role="status">
-            {message}
-          </p>
-        )}
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-
-        {signed ? (
-          <p className="footer-meta">
-            Firmada el{" "}
-            {detail.encounter.signed_at
-              ? dateTimeFormatter.format(new Date(detail.encounter.signed_at))
-              : ""}{" "}
-            · huella {detail.encounter.signed_hash?.slice(0, 16)}…
-          </p>
-        ) : null}
+            {signed ? (
+              <p className="footer-meta">
+                Firmada el{" "}
+                {detail.encounter.signed_at
+                  ? dateTimeFormatter.format(new Date(detail.encounter.signed_at))
+                  : ""}{" "}
+                · huella {detail.encounter.signed_hash?.slice(0, 16)}…
+              </p>
+            ) : null}
+          </div>
+        </div>
       </div>
     </>
   );

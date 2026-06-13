@@ -281,6 +281,22 @@ const MIGRATIONS: &[&str] = &[
         result_summary TEXT
     );
     CREATE INDEX idx_arco_requests_patient ON arco_requests (patient_id);",
+    // v11: linea del tiempo clinica por paciente (paso 13). Eventos relevantes
+    // que el medico cura a mano (diagnosticos, hitos, alertas, etc.), separados
+    // de las notas de consulta. CLINICO: vive solo en la base local cifrada, la
+    // nube no lo conoce. `event_date` es la fecha clinica del evento (la captura
+    // el medico); `created_at`/`updated_at` son de auditoria.
+    "CREATE TABLE timeline_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        event_date TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'NOTE',
+        title TEXT NOT NULL,
+        detail TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_timeline_events_patient ON timeline_events (patient_id, event_date);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

@@ -39,6 +39,38 @@ const mockState = {
   aiRuns: [] as Array<{ id: string; usage_type: string; cost_cents: number; status: string; reported: boolean }>,
   benchmarks: [] as Array<Record<string, unknown>>,
   arcoRequests: [] as Array<Record<string, unknown>>,
+  timelineSeq: 0,
+  timeline: [
+    {
+      id: "tl-1",
+      patient_id: "pat-1",
+      event_date: "2024-02-10",
+      category: "DIAGNOSIS",
+      title: "Hipertension arterial",
+      detail: "Inicio de losartan 50mg.",
+      created_at: new Date(Date.now() - 200 * 86400_000).toISOString(),
+      updated_at: new Date(Date.now() - 200 * 86400_000).toISOString()
+    },
+    {
+      id: "tl-2",
+      patient_id: "pat-1",
+      event_date: "2025-09-01",
+      category: "LAB",
+      title: "Perfil lipidico",
+      detail: "Colesterol total 210 mg/dL.",
+      created_at: new Date(Date.now() - 30 * 86400_000).toISOString(),
+      updated_at: new Date(Date.now() - 30 * 86400_000).toISOString()
+    }
+  ] as Array<{
+    id: string;
+    patient_id: string;
+    event_date: string;
+    category: string;
+    title: string;
+    detail: string | null;
+    created_at: string;
+    updated_at: string;
+  }>,
   appointments: [
     {
       id: "appt-1",
@@ -72,6 +104,30 @@ const mockState = {
       patient_name: "Jorge Luna",
       patient_phone: null,
       has_precheckin: false
+    }
+  ],
+  patients: [
+    {
+      id: "pat-1",
+      first_name: "Hugo",
+      last_name: "Paz Olivares",
+      phone: "614 000 1111" as string | null,
+      email: null as string | null,
+      birth_date: "1981-03-02" as string | null,
+      allergies: "Penicilina" as string | null,
+      medical_background: "Hipertension en tratamiento (losartan)." as string | null,
+      family_background: "Padre con DM2." as string | null
+    },
+    {
+      id: "pat-2",
+      first_name: "Maria Elena",
+      last_name: "Duarte",
+      phone: "614 000 2222",
+      email: "maria.duarte@example.com" as string | null,
+      birth_date: "1990-11-20",
+      allergies: null as string | null,
+      medical_background: null as string | null,
+      family_background: null as string | null
     }
   ],
   encounter: {
@@ -357,6 +413,125 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return mockState.appointments as T;
     case "open_encounter":
       return { id: e.id } as T;
+    case "list_patients": {
+      const term = String(args?.search ?? "").trim().toLowerCase();
+      const filtered = term
+        ? mockState.patients.filter((p) =>
+            `${p.first_name} ${p.last_name} ${p.phone ?? ""}`.toLowerCase().includes(term)
+          )
+        : mockState.patients;
+      return filtered.map((p) => ({
+        id: p.id,
+        first_name: p.first_name,
+        last_name: p.last_name,
+        phone: p.phone,
+        email: p.email,
+        birth_date: p.birth_date,
+        allergies: p.allergies,
+        encounter_count: p.id === "pat-1" ? 1 : 0,
+        last_visit: p.id === "pat-1" ? new Date(Date.now() - 40 * 86400_000).toISOString() : null
+      })) as T;
+    }
+    case "get_patient_profile": {
+      const patient = mockState.patients.find((p) => p.id === args?.patientId);
+      if (!patient) throw "no encontrado";
+      return {
+        patient,
+        history:
+          patient.id === "pat-1"
+            ? [
+                {
+                  encounter_id: "enc-1",
+                  signed_at: null,
+                  status: "OPEN",
+                  diagnosis: "Cefalea en estudio"
+                },
+                {
+                  encounter_id: "enc-0",
+                  signed_at: new Date(Date.now() - 40 * 86400_000).toISOString(),
+                  status: "SIGNED",
+                  diagnosis: "Gastritis aguda"
+                }
+              ]
+            : []
+      } as T;
+    }
+    case "create_patient": {
+      const input = args?.patient as {
+        first_name: string;
+        last_name: string;
+        phone: string | null;
+        email: string | null;
+        birth_date: string | null;
+        sex: string | null;
+      };
+      const created = {
+        id: `pat-${mockState.patients.length + 1}`,
+        first_name: input.first_name.trim(),
+        last_name: input.last_name.trim(),
+        phone: input.phone?.trim() || null,
+        email: input.email?.trim() || null,
+        birth_date: input.birth_date?.trim() || null,
+        allergies: null as string | null,
+        medical_background: null as string | null,
+        family_background: null as string | null
+      };
+      mockState.patients.push(created);
+      return created as T;
+    }
+    case "open_patient_encounter":
+      return { id: e.id } as T;
+    case "list_timeline_events": {
+      const pid = String(args?.patientId);
+      return mockState.timeline
+        .filter((ev) => ev.patient_id === pid)
+        .sort((a, b) => (a.event_date < b.event_date ? 1 : -1)) as T;
+    }
+    case "add_timeline_event": {
+      const input = args?.event as {
+        event_date: string;
+        category: string;
+        title: string;
+        detail: string | null;
+      };
+      if (!input.title.trim()) throw "el evento necesita un titulo";
+      if (!input.event_date.trim()) throw "el evento necesita una fecha";
+      mockState.timelineSeq += 1;
+      const created = {
+        id: `tl-new-${mockState.timelineSeq}`,
+        patient_id: String(args?.patientId),
+        event_date: input.event_date,
+        category: input.category.toUpperCase(),
+        title: input.title.trim(),
+        detail: input.detail?.trim() || null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      mockState.timeline.push(created);
+      return created as T;
+    }
+    case "update_timeline_event": {
+      const input = args?.event as {
+        event_date: string;
+        category: string;
+        title: string;
+        detail: string | null;
+      };
+      const ev = mockState.timeline.find((x) => x.id === args?.eventId);
+      if (!ev) throw "no encontrado";
+      ev.event_date = input.event_date;
+      ev.category = input.category.toUpperCase();
+      ev.title = input.title.trim();
+      ev.detail = input.detail?.trim() || null;
+      ev.updated_at = new Date().toISOString();
+      return ev as T;
+    }
+    case "delete_timeline_event": {
+      const idx = mockState.timeline.findIndex((x) => x.id === args?.eventId);
+      if (idx === -1) throw "no encontrado";
+      mockState.timeline.splice(idx, 1);
+      return undefined as T;
+    }
     case "get_encounter":
       return mockDetail() as T;
     case "save_note": {

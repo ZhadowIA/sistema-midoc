@@ -390,6 +390,86 @@ fn get_encounter(
 }
 
 #[tauri::command]
+fn list_patients(
+    state: tauri::State<'_, AppDb>,
+    search: Option<String>,
+) -> Result<Vec<clinical::PatientSummary>, String> {
+    with_conn(&state, |conn| {
+        clinical::list_patients(conn, search.as_deref())
+    })
+}
+
+#[tauri::command]
+fn get_patient_profile(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<clinical::PatientProfile, String> {
+    with_conn(&state, |conn| {
+        clinical::get_patient_profile(conn, &patient_id)
+    })
+}
+
+#[tauri::command]
+fn create_patient(
+    state: tauri::State<'_, AppDb>,
+    patient: clinical::NewPatientInput,
+) -> Result<clinical::PatientRecord, String> {
+    with_conn(&state, |conn| clinical::create_patient(conn, &patient))
+}
+
+#[tauri::command]
+fn open_patient_encounter(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<clinical::Encounter, String> {
+    with_conn(&state, |conn| {
+        clinical::open_encounter_for_patient(conn, &patient_id)
+    })
+}
+
+#[tauri::command]
+fn list_timeline_events(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<Vec<clinical::TimelineEvent>, String> {
+    with_conn(&state, |conn| {
+        clinical::list_timeline_events(conn, &patient_id)
+    })
+}
+
+#[tauri::command]
+fn add_timeline_event(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+    event: clinical::TimelineEventInput,
+) -> Result<clinical::TimelineEvent, String> {
+    with_conn(&state, |conn| {
+        clinical::add_timeline_event(conn, &patient_id, &event)
+    })
+}
+
+#[tauri::command]
+fn update_timeline_event(
+    state: tauri::State<'_, AppDb>,
+    event_id: String,
+    event: clinical::TimelineEventInput,
+) -> Result<clinical::TimelineEvent, String> {
+    with_conn(&state, |conn| {
+        clinical::update_timeline_event(conn, &event_id, &event)
+    })
+}
+
+#[tauri::command]
+fn delete_timeline_event(
+    state: tauri::State<'_, AppDb>,
+    event_id: String,
+) -> Result<(), String> {
+    with_conn(&state, |conn| {
+        clinical::delete_timeline_event(conn, &event_id)
+    })
+}
+
+#[tauri::command]
 fn save_note(
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
@@ -832,6 +912,14 @@ pub fn run() {
             list_appointments,
             open_encounter,
             get_encounter,
+            list_patients,
+            get_patient_profile,
+            create_patient,
+            open_patient_encounter,
+            list_timeline_events,
+            add_timeline_event,
+            update_timeline_event,
+            delete_timeline_event,
             save_note,
             save_prescription,
             update_patient_background,

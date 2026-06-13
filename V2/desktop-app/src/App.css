@@ -417,7 +417,181 @@ textarea:disabled {
   font-size: 0.92rem;
 }
 
+/* ---------- Directorio de pacientes ---------- */
+
+.directory-toolbar {
+  flex-wrap: nowrap;
+}
+
+.directory-toolbar input {
+  flex: 1;
+}
+
+/* La fila del directorio abre la ficha al pulsarse: boton que se ve como texto. */
+.directory-row {
+  appearance: none;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.directory-row:hover strong {
+  color: var(--primary);
+}
+
+.directory-allergy {
+  color: oklch(0.45 0.12 60);
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .directory-toolbar {
+    flex-wrap: wrap;
+  }
+}
+
+/* ---------- Linea del tiempo ---------- */
+
+.timeline-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.timeline-form {
+  border: 1px dashed var(--primary);
+  border-radius: var(--radius-panel);
+  background: var(--primary-soft);
+  padding: 16px;
+}
+
+.timeline-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+/* Cada evento es una tarjeta con una guia vertical a la izquierda. */
+.timeline-item {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 12px 14px 12px 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.timeline-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--primary);
+}
+
+.timeline-item-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.timeline-date {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.timeline-detail {
+  white-space: pre-wrap;
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+@media (max-width: 760px) {
+  .timeline-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .timeline-header {
+    flex-direction: column;
+  }
+}
+
 /* ---------- Atencion ---------- */
+
+/* La pantalla de consulta es mas ancha: identidad del paciente fija arriba
+   y, debajo, navegacion lateral + el panel de la seccion activa. */
+.encounter-content {
+  width: min(1140px, calc(100% - 40px));
+}
+
+.patient-banner {
+  position: sticky;
+  top: 54px;
+  z-index: 5;
+}
+
+.encounter-layout {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.encounter-nav {
+  position: sticky;
+  top: 178px;
+  display: grid;
+  gap: 2px;
+}
+
+.nav-item {
+  appearance: none;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 550;
+  font-size: 0.95rem;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  transition:
+    background var(--speed) var(--ease),
+    color var(--speed) var(--ease);
+}
+
+.nav-item:hover {
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.nav-item-active {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.encounter-main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
 
 .precheckin-list {
   margin: 0;
@@ -620,6 +794,22 @@ textarea:disabled {
 
   .tooth-grid {
     grid-template-columns: 1fr;
+  }
+
+  .encounter-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .encounter-nav {
+    position: static;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .nav-item {
+    white-space: nowrap;
   }
 }
 

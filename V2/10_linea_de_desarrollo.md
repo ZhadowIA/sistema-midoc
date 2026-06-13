@@ -11,7 +11,9 @@
 - IA gobernada: capa multi-proveedor, consentimiento, seudonimización, trazas, revisión humana, costo/créditos, benchmark, transcripción de voz y reporte de uso al portal por referencia
 - SaaS/compliance: suscripción con gating por capacidad, 2FA con códigos de recuperación, incidentes, exportación de auditoría, retención y derechos ARCO (residencia local)
 
-**Línea de desarrollo completa.** Siguientes prioridades fuera de la línea: pasarela de pago real para la suscripción, panel de administración de planes y endurecimiento de producción/staging con proveedores reales (BAA).
+**Paso 13 completado** (post-MVP, app del médico): directorio clínico de pacientes y expediente longitudinal con línea del tiempo editable. Rebanadas 1 (directorio) y 2 (línea del tiempo) entregadas el 2026-06-12.
+
+**Siguientes prioridades fuera de la línea:** pasarela de pago real para la suscripción, panel de administración de planes y endurecimiento de producción/staging con proveedores reales (BAA).
 
 ## Por que usar linea de desarrollo y no roadmap
 
@@ -68,6 +70,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 10 | Operacion presencial | `impeccable` | Recepcion, caja, lista de espera y consulta sin cita. | ✅ DONE |
 | 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 🚧 IN PROGRESS (fundacion + SOAP asistido) |
 | 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | ✅ DONE |
+| 13 | Directorio y expediente longitudinal | `impeccable` | Directorio de pacientes y linea del tiempo clinica editable. | ✅ DONE |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -508,6 +511,53 @@ Entregado (rebanada 4 — derechos ARCO en la app del medico):
 Verificacion (rebanada 4): 57 pruebas de Rust en verde (+5: exportacion completa, paciente inexistente, validacion de tipo/paciente, cancelacion que borra lo clinico y conserva lo contable, rechazo de cancelacion sobre solicitud que no es de cancelacion), `cargo clippy` sin warnings nuevos (los 9 restantes son de `operations.rs`, paso 10), `tsc + vite build` ok.
 
 Con esto la compuerta de push del paso 12 queda cubierta: suscripcion gestionable y gating por capacidad, 2FA con codigos de recuperacion, registro de incidentes, exportacion de auditoria, resumen de retencion y derechos ARCO con residencia local. Pendiente futuro (no requerido por la compuerta): pasarela de pago real para cobro de la suscripcion (hoy el ciclo de vida es interno) y panel de administracion de planes con capacidades personalizadas.
+
+## Paso 13 - Directorio y expediente longitudinal del paciente
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que el medico llegue a cualquier paciente sin depender de una cita y construya un expediente longitudinal: antecedentes, historial de consultas y una linea del tiempo clinica que pueda editar. |
+| Requisitos relacionados | RF09, RF10, RF11, RNF05, RNF07 (extiende el paso 4) |
+| Entrada necesaria | Atencion clinica integrada (paso 4) funcionando. |
+| Skills IA recomendadas | `smart-explore`, `impeccable`, `coding-standards`, `superpowers:test-driven-development`, `superpowers:verification-before-completion` |
+| Se construye | En la app del medico: directorio de pacientes (listar/buscar/alta), ficha del paciente y linea del tiempo de eventos clinicos relevantes (alta, baja y edicion). Todo persiste en la base local cifrada; nada de este paso toca la nube. |
+| Se valida con | El medico busca un paciente, abre su expediente longitudinal, revisa antecedentes e historial, y agrega/edita/elimina eventos en la linea del tiempo. |
+| Compuerta de avance | El directorio y la linea del tiempo solo leen y escriben en la base local; ningun dato clinico nuevo sale a la nube (regla de residencia 1). |
+| Push recomendado | Hacer push cuando el directorio permita llegar a un paciente y la linea del tiempo sostenga el ciclo completo de eventos (alta/edicion/baja) con pruebas. |
+
+Checklist de salida:
+
+- Directorio de pacientes con busqueda por nombre/telefono.
+- Alta manual de paciente que no llego por el portal.
+- Ficha del paciente con antecedentes e historial de consultas.
+- Linea del tiempo clinica por paciente, editable (anadir/modificar/eliminar).
+- Auditoria local de los eventos de la linea del tiempo.
+
+Estado: ✅ DONE — rebanadas 1 (directorio de pacientes) y 2 (linea del tiempo clinica editable) entregadas (2026-06-12). Construido sobre el paso 4.
+
+Entregado (rebanada 1 — directorio de pacientes, 2026-06-12):
+
+- **Acceso al paciente sin cita.** Hasta ahora solo se llegaba a un paciente desde una cita de la agenda o un walk-in de recepcion. Nueva pestana "Pacientes" en el espacio de trabajo con el directorio completo del expediente local.
+- **Capa clinica (`clinical.rs`).** `list_patients` (filtro opcional por nombre o telefono, con recuento de consultas y fecha de ultima visita), `get_patient_profile` (datos del paciente + historial completo de encuentros), `create_patient` (alta manual con validacion de nombre y normalizacion de campos opcionales). Reutiliza `open_encounter_for_patient` para iniciar una consulta walk-in desde la ficha.
+- **Comandos (`lib.rs`).** `list_patients`, `get_patient_profile`, `create_patient`, `open_patient_encounter`.
+- **UI y mock (`Directorio.tsx`).** Lista con buscador en vivo, ficha del paciente (datos, alergias, antecedentes, historial e "Iniciar consulta") y formulario de alta; el mock de navegador simula el mismo comportamiento.
+
+Verificacion (rebanada 1): pruebas de Rust en verde (+1: alta con recorte/normalizacion, rechazo de nombre vacio, busqueda por nombre y telefono, ficha con historial y paciente inexistente), `tsc + vite build` ok.
+
+Entregado (rebanada 2 — linea del tiempo clinica editable, 2026-06-12):
+
+- **Expediente longitudinal del paciente.** Nueva pagina (boton "Expediente" junto a "Iniciar consulta" en el directorio) con tres secciones en barra lateral: Antecedentes (lectura), Historial de consultas (lectura) y Linea del tiempo (edicion). El nombre del paciente queda fijo arriba.
+- **Migracion SQLite v11 (`timeline_events`).** Eventos clinicos curados a mano por el medico (separados de las notas de consulta), con fecha clinica, categoria, titulo y detalle. CLINICO: viven solo en la base local cifrada; la nube no los conoce.
+- **Capa clinica (`clinical.rs`).** `list_timeline_events` (orden por fecha clinica desc), `add_timeline_event`, `update_timeline_event` y `delete_timeline_event`, con validacion de titulo/fecha y de categoria contra una lista cerrada (NOTE, DIAGNOSIS, PROCEDURE, MEDICATION, LAB, ALERT, MILESTONE). Cada alta/edicion/baja queda auditada en la bitacora local.
+- **Comandos (`lib.rs`).** `list_timeline_events`, `add_timeline_event`, `update_timeline_event`, `delete_timeline_event`.
+- **UI y mock (`Expediente.tsx`).** Linea del tiempo con tarjetas por evento (fecha, categoria con color, titulo y detalle), alta/edicion en formulario y baja con confirmacion; el mock de navegador simula el mismo comportamiento.
+- **Antecedentes editables desde el expediente.** La seccion Antecedentes del expediente longitudinal ahora se edita en sitio (alergias, antecedentes personales/familiares y fecha de nacimiento) reutilizando `update_patient_background`, sin necesidad de abrir una consulta.
+- **Historial solo con contenido.** El historial (en el expediente y en la pantalla de consulta) y el recuento de consultas del directorio solo cuentan encuentros con algo escrito (al menos una version de nota); los encuentros abiertos y vacios ya no aparecen.
+- **Reabrir consultas sin firmar.** Cada consulta del historial que sigue sin firmar muestra un boton "Abrir y firmar" que entra al encuentro para ver/editar lo escrito y cerrarlo; al volver se regresa al expediente.
+
+Verificacion (rebanada 2): pruebas de Rust en verde (+2: linea del tiempo —alta con normalizacion de categoria/detalle, rechazo de titulo/fecha vacios y categoria invalida, paciente inexistente, orden por fecha, edicion y baja con NotFound; y exclusion de encuentros vacios del historial y del conteo, que aparecen al escribir la primera nota), `tsc + vite build` ok.
+
+Con esto la compuerta de push del paso 13 queda cubierta: directorio para llegar a cualquier paciente sin cita y expediente longitudinal con linea del tiempo editable, todo en la base local cifrada sin enviar datos clinicos a la nube.
 
 ## MVP recomendado
 

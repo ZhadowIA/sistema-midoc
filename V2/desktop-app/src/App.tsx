@@ -4,6 +4,8 @@ import { Atencion } from "./Atencion";
 import { Recepcion } from "./Recepcion";
 import { Benchmark } from "./Benchmark";
 import { Arco } from "./Arco";
+import { Directorio } from "./Directorio";
+import { Expediente } from "./Expediente";
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
 import "./App.css";
 
@@ -205,8 +207,11 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [activeEncounter, setActiveEncounter] = useState<string | null>(null);
+  const [activePatient, setActivePatient] = useState<string | null>(null);
   const [clinicalProfile, setClinicalProfile] = useState<ClinicalProfile>("GENERAL_MEDICINE");
-  const [view, setView] = useState<"agenda" | "reception" | "benchmark" | "arco">("agenda");
+  const [view, setView] = useState<
+    "agenda" | "patients" | "reception" | "benchmark" | "arco"
+  >("agenda");
 
   const refresh = useCallback(async () => {
     try {
@@ -280,6 +285,16 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     );
   }
 
+  if (activePatient) {
+    return (
+      <Expediente
+        patientId={activePatient}
+        onBack={() => setActivePatient(null)}
+        onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
+      />
+    );
+  }
+
   return (
     <>
       <header className="app-topbar">
@@ -325,6 +340,12 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 Agenda
               </button>
               <button
+                className={view === "patients" ? "tab tab-active" : "tab"}
+                onClick={() => setView("patients")}
+              >
+                Pacientes
+              </button>
+              <button
                 className={view === "reception" ? "tab tab-active" : "tab"}
                 onClick={() => setView("reception")}
               >
@@ -343,7 +364,12 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 Privacidad (ARCO)
               </button>
             </nav>
-            {view === "reception" ? (
+            {view === "patients" ? (
+              <Directorio
+                onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
+                onOpenPatient={(patientId) => setActivePatient(patientId)}
+              />
+            ) : view === "reception" ? (
               <Recepcion onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)} />
             ) : view === "benchmark" ? (
               <Benchmark />

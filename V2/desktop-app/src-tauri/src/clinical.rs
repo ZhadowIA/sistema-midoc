@@ -128,6 +128,61 @@ pub struct EncounterDetail {
     pub history: Vec<HistoryEntry>,
 }
 
+/// Renglon del directorio de pacientes: datos minimos para listar/buscar mas
+/// el recuento de encuentros y la fecha de la ultima visita.
+#[derive(Debug, Serialize)]
+pub struct PatientSummary {
+    pub id: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub birth_date: Option<String>,
+    pub allergies: Option<String>,
+    pub encounter_count: i64,
+    pub last_visit: Option<String>,
+}
+
+/// Ficha del paciente fuera de un encuentro: sus datos y el historial completo
+/// de consultas (incluye no firmadas).
+#[derive(Debug, Serialize)]
+pub struct PatientProfile {
+    pub patient: PatientRecord,
+    pub history: Vec<HistoryEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewPatientInput {
+    pub first_name: String,
+    pub last_name: String,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub birth_date: Option<String>,
+    pub sex: Option<String>,
+}
+
+/// Evento de la linea del tiempo clinica del paciente, curado a mano por el
+/// medico. CLINICO: vive solo en la base local cifrada.
+#[derive(Debug, Serialize)]
+pub struct TimelineEvent {
+    pub id: String,
+    pub patient_id: String,
+    pub event_date: String,
+    pub category: String,
+    pub title: String,
+    pub detail: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TimelineEventInput {
+    pub event_date: String,
+    pub category: String,
+    pub title: String,
+    pub detail: Option<String>,
+}
+
 /* ---------- Encuentros ---------- */
 
 fn read_encounter(conn: &Connection, encounter_id: &str) -> Result<Encounter, ClinicalError> {
@@ -338,7 +393,9 @@ pub fn get_encounter_detail(
         .optional()?;
 
     // Expediente desde la cita: encuentros previos del mismo paciente con su
-    // diagnostico mas reciente.
+    // diagnostico mas reciente. Solo aparecen los que tienen algo escrito (al
+    // menos una version de nota); los encuentros abiertos y vacios no ensucian
+    // el historial.
     let mut statement = conn.prepare(
         "SELECT e.id, e.signed_at, e.status,
                 COALESCE((SELECT diagnosis FROM note_versions n
@@ -346,6 +403,7 @@ pub fn get_encounter_detail(
                           ORDER BY n.version DESC LIMIT 1), '')
          FROM encounters e
          WHERE e.patient_id = ?1 AND e.id != ?2
+           AND EXISTS (SELECT 1 FROM note_versions nv WHERE nv.encounter_id = e.id)
          ORDER BY e.opened_at DESC",
     )?;
     let history = statement
@@ -370,6 +428,319 @@ pub fn get_encounter_detail(
         prescription,
         history,
     })
+}
+
+/* ---------- Directorio de pacientes ---------- */
+
+/// Normaliza un campo opcional de texto: recorta y convierte vacio en NULL.
+fn normalize_optional(value: &Option<String>) -> Option<String> {
+    value
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Lista los pacientes del expediente con un filtro opcional por nombre o
+/// telefono. Solo lee la base local; nada sale a la red.
+pub fn list_patients(
+    conn: &Connection,
+    search: Option<&str>,
+) -> Result<Vec<PatientSummary>, ClinicalError> {
+    let like = search
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("%{s}%"));
+
+    let mut statement = conn.prepare(
+        "SELECT p.id, p.first_name, p.last_name, p.phone, p.email, p.birth_date,
+                p.allergies,
+                COUNT(e.id) AS encounter_count,
+                MAX(e.opened_at) AS last_visit
+         FROM patients p
+         LEFT JOIN encounters e ON e.patient_id = p.id
+            AND EXISTS (SELECT 1 FROM note_versions nv WHERE nv.encounter_id = e.id)
+         WHERE ?1 IS NULL
+            OR p.first_name LIKE ?1
+            OR p.last_name LIKE ?1
+            OR p.phone LIKE ?1
+            OR (p.first_name || ' ' || p.last_name) LIKE ?1
+         GROUP BY p.id
+         ORDER BY p.last_name COLLATE NOCASE, p.first_name COLLATE NOCASE",
+    )?;
+
+    let rows = statement
+        .query_map(params![like], |row| {
+            Ok(PatientSummary {
+                id: row.get(0)?,
+                first_name: row.get(1)?,
+                last_name: row.get(2)?,
+                phone: row.get(3)?,
+                email: row.get(4)?,
+                birth_date: row.get(5)?,
+                allergies: row.get(6)?,
+                encounter_count: row.get(7)?,
+                last_visit: row.get(8)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// Ficha de un paciente: sus datos mas el historial de encuentros con su
+/// diagnostico mas reciente, ordenado del mas nuevo al mas antiguo.
+pub fn get_patient_profile(
+    conn: &Connection,
+    patient_id: &str,
+) -> Result<PatientProfile, ClinicalError> {
+    let patient = conn
+        .query_row(
+            "SELECT id, first_name, last_name, phone, email, birth_date,
+                    allergies, medical_background, family_background
+             FROM patients WHERE id = ?1",
+            params![patient_id],
+            |row| {
+                Ok(PatientRecord {
+                    id: row.get(0)?,
+                    first_name: row.get(1)?,
+                    last_name: row.get(2)?,
+                    phone: row.get(3)?,
+                    email: row.get(4)?,
+                    birth_date: row.get(5)?,
+                    allergies: row.get(6)?,
+                    medical_background: row.get(7)?,
+                    family_background: row.get(8)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or(ClinicalError::NotFound)?;
+
+    // Solo encuentros con algo escrito (al menos una version de nota): un
+    // encuentro abierto y vacio no se registra en el historial.
+    let mut statement = conn.prepare(
+        "SELECT e.id, e.signed_at, e.status,
+                COALESCE((SELECT diagnosis FROM note_versions n
+                          WHERE n.encounter_id = e.id
+                          ORDER BY n.version DESC LIMIT 1), '')
+         FROM encounters e
+         WHERE e.patient_id = ?1
+           AND EXISTS (SELECT 1 FROM note_versions nv WHERE nv.encounter_id = e.id)
+         ORDER BY e.opened_at DESC",
+    )?;
+    let history = statement
+        .query_map(params![patient_id], |row| {
+            Ok(HistoryEntry {
+                encounter_id: row.get(0)?,
+                signed_at: row.get(1)?,
+                status: row.get(2)?,
+                diagnosis: row.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(PatientProfile { patient, history })
+}
+
+/// Da de alta un paciente capturado a mano (no llego por una cita del portal).
+/// El paciente queda en el expediente cifrado local, listo para abrir una
+/// consulta walk-in desde el directorio.
+pub fn create_patient(
+    conn: &Connection,
+    input: &NewPatientInput,
+) -> Result<PatientRecord, ClinicalError> {
+    let first_name = input.first_name.trim().to_string();
+    let last_name = input.last_name.trim().to_string();
+    if first_name.is_empty() && last_name.is_empty() {
+        return Err(ClinicalError::Invalid(
+            "el paciente necesita al menos un nombre o apellido".into(),
+        ));
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let phone = normalize_optional(&input.phone);
+    let email = normalize_optional(&input.email);
+    let birth_date = normalize_optional(&input.birth_date);
+    let sex = normalize_optional(&input.sex);
+
+    conn.execute(
+        "INSERT INTO patients
+            (id, first_name, last_name, phone, email, birth_date, sex, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+        params![id, first_name, last_name, phone, email, birth_date, sex, now()],
+    )?;
+
+    audit(conn, "patient", &id, "created", Some("manual"))?;
+
+    Ok(PatientRecord {
+        id,
+        first_name,
+        last_name,
+        phone,
+        email,
+        birth_date,
+        allergies: None,
+        medical_background: None,
+        family_background: None,
+    })
+}
+
+/* ---------- Linea del tiempo clinica ---------- */
+
+const TIMELINE_CATEGORIES: &[&str] =
+    &["NOTE", "DIAGNOSIS", "PROCEDURE", "MEDICATION", "LAB", "ALERT", "MILESTONE"];
+
+fn validate_timeline_input(input: &TimelineEventInput) -> Result<String, ClinicalError> {
+    if input.title.trim().is_empty() {
+        return Err(ClinicalError::Invalid("el evento necesita un titulo".into()));
+    }
+    if input.event_date.trim().is_empty() {
+        return Err(ClinicalError::Invalid("el evento necesita una fecha".into()));
+    }
+    let category = input.category.trim().to_uppercase();
+    let category = if category.is_empty() {
+        "NOTE".to_string()
+    } else if TIMELINE_CATEGORIES.contains(&category.as_str()) {
+        category
+    } else {
+        return Err(ClinicalError::Invalid(format!(
+            "categoria de evento no valida: {category}"
+        )));
+    };
+    Ok(category)
+}
+
+fn read_timeline_event(conn: &Connection, event_id: &str) -> Result<TimelineEvent, ClinicalError> {
+    conn.query_row(
+        "SELECT id, patient_id, event_date, category, title, detail, created_at, updated_at
+         FROM timeline_events WHERE id = ?1",
+        params![event_id],
+        |row| {
+            Ok(TimelineEvent {
+                id: row.get(0)?,
+                patient_id: row.get(1)?,
+                event_date: row.get(2)?,
+                category: row.get(3)?,
+                title: row.get(4)?,
+                detail: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or(ClinicalError::NotFound)
+}
+
+/// Lista la linea del tiempo de un paciente, del evento mas reciente al mas
+/// antiguo (por fecha clinica capturada por el medico).
+pub fn list_timeline_events(
+    conn: &Connection,
+    patient_id: &str,
+) -> Result<Vec<TimelineEvent>, ClinicalError> {
+    let mut statement = conn.prepare(
+        "SELECT id, patient_id, event_date, category, title, detail, created_at, updated_at
+         FROM timeline_events
+         WHERE patient_id = ?1
+         ORDER BY event_date DESC, created_at DESC",
+    )?;
+    let rows = statement
+        .query_map(params![patient_id], |row| {
+            Ok(TimelineEvent {
+                id: row.get(0)?,
+                patient_id: row.get(1)?,
+                event_date: row.get(2)?,
+                category: row.get(3)?,
+                title: row.get(4)?,
+                detail: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Agrega un evento a la linea del tiempo de un paciente existente.
+pub fn add_timeline_event(
+    conn: &Connection,
+    patient_id: &str,
+    input: &TimelineEventInput,
+) -> Result<TimelineEvent, ClinicalError> {
+    let category = validate_timeline_input(input)?;
+
+    let patient_exists: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM patients WHERE id = ?1)",
+        params![patient_id],
+        |row| row.get(0),
+    )?;
+    if !patient_exists {
+        return Err(ClinicalError::NotFound);
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let detail = normalize_optional(&input.detail);
+    conn.execute(
+        "INSERT INTO timeline_events
+            (id, patient_id, event_date, category, title, detail, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+        params![
+            id,
+            patient_id,
+            input.event_date.trim(),
+            category,
+            input.title.trim(),
+            detail,
+            now()
+        ],
+    )?;
+
+    audit(conn, "timeline_event", &id, "created", Some(&category))?;
+    read_timeline_event(conn, &id)
+}
+
+/// Modifica un evento existente de la linea del tiempo.
+pub fn update_timeline_event(
+    conn: &Connection,
+    event_id: &str,
+    input: &TimelineEventInput,
+) -> Result<TimelineEvent, ClinicalError> {
+    let category = validate_timeline_input(input)?;
+    let detail = normalize_optional(&input.detail);
+
+    let changed = conn.execute(
+        "UPDATE timeline_events
+         SET event_date = ?2, category = ?3, title = ?4, detail = ?5, updated_at = ?6
+         WHERE id = ?1",
+        params![
+            event_id,
+            input.event_date.trim(),
+            category,
+            input.title.trim(),
+            detail,
+            now()
+        ],
+    )?;
+    if changed == 0 {
+        return Err(ClinicalError::NotFound);
+    }
+
+    audit(conn, "timeline_event", event_id, "updated", None)?;
+    read_timeline_event(conn, event_id)
+}
+
+/// Elimina un evento de la linea del tiempo.
+pub fn delete_timeline_event(conn: &Connection, event_id: &str) -> Result<(), ClinicalError> {
+    let changed = conn.execute(
+        "DELETE FROM timeline_events WHERE id = ?1",
+        params![event_id],
+    )?;
+    if changed == 0 {
+        return Err(ClinicalError::NotFound);
+    }
+
+    audit(conn, "timeline_event", event_id, "deleted", None)?;
+    Ok(())
 }
 
 /* ---------- Nota SOAP, receta y antecedentes ---------- */
@@ -742,5 +1113,213 @@ mod tests {
         )
         .unwrap();
         assert!(!verify_signature(&conn, &encounter.id).unwrap());
+    }
+
+    #[test]
+    fn directory_creates_searches_and_profiles_patients() {
+        let conn = test_conn("directory");
+
+        // Alta manual: el paciente queda en el expediente local.
+        let created = create_patient(
+            &conn,
+            &NewPatientInput {
+                first_name: " Ana ".into(),
+                last_name: "Lopez".into(),
+                phone: Some(" 614 555 0000 ".into()),
+                email: Some("".into()),
+                birth_date: Some("1992-07-01".into()),
+                sex: Some("F".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(created.first_name, "Ana"); // recortado
+        assert_eq!(created.phone.as_deref(), Some("614 555 0000"));
+        assert_eq!(created.email, None); // vacio -> NULL
+
+        // Un paciente sin nombre ni apellido es invalido.
+        assert!(matches!(
+            create_patient(
+                &conn,
+                &NewPatientInput {
+                    first_name: "  ".into(),
+                    last_name: "".into(),
+                    phone: None,
+                    email: None,
+                    birth_date: None,
+                    sex: None,
+                },
+            ),
+            Err(ClinicalError::Invalid(_))
+        ));
+
+        // Una consulta walk-in para el paciente aparece en su ficha.
+        let encounter = open_encounter_for_patient(&conn, &created.id).unwrap();
+        save_note(
+            &conn,
+            &encounter.id,
+            &NoteContent {
+                diagnosis: "Migrana".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // El directorio lista a Ana con su recuento de consultas.
+        let all = list_patients(&conn, None).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].encounter_count, 1);
+        assert!(all[0].last_visit.is_some());
+
+        // La busqueda filtra por nombre y por telefono.
+        assert_eq!(list_patients(&conn, Some("ana")).unwrap().len(), 1);
+        assert_eq!(list_patients(&conn, Some("555")).unwrap().len(), 1);
+        assert_eq!(list_patients(&conn, Some("zzz")).unwrap().len(), 0);
+
+        // La ficha trae los datos y el historial del paciente.
+        let profile = get_patient_profile(&conn, &created.id).unwrap();
+        assert_eq!(profile.patient.last_name, "Lopez");
+        assert_eq!(profile.history.len(), 1);
+        assert_eq!(profile.history[0].diagnosis, "Migrana");
+
+        // Un paciente inexistente no tiene ficha.
+        assert!(matches!(
+            get_patient_profile(&conn, "no-existe"),
+            Err(ClinicalError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn empty_encounters_stay_out_of_history_and_counts() {
+        let conn = test_conn("empty-encounter");
+        let patient = create_patient(
+            &conn,
+            &NewPatientInput {
+                first_name: "Carlos".into(),
+                last_name: "Vega".into(),
+                phone: None,
+                email: None,
+                birth_date: None,
+                sex: None,
+            },
+        )
+        .unwrap();
+
+        // Un encuentro abierto pero sin nota no cuenta como consulta.
+        open_encounter_for_patient(&conn, &patient.id).unwrap();
+        let listed = list_patients(&conn, None).unwrap();
+        assert_eq!(listed[0].encounter_count, 0);
+        assert!(listed[0].last_visit.is_none());
+        assert_eq!(get_patient_profile(&conn, &patient.id).unwrap().history.len(), 0);
+
+        // En cuanto se escribe algo, el encuentro aparece en el historial.
+        let encounter = open_encounter_for_patient(&conn, &patient.id).unwrap();
+        save_note(
+            &conn,
+            &encounter.id,
+            &NoteContent {
+                subjective: "Refiere tos".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(get_patient_profile(&conn, &patient.id).unwrap().history.len(), 1);
+        assert_eq!(list_patients(&conn, None).unwrap()[0].encounter_count, 1);
+    }
+
+    #[test]
+    fn timeline_events_add_edit_delete_and_validate() {
+        let conn = test_conn("timeline");
+        let patient = create_patient(
+            &conn,
+            &NewPatientInput {
+                first_name: "Beatriz".into(),
+                last_name: "Ramos".into(),
+                phone: None,
+                email: None,
+                birth_date: None,
+                sex: None,
+            },
+        )
+        .unwrap();
+
+        // Alta: la categoria se normaliza a mayusculas y el detalle vacio es NULL.
+        let event = add_timeline_event(
+            &conn,
+            &patient.id,
+            &TimelineEventInput {
+                event_date: "2024-02-10".into(),
+                category: "diagnosis".into(),
+                title: "Diabetes tipo 2".into(),
+                detail: Some("".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(event.category, "DIAGNOSIS");
+        assert_eq!(event.detail, None);
+
+        // Validaciones: titulo vacio, fecha vacia y categoria desconocida.
+        let base = || TimelineEventInput {
+            event_date: "2024-02-10".into(),
+            category: "NOTE".into(),
+            title: "Algo".into(),
+            detail: None,
+        };
+        assert!(matches!(
+            add_timeline_event(&conn, &patient.id, &TimelineEventInput { title: "  ".into(), ..base() }),
+            Err(ClinicalError::Invalid(_))
+        ));
+        assert!(matches!(
+            add_timeline_event(&conn, &patient.id, &TimelineEventInput { event_date: "".into(), ..base() }),
+            Err(ClinicalError::Invalid(_))
+        ));
+        assert!(matches!(
+            add_timeline_event(&conn, &patient.id, &TimelineEventInput { category: "INVENTADA".into(), ..base() }),
+            Err(ClinicalError::Invalid(_))
+        ));
+
+        // Un evento para un paciente inexistente se rechaza.
+        assert!(matches!(
+            add_timeline_event(&conn, "no-existe", &base()),
+            Err(ClinicalError::NotFound)
+        ));
+
+        // Segundo evento mas reciente: encabeza la lista (orden por fecha desc).
+        add_timeline_event(
+            &conn,
+            &patient.id,
+            &TimelineEventInput {
+                event_date: "2025-09-01".into(),
+                category: "ALERT".into(),
+                title: "Control glucemico deficiente".into(),
+                detail: Some("HbA1c 9.2".into()),
+            },
+        )
+        .unwrap();
+        let listed = list_timeline_events(&conn, &patient.id).unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].event_date, "2025-09-01");
+
+        // Edicion: cambia titulo y detalle.
+        let updated = update_timeline_event(
+            &conn,
+            &event.id,
+            &TimelineEventInput {
+                event_date: "2024-02-10".into(),
+                category: "DIAGNOSIS".into(),
+                title: "Diabetes mellitus tipo 2".into(),
+                detail: Some("Controlada con metformina".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.title, "Diabetes mellitus tipo 2");
+        assert_eq!(updated.detail.as_deref(), Some("Controlada con metformina"));
+
+        // Baja: elimina el evento; un id inexistente da NotFound.
+        delete_timeline_event(&conn, &event.id).unwrap();
+        assert_eq!(list_timeline_events(&conn, &patient.id).unwrap().len(), 1);
+        assert!(matches!(
+            delete_timeline_event(&conn, &event.id),
+            Err(ClinicalError::NotFound)
+        ));
     }
 }
