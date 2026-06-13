@@ -8,6 +8,15 @@ import { invoke } from "@tauri-apps/api/core";
 
 const isTauri = "__TAURI_INTERNALS__" in window;
 
+// Fecha de esta semana (offset de dias desde hoy) a una hora HH:MM local, para
+// que las citas de demostracion caigan dentro del horario laboral simulado.
+function slotDate(dayOffset: number, hh: number, mm: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  d.setHours(hh, mm, 0, 0);
+  return d.toISOString();
+}
+
 export function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (isTauri) {
     return invoke<T>(command, args);
@@ -32,6 +41,7 @@ interface MockNote {
 const mockState = {
   linked: true,
   clinicalProfile: "ODONTOLOGY",
+  slotMinutes: 30,
   aiConsent: false,
   aiVoiceConsent: false,
   aiRunSeq: 0,
@@ -75,8 +85,8 @@ const mockState = {
     {
       id: "appt-1",
       status: "CONFIRMED",
-      scheduled_start: new Date(Date.now() + 3 * 3600_000).toISOString(),
-      scheduled_end: new Date(Date.now() + 3.5 * 3600_000).toISOString(),
+      scheduled_start: slotDate(0, 10, 30),
+      scheduled_end: slotDate(0, 11, 0),
       service_name: "Valoracion dental",
       reason: "Dolor en molar superior derecho",
       patient_name: "Hugo Paz Olivares",
@@ -86,8 +96,8 @@ const mockState = {
     {
       id: "appt-2",
       status: "PENDING",
-      scheduled_start: new Date(Date.now() + 26 * 3600_000).toISOString(),
-      scheduled_end: new Date(Date.now() + 26.5 * 3600_000).toISOString(),
+      scheduled_start: slotDate(1, 9, 30),
+      scheduled_end: slotDate(1, 10, 0),
       service_name: "Seguimiento",
       reason: null,
       patient_name: "Maria Elena Duarte",
@@ -97,8 +107,8 @@ const mockState = {
     {
       id: "appt-3",
       status: "CANCELLED",
-      scheduled_start: new Date(Date.now() + 50 * 3600_000).toISOString(),
-      scheduled_end: new Date(Date.now() + 50.5 * 3600_000).toISOString(),
+      scheduled_start: slotDate(1, 12, 0),
+      scheduled_end: slotDate(1, 12, 30),
       service_name: "Consulta general",
       reason: "Revision de estudios",
       patient_name: "Jorge Luna",
@@ -463,7 +473,10 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         linked: mockState.linked,
         server_url: "http://localhost:3000",
         cursor: 7,
-        clinical_profile: mockState.clinicalProfile
+        clinical_profile: mockState.clinicalProfile,
+        slot_minutes: mockState.slotMinutes,
+        work_start_minutes: 9 * 60,
+        work_end_minutes: 14 * 60
       } as T;
     case "link_account":
       mockState.linked = true;
@@ -485,6 +498,52 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       const candidates = matchPatientsMock(appt?.patient_name, appt?.patient_phone);
       if (candidates.length === 0) {
         return { kind: "encounter", encounter_id: e.id } as T;
+      }
+      return {
+        kind: "needs_resolution",
+        appointment_patient: {
+          ...splitNameMock(appt?.patient_name ?? "Paciente"),
+          phone: appt?.patient_phone ?? null,
+          email: null
+        },
+        candidates
+      } as T;
+    }
+    case "resolve_appointment_patient": {
+      // Espeja resolve_appointment_patient del backend: resuelve el expediente
+      // del paciente (sin abrir encuentro). El front abre la vista Expediente.
+      const appt = mockState.appointments.find((a) => a.id === args?.appointmentId);
+      if (args?.linkPatientId) {
+        return { kind: "patient", patient_id: String(args.linkPatientId) } as T;
+      }
+      if (args?.forceNew) {
+        const created = {
+          id: `pat-${mockState.patients.length + 1}`,
+          ...splitNameMock(appt?.patient_name ?? "Paciente"),
+          phone: appt?.patient_phone ?? null,
+          email: null as string | null,
+          birth_date: null as string | null,
+          allergies: null as string | null,
+          medical_background: null as string | null,
+          family_background: null as string | null
+        };
+        mockState.patients.push(created);
+        return { kind: "patient", patient_id: created.id } as T;
+      }
+      const candidates = matchPatientsMock(appt?.patient_name, appt?.patient_phone);
+      if (candidates.length === 0) {
+        const created = {
+          id: `pat-${mockState.patients.length + 1}`,
+          ...splitNameMock(appt?.patient_name ?? "Paciente"),
+          phone: appt?.patient_phone ?? null,
+          email: null as string | null,
+          birth_date: null as string | null,
+          allergies: null as string | null,
+          medical_background: null as string | null,
+          family_background: null as string | null
+        };
+        mockState.patients.push(created);
+        return { kind: "patient", patient_id: created.id } as T;
       }
       return {
         kind: "needs_resolution",

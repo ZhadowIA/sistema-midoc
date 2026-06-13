@@ -888,6 +888,211 @@ textarea:disabled {
   font-size: 0.92rem;
 }
 
+/* Agenda semanal por bloques (paso 13, rebanada 4). 7 columnas = dias; el
+   bloque es la duracion de cita del medico. Solo se listan los bloques (slots)
+   con citas, en filas; cada cita cae en la celda de su dia. Color = estado. */
+.week-agenda {
+  --week-time-w: 60px;
+  display: grid;
+  gap: 10px;
+}
+
+.week-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.week-nav .ghost-button {
+  padding: 6px 12px;
+}
+
+.week-range {
+  margin-left: 6px;
+}
+
+.week-head,
+.week-row {
+  display: grid;
+  grid-template-columns: var(--week-time-w) repeat(7, minmax(0, 1fr));
+}
+
+.week-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.week-head-corner {
+  border-right: 1px solid var(--line);
+}
+
+.week-col-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 8px 4px;
+  border-right: 1px solid var(--line);
+}
+
+.week-col-head:last-child {
+  border-right: none;
+}
+
+.week-col-day {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.week-col-date {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.week-col-today {
+  background: var(--primary-soft);
+}
+
+.week-col-today .week-col-day,
+.week-col-today .week-col-date {
+  color: var(--primary);
+}
+
+.week-grid {
+  overflow-y: auto;
+  max-height: 62vh;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  scrollbar-gutter: stable;
+}
+
+.week-time-cell {
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  padding: 4px 6px 0 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+
+/* Fila con cita: etiqueta de hora mas marcada. */
+.week-row-filled .week-time-cell {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.week-row:first-child .week-time-cell,
+.week-row:first-child .week-day-cell {
+  border-top: none;
+}
+
+.week-day-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Bloque sin cita: compacto. */
+  min-height: 20px;
+  padding: 3px;
+  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+
+/* Bloque con cita: altura completa para mostrar la tarjeta. */
+.week-row-filled .week-day-cell {
+  min-height: 64px;
+  padding: 4px;
+}
+
+.week-day-cell:last-child {
+  border-right: none;
+}
+
+.week-day-today-cell {
+  background-color: color-mix(in oklch, var(--primary-soft) 45%, transparent);
+}
+
+.week-appt {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  text-align: left;
+  padding: 4px 7px;
+  border: 1px solid var(--primary);
+  border-left-width: 3px;
+  border-radius: var(--radius-control);
+  background: var(--primary-soft);
+  color: var(--ink);
+  cursor: pointer;
+  transition: transform var(--speed) var(--ease), box-shadow var(--speed) var(--ease);
+}
+
+.week-appt:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px oklch(0.49 0.143 250 / 0.18);
+}
+
+.week-appt:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.week-appt-time {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.week-appt-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.week-appt-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.week-appt-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.week-appt-tags .pill {
+  padding: 1px 7px;
+  font-size: 0.7rem;
+}
+
+.week-appt-cancelled {
+  background: var(--surface);
+  border-color: var(--line);
+  cursor: default;
+}
+
+.week-appt-cancelled .week-appt-time {
+  color: var(--muted);
+}
+
+.week-appt-cancelled .week-appt-name {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

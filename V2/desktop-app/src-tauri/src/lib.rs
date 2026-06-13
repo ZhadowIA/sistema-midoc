@@ -34,6 +34,9 @@ struct SyncStatus {
     server_url: Option<String>,
     cursor: i64,
     clinical_profile: Option<String>,
+    slot_minutes: Option<i64>,
+    work_start_minutes: Option<i64>,
+    work_end_minutes: Option<i64>,
 }
 
 #[derive(serde::Serialize)]
@@ -101,12 +104,23 @@ fn sync_status(state: tauri::State<'_, AppDb>) -> Result<SyncStatus, String> {
         .is_some();
     let cursor = sync::get_cursor(conn).map_err(|e| e.to_string())?;
     let clinical_profile = sync::get_state(conn, "clinical_profile").map_err(|e| e.to_string())?;
+    let parse_minutes = |key: &str| -> Result<Option<i64>, String> {
+        Ok(sync::get_state(conn, key)
+            .map_err(|e| e.to_string())?
+            .and_then(|value| value.parse::<i64>().ok()))
+    };
+    let slot_minutes = parse_minutes("slot_minutes")?;
+    let work_start_minutes = parse_minutes("work_start_minutes")?;
+    let work_end_minutes = parse_minutes("work_end_minutes")?;
 
     Ok(SyncStatus {
         linked,
         server_url,
         cursor,
         clinical_profile,
+        slot_minutes,
+        work_start_minutes,
+        work_end_minutes,
     })
 }
 
@@ -148,8 +162,31 @@ async fn link_account(
         .map_err(|e| e.to_string())?;
     sync::set_state(conn, "device_token", &link.device_token).map_err(|e| e.to_string())?;
     sync::set_state(conn, "cursor", "0").map_err(|e| e.to_string())?;
-    if let Some(clinical_profile) = link.clinical_profile.as_deref() {
+    persist_profile_metadata(conn, &link.metadata)?;
+    Ok(())
+}
+
+/// Guarda en el estado local los metadatos del perfil (perfil clinico, duracion
+/// de cita y horario laboral) que alimentan la agenda. Solo escribe los valores
+/// presentes, para no pisar con vacio lo ya conocido.
+fn persist_profile_metadata(
+    conn: &rusqlite::Connection,
+    metadata: &sync::ProfileMetadata,
+) -> Result<(), String> {
+    if let Some(clinical_profile) = metadata.clinical_profile.as_deref() {
         sync::set_state(conn, "clinical_profile", clinical_profile).map_err(|e| e.to_string())?;
+    }
+    if let Some(slot_minutes) = metadata.slot_minutes {
+        sync::set_state(conn, "slot_minutes", &slot_minutes.to_string())
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(work_start) = metadata.work_start_minutes {
+        sync::set_state(conn, "work_start_minutes", &work_start.to_string())
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(work_end) = metadata.work_end_minutes {
+        sync::set_state(conn, "work_end_minutes", &work_end.to_string())
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -267,6 +304,17 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
             ai::mark_usage_reports_sent(conn, &run_ids).map_err(|e| e.to_string())?;
         }
         ai_usage_reported += result.reported;
+    }
+
+    // Refrescar el perfil de la agenda (perfil clinico, duracion de cita y
+    // horario laboral) en cada sincronizacion, no solo al vincular.
+    let metadata = sync::fetch_profile_metadata(&server_url, &token)
+        .await
+        .map_err(|e| e.to_string())?;
+    {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        persist_profile_metadata(conn, &metadata)?;
     }
 
     Ok(sync::SyncSummary {
@@ -398,6 +446,26 @@ fn attend_appointment(
 ) -> Result<clinical::AttendOutcome, String> {
     with_conn(&state, |conn| {
         clinical::attend_appointment(
+            conn,
+            &appointment_id,
+            link_patient_id.as_deref(),
+            force_new,
+        )
+    })
+}
+
+/// Resuelve, desde la agenda, a que expediente pertenece una cita y abre su
+/// expediente, sin iniciar un encuentro. Misma busqueda anti-duplicados que
+/// `attend_appointment`, pero el desenlace es el expediente del paciente.
+#[tauri::command]
+fn resolve_appointment_patient(
+    state: tauri::State<'_, AppDb>,
+    appointment_id: String,
+    link_patient_id: Option<String>,
+    force_new: bool,
+) -> Result<clinical::ResolveOutcome, String> {
+    with_conn(&state, |conn| {
+        clinical::resolve_appointment_patient(
             conn,
             &appointment_id,
             link_patient_id.as_deref(),
@@ -1014,6 +1082,7 @@ pub fn run() {
             list_appointments,
             open_encounter,
             attend_appointment,
+            resolve_appointment_patient,
             get_encounter,
             list_patients,
             get_patient_profile,

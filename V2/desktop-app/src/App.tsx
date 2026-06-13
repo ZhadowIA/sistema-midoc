@@ -6,6 +6,7 @@ import { Benchmark } from "./Benchmark";
 import { Arco } from "./Arco";
 import { Directorio } from "./Directorio";
 import { Expediente } from "./Expediente";
+import { WeekAgenda } from "./WeekAgenda";
 import {
   PatientResolution,
   type PatientMatch,
@@ -25,6 +26,9 @@ interface SyncStatus {
   server_url: string | null;
   cursor: number;
   clinical_profile: ClinicalProfile | null;
+  slot_minutes: number | null;
+  work_start_minutes: number | null;
+  work_end_minutes: number | null;
 }
 
 interface AppointmentRow {
@@ -39,32 +43,15 @@ interface AppointmentRow {
   has_precheckin: boolean;
 }
 
-type AttendOutcome =
-  | { kind: "encounter"; encounter_id: string }
+// Desenlace de "Atender" desde la agenda: o se identifico el expediente del
+// paciente (se abre), o hay candidatos a duplicado que el medico debe revisar.
+type ResolveOutcome =
+  | { kind: "patient"; patient_id: string }
   | {
       kind: "needs_resolution";
       appointment_patient: ResolutionPatient;
       candidates: PatientMatch[];
     };
-
-const STATUS_LABELS: Record<string, string> = {
-  PENDING: "Pendiente",
-  CONFIRMED: "Confirmada",
-  CANCELLED: "Cancelada",
-  COMPLETED: "Atendida"
-};
-
-const STATUS_PILLS: Record<string, string> = {
-  PENDING: "pill pill-primary",
-  CONFIRMED: "pill pill-success",
-  CANCELLED: "pill pill-danger",
-  COMPLETED: "pill pill-muted"
-};
-
-const dateTimeFormatter = new Intl.DateTimeFormat("es-MX", {
-  dateStyle: "medium",
-  timeStyle: "short"
-});
 
 function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => void }) {
   const [passphrase, setPassphrase] = useState("");
@@ -227,6 +214,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     candidates: PatientMatch[];
   } | null>(null);
   const [clinicalProfile, setClinicalProfile] = useState<ClinicalProfile>("GENERAL_MEDICINE");
+  const [slotMinutes, setSlotMinutes] = useState(30);
+  const [workStartMinutes, setWorkStartMinutes] = useState<number | null>(null);
+  const [workEndMinutes, setWorkEndMinutes] = useState<number | null>(null);
   const [view, setView] = useState<
     "agenda" | "patients" | "reception" | "benchmark" | "arco"
   >("agenda");
@@ -239,6 +229,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       ]);
       setStatus(nextStatus);
       setClinicalProfile(coerceClinicalProfile(nextStatus.clinical_profile));
+      setSlotMinutes(nextStatus.slot_minutes && nextStatus.slot_minutes > 0 ? nextStatus.slot_minutes : 30);
+      setWorkStartMinutes(nextStatus.work_start_minutes);
+      setWorkEndMinutes(nextStatus.work_end_minutes);
       setAppointments(rows);
     } catch (e) {
       setError(String(e));
@@ -280,21 +273,25 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     onLock();
   }
 
-  async function attend(
+  // "Atender" desde la agenda: NO abre una consulta nueva. Resuelve a que
+  // expediente pertenece la cita (busca duplicados; si los hay, el medico decide
+  // si es un paciente con expediente previo) y abre ese expediente. La consulta
+  // se inicia despues, desde el propio expediente.
+  async function openPatientFromAppointment(
     appointmentId: string,
     opts?: { linkPatientId?: string; forceNew?: boolean }
   ) {
     setError("");
     setBusy(true);
     try {
-      const outcome = await call<AttendOutcome>("attend_appointment", {
+      const outcome = await call<ResolveOutcome>("resolve_appointment_patient", {
         appointmentId,
         linkPatientId: opts?.linkPatientId ?? null,
         forceNew: opts?.forceNew ?? false
       });
-      if (outcome.kind === "encounter") {
+      if (outcome.kind === "patient") {
         setResolution(null);
-        setActiveEncounter(outcome.encounter_id);
+        setActivePatient(outcome.patient_id);
       } else {
         setResolution({
           appointmentId,
@@ -347,9 +344,13 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
             candidates={resolution.candidates}
             busy={busy}
             onLink={(patientId) =>
-              void attend(resolution.appointmentId, { linkPatientId: patientId })
+              void openPatientFromAppointment(resolution.appointmentId, {
+                linkPatientId: patientId
+              })
             }
-            onCreateNew={() => void attend(resolution.appointmentId, { forceNew: true })}
+            onCreateNew={() =>
+              void openPatientFromAppointment(resolution.appointmentId, { forceNew: true })
+            }
           />
           {error && (
             <p className="form-error" role="alert">
@@ -459,36 +460,13 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 </p>
               </div>
             ) : (
-              <ul className="appointment-list">
-                {appointments.map((appointment) => (
-                  <li key={appointment.id} className="list-row">
-                    <div className="list-row-main">
-                      <strong>{appointment.patient_name}</strong>
-                      <span className="meta">
-                        {dateTimeFormatter.format(new Date(appointment.scheduled_start))} ·{" "}
-                        {appointment.service_name ?? "Consulta"}
-                        {appointment.reason ? ` · ${appointment.reason}` : ""}
-                      </span>
-                      {appointment.has_precheckin ? (
-                        <span className="meta">Preconsulta recibida</span>
-                      ) : null}
-                    </div>
-                    <div className="row-actions">
-                      <span className={STATUS_PILLS[appointment.status] ?? "pill pill-muted"}>
-                        {STATUS_LABELS[appointment.status] ?? appointment.status}
-                      </span>
-                      {appointment.status !== "CANCELLED" ? (
-                        <button
-                          className="ghost-button"
-                          onClick={() => void attend(appointment.id)}
-                        >
-                          Atender
-                        </button>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <WeekAgenda
+                appointments={appointments}
+                slotMinutes={slotMinutes}
+                workStartMinutes={workStartMinutes}
+                workEndMinutes={workEndMinutes}
+                onAttend={(appointmentId) => void openPatientFromAppointment(appointmentId)}
+              />
             )}
           </section>
             )}

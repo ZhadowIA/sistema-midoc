@@ -213,24 +213,14 @@ fn ensure_open(encounter: &Encounter) -> Result<(), ClinicalError> {
     Ok(())
 }
 
-/// Abre (o reabre, si ya existe) el encuentro clinico de una cita. La cita
-/// abre el contexto del paciente: si el paciente local no existe todavia
-/// (base anterior a v3), se crea desde los datos de la cita.
-pub fn open_encounter_for_appointment(
+/// Importa (si aun no existe) el expediente local del paciente de una cita a
+/// partir de los datos que viajan en la propia cita, y devuelve su id. No abre
+/// encuentro: lo usan tanto la apertura de encuentro como la resolucion de
+/// paciente desde la agenda.
+fn import_appointment_patient(
     conn: &Connection,
     appointment_id: &str,
-) -> Result<Encounter, ClinicalError> {
-    if let Some(existing) = conn
-        .query_row(
-            "SELECT id FROM encounters WHERE appointment_id = ?1",
-            params![appointment_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?
-    {
-        return read_encounter(conn, &existing);
-    }
-
+) -> Result<String, ClinicalError> {
     let (patient_id, first_name, last_name, phone, email): (
         Option<String>,
         String,
@@ -259,6 +249,29 @@ pub fn open_encounter_for_appointment(
          ON CONFLICT(id) DO NOTHING",
         params![patient_id, first_name, last_name, phone, email, now()],
     )?;
+
+    Ok(patient_id)
+}
+
+/// Abre (o reabre, si ya existe) el encuentro clinico de una cita. La cita
+/// abre el contexto del paciente: si el paciente local no existe todavia
+/// (base anterior a v3), se crea desde los datos de la cita.
+pub fn open_encounter_for_appointment(
+    conn: &Connection,
+    appointment_id: &str,
+) -> Result<Encounter, ClinicalError> {
+    if let Some(existing) = conn
+        .query_row(
+            "SELECT id FROM encounters WHERE appointment_id = ?1",
+            params![appointment_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    {
+        return read_encounter(conn, &existing);
+    }
+
+    let patient_id = import_appointment_patient(conn, appointment_id)?;
 
     let encounter_id = uuid::Uuid::new_v4().to_string();
     conn.execute(
@@ -317,6 +330,21 @@ pub struct AppointmentPatient {
 pub enum AttendOutcome {
     Encounter {
         encounter_id: String,
+    },
+    NeedsResolution {
+        appointment_patient: AppointmentPatient,
+        candidates: Vec<PatientMatch>,
+    },
+}
+
+/// Resultado de resolver, desde la agenda, a que expediente pertenece una cita
+/// SIN abrir un encuentro: o ya se identifico el paciente (se abre su
+/// expediente), o hay candidatos a duplicado que el medico debe revisar.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResolveOutcome {
+    Patient {
+        patient_id: String,
     },
     NeedsResolution {
         appointment_patient: AppointmentPatient,
@@ -493,6 +521,89 @@ pub fn attend_appointment(
     }
 
     Ok(AttendOutcome::NeedsResolution {
+        appointment_patient: appt,
+        candidates,
+    })
+}
+
+/// Resuelve, desde la agenda, a que expediente pertenece una cita SIN abrir un
+/// encuentro: el desenlace es abrir el expediente del paciente. Misma cascada
+/// anti-duplicados que `attend_appointment`, pero en vez de crear un encuentro
+/// solo asegura el expediente y devuelve su id:
+/// 1. Si la cita ya tiene un encuentro, se devuelve el paciente de ese encuentro.
+/// 2. Si el medico eligio vincular (`link_patient_id`), se vincula y se devuelve.
+/// 3. Si eligio crear uno nuevo (`force_new`), se importa de la cita.
+/// 4. En automatico: vinculo de portal recordado o expediente ya existente se
+///    reusa; sin candidatos se importa; con candidatos se pide decidir.
+pub fn resolve_appointment_patient(
+    conn: &Connection,
+    appointment_id: &str,
+    link_patient_id: Option<&str>,
+    force_new: bool,
+) -> Result<ResolveOutcome, ClinicalError> {
+    if let Some(encounter_id) = encounter_id_for_appointment(conn, appointment_id)? {
+        let patient_id = conn.query_row(
+            "SELECT patient_id FROM encounters WHERE id = ?1",
+            params![encounter_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        return Ok(ResolveOutcome::Patient { patient_id });
+    }
+
+    let (portal_id, appt) = read_appointment_patient(conn, appointment_id)?;
+
+    // El medico eligio vincular a un expediente existente.
+    if let Some(local_id) = link_patient_id {
+        if !patient_exists(conn, local_id)? {
+            return Err(ClinicalError::NotFound);
+        }
+        if let Some(pid) = &portal_id {
+            if pid != local_id {
+                link_portal_patient(conn, pid, local_id)?;
+            }
+        }
+        return Ok(ResolveOutcome::Patient {
+            patient_id: local_id.to_string(),
+        });
+    }
+
+    // El medico eligio crear un expediente nuevo desde los datos de la cita.
+    if force_new {
+        let patient_id = import_appointment_patient(conn, appointment_id)?;
+        return Ok(ResolveOutcome::Patient { patient_id });
+    }
+
+    // Resolucion automatica por id del portal (cuenta de paciente o vinculo ya
+    // recordado): no vuelve a preguntar por la misma persona.
+    if let Some(pid) = &portal_id {
+        if let Some(local_id) = lookup_patient_link(conn, pid)? {
+            if patient_exists(conn, &local_id)? {
+                return Ok(ResolveOutcome::Patient { patient_id: local_id });
+            }
+        }
+        if patient_exists(conn, pid)? {
+            return Ok(ResolveOutcome::Patient {
+                patient_id: pid.clone(),
+            });
+        }
+    }
+
+    // Busca duplicados con los datos de la cita (nombre con mas peso).
+    let candidates = match_patients_with_reasons(
+        conn,
+        appt.email.as_deref(),
+        appt.phone.as_deref(),
+        &appt.first_name,
+        &appt.last_name,
+    )?;
+
+    if candidates.is_empty() {
+        // Sin coincidencias: importa los datos y abre el expediente.
+        let patient_id = import_appointment_patient(conn, appointment_id)?;
+        return Ok(ResolveOutcome::Patient { patient_id });
+    }
+
+    Ok(ResolveOutcome::NeedsResolution {
         appointment_patient: appt,
         candidates,
     })
@@ -1561,6 +1672,97 @@ mod tests {
         // Se importo el paciente con el id del portal (preserva enlaces de buzon).
         assert!(patient_exists(&conn, "portal-new").unwrap());
         assert_eq!(get_encounter_detail(&conn, &enc).unwrap().patient.id, "portal-new");
+    }
+
+    fn encounter_count_for(conn: &Connection, appointment_id: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM encounters WHERE appointment_id = ?1",
+            params![appointment_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn resolve_appointment_patient_warns_then_links_without_encounter() {
+        let conn = test_conn("resolve-link");
+
+        // Expediente previo de la misma persona, con otro id que el del portal.
+        let local = create_patient(
+            &conn,
+            &NewPatientInput {
+                first_name: "Hugo".into(),
+                last_name: "Paz".into(),
+                phone: Some("6140001111".into()),
+                email: None,
+                birth_date: None,
+                sex: None,
+            },
+        )
+        .unwrap();
+        seed_appointment(&conn, "appt-1", "portal-xyz");
+
+        // En automatico detecta el posible duplicado y avisa al medico.
+        match resolve_appointment_patient(&conn, "appt-1", None, false).unwrap() {
+            ResolveOutcome::NeedsResolution { candidates, .. } => {
+                assert_eq!(candidates.len(), 1);
+                assert!(candidates[0].matched_name);
+                assert!(candidates[0].matched_phone);
+                assert_eq!(candidates[0].patient.id, local.id);
+            }
+            ResolveOutcome::Patient { .. } => panic!("debio pedir resolucion"),
+        }
+
+        // El medico confirma que es el expediente previo: se abre ese expediente.
+        match resolve_appointment_patient(&conn, "appt-1", Some(&local.id), false).unwrap() {
+            ResolveOutcome::Patient { patient_id } => assert_eq!(patient_id, local.id),
+            _ => panic!("debio resolver al expediente vinculado"),
+        }
+        // No se creo un expediente con el id del portal y NO se abrio encuentro.
+        assert!(!patient_exists(&conn, "portal-xyz").unwrap());
+        assert_eq!(encounter_count_for(&conn, "appt-1"), 0);
+
+        // Una segunda cita del MISMO id de portal se resuelve sola (vinculo
+        // recordado) y abre el mismo expediente, sin volver a preguntar.
+        seed_appointment(&conn, "appt-2", "portal-xyz");
+        match resolve_appointment_patient(&conn, "appt-2", None, false).unwrap() {
+            ResolveOutcome::Patient { patient_id } => assert_eq!(patient_id, local.id),
+            _ => panic!("el vinculo recordado debio resolver solo"),
+        }
+    }
+
+    #[test]
+    fn resolve_appointment_patient_creates_without_encounter() {
+        let conn = test_conn("resolve-new");
+        seed_appointment(&conn, "appt-9", "portal-new");
+
+        // Sin coincidencias: importa el expediente y lo abre, sin encuentro.
+        match resolve_appointment_patient(&conn, "appt-9", None, false).unwrap() {
+            ResolveOutcome::Patient { patient_id } => assert_eq!(patient_id, "portal-new"),
+            _ => panic!("sin duplicados debio importar y abrir el expediente"),
+        }
+        assert!(patient_exists(&conn, "portal-new").unwrap());
+        assert_eq!(encounter_count_for(&conn, "appt-9"), 0);
+
+        // force_new sobre una persona con duplicado tambien evita el encuentro.
+        create_patient(
+            &conn,
+            &NewPatientInput {
+                first_name: "Hugo".into(),
+                last_name: "Paz".into(),
+                phone: Some("6140001111".into()),
+                email: None,
+                birth_date: None,
+                sex: None,
+            },
+        )
+        .unwrap();
+        seed_appointment(&conn, "appt-10", "portal-dup");
+        match resolve_appointment_patient(&conn, "appt-10", None, true).unwrap() {
+            ResolveOutcome::Patient { patient_id } => assert_eq!(patient_id, "portal-dup"),
+            _ => panic!("force_new debio crear expediente nuevo"),
+        }
+        assert_eq!(encounter_count_for(&conn, "appt-10"), 0);
     }
 
     #[test]
