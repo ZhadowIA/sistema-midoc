@@ -11,7 +11,7 @@
 - IA gobernada: capa multi-proveedor, consentimiento, seudonimización, trazas, revisión humana, costo/créditos, benchmark, transcripción de voz y reporte de uso al portal por referencia
 - SaaS/compliance: suscripción con gating por capacidad, 2FA con códigos de recuperación, incidentes, exportación de auditoría, retención y derechos ARCO (residencia local)
 
-**Paso 13 completado** (post-MVP, app del médico): directorio clínico de pacientes y expediente longitudinal con línea del tiempo editable. Rebanadas 1 (directorio) y 2 (línea del tiempo) entregadas el 2026-06-12.
+**Paso 13 completado** (post-MVP, app del médico): directorio clínico de pacientes y expediente longitudinal con línea del tiempo editable. Rebanadas 1 (directorio), 2 (línea del tiempo), 3 (independencia agenda/directorio + anti-duplicados) y 4 (agenda semanal por bloques + "Atender" abre expediente) entregadas el 2026-06-12/13.
 
 **Siguientes prioridades fuera de la línea:** pasarela de pago real para la suscripción, panel de administración de planes y endurecimiento de producción/staging con proveedores reales (BAA).
 
@@ -533,8 +533,9 @@ Checklist de salida:
 - Linea del tiempo clinica por paciente, editable (anadir/modificar/eliminar).
 - Auditoria local de los eventos de la linea del tiempo.
 - Agenda y directorio independientes: importar un paciente desde una cita pasa por deteccion de duplicados antes de crear expediente.
+- Agenda semanal por bloques (7 dias) con el tamano de bloque que el medico configuro; "Atender" abre el expediente del paciente, no una consulta.
 
-Estado: ✅ DONE — rebanadas 1 (directorio), 2 (linea del tiempo) y 3 (independencia agenda/directorio + anti-duplicados) entregadas (2026-06-12). Construido sobre el paso 4.
+Estado: ✅ DONE — rebanadas 1 (directorio), 2 (linea del tiempo), 3 (independencia agenda/directorio + anti-duplicados) y 4 (agenda semanal por bloques + "Atender" abre expediente) entregadas (2026-06-12/13). Construido sobre el paso 4.
 
 Entregado (rebanada 1 — directorio de pacientes, 2026-06-12):
 
@@ -569,7 +570,16 @@ Entregado (rebanada 3 — independencia agenda/directorio + anti-duplicados, 202
 
 Verificacion (rebanada 3): pruebas de Rust en verde (+4: resolucion que detecta duplicado por nombre/telefono y vincula sin crear el id del portal, vinculo recordado que resuelve la segunda cita y reapertura idempotente; alta directa sin coincidencias preservando el id del portal; matcher por nombre/telefono/correo con sus razones; walk-in vinculado a un expediente existente que no crea paciente nuevo), `tsc + vite build` ok.
 
-Con esto la compuerta de push del paso 13 queda cubierta: directorio para llegar a cualquier paciente sin cita, expediente longitudinal con linea del tiempo editable, y agenda independiente del expediente con importacion anti-duplicados — todo en la base local cifrada sin enviar datos clinicos a la nube.
+Entregado (rebanada 4 — agenda semanal por bloques + "Atender" abre expediente, 2026-06-13):
+
+- **Agenda semanal por bloques (`WeekAgenda.tsx`).** La pestana Agenda deja de ser una lista plana: ahora es una rejilla de 7 columnas (lunes a domingo, con navegacion de semana y resaltado del dia de hoy). El bloque (slot) es la **duracion de cita que el medico configuro** en su cuenta (`consultationDuration` del perfil). Se listan como filas los bloques del **horario laboral del medico** (de su inicio mas temprano a su fin mas tardio entre las reglas de disponibilidad); los bloques **sin cita salen compactos** y los que **tienen cita a altura completa**. Si hay citas fuera del horario, el rango se extiende para no ocultarlas. Cada cita cae en la celda de su dia y bloque (varias en el mismo bloque/dia se apilan); encabezados de dia fijos y scroll vertical interno. Sin horario configurado se usa 8:00-20:00 por defecto.
+- **Duracion de cita y horario laboral sincronizados (`sync.rs`, `lib.rs`).** Se traen del perfil del medico el perfil clinico, `consultationDuration` (guardado como `slot_minutes`) y la ventana de horario laboral derivada de `availabilityRules` (`work_start_minutes`/`work_end_minutes`, inicio mas temprano y fin mas tardio entre reglas activas). `sync_status` los expone al front (defaults en el front si faltan).
+- **Refresco en cada sincronizacion (no solo al vincular).** Al vincular se leen de `/api/admin/profile` (sesion). En cada "Sincronizar", `sync_now` los vuelve a leer de un endpoint nuevo del portal **autenticado por device token** (`GET /api/sync/profile` → `getSyncDeviceProfile`), con el mismo shape `{ profile: { specialty, consultationDuration, availabilityRules } }` para reutilizar los mismos extractores (`profile_metadata_from_body`). Asi, si el medico cambia su duracion de cita u horario en el portal, la agenda se actualiza al siguiente sync sin re-vincular. El endpoint no expone contenido clinico.
+- **"Atender" abre el expediente, no una consulta (`resolve_appointment_patient`).** El boton de la cita ya no inicia un encuentro: corre la misma deteccion anti-duplicados de la rebanada 3 pero su desenlace es el **expediente** del paciente. Si hay coincidencias, avisa al medico para que vincule al expediente previo o cree uno nuevo; sin coincidencias, importa los datos de la cita y abre el expediente. La consulta se inicia despues, desde el propio expediente (`open_encounter_*`). Se reutiliza el helper nuevo `import_appointment_patient` (extraido de `open_encounter_for_appointment`) y la pantalla compartida `PatientResolution`.
+
+Verificacion (rebanada 4): pruebas de Rust en verde (+4: `resolve_appointment_patient` avisa del duplicado y vincula sin abrir encuentro ni crear el id del portal, vinculo recordado que resuelve la segunda cita, e importacion directa con y sin coincidencias —`force_new`— siempre con cero encuentros para la cita; extraccion de `consultationDuration` del perfil con caso ausente/no positivo; ventana de horario laboral tomando el inicio mas temprano y fin mas tardio entre reglas activas; composicion de metadatos del perfil) mas prueba de integracion del portal (`getSyncDeviceProfile` expone especialidad, duracion y horario activo al dispositivo), `cargo clippy` sin nuevas advertencias, `eslint`/`tsc` del portal limpios, `tsc + vite build` del escritorio ok y prueba manual en navegador (agenda semanal con los bloques del horario laboral 09:00-13:30, filas vacias compactas y con cita a altura completa, columnas alineadas; "Atender" sobre paciente con coincidencia → resolucion → "Usar este expediente" abre el expediente sin iniciar consulta).
+
+Con esto la compuerta de push del paso 13 queda cubierta: directorio para llegar a cualquier paciente sin cita, expediente longitudinal con linea del tiempo editable, y agenda semanal independiente del expediente con importacion anti-duplicados que abre el expediente del paciente — todo en la base local cifrada sin enviar datos clinicos a la nube.
 
 ## MVP recomendado
 
