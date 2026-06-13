@@ -69,6 +69,28 @@ Esfuerzo recomendado por modelo:
 | OpenAI gpt-4o-mini-transcribe | $0.003/min | Intermedio; evaluar en benchmark. |
 | Nabla Core API | (comercial) | Evaluar solo si se busca scribe clinico especializado todo-en-uno. |
 
+### Whisper local: seleccion automatica de modelo segun el equipo
+
+Whisper es de pesos abiertos y corre en el equipo del medico (via `whisper.cpp`, integrable con Tauri y operable en CPU). Viene en varios tamanos: a mayor tamano, mas precision en terminos clinicos pero mas RAM y mas tiempo de proceso. Para que el medico no tenga que entender de esto, la app **detecta el hardware al configurar la transcripcion y sugiere el tamano de modelo** (implementado en `desktop-app/src-tauri/src/transcription.rs`, comando `transcription_recommendation`, pantalla "Transcripcion").
+
+Requisitos por modelo (referencia; no son limites duros):
+
+| Modelo | RAM del modelo | Disco | Calidad en español clinico |
+|---|---|---|---|
+| small | ~2 GB | ~0.5 GB | Minimo usable para consulta general |
+| medium | ~5 GB | ~1.5 GB | Recomendado: buen balance para terminos clinicos y acentos |
+| large-v3 | ~10 GB | ~3 GB | Maxima precision; practico con GPU |
+
+Politica de seleccion (sobre RAM total del equipo; la deteccion de GPU se difiere y por defecto es conservadora):
+
+| RAM total | Sin GPU | Con GPU |
+|---|---|---|
+| < 8 GB | small + sugerir nube con consentimiento | small + sugerir nube |
+| 8-16 GB | small (por lotes) | medium (casi en vivo) |
+| >= 16 GB | medium (casi en vivo si CPU >= 8 nucleos) | large-v3 (casi en vivo) |
+
+La transcripcion es por lotes salvo que el equipo (RAM/GPU/nucleos) permita el modo casi en vivo. Cuando el equipo queda por debajo del minimo comodo, la app sugiere la transcripcion en nube (AssemblyAI/Deepgram) seudonimizada y con consentimiento, sin bloquear el modo offline.
+
 ## Recomendacion por modulo
 
 | Modulo MiDoc | Proveedor recomendado (costo) | Fallback | Criterio de decision |

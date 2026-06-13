@@ -875,6 +875,21 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     }
     case "ai_list_benchmarks":
       return mockState.benchmarks as T;
+    case "transcription_recommendation":
+      // Equipo de demostracion: 16 GB sin GPU → modelo mediano por lotes.
+      return {
+        totalRamMb: 16 * 1024,
+        cpuCores: 8,
+        hasGpu: false,
+        modelId: "medium",
+        modelLabel: "Whisper medium (recomendado para terminos clinicos)",
+        modelRamMb: 5 * 1024,
+        diskMb: 1500,
+        realtimeCapable: true,
+        recommendCloudFallback: false,
+        reason:
+          "Equipo con 16 GB o mas y CPU de 8+ nucleos: el modelo mediano ofrece buena precision clinica con transcripcion agil."
+      } as T;
     case "ai_usage_summary": {
       const byMap = new Map<string, { run_count: number; cost_cents: number }>();
       for (const r of mockState.aiRuns) {

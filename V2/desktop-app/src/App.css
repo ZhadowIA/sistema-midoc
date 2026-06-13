@@ -1101,3 +1101,28 @@ textarea:disabled {
     animation-duration: 0.01ms !important;
   }
 }
+
+.spec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.spec-grid > div {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: 10px 12px;
+  background: var(--surface);
+}
+
+.spec-grid dt {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.spec-grid dd {
+  margin: 0;
+  font-weight: 600;
+}

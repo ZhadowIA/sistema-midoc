@@ -3,6 +3,7 @@ import { call } from "./ipc";
 import { Atencion } from "./Atencion";
 import { Recepcion } from "./Recepcion";
 import { Benchmark } from "./Benchmark";
+import { TranscriptionSetup } from "./TranscriptionSetup";
 import { Arco } from "./Arco";
 import { Directorio } from "./Directorio";
 import { Expediente } from "./Expediente";
@@ -218,7 +219,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [workStartMinutes, setWorkStartMinutes] = useState<number | null>(null);
   const [workEndMinutes, setWorkEndMinutes] = useState<number | null>(null);
   const [view, setView] = useState<
-    "agenda" | "patients" | "reception" | "benchmark" | "arco"
+    "agenda" | "patients" | "reception" | "benchmark" | "transcription" | "arco"
   >("agenda");
 
   const refresh = useCallback(async () => {
@@ -425,6 +426,12 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 Benchmark IA
               </button>
               <button
+                className={view === "transcription" ? "tab tab-active" : "tab"}
+                onClick={() => setView("transcription")}
+              >
+                Transcripcion
+              </button>
+              <button
                 className={view === "arco" ? "tab tab-active" : "tab"}
                 onClick={() => setView("arco")}
               >
@@ -440,6 +447,8 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
               <Recepcion onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)} />
             ) : view === "benchmark" ? (
               <Benchmark />
+            ) : view === "transcription" ? (
+              <TranscriptionSetup />
             ) : view === "arco" ? (
               <Arco />
             ) : (

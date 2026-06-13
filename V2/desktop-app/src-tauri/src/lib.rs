@@ -5,6 +5,7 @@ mod crypto;
 mod db;
 mod operations;
 mod sync;
+mod transcription;
 
 #[cfg(test)]
 mod consultation_e2e;
@@ -1010,6 +1011,15 @@ fn ai_list_benchmarks(state: tauri::State<'_, AppDb>) -> Result<Vec<ai::Benchmar
     with_ai(&state, ai::list_benchmarks)
 }
 
+/// Detecta el hardware del equipo y sugiere el tamano de modelo Whisper local
+/// para transcripcion. No requiere la base (no toca datos clinicos): solo lee
+/// RAM y nucleos de CPU. Se usa al configurar la transcripcion para que el
+/// medico no tenga que entender de tamanos de modelo.
+#[tauri::command]
+fn transcription_recommendation() -> transcription::TranscriptionRecommendation {
+    transcription::recommendation()
+}
+
 /* ---------- Derechos ARCO (paso 12) ---------- */
 
 fn with_arco<T>(
@@ -1128,6 +1138,7 @@ pub fn run() {
             ai_set_budget,
             ai_run_benchmark,
             ai_list_benchmarks,
+            transcription_recommendation,
             arco_list_requests,
             arco_record_request,
             arco_mark_fulfilled,

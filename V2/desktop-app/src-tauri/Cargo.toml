@@ -30,6 +30,9 @@ chrono = "0.4.45"
 sha2 = "0.11.0"
 dryoc = "0.8.0"
 base64 = "0.22.1"
+# Lectura multiplataforma de RAM/CPU para recomendar el modelo Whisper local.
+# Mantenido, auditable y MIT; evita FFI por plataforma para leer memoria total.
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 chrono = "0.4.45"
