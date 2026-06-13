@@ -19,6 +19,7 @@ import {
   ackSyncEvents,
   authenticateSyncDevice,
   getActiveDeviceDocumentKey,
+  getSyncDeviceProfile,
   getSyncInbox,
   linkSyncDevice,
   recordAiUsageBatch
@@ -181,6 +182,61 @@ describe("desktop sync (fase A)", () => {
 
       const drained = await getSyncInbox(device, inbox.nextCursor);
       expect(drained.events).toHaveLength(0);
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+});
+
+describe("device profile metadata (paso 13, rebanada 4)", () => {
+  it("exposes specialty, consultation duration and active working hours to the device", async () => {
+    const email = uniqueEmail("doctor-profile-sync");
+    const slug = uniqueSlug("dra-profile");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Eva",
+        lastName: "Soto",
+        professionalName: "Dra. Eva Soto",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        specialty: ClinicalProfile.ODONTOLOGY,
+        consultationDuration: 20,
+        isPublic: true
+      });
+
+      // Dos franjas: la ventana laboral debe ir de la mas temprana a la mas tardia.
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: 1,
+        startTime: "09:00",
+        endTime: "13:00",
+        slotInterval: 20
+      });
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: 1,
+        startTime: "16:00",
+        endTime: "20:00",
+        slotInterval: 20
+      });
+
+      const link = await linkSyncDevice(account.user.id, "PC perfil");
+      const device = await authenticateSyncDevice(bearerRequest(link.deviceToken));
+
+      const { profile } = await getSyncDeviceProfile(device);
+      expect(profile?.specialty).toBe(ClinicalProfile.ODONTOLOGY);
+      expect(profile?.consultationDuration).toBe(20);
+
+      const starts = profile?.availabilityRules.map((rule) => rule.startTime).sort();
+      const ends = profile?.availabilityRules.map((rule) => rule.endTime).sort();
+      expect(starts).toEqual(["09:00", "16:00"]);
+      expect(ends).toEqual(["13:00", "20:00"]);
     } finally {
       await cleanupUserByEmail(email);
     }

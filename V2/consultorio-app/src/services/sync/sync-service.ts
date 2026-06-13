@@ -179,6 +179,30 @@ export async function getActiveDeviceDocumentKey(doctorId: string): Promise<stri
   return device?.documentPublicKey ?? null;
 }
 
+/**
+ * Metadatos del perfil del medico para un dispositivo autenticado por token
+ * (no sesion): especialidad, duracion de cita y reglas de disponibilidad
+ * activas. La app de escritorio los usa para refrescar, en cada sincronizacion,
+ * el perfil clinico, el tamano de bloque y el horario laboral de la agenda. No
+ * incluye contenido clinico. Mismo shape que `/api/admin/profile` (campo
+ * `profile`) para reutilizar los extractores de la app.
+ */
+export async function getSyncDeviceProfile(device: SyncDevice) {
+  const profile = await prisma.doctorProfile.findUnique({
+    where: { userId: device.doctorId },
+    select: {
+      specialty: true,
+      consultationDuration: true,
+      availabilityRules: {
+        where: { isActive: true },
+        select: { startTime: true, endTime: true, isActive: true }
+      }
+    }
+  });
+
+  return { profile };
+}
+
 /** Resuelve el dispositivo activo a partir del header Authorization. */
 export async function authenticateSyncDevice(request: Request): Promise<SyncDevice> {
   const header = request.headers.get("authorization");
