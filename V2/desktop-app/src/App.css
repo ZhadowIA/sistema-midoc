@@ -447,6 +447,20 @@ textarea:disabled {
   font-weight: 600;
 }
 
+/* Aviso de posible duplicado al dar de alta un paciente. */
+.dup-warning {
+  border: 1px solid var(--warning);
+  background: var(--warning-soft);
+  border-radius: var(--radius-panel);
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.dup-warning > strong {
+  color: oklch(0.45 0.12 60);
+}
+
 @media (max-width: 760px) {
   .directory-toolbar {
     flex-wrap: wrap;

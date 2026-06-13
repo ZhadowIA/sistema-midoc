@@ -297,6 +297,19 @@ const MIGRATIONS: &[&str] = &[
         updated_at TEXT NOT NULL
     );
     CREATE INDEX idx_timeline_events_patient ON timeline_events (patient_id, event_date);",
+    // v12: vinculo agenda -> expediente (paso 13). La agenda y el directorio
+    // son independientes: una cita no crea automaticamente un expediente. Al
+    // importar un paciente desde una cita, el medico puede vincular el id del
+    // paciente del portal a un expediente local existente (porque el portal no
+    // garantiza el mismo id para la misma persona). Este mapeo recuerda esa
+    // decision para que la proxima cita de la misma persona se resuelva sola.
+    // Clase: OPERATIVO (solo correlaciona identificadores, sin contenido clinico).
+    "CREATE TABLE patient_links (
+        portal_patient_id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        linked_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_patient_links_patient ON patient_links (patient_id);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

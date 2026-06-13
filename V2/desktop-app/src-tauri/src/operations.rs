@@ -357,6 +357,45 @@ pub fn register_walk_in(conn: &Connection, input: &WalkInInput) -> Result<Visit,
     read_visit(conn, &id)
 }
 
+/// Registra una consulta sin cita vinculada a un expediente que ya existe (el
+/// recepcionista identifico al paciente y evito un duplicado). No crea paciente
+/// nuevo: solo la visita en espera.
+pub fn register_walk_in_for_patient(
+    conn: &Connection,
+    input: &WalkInInput,
+    patient_id: &str,
+) -> Result<Visit, OperationsError> {
+    let name = input.patient_name.trim();
+    if name.is_empty() {
+        return Err(OperationsError::Invalid(
+            "la consulta sin cita necesita el nombre del paciente".into(),
+        ));
+    }
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM patients WHERE id = ?1)",
+        params![patient_id],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(OperationsError::NotFound);
+    }
+
+    let timestamp = now();
+    let id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO visits
+            (id, appointment_id, patient_id, patient_name, patient_phone, reason,
+             service_name, state, priority, arrived_at, created_at, updated_at)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, 'WAITING', ?7, ?8, ?8, ?8)",
+        params![
+            id, patient_id, name, input.patient_phone, input.reason, input.service_name,
+            input.priority.unwrap_or(0), timestamp
+        ],
+    )?;
+    audit(conn, "visit", &id, "walk-in-linked", Some(patient_id))?;
+    read_visit(conn, &id)
+}
+
 /// Cambia el estado operativo de la visita y fija las marcas de tiempo:
 /// IN_PROGRESS sella `started_at`, DONE/CANCELLED sellan `ended_at`.
 pub fn set_visit_state(
@@ -436,9 +475,13 @@ pub fn link_visit_encounter(
     encounter_id: &str,
 ) -> Result<(), OperationsError> {
     let timestamp = now();
+    // Sincroniza el paciente de la visita con el del encuentro: si al atender
+    // se resolvio un duplicado (la cita se vinculo a otro expediente), la visita
+    // y sus cobros quedan asociados al paciente correcto.
     let changed = conn.execute(
         "UPDATE visits
          SET encounter_id = ?2, state = 'IN_PROGRESS',
+             patient_id = (SELECT patient_id FROM encounters WHERE id = ?2),
              started_at = COALESCE(started_at, ?3), updated_at = ?3
          WHERE id = ?1",
         params![visit_id, encounter_id, timestamp],
@@ -755,6 +798,56 @@ mod tests {
         let encounter = crate::clinical::open_encounter_for_patient(&conn, &patient_id).unwrap();
         assert!(encounter.appointment_id.is_none());
         assert_eq!(encounter.patient_id, patient_id);
+    }
+
+    #[test]
+    fn walk_in_for_patient_links_without_creating_a_new_patient() {
+        let conn = test_conn("walkin-link");
+        conn.execute(
+            "INSERT INTO patients (id, first_name, last_name, created_at, updated_at)
+             VALUES ('pat-1', 'Ana', 'Lopez', '0', '0')",
+            [],
+        )
+        .unwrap();
+        let before: i64 = conn
+            .query_row("SELECT count(*) FROM patients", [], |r| r.get(0))
+            .unwrap();
+
+        let visit = register_walk_in_for_patient(
+            &conn,
+            &WalkInInput {
+                patient_name: "Ana Lopez".into(),
+                patient_phone: None,
+                reason: Some("Control".into()),
+                service_name: None,
+                priority: None,
+            },
+            "pat-1",
+        )
+        .unwrap();
+        assert_eq!(visit.patient_id.as_deref(), Some("pat-1"));
+        assert!(visit.appointment_id.is_none());
+
+        let after: i64 = conn
+            .query_row("SELECT count(*) FROM patients", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, after, "no debe crear un paciente nuevo");
+
+        // Vincular a un paciente inexistente se rechaza.
+        assert!(matches!(
+            register_walk_in_for_patient(
+                &conn,
+                &WalkInInput {
+                    patient_name: "X".into(),
+                    patient_phone: None,
+                    reason: None,
+                    service_name: None,
+                    priority: None,
+                },
+                "no-existe",
+            ),
+            Err(OperationsError::NotFound)
+        ));
     }
 
     #[test]

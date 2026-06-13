@@ -532,8 +532,9 @@ Checklist de salida:
 - Ficha del paciente con antecedentes e historial de consultas.
 - Linea del tiempo clinica por paciente, editable (anadir/modificar/eliminar).
 - Auditoria local de los eventos de la linea del tiempo.
+- Agenda y directorio independientes: importar un paciente desde una cita pasa por deteccion de duplicados antes de crear expediente.
 
-Estado: ✅ DONE — rebanadas 1 (directorio de pacientes) y 2 (linea del tiempo clinica editable) entregadas (2026-06-12). Construido sobre el paso 4.
+Estado: ✅ DONE — rebanadas 1 (directorio), 2 (linea del tiempo) y 3 (independencia agenda/directorio + anti-duplicados) entregadas (2026-06-12). Construido sobre el paso 4.
 
 Entregado (rebanada 1 — directorio de pacientes, 2026-06-12):
 
@@ -557,7 +558,18 @@ Entregado (rebanada 2 — linea del tiempo clinica editable, 2026-06-12):
 
 Verificacion (rebanada 2): pruebas de Rust en verde (+2: linea del tiempo —alta con normalizacion de categoria/detalle, rechazo de titulo/fecha vacios y categoria invalida, paciente inexistente, orden por fecha, edicion y baja con NotFound; y exclusion de encuentros vacios del historial y del conteo, que aparecen al escribir la primera nota), `tsc + vite build` ok.
 
-Con esto la compuerta de push del paso 13 queda cubierta: directorio para llegar a cualquier paciente sin cita y expediente longitudinal con linea del tiempo editable, todo en la base local cifrada sin enviar datos clinicos a la nube.
+Entregado (rebanada 3 — independencia agenda/directorio + anti-duplicados, 2026-06-12):
+
+- **La agenda deja de ser la fuente del expediente.** El portal no garantiza el mismo `patient_id` para la misma persona (muchos agendan sin cuenta y escriben sus datos distinto cada vez), y hay medicos que usan otra agenda. La cita ya no crea expediente en automatico: es solo una ayuda de horarios desde la que el medico **importa** al paciente.
+- **Importacion con deteccion de duplicados (`attend_appointment`).** Al atender una cita, antes de crear expediente se buscan coincidencias en el directorio con los datos de la cita, **ponderando el nombre** por encima de telefono/correo (estos pueden ser de un tutor: ninos, adultos mayores). Si hay candidatos, se le muestran al medico con el motivo de cada coincidencia para que **vincule** al expediente correcto o confirme que es alguien nuevo. Sin coincidencias, importa y entra directo.
+- **Vinculo recordado (migracion SQLite v12, `patient_links`).** Cuando el medico vincula el id del portal a un expediente local, se recuerda el mapeo: la proxima cita de la misma persona (mismo id de portal) se resuelve sola sin volver a preguntar. Al vincular se reapuntan tambien los documentos del buzon descargados bajo el id del portal.
+- **Prevencion en el alta manual (`find_patient_matches`).** El alta manual del directorio tambien busca coincidencias antes de crear y, si las hay, ofrece abrir el expediente existente o crear de todos modos.
+- **Recepcion cubierta tambien.** El walk-in (`register_walk_in` con `link_patient_id`/`force_new` + `register_walk_in_for_patient`) y el check-in de cita (`start_visit_encounter` ahora pasa por `attend_appointment`) corren la misma deteccion: antes de crear paciente, ofrecen vincular a un expediente existente. Al vincular, la visita y sus cobros quedan asociados al expediente correcto (`link_visit_encounter` sincroniza el `patient_id` de la visita con el del encuentro).
+- **UI y mock.** Pantalla de identificacion de paciente compartida (`PatientResolution.tsx`) usada por la agenda y la recepcion (candidatos con motivo y boton de vincular / crear nuevo); aviso de duplicado en el alta manual; el mock de navegador simula el mismo comportamiento.
+
+Verificacion (rebanada 3): pruebas de Rust en verde (+4: resolucion que detecta duplicado por nombre/telefono y vincula sin crear el id del portal, vinculo recordado que resuelve la segunda cita y reapertura idempotente; alta directa sin coincidencias preservando el id del portal; matcher por nombre/telefono/correo con sus razones; walk-in vinculado a un expediente existente que no crea paciente nuevo), `tsc + vite build` ok.
+
+Con esto la compuerta de push del paso 13 queda cubierta: directorio para llegar a cualquier paciente sin cita, expediente longitudinal con linea del tiempo editable, y agenda independiente del expediente con importacion anti-duplicados — todo en la base local cifrada sin enviar datos clinicos a la nube.
 
 ## MVP recomendado
 

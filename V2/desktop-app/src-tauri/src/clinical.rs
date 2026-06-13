@@ -298,6 +298,206 @@ pub fn open_encounter_for_patient(
     read_encounter(conn, &encounter_id)
 }
 
+/* ---------- Atender cita: agenda -> expediente con anti-duplicados ---------- */
+
+/// Datos de contacto del paciente tal como vienen en la cita (agenda). Se usan
+/// para buscar coincidencias y, si el medico decide, crear el expediente.
+#[derive(Debug, Serialize)]
+pub struct AppointmentPatient {
+    pub first_name: String,
+    pub last_name: String,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+}
+
+/// Resultado de atender una cita: o ya se resolvio el paciente y hay un
+/// encuentro abierto, o hay candidatos a duplicado que el medico debe revisar.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AttendOutcome {
+    Encounter {
+        encounter_id: String,
+    },
+    NeedsResolution {
+        appointment_patient: AppointmentPatient,
+        candidates: Vec<PatientMatch>,
+    },
+}
+
+fn encounter_id_for_appointment(
+    conn: &Connection,
+    appointment_id: &str,
+) -> Result<Option<String>, ClinicalError> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM encounters WHERE appointment_id = ?1",
+            params![appointment_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
+fn read_appointment_patient(
+    conn: &Connection,
+    appointment_id: &str,
+) -> Result<(Option<String>, AppointmentPatient), ClinicalError> {
+    conn.query_row(
+        "SELECT patient_id, patient_first_name, patient_last_name, patient_phone, patient_email
+         FROM appointments WHERE id = ?1",
+        params![appointment_id],
+        |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                AppointmentPatient {
+                    first_name: row.get(1)?,
+                    last_name: row.get(2)?,
+                    phone: row.get(3)?,
+                    email: row.get(4)?,
+                },
+            ))
+        },
+    )
+    .optional()?
+    .ok_or(ClinicalError::NotFound)
+}
+
+fn lookup_patient_link(
+    conn: &Connection,
+    portal_patient_id: &str,
+) -> Result<Option<String>, ClinicalError> {
+    Ok(conn
+        .query_row(
+            "SELECT patient_id FROM patient_links WHERE portal_patient_id = ?1",
+            params![portal_patient_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
+fn patient_exists(conn: &Connection, patient_id: &str) -> Result<bool, ClinicalError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM patients WHERE id = ?1)",
+        params![patient_id],
+        |row| row.get(0),
+    )?)
+}
+
+/// Recuerda que el paciente del portal `portal_patient_id` corresponde al
+/// expediente local `patient_id`, y reapunta a el los documentos ya
+/// descargados bajo el id del portal.
+fn link_portal_patient(
+    conn: &Connection,
+    portal_patient_id: &str,
+    patient_id: &str,
+) -> Result<(), ClinicalError> {
+    conn.execute(
+        "INSERT INTO patient_links (portal_patient_id, patient_id, linked_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(portal_patient_id) DO UPDATE SET
+            patient_id = excluded.patient_id,
+            linked_at = excluded.linked_at",
+        params![portal_patient_id, patient_id, now()],
+    )?;
+    conn.execute(
+        "UPDATE documents SET patient_id = ?2 WHERE patient_id = ?1",
+        params![portal_patient_id, patient_id],
+    )?;
+    audit(conn, "patient_link", portal_patient_id, "linked", Some(patient_id))?;
+    Ok(())
+}
+
+fn open_encounter_with_patient(
+    conn: &Connection,
+    appointment_id: &str,
+    patient_id: &str,
+) -> Result<Encounter, ClinicalError> {
+    let encounter_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO encounters (id, appointment_id, patient_id, status, opened_at)
+         VALUES (?1, ?2, ?3, 'OPEN', ?4)",
+        params![encounter_id, appointment_id, patient_id, now()],
+    )?;
+    audit(conn, "encounter", &encounter_id, "opened", Some(appointment_id))?;
+    read_encounter(conn, &encounter_id)
+}
+
+/// Atiende una cita resolviendo a que expediente pertenece, sin acoplar la
+/// agenda al directorio. El orden de resolucion:
+/// 1. Si la cita ya tiene un encuentro, se reabre.
+/// 2. Si el medico eligio vincular a un expediente (`link_patient_id`), se
+///    vincula el id del portal y se abre el encuentro sobre ese expediente.
+/// 3. Si el medico eligio crear uno nuevo (`force_new`), se importa de la cita.
+/// 4. En automatico: si el id del portal ya esta vinculado o ya existe como
+///    expediente, se reusa; si no, se buscan duplicados. Sin candidatos, se
+///    crea e ingresa directo; con candidatos, se pide al medico decidir.
+pub fn attend_appointment(
+    conn: &Connection,
+    appointment_id: &str,
+    link_patient_id: Option<&str>,
+    force_new: bool,
+) -> Result<AttendOutcome, ClinicalError> {
+    if let Some(existing) = encounter_id_for_appointment(conn, appointment_id)? {
+        return Ok(AttendOutcome::Encounter { encounter_id: existing });
+    }
+
+    let (portal_id, appt) = read_appointment_patient(conn, appointment_id)?;
+
+    // El medico eligio vincular a un expediente existente.
+    if let Some(local_id) = link_patient_id {
+        if !patient_exists(conn, local_id)? {
+            return Err(ClinicalError::NotFound);
+        }
+        if let Some(pid) = &portal_id {
+            if pid != local_id {
+                link_portal_patient(conn, pid, local_id)?;
+            }
+        }
+        let encounter = open_encounter_with_patient(conn, appointment_id, local_id)?;
+        return Ok(AttendOutcome::Encounter { encounter_id: encounter.id });
+    }
+
+    // El medico eligio crear un expediente nuevo desde los datos de la cita.
+    if force_new {
+        let encounter = open_encounter_for_appointment(conn, appointment_id)?;
+        return Ok(AttendOutcome::Encounter { encounter_id: encounter.id });
+    }
+
+    // Resolucion automatica por id del portal (cuenta de paciente o vinculo ya
+    // recordado): no vuelve a preguntar por la misma persona.
+    if let Some(pid) = &portal_id {
+        if let Some(local_id) = lookup_patient_link(conn, pid)? {
+            if patient_exists(conn, &local_id)? {
+                let encounter = open_encounter_with_patient(conn, appointment_id, &local_id)?;
+                return Ok(AttendOutcome::Encounter { encounter_id: encounter.id });
+            }
+        }
+        if patient_exists(conn, pid)? {
+            let encounter = open_encounter_with_patient(conn, appointment_id, pid)?;
+            return Ok(AttendOutcome::Encounter { encounter_id: encounter.id });
+        }
+    }
+
+    // Busca duplicados con los datos de la cita (nombre con mas peso).
+    let candidates = match_patients_with_reasons(
+        conn,
+        appt.email.as_deref(),
+        appt.phone.as_deref(),
+        &appt.first_name,
+        &appt.last_name,
+    )?;
+
+    if candidates.is_empty() {
+        // Sin coincidencias: importa los datos y entra directo.
+        let encounter = open_encounter_for_appointment(conn, appointment_id)?;
+        return Ok(AttendOutcome::Encounter { encounter_id: encounter.id });
+    }
+
+    Ok(AttendOutcome::NeedsResolution {
+        appointment_patient: appt,
+        candidates,
+    })
+}
+
 pub fn get_encounter_detail(
     conn: &Connection,
     encounter_id: &str,
@@ -540,6 +740,106 @@ pub fn get_patient_profile(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(PatientProfile { patient, history })
+}
+
+/// Solo digitos: normaliza telefonos para comparar `614 000 1111` con
+/// `6140001111`.
+fn normalize_phone(value: &str) -> String {
+    value.chars().filter(|c| c.is_ascii_digit()).collect()
+}
+
+fn normalize_text(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+fn normalize_name(first: &str, last: &str) -> String {
+    format!("{} {}", normalize_text(first), normalize_text(last))
+        .trim()
+        .to_string()
+}
+
+/// Candidato a duplicado con la razon de la coincidencia. El nombre es la
+/// senal mas fuerte (correo/telefono pueden ser de un tutor: ninos, adultos
+/// mayores), asi que se etiqueta cada motivo por separado y los que coinciden
+/// por nombre encabezan la lista.
+#[derive(Debug, Serialize)]
+pub struct PatientMatch {
+    #[serde(flatten)]
+    pub patient: PatientSummary,
+    pub matched_name: bool,
+    pub matched_phone: bool,
+    pub matched_email: bool,
+}
+
+/// Busca pacientes locales que probablemente sean la misma persona, con la
+/// razon de cada coincidencia. Coincide por nombre completo, telefono o correo
+/// normalizados. No fusiona ni descarta nada: solo propone candidatos.
+pub fn match_patients_with_reasons(
+    conn: &Connection,
+    email: Option<&str>,
+    phone: Option<&str>,
+    first_name: &str,
+    last_name: &str,
+) -> Result<Vec<PatientMatch>, ClinicalError> {
+    let email_n = email.map(normalize_text).filter(|s| !s.is_empty());
+    let phone_n = phone.map(normalize_phone).filter(|s| !s.is_empty());
+    let name_n = {
+        let n = normalize_name(first_name, last_name);
+        if n.is_empty() {
+            None
+        } else {
+            Some(n)
+        }
+    };
+
+    if email_n.is_none() && phone_n.is_none() && name_n.is_none() {
+        return Ok(Vec::new());
+    }
+
+    let candidates = list_patients(conn, None)?;
+    let mut matches: Vec<PatientMatch> = candidates
+        .into_iter()
+        .filter_map(|p| {
+            let p_email = p.email.as_deref().map(normalize_text).filter(|s| !s.is_empty());
+            let p_phone = p.phone.as_deref().map(normalize_phone).filter(|s| !s.is_empty());
+            let p_name = normalize_name(&p.first_name, &p.last_name);
+
+            let matched_email = matches!((&email_n, &p_email), (Some(e), Some(pe)) if e == pe);
+            let matched_phone = matches!((&phone_n, &p_phone), (Some(ph), Some(pp)) if ph == pp);
+            let matched_name =
+                name_n.as_ref().is_some_and(|n| !p_name.is_empty() && n == &p_name);
+
+            if matched_name || matched_phone || matched_email {
+                Some(PatientMatch {
+                    patient: p,
+                    matched_name,
+                    matched_phone,
+                    matched_email,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // El nombre pesa mas: los candidatos que coinciden por nombre van primero.
+    matches.sort_by(|a, b| b.matched_name.cmp(&a.matched_name));
+    Ok(matches)
+}
+
+/// Igual que [`match_patients_with_reasons`] pero devolviendo solo el resumen
+/// del paciente (lo usa el alta manual del directorio).
+pub fn find_patient_matches(
+    conn: &Connection,
+    email: Option<&str>,
+    phone: Option<&str>,
+    first_name: &str,
+    last_name: &str,
+) -> Result<Vec<PatientSummary>, ClinicalError> {
+    Ok(match_patients_with_reasons(conn, email, phone, first_name, last_name)?
+        .into_iter()
+        .map(|m| m.patient)
+        .collect())
 }
 
 /// Da de alta un paciente capturado a mano (no llego por una cita del portal).
@@ -1186,6 +1486,129 @@ mod tests {
             get_patient_profile(&conn, "no-existe"),
             Err(ClinicalError::NotFound)
         ));
+    }
+
+    #[test]
+    fn attend_appointment_resolves_links_and_remembers() {
+        let conn = test_conn("attend");
+
+        // Expediente existente del paciente (alta previa a mano).
+        let local = create_patient(
+            &conn,
+            &NewPatientInput {
+                first_name: "Hugo".into(),
+                last_name: "Paz".into(),
+                phone: Some("6140001111".into()),
+                email: None,
+                birth_date: None,
+                sex: None,
+            },
+        )
+        .unwrap();
+
+        // Cita del portal de la MISMA persona pero con OTRO id (el portal no
+        // dedujo). seed_appointment usa nombre "Hugo Paz" y tel "6140001111".
+        seed_appointment(&conn, "appt-1", "portal-xyz");
+
+        // Atender en automatico: detecta el duplicado por nombre y telefono.
+        match attend_appointment(&conn, "appt-1", None, false).unwrap() {
+            AttendOutcome::NeedsResolution { candidates, .. } => {
+                assert_eq!(candidates.len(), 1);
+                assert!(candidates[0].matched_name);
+                assert!(candidates[0].matched_phone);
+                assert_eq!(candidates[0].patient.id, local.id);
+            }
+            AttendOutcome::Encounter { .. } => panic!("debio pedir resolucion"),
+        }
+
+        // El medico vincula la cita al expediente existente.
+        let enc = match attend_appointment(&conn, "appt-1", Some(&local.id), false).unwrap() {
+            AttendOutcome::Encounter { encounter_id } => encounter_id,
+            _ => panic!("debio abrir encuentro"),
+        };
+        // El encuentro quedo sobre el expediente local, no sobre el id del portal.
+        let detail = get_encounter_detail(&conn, &enc).unwrap();
+        assert_eq!(detail.patient.id, local.id);
+        // No se creo un expediente con el id del portal.
+        assert!(!patient_exists(&conn, "portal-xyz").unwrap());
+
+        // Una segunda cita del MISMO id de portal se resuelve sola (vinculo
+        // recordado), sin volver a pedir resolucion.
+        seed_appointment(&conn, "appt-2", "portal-xyz");
+        let enc2 = match attend_appointment(&conn, "appt-2", None, false).unwrap() {
+            AttendOutcome::Encounter { encounter_id } => encounter_id,
+            _ => panic!("el vinculo recordado debio resolver solo"),
+        };
+        assert_eq!(get_encounter_detail(&conn, &enc2).unwrap().patient.id, local.id);
+
+        // Reabrir la misma cita devuelve el mismo encuentro (idempotente).
+        match attend_appointment(&conn, "appt-1", None, false).unwrap() {
+            AttendOutcome::Encounter { encounter_id } => assert_eq!(encounter_id, enc),
+            _ => panic!("debio reabrir el encuentro existente"),
+        }
+    }
+
+    #[test]
+    fn attend_appointment_creates_when_no_match() {
+        let conn = test_conn("attend-new");
+        seed_appointment(&conn, "appt-9", "portal-new");
+
+        // Sin coincidencias en el directorio: crea e ingresa directo.
+        let enc = match attend_appointment(&conn, "appt-9", None, false).unwrap() {
+            AttendOutcome::Encounter { encounter_id } => encounter_id,
+            _ => panic!("sin duplicados debio crear y entrar"),
+        };
+        // Se importo el paciente con el id del portal (preserva enlaces de buzon).
+        assert!(patient_exists(&conn, "portal-new").unwrap());
+        assert_eq!(get_encounter_detail(&conn, &enc).unwrap().patient.id, "portal-new");
+    }
+
+    #[test]
+    fn find_patient_matches_detects_likely_duplicates() {
+        let conn = test_conn("dup-matches");
+        create_patient(
+            &conn,
+            &NewPatientInput {
+                first_name: "Maria Elena".into(),
+                last_name: "Duarte".into(),
+                phone: Some("614 000 2222".into()),
+                email: Some("maria@example.com".into()),
+                birth_date: None,
+                sex: None,
+            },
+        )
+        .unwrap();
+
+        // Coincide por telefono aunque tenga otro formato.
+        assert_eq!(
+            find_patient_matches(&conn, None, Some("6140002222"), "Otra", "Persona")
+                .unwrap()
+                .len(),
+            1
+        );
+        // Coincide por correo aunque cambie mayusculas/espacios.
+        assert_eq!(
+            find_patient_matches(&conn, Some(" MARIA@example.com "), None, "X", "Y")
+                .unwrap()
+                .len(),
+            1
+        );
+        // Coincide por nombre completo (sin distinguir mayusculas).
+        assert_eq!(
+            find_patient_matches(&conn, None, None, "maria elena", "duarte")
+                .unwrap()
+                .len(),
+            1
+        );
+        // Sin coincidencia: otra persona con otros datos.
+        assert_eq!(
+            find_patient_matches(&conn, Some("otro@example.com"), Some("555"), "Juan", "Perez")
+                .unwrap()
+                .len(),
+            0
+        );
+        // Sin datos no devuelve nada (no propone a todo el directorio).
+        assert_eq!(find_patient_matches(&conn, None, None, "", "").unwrap().len(), 0);
     }
 
     #[test]

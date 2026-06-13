@@ -390,6 +390,23 @@ fn get_encounter(
 }
 
 #[tauri::command]
+fn attend_appointment(
+    state: tauri::State<'_, AppDb>,
+    appointment_id: String,
+    link_patient_id: Option<String>,
+    force_new: bool,
+) -> Result<clinical::AttendOutcome, String> {
+    with_conn(&state, |conn| {
+        clinical::attend_appointment(
+            conn,
+            &appointment_id,
+            link_patient_id.as_deref(),
+            force_new,
+        )
+    })
+}
+
+#[tauri::command]
 fn list_patients(
     state: tauri::State<'_, AppDb>,
     search: Option<String>,
@@ -406,6 +423,25 @@ fn get_patient_profile(
 ) -> Result<clinical::PatientProfile, String> {
     with_conn(&state, |conn| {
         clinical::get_patient_profile(conn, &patient_id)
+    })
+}
+
+#[tauri::command]
+fn find_patient_matches(
+    state: tauri::State<'_, AppDb>,
+    email: Option<String>,
+    phone: Option<String>,
+    first_name: String,
+    last_name: String,
+) -> Result<Vec<clinical::PatientSummary>, String> {
+    with_conn(&state, |conn| {
+        clinical::find_patient_matches(
+            conn,
+            email.as_deref(),
+            phone.as_deref(),
+            &first_name,
+            &last_name,
+        )
     })
 }
 
@@ -568,12 +604,60 @@ fn check_in_appointment(
     })
 }
 
+/// Resultado de registrar una consulta sin cita: o se creo la visita, o hay
+/// candidatos a duplicado que el recepcionista debe revisar antes de crear el
+/// expediente.
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum WalkInOutcome {
+    Visit { visit: operations::Visit },
+    NeedsResolution { candidates: Vec<clinical::PatientMatch> },
+}
+
 #[tauri::command]
 fn register_walk_in(
     state: tauri::State<'_, AppDb>,
     walk_in: operations::WalkInInput,
-) -> Result<operations::Visit, String> {
-    with_ops(&state, |conn| operations::register_walk_in(conn, &walk_in))
+    link_patient_id: Option<String>,
+    force_new: bool,
+) -> Result<WalkInOutcome, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+
+    // El recepcionista identifico al paciente: vincula a su expediente.
+    if let Some(patient_id) = &link_patient_id {
+        let visit = operations::register_walk_in_for_patient(conn, &walk_in, patient_id)
+            .map_err(|e| e.to_string())?;
+        return Ok(WalkInOutcome::Visit { visit });
+    }
+
+    // El recepcionista confirmo que es alguien nuevo.
+    if force_new {
+        let visit = operations::register_walk_in(conn, &walk_in).map_err(|e| e.to_string())?;
+        return Ok(WalkInOutcome::Visit { visit });
+    }
+
+    // Automatico: busca duplicados por nombre (con mas peso) y telefono.
+    let name = walk_in.patient_name.trim();
+    let (first, last) = match name.split_once(' ') {
+        Some((f, l)) => (f, l),
+        None => (name, ""),
+    };
+    let candidates = clinical::match_patients_with_reasons(
+        conn,
+        None,
+        walk_in.patient_phone.as_deref(),
+        first,
+        last,
+    )
+    .map_err(|e| e.to_string())?;
+
+    if candidates.is_empty() {
+        let visit = operations::register_walk_in(conn, &walk_in).map_err(|e| e.to_string())?;
+        Ok(WalkInOutcome::Visit { visit })
+    } else {
+        Ok(WalkInOutcome::NeedsResolution { candidates })
+    }
 }
 
 #[tauri::command]
@@ -606,22 +690,40 @@ fn assign_resource(
 fn start_visit_encounter(
     state: tauri::State<'_, AppDb>,
     visit_id: String,
-) -> Result<String, String> {
+    link_patient_id: Option<String>,
+    force_new: bool,
+) -> Result<clinical::AttendOutcome, String> {
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
 
     let visit = operations::read_active_visit(conn, &visit_id).map_err(|e| e.to_string())?;
-    let encounter = match (&visit.appointment_id, &visit.patient_id) {
-        (Some(appointment_id), _) => clinical::open_encounter_for_appointment(conn, appointment_id),
-        (None, Some(patient_id)) => clinical::open_encounter_for_patient(conn, patient_id),
-        (None, None) => {
-            return Err("la visita no tiene paciente asociado".into());
+    match (&visit.appointment_id, &visit.patient_id) {
+        // Visita con cita: resuelve por la misma via anti-duplicados que la
+        // agenda. Si hay candidatos, devuelve la resolucion sin abrir nada.
+        (Some(appointment_id), _) => {
+            let outcome = clinical::attend_appointment(
+                conn,
+                appointment_id,
+                link_patient_id.as_deref(),
+                force_new,
+            )
+            .map_err(|e| e.to_string())?;
+            if let clinical::AttendOutcome::Encounter { encounter_id } = &outcome {
+                operations::link_visit_encounter(conn, &visit_id, encounter_id)
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(outcome)
         }
+        // Walk-in: el paciente ya se resolvio al registrarlo en recepcion.
+        (None, Some(patient_id)) => {
+            let encounter =
+                clinical::open_encounter_for_patient(conn, patient_id).map_err(|e| e.to_string())?;
+            operations::link_visit_encounter(conn, &visit_id, &encounter.id)
+                .map_err(|e| e.to_string())?;
+            Ok(clinical::AttendOutcome::Encounter { encounter_id: encounter.id })
+        }
+        (None, None) => Err("la visita no tiene paciente asociado".into()),
     }
-    .map_err(|e| e.to_string())?;
-
-    operations::link_visit_encounter(conn, &visit_id, &encounter.id).map_err(|e| e.to_string())?;
-    Ok(encounter.id)
 }
 
 #[tauri::command]
@@ -911,9 +1013,11 @@ pub fn run() {
             publish_authorized_summary,
             list_appointments,
             open_encounter,
+            attend_appointment,
             get_encounter,
             list_patients,
             get_patient_profile,
+            find_patient_matches,
             create_patient,
             open_patient_encounter,
             list_timeline_events,

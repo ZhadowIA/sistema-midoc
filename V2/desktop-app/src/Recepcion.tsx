@@ -1,5 +1,40 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
+import {
+  PatientResolution,
+  type PatientMatch,
+  type ResolutionPatient
+} from "./PatientResolution";
+
+interface WalkInInput {
+  patient_name: string;
+  patient_phone: string | null;
+  reason: string | null;
+}
+
+type AttendOutcome =
+  | { kind: "encounter"; encounter_id: string }
+  | {
+      kind: "needs_resolution";
+      appointment_patient: ResolutionPatient;
+      candidates: PatientMatch[];
+    };
+
+type WalkInOutcome =
+  | { kind: "visit"; visit: Visit }
+  | { kind: "needs_resolution"; candidates: PatientMatch[] };
+
+type PendingResolution =
+  | { kind: "visit"; visitId: string; patient: ResolutionPatient; candidates: PatientMatch[] }
+  | { kind: "walkin"; input: WalkInInput; patient: ResolutionPatient; candidates: PatientMatch[] };
+
+function splitName(fullName: string): { first_name: string; last_name: string } {
+  const trimmed = fullName.trim();
+  const space = trimmed.indexOf(" ");
+  return space === -1
+    ? { first_name: trimmed, last_name: "" }
+    : { first_name: trimmed.slice(0, space), last_name: trimmed.slice(space + 1) };
+}
 
 /**
  * Operacion presencial (paso 10): recepcion, lista de espera, consulta sin
@@ -116,6 +151,7 @@ export function Recepcion({
   const [payments, setPayments] = useState<Payment[]>([]);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [resolution, setResolution] = useState<PendingResolution | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -163,9 +199,76 @@ export function Recepcion({
 
   async function attend(visit: Visit) {
     setError("");
+    setMessage("");
     try {
-      const encounterId = await call<string>("start_visit_encounter", { visitId: visit.id });
-      onOpenEncounter(encounterId);
+      const outcome = await call<AttendOutcome>("start_visit_encounter", { visitId: visit.id });
+      if (outcome.kind === "encounter") {
+        onOpenEncounter(outcome.encounter_id);
+      } else {
+        setResolution({
+          kind: "visit",
+          visitId: visit.id,
+          patient: outcome.appointment_patient,
+          candidates: outcome.candidates
+        });
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function registerWalkIn(input: WalkInInput) {
+    setError("");
+    setMessage("");
+    try {
+      const outcome = await call<WalkInOutcome>("register_walk_in", {
+        walkIn: input,
+        linkPatientId: null,
+        forceNew: false
+      });
+      if (outcome.kind === "visit") {
+        setMessage("Consulta sin cita registrada.");
+        await refresh();
+      } else {
+        setResolution({
+          kind: "walkin",
+          input,
+          patient: { ...splitName(input.patient_name), phone: input.patient_phone, email: null },
+          candidates: outcome.candidates
+        });
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Resuelve la pendiente vinculando a un expediente existente o creando uno
+  // nuevo, segun el origen (atender una visita con cita o registrar walk-in).
+  async function resolvePending(choice: { linkPatientId?: string; forceNew?: boolean }) {
+    if (!resolution) return;
+    setError("");
+    setMessage("");
+    try {
+      if (resolution.kind === "visit") {
+        const outcome = await call<AttendOutcome>("start_visit_encounter", {
+          visitId: resolution.visitId,
+          linkPatientId: choice.linkPatientId ?? null,
+          forceNew: choice.forceNew ?? false
+        });
+        setResolution(null);
+        if (outcome.kind === "encounter") {
+          onOpenEncounter(outcome.encounter_id);
+        }
+      } else {
+        await call<WalkInOutcome>("register_walk_in", {
+          walkIn: resolution.input,
+          linkPatientId: choice.linkPatientId ?? null,
+          forceNew: choice.forceNew ?? false
+        });
+        setResolution(null);
+        setMessage("Consulta sin cita registrada.");
+        await refresh();
+      }
     } catch (e) {
       setError(String(e));
     }
@@ -191,6 +294,24 @@ export function Recepcion({
         </p>
       )}
 
+      {resolution ? (
+        <>
+          <PatientResolution
+            patient={resolution.patient}
+            candidates={resolution.candidates}
+            busy={false}
+            onLink={(patientId) => void resolvePending({ linkPatientId: patientId })}
+            onCreateNew={() => void resolvePending({ forceNew: true })}
+          />
+          <div className="button-row">
+            <button className="ghost-button" onClick={() => setResolution(null)}>
+              Cancelar
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      <div hidden={resolution !== null}>
       <WaitingRoom
         visits={visits}
         resources={resources}
@@ -211,9 +332,7 @@ export function Recepcion({
         onCheckIn={(appointmentId) =>
           run(() => call("check_in_appointment", { appointmentId }), "Llegada registrada.")
         }
-        onWalkIn={(walkIn) =>
-          run(() => call("register_walk_in", { walkIn }), "Consulta sin cita registrada.")
-        }
+        onWalkIn={(walkIn) => void registerWalkIn(walkIn)}
       />
 
       <ResourcesPanel
@@ -244,6 +363,7 @@ export function Recepcion({
           run(() => call("register_payment", { payment }), "Cobro registrado.")
         }
       />
+      </div>
     </div>
   );
 }

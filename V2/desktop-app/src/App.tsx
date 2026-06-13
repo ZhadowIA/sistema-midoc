@@ -6,6 +6,11 @@ import { Benchmark } from "./Benchmark";
 import { Arco } from "./Arco";
 import { Directorio } from "./Directorio";
 import { Expediente } from "./Expediente";
+import {
+  PatientResolution,
+  type PatientMatch,
+  type ResolutionPatient
+} from "./PatientResolution";
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
 import "./App.css";
 
@@ -33,6 +38,14 @@ interface AppointmentRow {
   patient_phone: string | null;
   has_precheckin: boolean;
 }
+
+type AttendOutcome =
+  | { kind: "encounter"; encounter_id: string }
+  | {
+      kind: "needs_resolution";
+      appointment_patient: ResolutionPatient;
+      candidates: PatientMatch[];
+    };
 
 const STATUS_LABELS: Record<string, string> = {
   PENDING: "Pendiente",
@@ -208,6 +221,11 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [busy, setBusy] = useState(false);
   const [activeEncounter, setActiveEncounter] = useState<string | null>(null);
   const [activePatient, setActivePatient] = useState<string | null>(null);
+  const [resolution, setResolution] = useState<{
+    appointmentId: string;
+    patient: ResolutionPatient;
+    candidates: PatientMatch[];
+  } | null>(null);
   const [clinicalProfile, setClinicalProfile] = useState<ClinicalProfile>("GENERAL_MEDICINE");
   const [view, setView] = useState<
     "agenda" | "patients" | "reception" | "benchmark" | "arco"
@@ -262,13 +280,32 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     onLock();
   }
 
-  async function attend(appointmentId: string) {
+  async function attend(
+    appointmentId: string,
+    opts?: { linkPatientId?: string; forceNew?: boolean }
+  ) {
     setError("");
+    setBusy(true);
     try {
-      const encounter = await call<{ id: string }>("open_encounter", { appointmentId });
-      setActiveEncounter(encounter.id);
+      const outcome = await call<AttendOutcome>("attend_appointment", {
+        appointmentId,
+        linkPatientId: opts?.linkPatientId ?? null,
+        forceNew: opts?.forceNew ?? false
+      });
+      if (outcome.kind === "encounter") {
+        setResolution(null);
+        setActiveEncounter(outcome.encounter_id);
+      } else {
+        setResolution({
+          appointmentId,
+          patient: outcome.appointment_patient,
+          candidates: outcome.candidates
+        });
+      }
     } catch (e) {
       setError(String(e));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -292,6 +329,35 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
         onBack={() => setActivePatient(null)}
         onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
       />
+    );
+  }
+
+  if (resolution) {
+    return (
+      <>
+        <header className="app-topbar">
+          <button className="ghost-button" onClick={() => setResolution(null)}>
+            ← Agenda
+          </button>
+          <span className="topbar-context">Identificar paciente de la cita</span>
+        </header>
+        <div className="content">
+          <PatientResolution
+            patient={resolution.patient}
+            candidates={resolution.candidates}
+            busy={busy}
+            onLink={(patientId) =>
+              void attend(resolution.appointmentId, { linkPatientId: patientId })
+            }
+            onCreateNew={() => void attend(resolution.appointmentId, { forceNew: true })}
+          />
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+      </>
     );
   }
 

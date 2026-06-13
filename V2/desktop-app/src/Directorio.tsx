@@ -65,6 +65,7 @@ export function Directorio({
   const [profile, setProfile] = useState<PatientProfile | null>(null);
   const [creating, setCreating] = useState(false);
   const [newPatient, setNewPatient] = useState(EMPTY_NEW_PATIENT);
+  const [matches, setMatches] = useState<PatientSummary[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -79,6 +80,12 @@ export function Directorio({
     const handle = setTimeout(() => loadPatients(search), 200);
     return () => clearTimeout(handle);
   }, [search, loadPatients]);
+
+  // Al editar el formulario, descarta una advertencia de duplicado previa: los
+  // candidatos se vuelven a calcular en el proximo intento de alta.
+  useEffect(() => {
+    setMatches(null);
+  }, [newPatient]);
 
   async function openProfile(patientId: string) {
     setError("");
@@ -104,11 +111,26 @@ export function Directorio({
     }
   }
 
-  async function createPatient() {
+  async function createPatient(force: boolean) {
     setBusy(true);
     setError("");
     setMessage("");
     try {
+      // Prevencion de duplicados: antes de crear, busca pacientes locales que
+      // probablemente sean la misma persona. Si los hay, los muestra y deja que
+      // el medico decida (abrir el existente o crear de todos modos).
+      if (!force) {
+        const found = await call<PatientSummary[]>("find_patient_matches", {
+          email: newPatient.email || null,
+          phone: newPatient.phone || null,
+          firstName: newPatient.first_name,
+          lastName: newPatient.last_name
+        });
+        if (found.length > 0) {
+          setMatches(found);
+          return;
+        }
+      }
       const created = await call<PatientRecord>("create_patient", {
         patient: {
           first_name: newPatient.first_name,
@@ -121,6 +143,7 @@ export function Directorio({
       });
       setNewPatient(EMPTY_NEW_PATIENT);
       setCreating(false);
+      setMatches(null);
       setMessage(`Paciente ${created.first_name} ${created.last_name} dado de alta.`);
       loadPatients(search);
       await openProfile(created.id);
@@ -221,11 +244,56 @@ export function Directorio({
             cifrado local.
           </p>
         </div>
+        {matches && matches.length > 0 ? (
+          <div className="dup-warning">
+            <strong>Ya existe un paciente con estos datos</strong>
+            <p className="meta">
+              Para no duplicar el expediente, abre el paciente existente. Si de verdad es
+              otra persona, puedes crearlo de todos modos.
+            </p>
+            <ul className="appointment-list">
+              {matches.map((m) => (
+                <li key={m.id} className="list-row">
+                  <button
+                    type="button"
+                    className="list-row-main directory-row"
+                    onClick={() => void openProfile(m.id)}
+                  >
+                    <strong>
+                      {m.first_name} {m.last_name}
+                    </strong>
+                    <span className="meta">
+                      {m.phone ?? "Sin telefono"}
+                      {m.email ? ` · ${m.email}` : ""}
+                      {" · "}
+                      {m.encounter_count > 0 ? `${m.encounter_count} consulta(s)` : "Sin consultas"}
+                    </span>
+                  </button>
+                  <div className="row-actions">
+                    <button className="ghost-button" onClick={() => onOpenPatient(m.id)}>
+                      Abrir expediente
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <div className="button-row">
+              <button
+                className="ghost-button"
+                onClick={() => void createPatient(true)}
+                disabled={busy}
+              >
+                Crear nuevo de todos modos
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <form
           className="stack"
           onSubmit={(e) => {
             e.preventDefault();
-            void createPatient();
+            void createPatient(false);
           }}
         >
           <label className="field">
@@ -311,6 +379,7 @@ export function Directorio({
               onClick={() => {
                 setCreating(false);
                 setError("");
+                setMatches(null);
               }}
               disabled={busy}
             >
@@ -348,7 +417,14 @@ export function Directorio({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <button className="action-button" onClick={() => setCreating(true)}>
+        <button
+          className="action-button"
+          onClick={() => {
+            setMatches(null);
+            setError("");
+            setCreating(true);
+          }}
+        >
           Nuevo paciente
         </button>
       </div>

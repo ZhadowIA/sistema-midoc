@@ -243,6 +243,44 @@ function opsSummary() {
   };
 }
 
+const digitsOnly = (value: string | null | undefined) => (value ?? "").replace(/\D/g, "");
+
+function splitNameMock(fullName: string): { first_name: string; last_name: string } {
+  const trimmed = (fullName ?? "").trim();
+  const space = trimmed.indexOf(" ");
+  return space === -1
+    ? { first_name: trimmed, last_name: "" }
+    : { first_name: trimmed.slice(0, space), last_name: trimmed.slice(space + 1) };
+}
+
+// Coincidencias para el diseño en navegador: por nombre completo o telefono,
+// con el nombre primero (espeja `match_patients_with_reasons` del backend).
+function matchPatientsMock(fullName: string | null | undefined, phone: string | null | undefined) {
+  const aName = (fullName ?? "").trim().toLowerCase();
+  const aPhone = digitsOnly(phone);
+  return mockState.patients
+    .map((p) => {
+      const pName = `${p.first_name} ${p.last_name}`.trim().toLowerCase();
+      const matched_name = Boolean(aName) && pName === aName;
+      const matched_phone = Boolean(aPhone) && digitsOnly(p.phone) === aPhone;
+      return { p, matched_name, matched_phone };
+    })
+    .filter((m) => m.matched_name || m.matched_phone)
+    .sort((a, b) => Number(b.matched_name) - Number(a.matched_name))
+    .map(({ p, matched_name, matched_phone }) => ({
+      id: p.id,
+      first_name: p.first_name,
+      last_name: p.last_name,
+      phone: p.phone,
+      email: p.email,
+      encounter_count: p.id === "pat-1" ? 1 : 0,
+      last_visit: null,
+      matched_name,
+      matched_phone,
+      matched_email: false
+    }));
+}
+
 async function mockCall<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   await new Promise((resolve) => setTimeout(resolve, 120));
   const e = mockState.encounter;
@@ -287,10 +325,18 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     }
     case "register_walk_in": {
       const input = args?.walkIn as { patient_name: string; patient_phone: string | null; reason: string | null };
+      if (!args?.linkPatientId && !args?.forceNew) {
+        const candidates = matchPatientsMock(input.patient_name, input.patient_phone);
+        if (candidates.length > 0) {
+          return { kind: "needs_resolution", candidates } as T;
+        }
+      }
       const visit: MockVisit = {
         id: `visit-${ops.visits.length + 1}`,
         appointment_id: null,
-        patient_id: `pat-walkin-${ops.visits.length + 1}`,
+        patient_id: args?.linkPatientId
+          ? String(args.linkPatientId)
+          : `pat-walkin-${ops.visits.length + 1}`,
         patient_name: input.patient_name,
         patient_phone: input.patient_phone,
         reason: input.reason,
@@ -305,7 +351,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         ended_at: null
       };
       ops.visits.push(visit);
-      return visit as T;
+      return { kind: "visit", visit } as T;
     }
     case "set_visit_state": {
       const v = ops.visits.find((x) => x.id === args?.visitId);
@@ -323,11 +369,29 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     }
     case "start_visit_encounter": {
       const v = ops.visits.find((x) => x.id === args?.visitId);
-      if (v) {
+      if (args?.linkPatientId || args?.forceNew || !v?.appointment_id) {
+        if (v) {
+          v.state = "IN_PROGRESS";
+          v.encounter_id = e.id;
+          if (args?.linkPatientId) v.patient_id = String(args.linkPatientId);
+        }
+        return { kind: "encounter", encounter_id: e.id } as T;
+      }
+      const candidates = matchPatientsMock(v.patient_name, v.patient_phone);
+      if (candidates.length === 0) {
         v.state = "IN_PROGRESS";
         v.encounter_id = e.id;
+        return { kind: "encounter", encounter_id: e.id } as T;
       }
-      return e.id as T;
+      return {
+        kind: "needs_resolution",
+        appointment_patient: {
+          ...splitNameMock(v.patient_name),
+          phone: v.patient_phone,
+          email: null
+        },
+        candidates
+      } as T;
     }
     case "get_open_cash_session":
       return ops.session as T;
@@ -413,6 +477,25 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return mockState.appointments as T;
     case "open_encounter":
       return { id: e.id } as T;
+    case "attend_appointment": {
+      if (args?.linkPatientId || args?.forceNew) {
+        return { kind: "encounter", encounter_id: e.id } as T;
+      }
+      const appt = mockState.appointments.find((a) => a.id === args?.appointmentId);
+      const candidates = matchPatientsMock(appt?.patient_name, appt?.patient_phone);
+      if (candidates.length === 0) {
+        return { kind: "encounter", encounter_id: e.id } as T;
+      }
+      return {
+        kind: "needs_resolution",
+        appointment_patient: {
+          ...splitNameMock(appt?.patient_name ?? "Paciente"),
+          phone: appt?.patient_phone ?? null,
+          email: null
+        },
+        candidates
+      } as T;
+    }
     case "list_patients": {
       const term = String(args?.search ?? "").trim().toLowerCase();
       const filtered = term
@@ -455,6 +538,39 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
               ]
             : []
       } as T;
+    }
+    case "find_patient_matches": {
+      const digits = (s: string | null | undefined) => (s ?? "").replace(/\D/g, "");
+      const email = String(args?.email ?? "").trim().toLowerCase();
+      const phone = digits(args?.phone as string | null);
+      const name = `${String(args?.firstName ?? "").trim().toLowerCase()} ${String(
+        args?.lastName ?? ""
+      ).trim().toLowerCase()}`.trim();
+      if (!email && !phone && !name) return [] as T;
+      return mockState.patients
+        .filter((p) => {
+          const pe = (p.email ?? "").trim().toLowerCase();
+          const pp = digits(p.phone);
+          const pn = `${p.first_name.trim().toLowerCase()} ${p.last_name
+            .trim()
+            .toLowerCase()}`.trim();
+          return (
+            (email && pe && email === pe) ||
+            (phone && pp && phone === pp) ||
+            (name && pn && name === pn)
+          );
+        })
+        .map((p) => ({
+          id: p.id,
+          first_name: p.first_name,
+          last_name: p.last_name,
+          phone: p.phone,
+          email: p.email,
+          birth_date: p.birth_date,
+          allergies: p.allergies,
+          encounter_count: p.id === "pat-1" ? 1 : 0,
+          last_visit: null
+        })) as T;
     }
     case "create_patient": {
       const input = args?.patient as {
