@@ -82,9 +82,33 @@ pub struct Guardian {
     pub email: Option<String>,
 }
 
+/// Edad en años cumplidos a partir de una fecha "YYYY-MM-DD". `None` si la
+/// fecha es vacia o no parsea.
+pub fn age_years(birth_date: Option<&str>) -> Option<i64> {
+    use chrono::Datelike;
+    let raw = birth_date?.get(..10)?;
+    let dob = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").ok()?;
+    let today = chrono::Utc::now().date_naive();
+    let mut years = today.year() - dob.year();
+    // Resta un año si todavia no ha cumplido años este año.
+    if (today.month(), today.day()) < (dob.month(), dob.day()) {
+        years -= 1;
+    }
+    Some(years as i64)
+}
+
+/// Edad por debajo de la cual la persona es menor de edad y sus derechos los
+/// ejerce un responsable/tutor (mayoria de edad legal en Mexico: 18).
+pub const MINOR_AGE_THRESHOLD: i64 = 18;
+
+/// `true` si la fecha de nacimiento corresponde a un menor de edad.
+pub fn is_minor(birth_date: Option<&str>) -> bool {
+    age_years(birth_date).is_some_and(|years| (0..MINOR_AGE_THRESHOLD).contains(&years))
+}
+
 /// Construye el responsable a partir de las columnas planas: solo existe si
 /// tiene nombre (el resto es opcional).
-fn guardian_from(
+pub(crate) fn guardian_from(
     name: Option<String>,
     relationship: Option<String>,
     phone: Option<String>,
@@ -110,6 +134,9 @@ pub struct PatientRecord {
     pub medical_background: Option<String>,
     pub family_background: Option<String>,
     pub guardian: Option<Guardian>,
+    /// Derivado de la fecha de nacimiento: el paciente es menor de edad y sus
+    /// derechos los ejerce su responsable (etiqueta "menor con tutor").
+    pub is_minor: bool,
 }
 
 /// Columnas del expediente del paciente en el orden que espera `patient_from_row`.
@@ -118,13 +145,15 @@ const PATIENT_COLUMNS: &str = "id, first_name, last_name, phone, email, birth_da
     guardian_name, guardian_relationship, guardian_phone, guardian_email";
 
 fn patient_from_row(row: &rusqlite::Row) -> rusqlite::Result<PatientRecord> {
+    let birth_date: Option<String> = row.get(5)?;
     Ok(PatientRecord {
         id: row.get(0)?,
         first_name: row.get(1)?,
         last_name: row.get(2)?,
         phone: row.get(3)?,
         email: row.get(4)?,
-        birth_date: row.get(5)?,
+        is_minor: is_minor(birth_date.as_deref()),
+        birth_date,
         allergies: row.get(6)?,
         medical_background: row.get(7)?,
         family_background: row.get(8)?,
@@ -1024,6 +1053,7 @@ pub fn create_patient(
         last_name,
         phone,
         email,
+        is_minor: is_minor(birth_date.as_deref()),
         birth_date,
         allergies: None,
         medical_background: None,
@@ -1392,6 +1422,24 @@ mod tests {
         let detail = get_encounter_detail(&conn, &first.id).unwrap();
         assert_eq!(detail.patient.first_name, "Hugo");
         assert_eq!(detail.appointment_reason.as_deref(), Some("Dolor lumbar"));
+    }
+
+    #[test]
+    fn minor_is_derived_from_birth_date() {
+        use chrono::Datelike;
+        let year = chrono::Utc::now().year();
+        let a_minor = format!("{}-01-01", year - 8);
+        let an_adult = format!("{}-01-01", year - 40);
+        // Justo en el limite: alguien que cumple exactamente 18 ya es mayor.
+        let just_eighteen = format!("{}-01-01", year - MINOR_AGE_THRESHOLD as i32);
+
+        assert!(is_minor(Some(&a_minor)));
+        assert!(!is_minor(Some(&an_adult)));
+        assert!(!is_minor(Some(&just_eighteen)));
+        // Sin fecha o invalida: no se puede afirmar que sea menor.
+        assert!(!is_minor(None));
+        assert!(!is_minor(Some("")));
+        assert!(!is_minor(Some("fecha-mala")));
     }
 
     #[test]

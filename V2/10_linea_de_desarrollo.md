@@ -755,7 +755,7 @@ Rebanadas:
 - **Rebanada 2 (app del medico):** el responsable viaja por sync, migracion local y se muestra en la cita y el expediente.
 - **Rebanada 3 (refinamiento):** menor por fecha de nacimiento exige responsable; etiqueta "menor con tutor"; consideraciones ARCO (quien ejerce los derechos del menor).
 
-Estado: 🚧 EN PROGRESO — rebanadas 1 (portal) y 2 (app del medico) entregadas (2026-06-14); rebanada 3 (refinamiento de menores) pendiente. Construido sobre los pasos 3, 6 y 13.
+Estado: ✅ DONE — rebanadas 1 (portal), 2 (app del medico) y 3 (refinamiento de menores) entregadas (2026-06-14). Construido sobre los pasos 3, 6 y 13.
 
 Entregado (rebanada 1 — portal: distinguir paciente con/sin responsable, 2026-06-14):
 
@@ -776,7 +776,13 @@ Entregado (rebanada 2 — app del medico: el responsable viaja por sync y se con
 
 Verificacion (rebanada 2): 109 pruebas de Rust en verde (+2: el agendado de un menor lleva al responsable como entidad propia con la identidad del menor; la importacion desde la cita conserva responsable y fecha de nacimiento en el expediente), `cargo clippy` sin advertencias nuevas, `tsc + vite build` del escritorio ok; 8 pruebas de integracion del portal en verde (la nueva asercion comprueba que `APPOINTMENT_BOOKED` lleva `responsible` y `birthDate`), `eslint`/`tsc` del portal limpios y `next build` ok.
 
-Pendiente (rebanada 3): refinamiento de menores por fecha de nacimiento (responsable obligatorio, etiqueta "menor con tutor") y consideraciones ARCO (quien ejerce los derechos del menor).
+Entregado (rebanada 3 — refinamiento de menores y ARCO, 2026-06-14):
+
+- **Menor exige responsable en el servidor (`public-booking-service.ts`).** `isMinor` deriva la edad de la fecha de nacimiento (mayoria de edad 18); si el paciente es menor y no llega responsable, el agendado se rechaza con 400 — la compuerta ya no depende solo del formulario. La validacion ocurre antes de consumir el hold.
+- **Etiqueta "menor con tutor" en el expediente (`clinical.rs` + `Expediente.tsx`).** `PatientRecord` expone `is_minor` derivado de la fecha de nacimiento (helper `is_minor`/`age_years` con chrono); el banner muestra una pildora "Menor con tutor".
+- **Consideraciones ARCO (`arco.rs`).** La exportacion del expediente incluye al responsable (`guardian`), la marca `is_minor` y una nota explicita `rights_exercised_by` que documenta quien ejerce los derechos ARCO de un menor (su responsable, con parentesco), o advierte si falta.
+
+Verificacion (rebanada 3): 112 pruebas de Rust en verde (+3: derivacion de menor por fecha de nacimiento con su limite a los 18 y fechas invalidas; exportacion ARCO de un menor documenta a su responsable; exportacion de un adulto sin nota de menor), `cargo clippy` sin advertencias nuevas, `tsc + vite build` del escritorio ok; 8 pruebas de integracion del portal en verde (la nueva asercion rechaza agendar a un menor sin responsable y luego agenda con el), `eslint`/`tsc` del portal limpios y `next build` ok.
 
 ## MVP recomendado
 

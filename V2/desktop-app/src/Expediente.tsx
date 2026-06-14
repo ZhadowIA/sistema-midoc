@@ -19,6 +19,7 @@ interface PatientRecord {
   medical_background: string | null;
   family_background: string | null;
   guardian: Guardian | null;
+  is_minor: boolean;
 }
 
 function guardianContactLine(guardian: Guardian): string {
@@ -304,6 +305,9 @@ export function Expediente({
           <div className="panel-header">
             <h2>
               {p.first_name} {p.last_name}
+              {p.is_minor ? (
+                <span className="pill pill-primary patient-minor-pill">Menor con tutor</span>
+              ) : null}
             </h2>
             <p>
               {p.phone ? `Tel: ${p.phone}` : "Sin telefono"}

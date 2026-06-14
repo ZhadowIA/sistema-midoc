@@ -449,6 +449,17 @@ describe("public booking flow", () => {
         serviceId: service.id,
         slotStart: availability.slots[0]!.slotStart
       });
+      // Agendar a un menor SIN responsable es rechazado en el servidor (la
+      // compuerta del paso 18 no depende solo del formulario). El hold sigue
+      // vivo porque la validacion ocurre antes de consumirlo.
+      await expect(
+        bookPublicAppointment({
+          holdToken: firstHold.token,
+          patient: { firstName: "Mateo", lastName: "Rios", birthDate: "2018-05-10" },
+          legal: { acceptedTerms: true, acceptedPrivacy: true }
+        })
+      ).rejects.toThrow(/responsable/i);
+
       const booking = await bookPublicAppointment({
         holdToken: firstHold.token,
         patient: { firstName: "Mateo", lastName: "Rios", birthDate: "2018-05-10" },

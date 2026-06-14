@@ -106,6 +106,14 @@ pub struct PatientDataExport {
     pub allergies: Option<String>,
     pub medical_background: Option<String>,
     pub family_background: Option<String>,
+    /// Responsable/tutor del paciente (paso 18). Para un menor, es quien ejerce
+    /// sus derechos ARCO.
+    pub guardian: Option<crate::clinical::Guardian>,
+    /// Derivado de la fecha de nacimiento al momento de exportar.
+    pub is_minor: bool,
+    /// Nota explicita de quien ejerce los derechos ARCO cuando el paciente es
+    /// menor de edad; ausente para pacientes mayores.
+    pub rights_exercised_by: Option<String>,
     pub encounters: Vec<EncounterExport>,
     pub documents: Vec<DocumentExport>,
     pub generated_at: String,
@@ -233,7 +241,8 @@ pub fn export_patient_data(
     let patient = conn
         .query_row(
             "SELECT first_name, last_name, phone, email, birth_date, sex,
-                    allergies, medical_background, family_background
+                    allergies, medical_background, family_background,
+                    guardian_name, guardian_relationship, guardian_phone, guardian_email
              FROM patients WHERE id = ?1",
             params![patient_id],
             |row| {
@@ -247,6 +256,10 @@ pub fn export_patient_data(
                     row.get::<_, Option<String>>(6)?,
                     row.get::<_, Option<String>>(7)?,
                     row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                    row.get::<_, Option<String>>(12)?,
                 ))
             },
         )
@@ -327,6 +340,31 @@ pub fn export_patient_data(
 
     audit(conn, patient_id, "arco.data.exported", None)?;
 
+    // El responsable, si existe, ejerce los derechos ARCO de un menor. Se hace
+    // explicito en el export para que la entrega documente quien los ejerce.
+    let guardian = crate::clinical::guardian_from(
+        patient.9.clone(),
+        patient.10.clone(),
+        patient.11.clone(),
+        patient.12.clone(),
+    );
+    let is_minor = crate::clinical::is_minor(patient.4.as_deref());
+    let rights_exercised_by = if is_minor {
+        Some(match &guardian {
+            Some(g) => format!(
+                "Paciente menor de edad; los derechos ARCO los ejerce su responsable: {}{}.",
+                g.name,
+                g.relationship
+                    .as_deref()
+                    .map(|r| format!(" ({r})"))
+                    .unwrap_or_default()
+            ),
+            None => "Paciente menor de edad sin responsable registrado; verificar quien ejerce sus derechos ARCO.".to_string(),
+        })
+    } else {
+        None
+    };
+
     Ok(PatientDataExport {
         patient_id: patient_id.to_string(),
         first_name: patient.0,
@@ -338,6 +376,9 @@ pub fn export_patient_data(
         allergies: patient.6,
         medical_background: patient.7,
         family_background: patient.8,
+        guardian,
+        is_minor,
+        rights_exercised_by,
         encounters,
         documents,
         generated_at: now(),
@@ -554,6 +595,37 @@ mod tests {
         assert_eq!(export.encounters[0].notes.len(), 1);
         assert_eq!(export.encounters[0].prescriptions, vec!["paracetamol"]);
         assert_eq!(export.documents.len(), 1);
+    }
+
+    #[test]
+    fn export_of_a_minor_documents_who_exercises_their_rights() {
+        let conn = test_conn("export-minor");
+        conn.execute(
+            "INSERT INTO patients (id, first_name, last_name, birth_date,
+                guardian_name, guardian_relationship, guardian_phone, created_at, updated_at)
+             VALUES ('pat-m', 'Lucia', 'Paz', '2018-03-04',
+                'Hugo Paz', 'Padre', '6140002222', '0', '0')",
+            [],
+        )
+        .unwrap();
+
+        let export = export_patient_data(&conn, "pat-m").unwrap();
+        assert!(export.is_minor);
+        let guardian = export.guardian.expect("el responsable debe viajar");
+        assert_eq!(guardian.name, "Hugo Paz");
+        let note = export.rights_exercised_by.expect("debe documentar quien ejerce");
+        assert!(note.contains("Hugo Paz"));
+        assert!(note.contains("Padre"));
+    }
+
+    #[test]
+    fn export_of_an_adult_has_no_minor_rights_note() {
+        let conn = test_conn("export-adult");
+        seed_patient(&conn, "pat-1");
+
+        let export = export_patient_data(&conn, "pat-1").unwrap();
+        assert!(!export.is_minor);
+        assert!(export.rights_exercised_by.is_none());
     }
 
     #[test]

@@ -75,6 +75,31 @@ async function runSerializable<T>(fn: (tx: Prisma.TransactionClient) => Promise<
   }
 }
 
+/** Mayoria de edad legal en Mexico: por debajo, los derechos los ejerce un tutor. */
+const MINOR_AGE_THRESHOLD = 18;
+
+/**
+ * `true` si la fecha de nacimiento ("YYYY-MM-DD") corresponde a un menor de edad.
+ * Fechas vacias o invalidas no se consideran menores (no se puede afirmar).
+ */
+function isMinor(birthDate?: string): boolean {
+  if (!birthDate) {
+    return false;
+  }
+  const dob = new Date(`${birthDate.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(dob.getTime())) {
+    return false;
+  }
+  const now = new Date();
+  let age = now.getUTCFullYear() - dob.getUTCFullYear();
+  const monthDay = now.getUTCMonth() * 100 + now.getUTCDate();
+  const dobMonthDay = dob.getUTCMonth() * 100 + dob.getUTCDate();
+  if (monthDay < dobMonthDay) {
+    age -= 1;
+  }
+  return age >= 0 && age < MINOR_AGE_THRESHOLD;
+}
+
 function addMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() + minutes * 60_000);
 }
@@ -527,6 +552,16 @@ export async function bookPublicAppointment(input: {
 }) {
   if (!input.legal.acceptedTerms || !input.legal.acceptedPrivacy) {
     throw new PublicBookingServiceError("Terms and privacy acceptance are required.", 400);
+  }
+
+  // Un menor de edad (por su fecha de nacimiento) exige un responsable: sus
+  // derechos los ejerce su tutor. La compuerta del paso 18 lo hace obligatorio
+  // en el servidor, no solo en el formulario.
+  if (isMinor(input.patient.birthDate) && !input.contact?.fullName?.trim()) {
+    throw new PublicBookingServiceError(
+      "Para agendar a un menor de edad se requieren los datos del responsable (tutor).",
+      400
+    );
   }
 
   await expireStaleHolds();

@@ -576,6 +576,15 @@ textarea:disabled {
   z-index: 5;
 }
 
+.patient-minor-pill {
+  margin-left: 10px;
+  vertical-align: middle;
+}
+
+.patient-guardian {
+  margin-top: 4px;
+}
+
 .encounter-layout {
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
