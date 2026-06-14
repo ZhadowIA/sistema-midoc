@@ -28,14 +28,9 @@ export function MedicationReference() {
   const [ddinterCsv, setDdinterCsv] = useState("");
   const [version, setVersion] = useState("");
   const [openfdaJson, setOpenfdaJson] = useState("");
-  const [medicationsUrl, setMedicationsUrl] = useState("");
-  const [ddinterUrl, setDdinterUrl] = useState("");
-  const [openfdaUrl, setOpenfdaUrl] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-
-  const today = new Date().toISOString().slice(0, 10);
 
   async function refresh() {
     try {
@@ -49,20 +44,14 @@ export function MedicationReference() {
     void refresh();
   }, []);
 
-  async function updateFromSources() {
-    const updateVersion = version.trim() || `oficial-${today}`;
+  async function updateFromMidoc() {
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      const summary = await call<ImportSummary>("update_medication_reference", {
-        medicationsUrl,
-        ddinterUrl,
-        openfdaUrl,
-        version: updateVersion
-      });
+      const summary = await call<ImportSummary>("update_medication_reference_from_midoc");
       setMessage(
-        `Base actualizada desde fuentes: ${summary.medications} medicamentos, ${summary.interactions} interacciones y ${summary.labels} etiquetas (version ${summary.version}).`
+        `Base actualizada: ${summary.medications} medicamentos, ${summary.interactions} interacciones y ${summary.labels} etiquetas (version ${summary.version}).`
       );
       await refresh();
     } catch (e) {
@@ -103,9 +92,8 @@ export function MedicationReference() {
       <div className="panel-header">
         <h2>Base de medicamentos</h2>
         <p>
-          Datos de referencia publicos para la verificacion de seguridad (sin IA). Importa un CSV de
-          medicamentos/clases y el CSV de interacciones de DDInter. La base vive cifrada en este
-          equipo.
+          Datos de referencia publicos para la verificacion de seguridad (sin IA). La base vive
+          cifrada en este equipo.
         </p>
       </div>
 
@@ -126,6 +114,20 @@ export function MedicationReference() {
         </p>
       )}
 
+      <div className="stack">
+        <div className="button-row">
+          <button className="action-button" onClick={() => void updateFromMidoc()} disabled={busy}>
+            {busy ? "Actualizando..." : "Buscar actualizaciones"}
+          </button>
+        </div>
+        <p className="meta">
+          MiDoc usa un catalogo curado incluido con la app y, cuando el build tenga una fuente fija
+          configurada, actualiza contra esa fuente sin enviar datos de pacientes.
+        </p>
+      </div>
+
+      <details className="technical-import">
+        <summary>Importacion tecnica</summary>
       <div className="stack">
         <label className="field">
           <span>CSV de medicamentos (name,ingredient,display_name,drug_class)</span>
@@ -176,62 +178,7 @@ export function MedicationReference() {
           Una lista vacia deja esa tabla sin cambios. Importar reemplaza la base anterior.
         </p>
       </div>
-
-      <div className="panel-header" style={{ marginTop: 24 }}>
-        <h3>Actualizar desde fuentes oficiales</h3>
-        <p>
-          Descarga los datos publicos (CSV de medicamentos/clases y CSV de DDInter) y reemplaza la
-          base local. Solo se descargan datos de referencia: no se envia ningun dato del paciente.
-          La descarga se valida antes de reemplazar (rechaza datos vacios o incompletos).
-        </p>
-      </div>
-      <div className="stack">
-        <label className="field">
-          <span>URL del CSV de medicamentos</span>
-          <input
-            type="url"
-            placeholder="https://…/medicamentos.csv"
-            value={medicationsUrl}
-            disabled={busy}
-            onChange={(e) => setMedicationsUrl(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span>URL del CSV de interacciones (DDInter)</span>
-          <input
-            type="url"
-            placeholder="https://…/ddinter.csv"
-            value={ddinterUrl}
-            disabled={busy}
-            onChange={(e) => setDdinterUrl(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span>URL del JSON de etiquetas (openFDA, opcional)</span>
-          <input
-            type="url"
-            placeholder="https://…/openfda.json"
-            value={openfdaUrl}
-            disabled={busy}
-            onChange={(e) => setOpenfdaUrl(e.target.value)}
-          />
-        </label>
-        <div className="button-row">
-          <button
-            className="action-button"
-            onClick={() => void updateFromSources()}
-            disabled={
-              busy ||
-              (medicationsUrl.trim().length === 0 &&
-                ddinterUrl.trim().length === 0 &&
-                openfdaUrl.trim().length === 0)
-            }
-          >
-            {busy ? "Actualizando…" : "Actualizar base"}
-          </button>
-        </div>
-        <p className="meta">Se usa la version indicada arriba, o `oficial-{today}` si la dejas vacia.</p>
-      </div>
+      </details>
     </section>
   );
 }

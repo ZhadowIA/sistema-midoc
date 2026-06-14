@@ -80,6 +80,10 @@ fn unlock_database(
     let path = database_path(&app)?;
     let conn = db::open_encrypted(&path, &passphrase).map_err(|e| e.to_string())?;
     let schema_version = db::schema_version(&conn).map_err(|e| e.to_string())?;
+    // Primer arranque: instala el catalogo real de medicamentos empaquetado si la
+    // base sigue en la version sembrada. No debe bloquear el acceso al expediente,
+    // por eso se ignora un eventual fallo (la base sembrada sigue siendo usable).
+    let _ = medication::ensure_bundled_reference_installed(&conn);
     let backup_path = backup_path(&app)?;
     db::create_encrypted_backup(&conn, &backup_path).map_err(|e| e.to_string())?;
     *state.0.lock().unwrap() = Some(conn);
@@ -1106,6 +1110,55 @@ async fn update_medication_reference(
     .map_err(|e| e.to_string())
 }
 
+const MIDOC_MEDICATIONS_URL: Option<&str> = option_env!("MIDOC_MEDICATIONS_URL");
+const MIDOC_DDINTER_URL: Option<&str> = option_env!("MIDOC_DDINTER_URL");
+const MIDOC_OPENFDA_URL: Option<&str> = option_env!("MIDOC_OPENFDA_URL");
+
+/// Actualiza la base usando la fuente fija de MiDoc. En builds sin endpoints
+/// configurados instala el catalogo curado empaquetado con la app, asi el medico
+/// no escribe URLs y la verificacion sigue funcionando offline.
+#[tauri::command]
+async fn update_medication_reference_from_midoc(
+    state: tauri::State<'_, AppDb>,
+) -> Result<medication::ImportSummary, String> {
+    let configured_medications = MIDOC_MEDICATIONS_URL.unwrap_or("").trim();
+    let configured_ddinter = MIDOC_DDINTER_URL.unwrap_or("").trim();
+
+    let summary = if !configured_medications.is_empty() && !configured_ddinter.is_empty() {
+        let client = reqwest::Client::new();
+        let medications_csv = fetch_text(&client, configured_medications, "medicamentos MiDoc").await?;
+        let ddinter_csv = fetch_text(&client, configured_ddinter, "interacciones MiDoc").await?;
+        let openfda_json = fetch_text(
+            &client,
+            MIDOC_OPENFDA_URL.unwrap_or("").trim(),
+            "etiquetas MiDoc",
+        )
+        .await?;
+        let dataset = medication::MedicationDataset {
+            medications_csv,
+            ddinter_csv,
+            openfda_json,
+            version: medication::BUNDLED_REFERENCE_VERSION.to_string(),
+        };
+
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        medication::update_reference(
+            conn,
+            &dataset,
+            medication::MIN_MEDICATIONS,
+            medication::MIN_INTERACTIONS,
+        )
+        .map_err(|e| e.to_string())?
+    } else {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        medication::install_bundled_reference(conn).map_err(|e| e.to_string())?
+    };
+
+    Ok(summary)
+}
+
 /// Descarga texto de una URL (o cadena vacia si la URL esta vacia). Frontera de
 /// red: el contrato real con las fuentes se verifica en staging.
 async fn fetch_text(client: &reqwest::Client, url: &str, label: &str) -> Result<String, String> {
@@ -1273,6 +1326,7 @@ pub fn run() {
             medication_reference_status,
             import_medication_reference,
             update_medication_reference,
+            update_medication_reference_from_midoc,
             extract_prescription_medications,
             arco_list_requests,
             arco_record_request,

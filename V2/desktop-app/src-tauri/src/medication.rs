@@ -513,6 +513,7 @@ pub fn parse_medication_csv(csv: &str) -> Result<Vec<MedicationRow>, MedicationE
 /// Mapea el nivel de DDInter a nuestra severidad.
 fn ddinter_severity(level: &str) -> &'static str {
     match level.trim().to_lowercase().as_str() {
+        "contraindicated" | "contraindication" => "CONTRAINDICATED",
         "major" => "MAJOR",
         "moderate" => "MODERATE",
         "minor" => "MINOR",
@@ -709,6 +710,43 @@ pub struct MedicationDataset {
 /// pero por debajo del minimo, se aborta la actualizacion completa.
 pub const MIN_MEDICATIONS: usize = 5;
 pub const MIN_INTERACTIONS: usize = 5;
+pub const BUNDLED_REFERENCE_VERSION: &str = "midoc-real-2026-06-14";
+
+const BUNDLED_MEDICATIONS_CSV: &str = include_str!("reference_data/medications.csv");
+const BUNDLED_DDINTER_CSV: &str = include_str!("reference_data/ddinter.csv");
+const BUNDLED_OPENFDA_JSON: &str = include_str!("reference_data/openfda.json");
+
+pub fn bundled_reference_dataset() -> MedicationDataset {
+    MedicationDataset {
+        medications_csv: BUNDLED_MEDICATIONS_CSV.to_string(),
+        ddinter_csv: BUNDLED_DDINTER_CSV.to_string(),
+        openfda_json: BUNDLED_OPENFDA_JSON.to_string(),
+        version: BUNDLED_REFERENCE_VERSION.to_string(),
+    }
+}
+
+pub fn install_bundled_reference(conn: &Connection) -> Result<ImportSummary, MedicationError> {
+    let dataset = bundled_reference_dataset();
+    update_reference(conn, &dataset, MIN_MEDICATIONS, MIN_INTERACTIONS)
+}
+
+/// Version sembrada por la migracion v13 (paso 14, rebanada 1). Marca que el
+/// catalogo real empaquetado aun no se ha instalado.
+pub const SEED_REFERENCE_VERSION: &str = "seed-v1";
+
+/// Instala el catalogo real empaquetado en el primer arranque: cuando la base
+/// sigue en la version sembrada (`seed-v1`), la reemplaza por el catalogo
+/// curado de MiDoc. Idempotente y respetuoso: si el medico ya instalo o
+/// actualizo el catalogo (otra version), no lo sobreescribe. Devuelve `true`
+/// si instalo el catalogo en esta llamada.
+pub fn ensure_bundled_reference_installed(conn: &Connection) -> Result<bool, MedicationError> {
+    if reference_version(conn)? == SEED_REFERENCE_VERSION {
+        install_bundled_reference(conn)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
 
 /// Aplica una actualizacion de la base desde datos descargados: parsea, **vetta**
 /// (rechaza descargas vacias o sospechosamente pequenas para no degradar la base
@@ -1141,5 +1179,68 @@ mod tests {
             update_reference(&conn, &empty, MIN_MEDICATIONS, MIN_INTERACTIONS),
             Err(MedicationError::Invalid(_))
         ));
+    }
+
+    /* ---------- Rebanada 5: catalogo MiDoc empaquetado ---------- */
+
+    #[test]
+    fn bundled_reference_installs_curated_dataset_without_network() {
+        let conn = test_conn("bundled-reference");
+        let summary = install_bundled_reference(&conn).unwrap();
+
+        assert!(summary.medications >= MIN_MEDICATIONS);
+        assert!(summary.interactions >= MIN_INTERACTIONS);
+        assert!(summary.labels > 0);
+        assert_eq!(summary.version, BUNDLED_REFERENCE_VERSION);
+
+        let status = reference_status(&conn).unwrap();
+        assert_eq!(status.version, BUNDLED_REFERENCE_VERSION);
+        assert_eq!(status.medications, summary.medications as i64);
+        assert_eq!(status.interactions, summary.interactions as i64);
+        assert_eq!(status.labels, summary.labels as i64);
+    }
+
+    #[test]
+    fn first_run_installs_bundled_catalog_then_is_idempotent() {
+        let conn = test_conn("first-run-bundled");
+        // Recien migrada: la base esta en la version sembrada.
+        assert_eq!(reference_version(&conn).unwrap(), SEED_REFERENCE_VERSION);
+
+        // Primer arranque: instala el catalogo real empaquetado.
+        assert!(ensure_bundled_reference_installed(&conn).unwrap());
+        assert_eq!(reference_status(&conn).unwrap().version, BUNDLED_REFERENCE_VERSION);
+
+        // Segundo arranque: ya no esta en la version sembrada, no reinstala.
+        assert!(!ensure_bundled_reference_installed(&conn).unwrap());
+        assert_eq!(reference_status(&conn).unwrap().version, BUNDLED_REFERENCE_VERSION);
+    }
+
+    #[test]
+    fn ensure_bundled_does_not_overwrite_a_custom_import() {
+        let conn = test_conn("first-run-custom");
+        // El medico importo su propia base antes del primer "ensure".
+        let rows = vec![MedicationRow {
+            name: "metoprolol".into(),
+            ingredient: "metoprolol".into(),
+            display_name: "Metoprolol".into(),
+            drug_class: Some("Betabloqueador".into()),
+        }];
+        import_reference(&conn, &rows, &[], "mi-base-1").unwrap();
+        // No debe pisar la version del medico con el catalogo empaquetado.
+        assert!(!ensure_bundled_reference_installed(&conn).unwrap());
+        assert_eq!(reference_status(&conn).unwrap().version, "mi-base-1");
+    }
+
+    #[test]
+    fn bundled_reference_maps_brand_names_to_canonical_ingredients() {
+        let conn = test_conn("bundled-brand-alias");
+        install_bundled_reference(&conn).unwrap();
+
+        let report = check_prescription(&conn, "enc-1", &meds(&["Tylenol", "Warfarina"]), None).unwrap();
+        let tylenol = report.normalized.iter().find(|drug| drug.input == "Tylenol").unwrap();
+        assert_eq!(tylenol.ingredient.as_deref(), Some("acetaminophen"));
+        assert_eq!(tylenol.display_name.as_deref(), Some("Paracetamol"));
+        assert_eq!(report.interactions.len(), 1);
+        assert_eq!(report.interactions[0].source, "DDInter 2.0");
     }
 }

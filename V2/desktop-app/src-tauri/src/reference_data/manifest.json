@@ -1,0 +1,14 @@
+{
+  "version": "midoc-real-2026-06-14",
+  "sources": {
+    "rxnorm": "https://rxnav.nlm.nih.gov/REST/rxcui.json",
+    "ddinter": "https://ddinter.scbdd.com/static/media/download",
+    "openfda": "https://api.fda.gov/drug/label.json"
+  },
+  "counts": {
+    "medicationRows": 173,
+    "interactionRows": 1060,
+    "labelRows": 64,
+    "rxnormValidatedIngredients": 65
+  }
+}

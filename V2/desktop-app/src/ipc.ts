@@ -19,9 +19,21 @@ function slotDate(dayOffset: number, hh: number, mm: number): string {
 
 export function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (isTauri) {
-    return invoke<T>(command, args);
+    return invoke<T>(command, args).catch((error: unknown) => {
+      throw formatIpcError(command, error);
+    });
   }
   return mockCall<T>(command, args);
+}
+
+function formatIpcError(command: string, error: unknown): Error {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/command .* not found/i.test(raw) || raw.includes(`Command ${command} not found`)) {
+    return new Error(
+      `El proceso nativo de MiDoc no tiene registrado el comando "${command}". Reinicia la app de escritorio para cargar el backend actualizado.`
+    );
+  }
+  return error instanceof Error ? error : new Error(raw);
 }
 
 /* ---------- Mock de navegador (solo diseño/desarrollo) ---------- */
@@ -462,6 +474,16 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       if (String(args?.passphrase ?? "").length < 8) {
         throw "la frase de seguridad debe tener al menos 8 caracteres";
       }
+      // Primer arranque: el backend instala el catalogo real empaquetado si la
+      // base sigue sembrada. El mock espeja ese comportamiento.
+      if (mockState.medicationRef.version === "seed-v1") {
+        mockState.medicationRef = {
+          version: "midoc-real-2026-06-14",
+          medications: 173,
+          interactions: 1060,
+          labels: 64
+        };
+      }
       return {
         schema_version: 3,
         db_path: "C:\\…\\midoc.db (demo)",
@@ -879,17 +901,24 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     case "check_medication_safety": {
       // Espeja el motor del backend con un subconjunto del dataset sembrado.
       const refs: Record<string, { ingredient: string; display: string; cls: string }> = {
-        ibuprofeno: { ingredient: "ibuprofeno", display: "Ibuprofeno", cls: "AINE" },
-        naproxeno: { ingredient: "naproxeno", display: "Naproxeno", cls: "AINE" },
-        warfarina: { ingredient: "warfarina", display: "Warfarina", cls: "Anticoagulante" },
+        ibuprofeno: { ingredient: "ibuprofen", display: "Ibuprofeno", cls: "AINE" },
+        advil: { ingredient: "ibuprofen", display: "Ibuprofeno", cls: "AINE" },
+        motrin: { ingredient: "ibuprofen", display: "Ibuprofeno", cls: "AINE" },
+        naproxeno: { ingredient: "naproxen", display: "Naproxeno", cls: "AINE" },
+        aleve: { ingredient: "naproxen", display: "Naproxeno", cls: "AINE" },
+        warfarina: { ingredient: "warfarin", display: "Warfarina", cls: "Anticoagulante" },
+        coumadin: { ingredient: "warfarin", display: "Warfarina", cls: "Anticoagulante" },
         sildenafil: { ingredient: "sildenafil", display: "Sildenafil", cls: "Inhibidor PDE5" },
         nitroglicerina: { ingredient: "nitroglicerina", display: "Nitroglicerina", cls: "Nitrato" },
         amoxicilina: { ingredient: "amoxicilina", display: "Amoxicilina", cls: "Penicilina" },
-        paracetamol: { ingredient: "paracetamol", display: "Paracetamol", cls: "Analgesico" }
+        paracetamol: { ingredient: "acetaminophen", display: "Paracetamol", cls: "Analgesico" },
+        acetaminofen: { ingredient: "acetaminophen", display: "Paracetamol", cls: "Analgesico" },
+        tylenol: { ingredient: "acetaminophen", display: "Paracetamol", cls: "Analgesico" },
+        tempra: { ingredient: "acetaminophen", display: "Paracetamol", cls: "Analgesico" }
       };
       const interactions: Record<string, { severity: string; description: string }> = {
-        "ibuprofeno|warfarina": { severity: "MAJOR", description: "Los AINE aumentan el riesgo de sangrado con warfarina." },
-        "naproxeno|warfarina": { severity: "MAJOR", description: "Los AINE aumentan el riesgo de sangrado con warfarina." },
+        "ibuprofen|warfarin": { severity: "MAJOR", description: "Los AINE aumentan el riesgo de sangrado con warfarina." },
+        "naproxen|warfarin": { severity: "MAJOR", description: "Los AINE aumentan el riesgo de sangrado con warfarina." },
         "nitroglicerina|sildenafil": { severity: "CONTRAINDICATED", description: "Hipotension grave por combinar nitrato con inhibidor de PDE5." }
       };
       const input = (args?.medications as string[]) ?? [];
@@ -927,10 +956,10 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         const rank = (s: string) => ({ CONTRAINDICATED: 4, MAJOR: 3, MODERATE: 2, MINOR: 1 }[s] ?? 0);
         return rank(String(y.severity)) - rank(String(x.severity));
       });
-      // Respaldo openFDA simulado: paracetamol + warfarina sin interaccion estructurada.
+      // Respaldo openFDA simulado: acetaminophen + warfarin sin interaccion estructurada.
       const ingredients = recognized.map((r) => r.ingredient);
       const labelNotes: Array<Record<string, unknown>> = [];
-      if (ingredients.includes("paracetamol") && ingredients.includes("warfarina") && mockState.medicationRef.labels > 0) {
+      if (ingredients.includes("acetaminophen") && ingredients.includes("warfarin") && mockState.medicationRef.labels > 0) {
         labelNotes.push({
           drugA: "Paracetamol",
           drugB: "Warfarina",
@@ -990,11 +1019,20 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       mockState.medicationRef = { version, medications, interactions, labels };
       return { medications, interactions, labels, version } as T;
     }
+    case "update_medication_reference_from_midoc": {
+      const version = "midoc-real-2026-06-14";
+      const medications = 173;
+      const interactions = 1060;
+      const labels = 64;
+      mockState.medicationRef = { version, medications, interactions, labels };
+      return { medications, interactions, labels, version } as T;
+    }
     case "extract_prescription_medications": {
-      const known = ["ibuprofeno", "naproxeno", "warfarina", "sildenafil", "nitroglicerina", "amoxicilina", "paracetamol"];
+      const known = ["ibuprofeno", "advil", "naproxeno", "warfarina", "coumadin", "sildenafil", "viagra", "nitroglicerina", "amoxicilina", "amoxil", "paracetamol", "acetaminofen", "tylenol", "tempra"];
       const display: Record<string, string> = {
-        ibuprofeno: "Ibuprofeno", naproxeno: "Naproxeno", warfarina: "Warfarina", sildenafil: "Sildenafil",
-        nitroglicerina: "Nitroglicerina", amoxicilina: "Amoxicilina", paracetamol: "Paracetamol"
+        ibuprofeno: "Ibuprofeno", advil: "Ibuprofeno", naproxeno: "Naproxeno", warfarina: "Warfarina", coumadin: "Warfarina",
+        sildenafil: "Sildenafil", viagra: "Sildenafil", nitroglicerina: "Nitroglicerina", amoxicilina: "Amoxicilina", amoxil: "Amoxicilina",
+        paracetamol: "Paracetamol", acetaminofen: "Paracetamol", tylenol: "Paracetamol", tempra: "Paracetamol"
       };
       const text = String(args?.prescription ?? "").toLowerCase();
       const found: Array<{ pos: number; name: string }> = [];

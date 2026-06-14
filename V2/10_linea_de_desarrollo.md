@@ -626,7 +626,7 @@ Clasificacion de datos: la base de farmacos/interacciones es REFERENCIA publica 
 
 > Nota: la API de interacciones de la NLM/RxNav fue descontinuada en enero 2024; por eso la fuente de interacciones es DDInter (descargable) + openFDA. RxNorm/RxClass siguen vigentes (doc 11).
 
-Estado: ✅ DONE — rebanadas 1 (motor determinista + dataset sembrado), 2 (importacion de datos reales + extraccion desde la receta), 3 (pipeline de actualizacion desde fuentes oficiales con vetting) y 4 (respaldo de openFDA) entregadas (2026-06-13/14). Construido sobre el paso 4.
+Estado: ✅ DONE — rebanadas 1 (motor determinista + dataset sembrado), 2 (importacion de datos reales + extraccion desde la receta), 3 (pipeline de actualizacion desde fuentes oficiales con vetting), 4 (respaldo de openFDA) y 5 (catalogo curado empaquetado + experiencia sin URLs para el medico) entregadas (2026-06-13/14). Construido sobre el paso 4.
 
 Entregado (rebanada 1 — motor determinista de seguridad con dataset sembrado, 2026-06-13):
 
@@ -668,9 +668,17 @@ Entregado (rebanada 4 — respaldo de openFDA, 2026-06-14):
 
 Verificacion (rebanada 4): 103 pruebas de Rust en verde (+3: parseo de openFDA que omite etiquetas vacias, nota de etiqueta solo cuando no hay par estructurado y la etiqueta menciona al otro, interaccion estructurada que suprime la nota de etiqueta), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok y prueba en navegador (importar etiqueta de paracetamol → Paracetamol+Warfarina muestra "Posible interaccion segun etiqueta" con fuente openFDA).
 
-Con esto la compuerta de push del paso 14 queda cubierta: verificacion determinista con severidad y fuente citada, importacion y actualizacion versionada de datos reales con vetting, extraccion desde la receta y respaldo de openFDA — todo local, sin enviar datos del paciente a la nube.
+Entregado (rebanada 5 — catalogo MiDoc empaquetado y actualizacion sin URLs, 2026-06-14):
 
-Pendiente futuro (no requerido por la compuerta, rebanada 5): mapeo de nombres comerciales a ingrediente via RxNorm (hoy soportado parcialmente importando alias como filas adicionales de `medication_reference`); dataset vetado empaquetado en el instalador y actualizacion programada.
+- **Catalogo real inicial empaquetado.** La app incluye un dataset MiDoc de REFERENCIA publica (`reference_data/medications.csv`, `ddinter.csv`, `openfda.json`, `manifest.json`) generado desde fuentes externas: DDInter descargable, openFDA y una lista curada de medicamentos/alias frecuentes. Version `midoc-real-2026-06-14`: 173 filas de medicamentos/alias, 1060 interacciones DDInter filtradas y 64 etiquetas openFDA. Si no hay endpoints fijos configurados en el build, el boton instala/actualiza desde ese catalogo local sin depender de red.
+- **Mapeo de nombres comerciales.** El catalogo incluye alias comerciales como filas de `medication_reference` que apuntan al ingrediente canonico usado por DDInter/openFDA (ej. Tylenol/Tempra/acetaminofen → acetaminophen, Coumadin/Jantoven/warfarina → warfarin, Advil/Motrin/ibuprofeno → ibuprofen). La verificacion sigue usando ingredientes canonicos.
+- **Actualizacion de producto sin URLs.** Nuevo comando `update_medication_reference_from_midoc`: usa endpoints fijos de build (`MIDOC_MEDICATIONS_URL`, `MIDOC_DDINTER_URL`, `MIDOC_OPENFDA_URL`) cuando existan, o el catalogo empaquetado como fallback offline. El medico ya no escribe URLs.
+- **Instalacion automatica en el primer arranque.** Al desbloquear la base, si sigue en la version sembrada (`seed-v1`), se instala el catalogo real empaquetado (`ensure_bundled_reference_installed`). Es idempotente y no pisa una base ya importada/actualizada por el medico; un fallo no bloquea el acceso al expediente (la base sembrada sigue siendo usable). Asi el medico arranca con el catalogo real sin pulsar nada.
+- **UI.** La pestana Medicamentos muestra un boton unico "Buscar actualizaciones"; la importacion manual queda como bloque tecnico colapsado.
+
+Verificacion (rebanada 5): 3 pruebas Python del generador en verde, 107 pruebas de Rust en verde (catalogo empaquetado instalable sin red, alias comercial Tylenol → acetaminophen con interaccion DDInter real contra warfarin, instalacion automatica en el primer arranque e idempotencia que respeta una base importada por el medico), 1 E2E ignorada porque requiere portal vivo, `cargo clippy --lib` sin warnings nuevos (persisten los 2 preexistentes de `clinical.rs` y `WalkInOutcome`), `tsc + vite build` ok, y prueba en navegador (al desbloquear, la base ya es `midoc-real-2026-06-14`; Medicamentos → Buscar actualizaciones sin inputs de URL y sin errores de consola).
+
+Con esto la compuerta de push del paso 14 queda cubierta: verificacion determinista con severidad y fuente citada, importacion y actualizacion versionada de datos reales con vetting, extraccion desde la receta, respaldo de openFDA, alias de nombres comerciales y catalogo curado empaquetado — todo local, sin enviar datos del paciente a la nube.
 
 ## Paso 15 - Transcripcion local real (Whisper) y descarga de modelo
 
