@@ -856,10 +856,18 @@ a.service-card:hover {
   font-size: 0.85rem;
 }
 
-.day:not(.empty):hover:not(.disabled) {
+.day:not(.empty):hover:not(.disabled):not(.unavailable) {
   border-color: var(--primary);
   background: var(--primary-soft);
   color: var(--primary);
+}
+
+/* Dia futuro sin cupo real del medico: visible pero no seleccionable. */
+.day.unavailable {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--muted);
+  text-decoration: line-through;
 }
 
 .day.selected {
@@ -879,6 +887,18 @@ a.service-card:hover {
   opacity: 0.4;
   cursor: not-allowed;
   color: var(--muted);
+}
+
+.calendar-legend {
+  margin: 12px 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.calendar-widget.is-loading .calendar-days {
+  opacity: 0.6;
+  transition: opacity var(--speed) var(--ease);
 }
 
 .status-copy {

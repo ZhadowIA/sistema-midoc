@@ -10,6 +10,7 @@ import {
   confirmPublicAppointment,
   createAppointmentHold,
   getPublicAppointmentByToken,
+  listAvailableDays,
   listPublicAvailability,
   reschedulePublicAppointment,
   submitPrecheckin
@@ -97,6 +98,68 @@ afterAll(async () => {
 });
 
 describe("public booking flow", () => {
+  it("lists only the days with real availability (calendar fidelity, paso 19)", async () => {
+    const email = uniqueEmail("doctor-days");
+    const slug = uniqueSlug("dra-days");
+    const ruleDate = nextWeekdayDate(3);
+    const dateFrom = ruleDate.toISOString().slice(0, 10);
+    const nextDay = new Date(ruleDate);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    const nextDayString = nextDay.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Paula",
+        lastName: "Reyes",
+        professionalName: "Dra. Paula Reyes",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        professionalName: "Dra. Paula Reyes",
+        specialty: ClinicalProfile.GENERAL_MEDICINE,
+        isPublic: true
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta general",
+        priceCents: 90000,
+        durationMinutes: 30
+      });
+
+      // Una sola regla semanal, en el dia de la semana de ruleDate.
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: ruleDate.getUTCDay(),
+        startTime: "09:00",
+        endTime: "11:00",
+        slotInterval: 30
+      });
+
+      const result = await listAvailableDays({ slug, serviceId: service.id, dateFrom, days: 8 });
+
+      // El dia con regla aparece; el dia siguiente (sin regla) no.
+      expect(result.days).toContain(dateFrom);
+      expect(result.days).not.toContain(nextDayString);
+      // Todos los dias devueltos tienen cupo real (>= 1 slot via listPublicAvailability).
+      for (const day of result.days) {
+        const availability = await listPublicAvailability({
+          slug,
+          serviceId: service.id,
+          dateFrom: day,
+          days: 1
+        });
+        expect(availability.slots.length).toBeGreaterThan(0);
+      }
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
   it("lists slots, creates a hold, books, confirms, and stores precheckin", async () => {
     const email = uniqueEmail("doctor-booking");
     const slug = uniqueSlug("dra-booking");

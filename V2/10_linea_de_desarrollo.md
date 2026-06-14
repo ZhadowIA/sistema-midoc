@@ -827,7 +827,16 @@ Rebanadas:
 - **Rebanada 9 (portal) — Recordatorio 24 h con cancelacion.** Job que envia SMS/correo 24 h antes de la cita (sobre el paso 7), con enlace corto de cancelacion (expiracion y un solo uso) que reusa el flujo de cancelacion existente.
 - **Rebanada 10 (app del medico) — Sync automatica al abrir + aviso de cambios.** Sincronizar la agenda en automatico al abrir/desbloquear la app; mostrar un badge (circulito rojo) en la esquina del boton "Sincronizar" cuando haya cambios pendientes por bajar/subir, y limpiarlo tras sincronizar.
 
-Estado: 🔜 PLANEADO. Construido sobre los pasos 2, 3, 6, 7 y 11.
+Estado: 🚧 EN PROGRESO. Construido sobre los pasos 2, 3, 6, 7 y 11.
+
+Entregado (rebanada 2 — calendario fiel a la disponibilidad, 2026-06-14):
+
+- **Dias con cupo real (`public-booking-service.ts`).** Nueva `listAvailableDays(slug, serviceId, dateFrom, days)` que reusa el computo real de slots (reglas semanales, excepciones `DATE_OVERRIDE`, bloqueos, citas, holds y limites de anticipacion) y devuelve las **fechas locales del medico** (YYYY-MM-DD) con al menos un horario. `listPublicAvailability` ahora expone `timeZone` y el tope de ventana sube a 31 dias para cubrir meses completos.
+- **Endpoint (`/api/public/doctors/[slug]/available-days`).** Espeja la ruta de disponibilidad; valida `serviceId` y `dateFrom`.
+- **Calendario fiel (`calendar.tsx`, `booking-client.tsx`).** El selector recibe `availableDays` y deshabilita los dias sin cupo (clase `unavailable`, tachado y no clickeable), ademas de los pasados; ya no se muestran como disponibles vacios. El cliente consulta los dias del **mes visible** al cambiar de mes o servicio, con estado de carga y leyenda. (El boton "Buscar horarios" y la carga automatica de horarios quedan para la rebanada 3.)
+- **Residencia.** Fechas/disponibilidad son OPERATIVO/publico; sin PHI.
+
+Verificacion (rebanada 2): 73 pruebas del portal en verde (+1: `listAvailableDays` incluye el dia con regla y excluye el dia siguiente sin regla; cada dia devuelto tiene >= 1 slot), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (junio: solo lun-vie activos, fines de semana y dias pasados deshabilitados; al navegar a julio se recalculan los dias).
 
 > Nota de residencia (rebanada 8): la preconsulta guiada por IA es el unico punto donde contenido clinico transita la nube para generar la siguiente pregunta. Debe tratarse como transitorio: consentimiento del paciente, seudonimizacion, prohibido persistir respuestas o prompts en logs/telemetria, y el resultado final sellado en el buzon cifrado (sealed box con la llave publica del medico) para que solo la app del medico lo lea. El adaptador real de IA se cablea en staging con BAA (paso 16); hasta entonces se usa un proveedor determinista para construir y probar el contrato.
 

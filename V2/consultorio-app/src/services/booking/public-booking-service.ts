@@ -231,7 +231,7 @@ export async function listPublicAvailability(input: {
     throw new PublicBookingServiceError("Invalid start date.");
   }
 
-  const days = Math.min(Math.max(input.days ?? 7, 1), 30);
+  const days = Math.min(Math.max(input.days ?? 7, 1), 31);
   // La ventana [dateFrom, until) se ancla a medianoche local del medico, no UTC.
   const dateFrom = localDateTimeToUtc(fromLocalDate, "00:00", timeZone);
   const until = localDateTimeToUtc(addDaysToLocalDate(fromLocalDate, days), "00:00", timeZone);
@@ -326,7 +326,8 @@ export async function listPublicAvailability(input: {
     doctor: {
       id: profile.userId,
       slug: profile.publicSlug,
-      professionalName: profile.professionalName
+      professionalName: profile.professionalName,
+      timeZone
     },
     service: {
       id: service.id,
@@ -334,6 +335,40 @@ export async function listPublicAvailability(input: {
       durationMinutes: service.durationMinutes
     },
     slots
+  };
+}
+
+/**
+ * Fechas locales del medico (YYYY-MM-DD) con al menos un horario disponible en
+ * la ventana [dateFrom, dateFrom+days). Reusa el computo real de slots (reglas,
+ * excepciones, citas, holds y limites de anticipacion) y agrupa por la fecha
+ * local del medico, no por UTC. Alimenta el calendario publico para deshabilitar
+ * los dias sin cupo en vez de mostrarlos como disponibles vacios.
+ */
+export async function listAvailableDays(input: {
+  slug: string;
+  serviceId: string;
+  dateFrom: string;
+  days?: number;
+}) {
+  const availability = await listPublicAvailability({
+    slug: input.slug,
+    serviceId: input.serviceId,
+    dateFrom: input.dateFrom,
+    days: input.days ?? 31
+  });
+
+  const timeZone = availability.doctor.timeZone;
+  const availableDates = new Set<string>();
+
+  for (const slot of availability.slots) {
+    availableDates.add(formatLocalDate(getLocalDate(new Date(slot.slotStart), timeZone)));
+  }
+
+  return {
+    doctor: availability.doctor,
+    service: availability.service,
+    days: [...availableDates].sort()
   };
 }
 

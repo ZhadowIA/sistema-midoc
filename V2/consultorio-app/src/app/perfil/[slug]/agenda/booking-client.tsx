@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Calendar } from "./calendar";
 import { IconCalendar } from "../icons";
 
@@ -42,6 +42,8 @@ function currency(priceCents: number, code: string) {
 export function BookingClient({ profile, initialDate }: BookingClientProps) {
   const [serviceId, setServiceId] = useState(profile.services[0]?.id ?? "");
   const [dateFrom, setDateFrom] = useState(initialDate);
+  const [availableDays, setAvailableDays] = useState<string[]>([]);
+  const [loadingDays, setLoadingDays] = useState(true);
   const [slots, setSlots] = useState<AvailabilityResponse["slots"]>([]);
   const [selectedSlot, setSelectedSlot] = useState<string>("");
   const [holdToken, setHoldToken] = useState<string>("");
@@ -63,6 +65,48 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
     phone: "",
     email: ""
   });
+
+  // Mes visible del calendario (YYYY-MM): al cambiar de servicio o de mes se
+  // consultan los dias con cupo real para deshabilitar el resto.
+  const visibleMonth = dateFrom.slice(0, 7);
+  const slug = profile.doctor.publicSlug;
+
+  useEffect(() => {
+    if (!serviceId || !visibleMonth) {
+      return;
+    }
+
+    let cancelled = false;
+    // Efecto de carga de datos: marcar "cargando" al cambiar mes/servicio dispara
+    // el fetch, no un re-render en cascada.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoadingDays(true);
+
+    fetch(
+      `/api/public/doctors/${slug}/available-days?serviceId=${serviceId}&dateFrom=${visibleMonth}-01&days=31`
+    )
+      .then(async (response) => ({ ok: response.ok, data: await response.json() }))
+      .then(({ ok, data }) => {
+        if (cancelled) {
+          return;
+        }
+        setAvailableDays(ok && Array.isArray(data.days) ? data.days : []);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAvailableDays([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingDays(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [serviceId, visibleMonth, slug]);
 
   async function loadSlots() {
     if (!serviceId || !dateFrom) {
@@ -206,10 +250,15 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
 
           <div className="field calendar-field">
             <span>Fecha</span>
-            <Calendar selectedDate={dateFrom} onDateSelect={(date) => {
-              setDateFrom(date);
-              setSearchError("");
-            }} />
+            <Calendar
+              selectedDate={dateFrom}
+              availableDays={availableDays}
+              loading={loadingDays}
+              onDateSelect={(date) => {
+                setDateFrom(date);
+                setSearchError("");
+              }}
+            />
           </div>
 
           <button className="action-button" onClick={loadSlots} disabled={busy}>
