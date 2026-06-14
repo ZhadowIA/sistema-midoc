@@ -412,16 +412,22 @@ async function findOrCreatePatient(input: {
     birthDate?: string;
   };
 }) {
+  const firstName = input.patient.firstName.trim();
+  const lastName = input.patient.lastName.trim();
   const email = input.patient.email?.trim().toLowerCase();
   const phone = input.patient.phone?.trim();
 
+  // Solo se reutiliza un expediente cuando coincide el NOMBRE. El telefono y el
+  // correo por si solos no identifican al paciente: pueden ser de un tutor que
+  // agenda para un hijo o un adulto mayor (mismo criterio anti-duplicados de la
+  // app del medico: el nombre pesa mas que el contacto). Asi, un nombre distinto
+  // con el contacto del tutor ya no devuelve al paciente del tutor.
   const existingPatient = await prisma.patient.findFirst({
     where: {
       ownerDoctorId: input.doctorId,
-      OR: [
-        ...(email ? [{ email }] : []),
-        ...(phone ? [{ phone, firstName: input.patient.firstName.trim(), lastName: input.patient.lastName.trim() }] : [])
-      ]
+      firstName: { equals: firstName, mode: "insensitive" },
+      lastName: { equals: lastName, mode: "insensitive" },
+      OR: [...(email ? [{ email }] : []), ...(phone ? [{ phone }] : [])]
     }
   });
 
@@ -437,13 +443,29 @@ async function findOrCreatePatient(input: {
     });
   }
 
+  // Paciente nuevo. El correo es unico por medico (`@@unique([ownerDoctorId,
+  // email])`): si ya pertenece a OTRO paciente (un tutor que agenda para varias
+  // personas), no se asigna a este paciente — el correo es del tutor (contacto),
+  // no del paciente. El telefono no es unico y puede compartirse. Las
+  // notificaciones de esta cita usan de todos modos el contacto capturado.
+  let patientEmail = email ?? null;
+  if (email) {
+    const emailOwner = await prisma.patient.findFirst({
+      where: { ownerDoctorId: input.doctorId, email },
+      select: { id: true }
+    });
+    if (emailOwner) {
+      patientEmail = null;
+    }
+  }
+
   return prisma.patient.create({
     data: {
       ownerDoctorId: input.doctorId,
-      firstName: input.patient.firstName.trim(),
-      lastName: input.patient.lastName.trim(),
+      firstName,
+      lastName,
       phone,
-      email,
+      email: patientEmail,
       birthDate: input.patient.birthDate ? new Date(input.patient.birthDate) : null,
       status: PatientStatus.ACTIVE
     }
@@ -614,9 +636,14 @@ export async function bookPublicAppointment(input: {
   const reminderShouldQueue = reminderAt > new Date();
   const appointmentLabel = appointment.scheduledStart.toISOString();
 
+  // Quien agenda (puede ser un tutor) recibe las notificaciones, aunque su
+  // correo no se haya guardado en el expediente del paciente por ser del tutor.
+  const notifyPhone = input.patient.phone?.trim() || patient.phone || null;
+  const notifyEmail = input.patient.email?.trim().toLowerCase() || patient.email || null;
+
   for (const contact of [
-    patient.phone ? { channel: "SMS" as const, destination: patient.phone } : null,
-    patient.email ? { channel: "EMAIL" as const, destination: patient.email } : null
+    notifyPhone ? { channel: "SMS" as const, destination: notifyPhone } : null,
+    notifyEmail ? { channel: "EMAIL" as const, destination: notifyEmail } : null
   ]) {
     if (!contact) {
       continue;
@@ -703,8 +730,10 @@ export async function bookPublicAppointment(input: {
       id: patient.id,
       firstName: patient.firstName,
       lastName: patient.lastName,
-      phone: patient.phone ?? null,
-      email: patient.email ?? null
+      // Contacto de la cita (el del tutor si agendo para otra persona), para que
+      // la app del medico tenga como ubicar/avisar, sin alterar la identidad.
+      phone: notifyPhone,
+      email: notifyEmail
     }
   });
 

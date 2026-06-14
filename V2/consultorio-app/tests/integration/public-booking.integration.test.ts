@@ -315,6 +315,90 @@ describe("public booking flow", () => {
     }
   });
 
+  it("books a different person with a guardian's contact as a new patient, not the guardian", async () => {
+    const email = uniqueEmail("doctor-guardian");
+    const slug = uniqueSlug("dra-guardian");
+    const guardianEmail = uniqueEmail("tutor-shared");
+    const guardianPhone = "6147770000";
+    const slotDate = nextWeekdayDate(4);
+    const dateFrom = slotDate.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Olivia",
+        lastName: "Reyes",
+        phone: "6140000401",
+        professionalName: "Dra. Olivia Reyes",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await createDoctorSubscription({ doctorUserId: account.user.id, planCode: "ESSENTIAL" });
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        professionalName: "Dra. Olivia Reyes",
+        specialty: ClinicalProfile.GENERAL_MEDICINE,
+        isPublic: true
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta general",
+        priceCents: 60000,
+        durationMinutes: 30
+      });
+
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: slotDate.getUTCDay(),
+        startTime: "09:00",
+        endTime: "10:00",
+        slotInterval: 30
+      });
+
+      const availability = await listPublicAvailability({ slug, serviceId: service.id, dateFrom, days: 1 });
+
+      // El tutor agenda primero para si mismo con su contacto.
+      const guardianHold = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: availability.slots[0]!.slotStart
+      });
+      const guardianBooking = await bookPublicAppointment({
+        holdToken: guardianHold.token,
+        patient: { firstName: "Marta", lastName: "Tutora", phone: guardianPhone, email: guardianEmail },
+        legal: { acceptedTerms: true, acceptedPrivacy: true }
+      });
+
+      // Ahora agenda para su hijo: NOMBRE distinto, MISMO telefono y correo.
+      const childHold = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: availability.slots[1]!.slotStart
+      });
+      const childBooking = await bookPublicAppointment({
+        holdToken: childHold.token,
+        patient: { firstName: "Diego", lastName: "Tutora", phone: guardianPhone, email: guardianEmail },
+        legal: { acceptedTerms: true, acceptedPrivacy: true }
+      });
+
+      // No se reutiliza el expediente del tutor: es un paciente nuevo.
+      expect(childBooking.patient.id).not.toBe(guardianBooking.patient.id);
+      expect(childBooking.patient.firstName).toBe("Diego");
+      // El correo del tutor (unico por medico) NO se asigna al hijo.
+      expect(childBooking.patient.email).toBeNull();
+
+      // La confirmacion muestra al hijo, no al tutor.
+      const details = await getPublicAppointmentByToken(childBooking.confirmationToken);
+      expect(details?.patient.firstName).toBe("Diego");
+      expect(details?.patient.lastName).toBe("Tutora");
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
   it("only lets one of two concurrent holds win the same slot", async () => {
     const email = uniqueEmail("doctor-race");
     const slug = uniqueSlug("dra-race");
