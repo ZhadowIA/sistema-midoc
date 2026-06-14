@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { env } from "../../../lib/env";
 import { getPublicDoctorProfile } from "../../../services/doctor/doctor-profile-service";
 import { BookingClient } from "./agenda/booking-client";
 import { ReviewsSection } from "./reviews-section";
@@ -67,6 +68,9 @@ export default async function PublicDoctorProfilePage({
 
   const specialty = profile.doctor.specialty === "ODONTOLOGY" ? "Odontología" : "Medicina General";
   const phoneDigits = profile.doctor.phone?.replace(/\D/g, "") ?? "";
+
+  const mapsApiKey = env.GOOGLE_MAPS_API_KEY;
+  const mapsSearchUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
 
   return (
     <section className="public-shell profile-v2">
@@ -277,14 +281,26 @@ export default async function PublicDoctorProfilePage({
               <IconPin className="dp-inline-icon" />
               {location}
             </p>
-            <iframe
-              className="dp-map"
-              title={`Mapa de ${location}`}
-              src={`https://www.google.com/maps/embed/v1/place?key=AIzaSyDzPvzIi81ZYB2-2KPuYRXLhzG6dHWzc9E&q=${encodeURIComponent(location)}`}
-              allowFullScreen={true}
-              loading="lazy"
-              referrerPolicy="no-referrer-when-downgrade"
-            />
+            {mapsApiKey ? (
+              <iframe
+                className="dp-map"
+                title={`Mapa de ${location}`}
+                src={`https://www.google.com/maps/embed/v1/place?key=${mapsApiKey}&q=${encodeURIComponent(location)}`}
+                allowFullScreen={true}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            ) : (
+              <a
+                className="dp-map-fallback"
+                href={mapsSearchUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <IconPin className="dp-btn-icon" />
+                Ver ubicación en Google Maps
+              </a>
+            )}
           </div>
         </section>
       )}
