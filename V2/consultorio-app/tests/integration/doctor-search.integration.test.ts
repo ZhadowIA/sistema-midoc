@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ClinicalProfile, PrismaClient } from "@prisma/client";
 
 import { createDoctorAccount, createDoctorSubscription } from "../../src/services/auth/auth-service";
+import { GET as searchDoctorsRoute } from "../../src/app/api/public/doctors/route";
 import { createDoctorService, updateDoctorProfile } from "../../src/services/doctor/doctor-profile-service";
 import { searchPublicDoctors } from "../../src/services/doctor/doctor-search-service";
 
@@ -175,6 +176,46 @@ describe("public doctor search", () => {
 
     await expect(searchPublicDoctors({ q: "a".repeat(81) })).rejects.toMatchObject({
       status: 400
+    });
+  });
+
+  it("serves search results from the public route", async () => {
+    const email = uniqueEmail("doctor-search-route");
+    const slug = uniqueSlug("dra-ruta-publica");
+
+    try {
+      await createPublicDoctor({
+        email,
+        slug,
+        professionalName: "Dra. Ruta Publica",
+        specialty: ClinicalProfile.GENERAL_MEDICINE,
+        city: "Chihuahua",
+        state: "Chihuahua",
+        serviceName: "Consulta de ruta"
+      });
+
+      const response = await searchDoctorsRoute(
+        new Request("http://localhost/api/public/doctors?q=Ruta")
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0].publicSlug).toBe(slug);
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("returns 400 from the public route for invalid search params", async () => {
+    const response = await searchDoctorsRoute(
+      new Request(`http://localhost/api/public/doctors?q=${"a".repeat(81)}`)
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({
+      error: "Parametros de busqueda invalidos."
     });
   });
 });
