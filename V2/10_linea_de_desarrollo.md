@@ -626,7 +626,7 @@ Clasificacion de datos: la base de farmacos/interacciones es REFERENCIA publica 
 
 > Nota: la API de interacciones de la NLM/RxNav fue descontinuada en enero 2024; por eso la fuente de interacciones es DDInter (descargable) + openFDA. RxNorm/RxClass siguen vigentes (doc 11).
 
-Estado: 🚧 EN PROGRESO — rebanada 1 (motor determinista + dataset sembrado) entregada (2026-06-13). Construido sobre el paso 4.
+Estado: 🚧 EN PROGRESO — rebanadas 1 (motor determinista + dataset sembrado) y 2 (importacion de datos reales + extraccion desde la receta) entregadas (2026-06-13). Construido sobre el paso 4.
 
 Entregado (rebanada 1 — motor determinista de seguridad con dataset sembrado, 2026-06-13):
 
@@ -638,7 +638,17 @@ Entregado (rebanada 1 — motor determinista de seguridad con dataset sembrado, 
 
 Verificacion (rebanada 1): 91 pruebas de Rust en verde (+10: reconoce farmaco sembrado y marca desconocido, interaccion MAJOR con fuente e independiente del orden, contraindicada, alergia cruzada por clase, duplicidad por clase, combinacion segura sin alertas, lista vacia rechazada, auditoria sin contenido clinico, pares puros y match de alergia), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok y prueba en navegador (Ibuprofeno+Warfarina → interaccion Grave con fuente; Amoxicilina en paciente alergico a Penicilina → alerta de alergia por clase).
 
-Pendiente (rebanada 2+): importacion real de RxNorm/RxClass (normalizacion y clases), DDInter (interacciones con severidad) y openFDA (texto de respaldo), con base versionada/actualizable y aviso de version; extraccion de farmacos desde el texto de la receta.
+Entregado (rebanada 2 — importacion de datos reales + extraccion desde la receta, 2026-06-13):
+
+- **Parsers de formatos reales (`medication.rs`).** `parse_medication_csv` (columnas `name,ingredient,display_name,drug_class`, derivable de exportaciones de RxNorm/RxClass) y `parse_ddinter_csv` (columnas de DDInter `DDInterID_A,Drug_A,DDInterID_B,Drug_B,Level`, mapeando el nivel a severidad y guardando el par de ingredientes en orden canonico). Puros y testeables sin red.
+- **Importador transaccional con versionado (`import_reference`).** Reemplaza la base de referencia local dentro de una transaccion (no la deja a medio cargar), bumpea `medication_reference_version` y devuelve un resumen (medicamentos/interacciones/version). Una lista vacia deja esa tabla sin cambios. Tras importar, la verificacion usa de inmediato los datos nuevos.
+- **Extraccion desde la receta (`extract_medications`).** Reconoce los farmacos en el texto libre de la receta respetando limites de palabra (no confunde fragmentos) y sin duplicar, en el orden en que aparecen, para que el medico no tenga que reescribir la lista.
+- **Comandos y UI.** `medication_reference_status`, `import_medication_reference` y `extract_prescription_medications`. Nueva pestana "Medicamentos" para ver la version/cantidades e importar CSV (medicamentos + DDInter); boton "Tomar de la receta" en el panel de seguridad que prellena la lista desde el texto de la receta. Mock de navegador espeja todo.
+- **Residencia.** La base es REFERENCIA publica (no PHI) y vive cifrada en el equipo; la importacion no usa la red (el CSV lo aporta el medico/instalador). Nada clinico sale a la nube.
+
+Verificacion (rebanada 2): 97 pruebas de Rust en verde (+6: parseo de CSV de medicamentos con encabezado y clase opcional, parseo de DDInter con mapeo de severidad y orden canonico, importacion que reemplaza la base y bumpea la version —y deja de reconocer lo sembrado—, rechazo de version vacia, extraccion en orden y con limites de palabra/dedupe), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok y prueba en navegador (importar Metoprolol/Verapamilo + interaccion DDInter → base actualizada a `ddinter-2026-06 · 2 · 1`).
+
+Pendiente (rebanada 3): descarga HTTP en vivo de RxNorm/RxClass/DDInter y openFDA (texto de respaldo de interacciones), con verificacion del contrato real en staging; dataset vetado empaquetado en el instalador y boton de actualizacion; mapeo de nombres comerciales a ingrediente via RxNorm.
 
 ## Paso 15 - Transcripcion local real (Whisper) y descarga de modelo
 

@@ -47,6 +47,7 @@ const mockState = {
   aiRunSeq: 0,
   aiBudgetCents: 0,
   aiRuns: [] as Array<{ id: string; usage_type: string; cost_cents: number; status: string; reported: boolean }>,
+  medicationRef: { version: "seed-v1", medications: 27, interactions: 15 },
   benchmarks: [] as Array<Record<string, unknown>>,
   arcoRequests: [] as Array<Record<string, unknown>>,
   timelineSeq: 0,
@@ -935,6 +936,42 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         referenceVersion: "seed-v1",
         hasAlerts: interactionAlerts.length + allergyAlerts.length + duplicateTherapy.length > 0
       } as T;
+    }
+    case "medication_reference_status":
+      return { ...mockState.medicationRef } as T;
+    case "import_medication_reference": {
+      const medRows = String(args?.medicationsCsv ?? "")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !/^name\s*,/i.test(l));
+      const ddRows = String(args?.ddinterCsv ?? "")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !/drug_a/i.test(l));
+      const version = String(args?.version ?? "").trim();
+      if (medRows.length > 0) mockState.medicationRef.medications = medRows.length;
+      if (ddRows.length > 0) mockState.medicationRef.interactions = ddRows.length;
+      mockState.medicationRef.version = version;
+      return { medications: medRows.length, interactions: ddRows.length, version } as T;
+    }
+    case "extract_prescription_medications": {
+      const known = ["ibuprofeno", "naproxeno", "warfarina", "sildenafil", "nitroglicerina", "amoxicilina", "paracetamol"];
+      const display: Record<string, string> = {
+        ibuprofeno: "Ibuprofeno", naproxeno: "Naproxeno", warfarina: "Warfarina", sildenafil: "Sildenafil",
+        nitroglicerina: "Nitroglicerina", amoxicilina: "Amoxicilina", paracetamol: "Paracetamol"
+      };
+      const text = String(args?.prescription ?? "").toLowerCase();
+      const found: Array<{ pos: number; name: string }> = [];
+      const seen = new Set<string>();
+      for (const k of known) {
+        const m = new RegExp(`\\b${k}\\b`).exec(text);
+        if (m && !seen.has(display[k])) {
+          seen.add(display[k]);
+          found.push({ pos: m.index, name: display[k] });
+        }
+      }
+      found.sort((a, b) => a.pos - b.pos);
+      return found.map((f) => f.name) as T;
     }
     case "transcription_recommendation":
       // Equipo de demostracion: 16 GB sin GPU → modelo mediano por lotes.

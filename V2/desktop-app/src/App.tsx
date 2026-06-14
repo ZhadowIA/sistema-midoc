@@ -4,6 +4,7 @@ import { Atencion } from "./Atencion";
 import { Recepcion } from "./Recepcion";
 import { Benchmark } from "./Benchmark";
 import { TranscriptionSetup } from "./TranscriptionSetup";
+import { MedicationReference } from "./MedicationReference";
 import { Arco } from "./Arco";
 import { Directorio } from "./Directorio";
 import { Expediente } from "./Expediente";
@@ -219,7 +220,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [workStartMinutes, setWorkStartMinutes] = useState<number | null>(null);
   const [workEndMinutes, setWorkEndMinutes] = useState<number | null>(null);
   const [view, setView] = useState<
-    "agenda" | "patients" | "reception" | "benchmark" | "transcription" | "arco"
+    "agenda" | "patients" | "reception" | "benchmark" | "transcription" | "medications" | "arco"
   >("agenda");
 
   const refresh = useCallback(async () => {
@@ -432,6 +433,12 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 Transcripcion
               </button>
               <button
+                className={view === "medications" ? "tab tab-active" : "tab"}
+                onClick={() => setView("medications")}
+              >
+                Medicamentos
+              </button>
+              <button
                 className={view === "arco" ? "tab tab-active" : "tab"}
                 onClick={() => setView("arco")}
               >
@@ -449,6 +456,8 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
               <Benchmark />
             ) : view === "transcription" ? (
               <TranscriptionSetup />
+            ) : view === "medications" ? (
+              <MedicationReference />
             ) : view === "arco" ? (
               <Arco />
             ) : (

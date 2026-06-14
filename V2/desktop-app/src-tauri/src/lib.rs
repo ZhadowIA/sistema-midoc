@@ -1034,6 +1034,46 @@ fn check_medication_safety(
     .map_err(|e| e.to_string())
 }
 
+/// Estado de la base de referencia de medicamentos (version y cantidades).
+#[tauri::command]
+fn medication_reference_status(
+    state: tauri::State<'_, AppDb>,
+) -> Result<medication::ReferenceStatus, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    medication::reference_status(conn).map_err(|e| e.to_string())
+}
+
+/// Importa la base de referencia de medicamentos desde datos reales (CSV de
+/// medicamentos/clases derivado de RxNorm/RxClass y CSV de interacciones de
+/// DDInter). Reemplaza la base local y actualiza su version. Datos publicos de
+/// referencia (no PHI); nada sale del equipo.
+#[tauri::command]
+fn import_medication_reference(
+    state: tauri::State<'_, AppDb>,
+    medications_csv: String,
+    ddinter_csv: String,
+    version: String,
+) -> Result<medication::ImportSummary, String> {
+    let medications = medication::parse_medication_csv(&medications_csv).map_err(|e| e.to_string())?;
+    let interactions = medication::parse_ddinter_csv(&ddinter_csv).map_err(|e| e.to_string())?;
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    medication::import_reference(conn, &medications, &interactions, &version).map_err(|e| e.to_string())
+}
+
+/// Extrae los medicamentos reconocidos del texto libre de la receta, para
+/// prellenar la verificacion de seguridad sin reescribir la lista.
+#[tauri::command]
+fn extract_prescription_medications(
+    state: tauri::State<'_, AppDb>,
+    prescription: String,
+) -> Result<Vec<String>, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    medication::extract_medications(conn, &prescription).map_err(|e| e.to_string())
+}
+
 /// Detecta el hardware del equipo y sugiere el tamano de modelo Whisper local
 /// para transcripcion. No requiere la base (no toca datos clinicos): solo lee
 /// RAM y nucleos de CPU. Se usa al configurar la transcripcion para que el
@@ -1163,6 +1203,9 @@ pub fn run() {
             ai_list_benchmarks,
             transcription_recommendation,
             check_medication_safety,
+            medication_reference_status,
+            import_medication_reference,
+            extract_prescription_medications,
             arco_list_requests,
             arco_record_request,
             arco_mark_fulfilled,

@@ -333,6 +333,280 @@ pub fn check_prescription(
     })
 }
 
+/* ---------- Importacion de datos reales (rebanada 2) ---------- */
+
+/// Fila de la base de medicamentos (derivable de exportaciones de RxNorm/RxClass).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MedicationRow {
+    pub name: String,
+    pub ingredient: String,
+    pub display_name: String,
+    pub drug_class: Option<String>,
+}
+
+/// Fila de interaccion (par canonico) lista para cargar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InteractionRow {
+    pub ingredient_a: String,
+    pub ingredient_b: String,
+    pub severity: String,
+    pub description: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSummary {
+    pub medications: usize,
+    pub interactions: usize,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceStatus {
+    pub version: String,
+    pub medications: i64,
+    pub interactions: i64,
+}
+
+/// Separa una linea CSV simple (sin comillas con comas embebidas), recortando.
+fn csv_fields(line: &str) -> Vec<&str> {
+    line.split(',').map(|field| field.trim()).collect()
+}
+
+/// Parsea un CSV de medicamentos con columnas: name,ingredient,display_name,drug_class.
+/// Si la primera linea es encabezado (`name,...`) se omite. Tolerante a clase vacia.
+pub fn parse_medication_csv(csv: &str) -> Result<Vec<MedicationRow>, MedicationError> {
+    let mut rows = Vec::new();
+    for (idx, line) in csv.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let fields = csv_fields(line);
+        if idx == 0
+            && fields
+                .first()
+                .map(|f| f.eq_ignore_ascii_case("name"))
+                .unwrap_or(false)
+        {
+            continue; // encabezado
+        }
+        if fields.len() < 3 {
+            return Err(MedicationError::Invalid(format!(
+                "fila {} del CSV de medicamentos invalida: se esperaban al menos 3 columnas",
+                idx + 1
+            )));
+        }
+        let name = normalize_name(fields[0]);
+        let ingredient = normalize_name(fields[1]);
+        if name.is_empty() || ingredient.is_empty() {
+            continue;
+        }
+        let display_name = {
+            let d = fields[2].trim();
+            if d.is_empty() {
+                fields[0].trim().to_string()
+            } else {
+                d.to_string()
+            }
+        };
+        let drug_class = fields
+            .get(3)
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty());
+        rows.push(MedicationRow {
+            name,
+            ingredient,
+            display_name,
+            drug_class,
+        });
+    }
+    Ok(rows)
+}
+
+/// Mapea el nivel de DDInter a nuestra severidad.
+fn ddinter_severity(level: &str) -> &'static str {
+    match level.trim().to_lowercase().as_str() {
+        "major" => "MAJOR",
+        "moderate" => "MODERATE",
+        "minor" => "MINOR",
+        _ => "UNKNOWN",
+    }
+}
+
+/// Parsea el CSV de DDInter (columnas: DDInterID_A,Drug_A,DDInterID_B,Drug_B,Level).
+/// Cada interaccion se guarda con el par de ingredientes en orden canonico.
+pub fn parse_ddinter_csv(csv: &str) -> Result<Vec<InteractionRow>, MedicationError> {
+    let mut rows = Vec::new();
+    for (idx, line) in csv.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if idx == 0 && line.to_lowercase().contains("drug_a") {
+            continue; // encabezado
+        }
+        let fields = csv_fields(line);
+        if fields.len() < 5 {
+            return Err(MedicationError::Invalid(format!(
+                "fila {} del CSV de DDInter invalida: se esperaban 5 columnas",
+                idx + 1
+            )));
+        }
+        let drug_a = normalize_name(fields[1]);
+        let drug_b = normalize_name(fields[3]);
+        if drug_a.is_empty() || drug_b.is_empty() || drug_a == drug_b {
+            continue;
+        }
+        let (ingredient_a, ingredient_b) = canonical_pair(&drug_a, &drug_b);
+        let level = fields[4].trim();
+        rows.push(InteractionRow {
+            ingredient_a,
+            ingredient_b,
+            severity: ddinter_severity(level).to_string(),
+            description: format!("Interaccion {level} segun DDInter."),
+            source: "DDInter 2.0".into(),
+        });
+    }
+    Ok(rows)
+}
+
+/// Reemplaza la base de referencia local con los datos importados, dentro de una
+/// transaccion (no deja las tablas a medio reemplazar). Si una lista viene vacia,
+/// no se toca esa tabla. Siempre actualiza la version de la base.
+pub fn import_reference(
+    conn: &Connection,
+    medications: &[MedicationRow],
+    interactions: &[InteractionRow],
+    version: &str,
+) -> Result<ImportSummary, MedicationError> {
+    let version = version.trim();
+    if version.is_empty() {
+        return Err(MedicationError::Invalid(
+            "la version de la base no puede estar vacia".into(),
+        ));
+    }
+    let tx = conn.unchecked_transaction()?;
+    if !medications.is_empty() {
+        tx.execute("DELETE FROM medication_reference", [])?;
+        for medication in medications {
+            tx.execute(
+                "INSERT OR REPLACE INTO medication_reference (name, ingredient, display_name, drug_class)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    medication.name,
+                    medication.ingredient,
+                    medication.display_name,
+                    medication.drug_class
+                ],
+            )?;
+        }
+    }
+    if !interactions.is_empty() {
+        tx.execute("DELETE FROM drug_interactions", [])?;
+        for interaction in interactions {
+            tx.execute(
+                "INSERT OR IGNORE INTO drug_interactions
+                    (ingredient_a, ingredient_b, severity, description, source, source_version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    interaction.ingredient_a,
+                    interaction.ingredient_b,
+                    interaction.severity,
+                    interaction.description,
+                    interaction.source,
+                    version
+                ],
+            )?;
+        }
+    }
+    tx.execute(
+        "INSERT INTO app_meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = ?2",
+        params![REFERENCE_VERSION_KEY, version],
+    )?;
+    tx.commit()?;
+    Ok(ImportSummary {
+        medications: medications.len(),
+        interactions: interactions.len(),
+        version: version.to_string(),
+    })
+}
+
+pub fn reference_status(conn: &Connection) -> Result<ReferenceStatus, MedicationError> {
+    let medications: i64 =
+        conn.query_row("SELECT count(*) FROM medication_reference", [], |row| row.get(0))?;
+    let interactions: i64 =
+        conn.query_row("SELECT count(*) FROM drug_interactions", [], |row| row.get(0))?;
+    Ok(ReferenceStatus {
+        version: reference_version(conn)?,
+        medications,
+        interactions,
+    })
+}
+
+/// Busca `needle` dentro de `haystack` respetando limites de palabra (para no
+/// confundir, p. ej., "litio" dentro de otra palabra). Devuelve la posicion.
+fn find_word(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
+    let mut start = 0;
+    while let Some(rel) = haystack[start..].find(needle) {
+        let pos = start + rel;
+        let before_ok = pos == 0
+            || !haystack[..pos]
+                .chars()
+                .next_back()
+                .map(|c| c.is_alphanumeric())
+                .unwrap_or(false);
+        let after = pos + needle.len();
+        let after_ok = after >= haystack.len()
+            || !haystack[after..]
+                .chars()
+                .next()
+                .map(|c| c.is_alphanumeric())
+                .unwrap_or(false);
+        if before_ok && after_ok {
+            return Some(pos);
+        }
+        start = pos + needle.len();
+    }
+    None
+}
+
+/// Extrae los nombres de medicamentos reconocidos del texto libre de la receta,
+/// en el orden en que aparecen, sin duplicar. Asi el medico no tiene que volver
+/// a escribir la lista para verificarla.
+pub fn extract_medications(conn: &Connection, text: &str) -> Result<Vec<String>, MedicationError> {
+    let haystack = normalize_name(text);
+    if haystack.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Nombres mas largos primero, para preferir "acido acetilsalicilico" sobre
+    // un fragmento mas corto.
+    let mut statement = conn.prepare(
+        "SELECT name, display_name FROM medication_reference ORDER BY length(name) DESC",
+    )?;
+    let reference = statement
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut hits: Vec<(usize, String)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (name, display_name) in reference {
+        if let Some(pos) = find_word(&haystack, &name) {
+            if seen.insert(display_name.clone()) {
+                hits.push((pos, display_name));
+            }
+        }
+    }
+    hits.sort_by_key(|(pos, _)| *pos);
+    Ok(hits.into_iter().map(|(_, display_name)| display_name).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,5 +724,94 @@ mod tests {
         assert_eq!(details, "alerts=1");
         // La bitacora no contiene nombres de farmacos.
         assert!(!details.to_lowercase().contains("warfarina"));
+    }
+
+    /* ---------- Rebanada 2: importacion y extraccion ---------- */
+
+    #[test]
+    fn parses_medication_csv_with_header_and_optional_class() {
+        let csv = "name,ingredient,display_name,drug_class\n\
+                   Metoprolol,metoprolol,Metoprolol,Betabloqueador\n\
+                   Vitamina C,acido ascorbico,Vitamina C,\n";
+        let rows = parse_medication_csv(csv).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "metoprolol");
+        assert_eq!(rows[0].drug_class.as_deref(), Some("Betabloqueador"));
+        assert_eq!(rows[1].drug_class, None); // clase vacia -> None
+    }
+
+    #[test]
+    fn parses_ddinter_csv_and_maps_severity_in_canonical_order() {
+        let csv = "DDInterID_A,Drug_A,DDInterID_B,Drug_B,Level\n\
+                   DDInter1,Warfarina,DDInter2,Aspirina,Major\n\
+                   DDInter3,Metoprolol,DDInter4,Verapamilo,Moderate\n";
+        let rows = parse_ddinter_csv(csv).unwrap();
+        assert_eq!(rows.len(), 2);
+        // Orden canonico: aspirina < warfarina.
+        assert_eq!(rows[0].ingredient_a, "aspirina");
+        assert_eq!(rows[0].ingredient_b, "warfarina");
+        assert_eq!(rows[0].severity, "MAJOR");
+        assert_eq!(rows[0].source, "DDInter 2.0");
+        assert_eq!(rows[1].severity, "MODERATE");
+    }
+
+    #[test]
+    fn import_replaces_reference_and_bumps_version() {
+        let conn = test_conn("import");
+        let medication_rows = vec![
+            MedicationRow { name: "metoprolol".into(), ingredient: "metoprolol".into(), display_name: "Metoprolol".into(), drug_class: Some("Betabloqueador".into()) },
+            MedicationRow { name: "verapamilo".into(), ingredient: "verapamilo".into(), display_name: "Verapamilo".into(), drug_class: Some("Calcioantagonista".into()) },
+        ];
+        let interactions = vec![InteractionRow {
+            ingredient_a: "metoprolol".into(),
+            ingredient_b: "verapamilo".into(),
+            severity: "MAJOR".into(),
+            description: "Riesgo de bradicardia/bloqueo.".into(),
+            source: "DDInter 2.0".into(),
+        }];
+
+        let summary = import_reference(&conn, &medication_rows, &interactions, "ddinter-2026-06").unwrap();
+        assert_eq!(summary.medications, 2);
+        assert_eq!(summary.interactions, 1);
+
+        let status = reference_status(&conn).unwrap();
+        assert_eq!(status.version, "ddinter-2026-06");
+        assert_eq!(status.medications, 2); // reemplazo: el dataset sembrado ya no esta
+        assert_eq!(status.interactions, 1);
+
+        // La verificacion usa ya los datos importados (y no los sembrados).
+        let report = check_prescription(&conn, "enc-1", &meds(&["Metoprolol", "Verapamilo"]), None).unwrap();
+        assert_eq!(report.interactions.len(), 1);
+        assert_eq!(report.interactions[0].severity, "MAJOR");
+        assert_eq!(report.reference_version, "ddinter-2026-06");
+        // Ibuprofeno ya no se reconoce tras el reemplazo.
+        let gone = check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno"]), None).unwrap();
+        assert_eq!(gone.unrecognized, vec!["Ibuprofeno".to_string()]);
+    }
+
+    #[test]
+    fn import_rejects_empty_version() {
+        let conn = test_conn("import-empty-version");
+        assert!(matches!(
+            import_reference(&conn, &[], &[], "  "),
+            Err(MedicationError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn extracts_known_drugs_from_prescription_text_in_order() {
+        let conn = test_conn("extract"); // base sembrada
+        let text = "1) Ibuprofeno 400 mg cada 8 h\n2) Amoxicilina 500 mg cada 8 h\nReposo.";
+        let found = extract_medications(&conn, text).unwrap();
+        assert_eq!(found, vec!["Ibuprofeno".to_string(), "Amoxicilina".to_string()]);
+    }
+
+    #[test]
+    fn extraction_respects_word_boundaries_and_dedupes() {
+        let conn = test_conn("extract-bounds");
+        // "litioxido" no debe contar como "litio"; "Ibuprofeno" repetido no duplica.
+        let text = "litioxido no contiene el ingrediente. Ibuprofeno. Ibuprofeno de nuevo.";
+        let found = extract_medications(&conn, text).unwrap();
+        assert_eq!(found, vec!["Ibuprofeno".to_string()]);
     }
 }

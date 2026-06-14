@@ -953,7 +953,7 @@ export function Atencion({
               </div>
             ) : null}
           </div>
-          <MedicationSafety encounterId={encounterId} disabled={signed} />
+          <MedicationSafety encounterId={encounterId} disabled={signed} prescription={prescription} />
         </section>
             ) : null}
 

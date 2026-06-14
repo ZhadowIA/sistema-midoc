@@ -52,20 +52,40 @@ const SEVERITY_LABEL: Record<string, string> = {
   CONTRAINDICATED: "Contraindicado",
   MAJOR: "Grave",
   MODERATE: "Moderada",
-  MINOR: "Leve"
+  MINOR: "Leve",
+  UNKNOWN: "No clasificada"
 };
 
 export function MedicationSafety({
   encounterId,
-  disabled
+  disabled,
+  prescription
 }: {
   encounterId: string;
   disabled: boolean;
+  prescription: string;
 }) {
   const [text, setText] = useState("");
   const [report, setReport] = useState<SafetyReport | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  async function fillFromPrescription() {
+    setBusy(true);
+    setError("");
+    try {
+      const found = await call<string[]>("extract_prescription_medications", { prescription });
+      if (found.length === 0) {
+        setError("No se reconocio ningun medicamento en la receta.");
+      } else {
+        setText(found.join("\n"));
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function verify() {
     const medications = text
@@ -105,6 +125,13 @@ export function MedicationSafety({
         <div className="button-row">
           <button className="action-button" onClick={() => void verify()} disabled={busy || disabled}>
             {busy ? "Verificando…" : "Verificar seguridad"}
+          </button>
+          <button
+            className="ghost-button"
+            onClick={() => void fillFromPrescription()}
+            disabled={busy || disabled || prescription.trim().length === 0}
+          >
+            Tomar de la receta
           </button>
         </div>
 
