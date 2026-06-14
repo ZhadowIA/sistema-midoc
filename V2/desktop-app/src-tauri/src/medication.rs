@@ -535,6 +535,56 @@ pub fn import_reference(
     })
 }
 
+/// Datos crudos de una actualizacion (CSV ya descargados, sin parsear). La
+/// descarga HTTP vive en la capa de transporte (comando); aqui solo se vetta,
+/// versiona e importa, para que el nucleo sea testeable sin red.
+#[derive(Debug, Clone)]
+pub struct MedicationDataset {
+    pub medications_csv: String,
+    pub ddinter_csv: String,
+    pub version: String,
+}
+
+/// Minimos de cordura por defecto: una descarga truncada o corrupta no debe
+/// poder reemplazar (y degradar) una base buena. Si una lista viene con datos
+/// pero por debajo del minimo, se aborta la actualizacion completa.
+pub const MIN_MEDICATIONS: usize = 5;
+pub const MIN_INTERACTIONS: usize = 5;
+
+/// Aplica una actualizacion de la base desde datos descargados: parsea, **vetta**
+/// (rechaza descargas vacias o sospechosamente pequenas para no degradar la base
+/// actual) y luego importa de forma transaccional con su version. La verificacion
+/// de cada receta sigue siendo local; el servicio externo solo regenera la base.
+pub fn update_reference(
+    conn: &Connection,
+    dataset: &MedicationDataset,
+    min_medications: usize,
+    min_interactions: usize,
+) -> Result<ImportSummary, MedicationError> {
+    let medications = parse_medication_csv(&dataset.medications_csv)?;
+    let interactions = parse_ddinter_csv(&dataset.ddinter_csv)?;
+
+    if medications.is_empty() && interactions.is_empty() {
+        return Err(MedicationError::Invalid(
+            "la fuente no devolvio datos de medicamentos ni de interacciones".into(),
+        ));
+    }
+    if !medications.is_empty() && medications.len() < min_medications {
+        return Err(MedicationError::Invalid(format!(
+            "la base descargada trae muy pocos medicamentos ({}); se aborta para no degradar la base actual",
+            medications.len()
+        )));
+    }
+    if !interactions.is_empty() && interactions.len() < min_interactions {
+        return Err(MedicationError::Invalid(format!(
+            "la base descargada trae muy pocas interacciones ({}); se aborta para no degradar la base actual",
+            interactions.len()
+        )));
+    }
+
+    import_reference(conn, &medications, &interactions, &dataset.version)
+}
+
 pub fn reference_status(conn: &Connection) -> Result<ReferenceStatus, MedicationError> {
     let medications: i64 =
         conn.query_row("SELECT count(*) FROM medication_reference", [], |row| row.get(0))?;
@@ -813,5 +863,58 @@ mod tests {
         let text = "litioxido no contiene el ingrediente. Ibuprofeno. Ibuprofeno de nuevo.";
         let found = extract_medications(&conn, text).unwrap();
         assert_eq!(found, vec!["Ibuprofeno".to_string()]);
+    }
+
+    /* ---------- Rebanada 3: pipeline de actualizacion ---------- */
+
+    fn dataset(med_rows: usize, int_rows: usize, version: &str) -> MedicationDataset {
+        let mut meds = String::from("name,ingredient,display_name,drug_class\n");
+        for i in 0..med_rows {
+            meds.push_str(&format!("farmaco{i},ingrediente{i},Farmaco {i},Clase {i}\n"));
+        }
+        let mut ddinter = String::from("DDInterID_A,Drug_A,DDInterID_B,Drug_B,Level\n");
+        for i in 0..int_rows {
+            ddinter.push_str(&format!("A{i},ingrediente{i},B{i},ingrediente{},Major\n", i + 1));
+        }
+        MedicationDataset {
+            medications_csv: meds,
+            ddinter_csv: ddinter,
+            version: version.to_string(),
+        }
+    }
+
+    #[test]
+    fn update_applies_a_healthy_dataset_and_versions_it() {
+        let conn = test_conn("update-ok");
+        let summary = update_reference(&conn, &dataset(8, 6, "ddinter-2026-07"), MIN_MEDICATIONS, MIN_INTERACTIONS).unwrap();
+        assert_eq!(summary.medications, 8);
+        assert_eq!(summary.interactions, 6);
+        let status = reference_status(&conn).unwrap();
+        assert_eq!(status.version, "ddinter-2026-07");
+        assert_eq!(status.medications, 8);
+    }
+
+    #[test]
+    fn update_rejects_a_suspiciously_small_dataset_to_protect_the_base() {
+        let conn = test_conn("update-small");
+        // Base sembrada vigente; una descarga truncada (2 meds) no debe reemplazarla.
+        let before = reference_status(&conn).unwrap();
+        assert!(matches!(
+            update_reference(&conn, &dataset(2, 6, "corrupta"), MIN_MEDICATIONS, MIN_INTERACTIONS),
+            Err(MedicationError::Invalid(_))
+        ));
+        let after = reference_status(&conn).unwrap();
+        assert_eq!(after.version, before.version); // intacta
+        assert_eq!(after.medications, before.medications);
+    }
+
+    #[test]
+    fn update_rejects_empty_source() {
+        let conn = test_conn("update-empty");
+        let empty = MedicationDataset { medications_csv: String::new(), ddinter_csv: String::new(), version: "x".into() };
+        assert!(matches!(
+            update_reference(&conn, &empty, MIN_MEDICATIONS, MIN_INTERACTIONS),
+            Err(MedicationError::Invalid(_))
+        ));
     }
 }

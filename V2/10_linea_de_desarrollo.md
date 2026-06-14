@@ -626,7 +626,7 @@ Clasificacion de datos: la base de farmacos/interacciones es REFERENCIA publica 
 
 > Nota: la API de interacciones de la NLM/RxNav fue descontinuada en enero 2024; por eso la fuente de interacciones es DDInter (descargable) + openFDA. RxNorm/RxClass siguen vigentes (doc 11).
 
-Estado: 🚧 EN PROGRESO — rebanadas 1 (motor determinista + dataset sembrado) y 2 (importacion de datos reales + extraccion desde la receta) entregadas (2026-06-13). Construido sobre el paso 4.
+Estado: 🚧 EN PROGRESO — rebanadas 1 (motor determinista + dataset sembrado), 2 (importacion de datos reales + extraccion desde la receta) y 3 (pipeline de actualizacion desde fuentes oficiales con vetting) entregadas (2026-06-13/14). Construido sobre el paso 4.
 
 Entregado (rebanada 1 — motor determinista de seguridad con dataset sembrado, 2026-06-13):
 
@@ -648,7 +648,17 @@ Entregado (rebanada 2 — importacion de datos reales + extraccion desde la rece
 
 Verificacion (rebanada 2): 97 pruebas de Rust en verde (+6: parseo de CSV de medicamentos con encabezado y clase opcional, parseo de DDInter con mapeo de severidad y orden canonico, importacion que reemplaza la base y bumpea la version —y deja de reconocer lo sembrado—, rechazo de version vacia, extraccion en orden y con limites de palabra/dedupe), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok y prueba en navegador (importar Metoprolol/Verapamilo + interaccion DDInter → base actualizada a `ddinter-2026-06 · 2 · 1`).
 
-Pendiente (rebanada 3): descarga HTTP en vivo de RxNorm/RxClass/DDInter y openFDA (texto de respaldo de interacciones), con verificacion del contrato real en staging; dataset vetado empaquetado en el instalador y boton de actualizacion; mapeo de nombres comerciales a ingrediente via RxNorm.
+Entregado (rebanada 3 — pipeline de actualizacion desde fuentes oficiales, 2026-06-14):
+
+- **El servicio externo regenera la base, no atiende cada receta.** Por la promesa local-first, consultar una API por prescripcion filtraria contenido clinico (los farmacos del paciente) a un tercero. La arquitectura correcta —y la que usan los sistemas clinicos serios— es un ETL: el servicio externo se contacta para **descargar y regenerar** la base local; la verificacion de cada receta sigue siendo local (microsegundos, offline, privada, auditable).
+- **Orquestador con vetting (`update_reference`).** Parsea los CSV descargados (reusa los parsers de la rebanada 2), **vetta** (rechaza fuentes vacias o sospechosamente pequenas para que una descarga truncada no degrade una base buena) y solo entonces importa de forma transaccional con su version. Nucleo testeable sin red.
+- **Frontera de red fina (`update_medication_reference`, `fetch_text`).** Descarga los CSV por HTTP (reqwest) antes de tomar el lock; no retiene el lock durante ningun await. El contrato real con las fuentes se verifica en staging (regla 5); el orquestador se prueba contra datasets en memoria, incluido el rechazo por vetting.
+- **Residencia.** Solo se descargan datos de REFERENCIA publica; no se envia ningun dato del paciente. La base vive cifrada en el equipo.
+- **UI y mock.** Seccion "Actualizar desde fuentes oficiales" en la pestana Medicamentos (URLs de los CSV + version, con version por fecha si se deja vacia); el mock de navegador simula una descarga a escala realista de DDInter.
+
+Verificacion (rebanada 3): 100 pruebas de Rust en verde (+3: actualizacion sana que versiona, rechazo de dataset sospechosamente pequeno que deja la base intacta, rechazo de fuente vacia), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok y prueba en navegador (actualizar desde URLs → base a `oficial-2026-06-14 · 1287 · 3402`).
+
+Pendiente (rebanada 4): openFDA como texto de respaldo de interacciones cuando DDInter no tiene el par; mapeo de nombres comerciales a ingrediente via RxNorm; dataset vetado empaquetado en el instalador y actualizacion programada.
 
 ## Paso 15 - Transcripcion local real (Whisper) y descarga de modelo
 

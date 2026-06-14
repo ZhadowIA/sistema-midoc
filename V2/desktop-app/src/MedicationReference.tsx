@@ -25,9 +25,13 @@ export function MedicationReference() {
   const [medicationsCsv, setMedicationsCsv] = useState("");
   const [ddinterCsv, setDdinterCsv] = useState("");
   const [version, setVersion] = useState("");
+  const [medicationsUrl, setMedicationsUrl] = useState("");
+  const [ddinterUrl, setDdinterUrl] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const today = new Date().toISOString().slice(0, 10);
 
   async function refresh() {
     try {
@@ -40,6 +44,28 @@ export function MedicationReference() {
   useEffect(() => {
     void refresh();
   }, []);
+
+  async function updateFromSources() {
+    const updateVersion = version.trim() || `oficial-${today}`;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const summary = await call<ImportSummary>("update_medication_reference", {
+        medicationsUrl,
+        ddinterUrl,
+        version: updateVersion
+      });
+      setMessage(
+        `Base actualizada desde fuentes: ${summary.medications} medicamentos y ${summary.interactions} interacciones (version ${summary.version}).`
+      );
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function importData() {
     if (version.trim().length === 0) {
@@ -133,6 +159,47 @@ export function MedicationReference() {
         <p className="meta">
           Una lista vacia deja esa tabla sin cambios. Importar reemplaza la base anterior.
         </p>
+      </div>
+
+      <div className="panel-header" style={{ marginTop: 24 }}>
+        <h3>Actualizar desde fuentes oficiales</h3>
+        <p>
+          Descarga los datos publicos (CSV de medicamentos/clases y CSV de DDInter) y reemplaza la
+          base local. Solo se descargan datos de referencia: no se envia ningun dato del paciente.
+          La descarga se valida antes de reemplazar (rechaza datos vacios o incompletos).
+        </p>
+      </div>
+      <div className="stack">
+        <label className="field">
+          <span>URL del CSV de medicamentos</span>
+          <input
+            type="url"
+            placeholder="https://…/medicamentos.csv"
+            value={medicationsUrl}
+            disabled={busy}
+            onChange={(e) => setMedicationsUrl(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>URL del CSV de interacciones (DDInter)</span>
+          <input
+            type="url"
+            placeholder="https://…/ddinter.csv"
+            value={ddinterUrl}
+            disabled={busy}
+            onChange={(e) => setDdinterUrl(e.target.value)}
+          />
+        </label>
+        <div className="button-row">
+          <button
+            className="action-button"
+            onClick={() => void updateFromSources()}
+            disabled={busy || (medicationsUrl.trim().length === 0 && ddinterUrl.trim().length === 0)}
+          >
+            {busy ? "Actualizando…" : "Actualizar base"}
+          </button>
+        </div>
+        <p className="meta">Se usa la version indicada arriba, o `oficial-{today}` si la dejas vacia.</p>
       </div>
     </section>
   );

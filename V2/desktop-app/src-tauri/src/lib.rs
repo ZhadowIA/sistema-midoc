@@ -1062,6 +1062,65 @@ fn import_medication_reference(
     medication::import_reference(conn, &medications, &interactions, &version).map_err(|e| e.to_string())
 }
 
+/// Actualiza la base de referencia de medicamentos descargando los datos de
+/// fuentes oficiales (CSV de medicamentos/clases y CSV de interacciones de
+/// DDInter) y reemplazando la base local. El servicio externo solo regenera la
+/// base; la verificacion de cada receta sigue siendo local. Los datos son de
+/// REFERENCIA publica (no PHI): no se envia ningun dato del paciente. La descarga
+/// se vetta (rechaza datos vacios o sospechosamente pequenos) antes de reemplazar.
+#[tauri::command]
+async fn update_medication_reference(
+    state: tauri::State<'_, AppDb>,
+    medications_url: String,
+    ddinter_url: String,
+    version: String,
+) -> Result<medication::ImportSummary, String> {
+    // Descarga (red): se hace antes de tomar el lock; no se retiene el lock
+    // durante ningun await.
+    let client = reqwest::Client::new();
+    let medications_csv = fetch_text(&client, medications_url.trim(), "medicamentos").await?;
+    let ddinter_csv = fetch_text(&client, ddinter_url.trim(), "interacciones").await?;
+
+    let dataset = medication::MedicationDataset {
+        medications_csv,
+        ddinter_csv,
+        version,
+    };
+
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    medication::update_reference(
+        conn,
+        &dataset,
+        medication::MIN_MEDICATIONS,
+        medication::MIN_INTERACTIONS,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Descarga texto de una URL (o cadena vacia si la URL esta vacia). Frontera de
+/// red: el contrato real con las fuentes se verifica en staging.
+async fn fetch_text(client: &reqwest::Client, url: &str, label: &str) -> Result<String, String> {
+    if url.is_empty() {
+        return Ok(String::new());
+    }
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("no se pudo descargar la fuente de {label}: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "la fuente de {label} respondio {}",
+            response.status()
+        ));
+    }
+    response
+        .text()
+        .await
+        .map_err(|e| format!("no se pudo leer la fuente de {label}: {e}"))
+}
+
 /// Extrae los medicamentos reconocidos del texto libre de la receta, para
 /// prellenar la verificacion de seguridad sin reescribir la lista.
 #[tauri::command]
@@ -1205,6 +1264,7 @@ pub fn run() {
             check_medication_safety,
             medication_reference_status,
             import_medication_reference,
+            update_medication_reference,
             extract_prescription_medications,
             arco_list_requests,
             arco_record_request,

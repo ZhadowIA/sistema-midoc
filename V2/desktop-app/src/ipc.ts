@@ -954,6 +954,16 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       mockState.medicationRef.version = version;
       return { medications: medRows.length, interactions: ddRows.length, version } as T;
     }
+    case "update_medication_reference": {
+      // En navegador no hay red: simula una descarga a escala realista de DDInter.
+      const version = String(args?.version ?? "").trim() || "oficial-demo";
+      const medsUrl = String(args?.medicationsUrl ?? "").trim();
+      const ddUrl = String(args?.ddinterUrl ?? "").trim();
+      const medications = medsUrl ? 1287 : mockState.medicationRef.medications;
+      const interactions = ddUrl ? 3402 : mockState.medicationRef.interactions;
+      mockState.medicationRef = { version, medications, interactions };
+      return { medications, interactions, version } as T;
+    }
     case "extract_prescription_medications": {
       const known = ["ibuprofeno", "naproxeno", "warfarina", "sildenafil", "nitroglicerina", "amoxicilina", "paracetamol"];
       const display: Record<string, string> = {
