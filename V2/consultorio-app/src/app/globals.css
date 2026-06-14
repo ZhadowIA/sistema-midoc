@@ -720,6 +720,43 @@ a.service-card:hover {
   gap: 14px;
 }
 
+.booking-for-toggle {
+  display: flex;
+  gap: 8px;
+}
+
+.booking-for-toggle .toggle-option {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.booking-for-toggle .toggle-option.toggle-active {
+  border-color: var(--primary, #2563eb);
+  background: var(--primary-soft, rgba(37, 99, 235, 0.1));
+  color: var(--primary, #2563eb);
+}
+
+.guardian-fieldset {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 12px;
+  padding: 14px;
+  margin: 0;
+}
+
+.guardian-fieldset legend {
+  padding: 0 6px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
 .form-actions {
   display: grid;
   gap: 12px;

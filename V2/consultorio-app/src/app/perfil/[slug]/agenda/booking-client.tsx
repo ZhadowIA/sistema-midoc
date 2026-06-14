@@ -48,12 +48,20 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
   const [message, setMessage] = useState<string>("");
   const [searchError, setSearchError] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [bookingFor, setBookingFor] = useState<"self" | "other">("self");
   const [patient, setPatient] = useState({
     firstName: "",
     lastName: "",
     phone: "",
     email: "",
+    birthDate: "",
     reason: ""
+  });
+  const [guardian, setGuardian] = useState({
+    fullName: "",
+    relationship: "",
+    phone: "",
+    email: ""
   });
 
   async function loadSlots() {
@@ -140,9 +148,21 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
             firstName: patient.firstName,
             lastName: patient.lastName,
             phone: patient.phone || undefined,
-            email: patient.email || undefined
+            email: patient.email || undefined,
+            birthDate: patient.birthDate || undefined
           },
           reason: patient.reason || undefined,
+          // Cuando se agenda para otra persona, el responsable (tutor) viaja como
+          // contacto propio; no se mezcla con la identidad del paciente.
+          contact:
+            bookingFor === "other" && guardian.fullName
+              ? {
+                  fullName: guardian.fullName,
+                  relationship: guardian.relationship || undefined,
+                  phone: guardian.phone || undefined,
+                  email: guardian.email || undefined
+                }
+              : undefined,
           legal: {
             acceptedTerms: true,
             acceptedPrivacy: true
@@ -237,32 +257,61 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
         <h3 className="booking-step-title">Paso 2: Tus datos</h3>
 
         <form className="booking-form" onSubmit={submitBooking}>
+          <div className="field field-full booking-for-toggle" role="radiogroup" aria-label="¿Para quién es la cita?">
+            <button
+              type="button"
+              className={bookingFor === "self" ? "toggle-option toggle-active" : "toggle-option"}
+              aria-pressed={bookingFor === "self"}
+              onClick={() => setBookingFor("self")}
+            >
+              Para mí
+            </button>
+            <button
+              type="button"
+              className={bookingFor === "other" ? "toggle-option toggle-active" : "toggle-option"}
+              aria-pressed={bookingFor === "other"}
+              onClick={() => setBookingFor("other")}
+            >
+              Para otra persona / un menor
+            </button>
+          </div>
+
           <label className="field">
-            <span>Nombre*</span>
+            <span>{bookingFor === "other" ? "Nombre del paciente*" : "Nombre*"}</span>
             <input
               required
-              placeholder="Tu nombre"
+              placeholder={bookingFor === "other" ? "Nombre del paciente" : "Tu nombre"}
               value={patient.firstName}
               onChange={(event) => setPatient((current) => ({ ...current, firstName: event.target.value }))}
             />
           </label>
 
           <label className="field">
-            <span>Apellidos*</span>
+            <span>{bookingFor === "other" ? "Apellidos del paciente*" : "Apellidos*"}</span>
             <input
               required
-              placeholder="Tus apellidos"
+              placeholder={bookingFor === "other" ? "Apellidos del paciente" : "Tus apellidos"}
               value={patient.lastName}
               onChange={(event) => setPatient((current) => ({ ...current, lastName: event.target.value }))}
             />
           </label>
 
           <label className="field">
-            <span>Teléfono*</span>
+            <span>Fecha de nacimiento{bookingFor === "other" ? "*" : ""}</span>
             <input
-              required
+              type="date"
+              required={bookingFor === "other"}
+              value={patient.birthDate}
+              onChange={(event) => setPatient((current) => ({ ...current, birthDate: event.target.value }))}
+            />
+          </label>
+
+          <label className="field">
+            <span>{bookingFor === "other" ? "Teléfono del paciente" : "Teléfono*"}</span>
+            <input
+              required={bookingFor === "self"}
               type="tel"
-              placeholder="Tu teléfono"
+              placeholder={bookingFor === "other" ? "Opcional" : "Tu teléfono"}
               value={patient.phone}
               onChange={(event) => setPatient((current) => ({ ...current, phone: event.target.value }))}
             />
@@ -272,11 +321,58 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
             <span>Correo electrónico</span>
             <input
               type="email"
-              placeholder="Tu correo (opcional)"
+              placeholder={bookingFor === "other" ? "Correo del paciente (opcional)" : "Tu correo (opcional)"}
               value={patient.email}
               onChange={(event) => setPatient((current) => ({ ...current, email: event.target.value }))}
             />
           </label>
+
+          {bookingFor === "other" ? (
+            <fieldset className="field field-full guardian-fieldset">
+              <legend>Datos del responsable (tutor)</legend>
+
+              <label className="field">
+                <span>Nombre completo del responsable*</span>
+                <input
+                  required
+                  placeholder="Nombre del tutor o responsable"
+                  value={guardian.fullName}
+                  onChange={(event) => setGuardian((current) => ({ ...current, fullName: event.target.value }))}
+                />
+              </label>
+
+              <label className="field">
+                <span>Parentesco*</span>
+                <input
+                  required
+                  placeholder="Madre, padre, tutor…"
+                  value={guardian.relationship}
+                  onChange={(event) => setGuardian((current) => ({ ...current, relationship: event.target.value }))}
+                />
+              </label>
+
+              <label className="field">
+                <span>Teléfono del responsable*</span>
+                <input
+                  required
+                  type="tel"
+                  placeholder="Teléfono de contacto"
+                  value={guardian.phone}
+                  onChange={(event) => setGuardian((current) => ({ ...current, phone: event.target.value }))}
+                />
+              </label>
+
+              <label className="field">
+                <span>Correo del responsable</span>
+                <input
+                  type="email"
+                  placeholder="Correo de contacto (opcional)"
+                  value={guardian.email}
+                  onChange={(event) => setGuardian((current) => ({ ...current, email: event.target.value }))}
+                />
+              </label>
+            </fieldset>
+          ) : null}
 
           <label className="field field-full">
             <span>Motivo de la cita</span>

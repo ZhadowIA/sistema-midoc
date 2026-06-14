@@ -411,24 +411,54 @@ async function findOrCreatePatient(input: {
     email?: string;
     birthDate?: string;
   };
+  contact?: {
+    phone?: string;
+    email?: string;
+  };
 }) {
   const firstName = input.patient.firstName.trim();
   const lastName = input.patient.lastName.trim();
   const email = input.patient.email?.trim().toLowerCase();
   const phone = input.patient.phone?.trim();
+  const guardianEmail = input.contact?.email?.trim().toLowerCase();
+  const guardianPhone = input.contact?.phone?.trim();
 
   // Solo se reutiliza un expediente cuando coincide el NOMBRE. El telefono y el
   // correo por si solos no identifican al paciente: pueden ser de un tutor que
   // agenda para un hijo o un adulto mayor (mismo criterio anti-duplicados de la
   // app del medico: el nombre pesa mas que el contacto). Asi, un nombre distinto
   // con el contacto del tutor ya no devuelve al paciente del tutor.
-  const existingPatient = await prisma.patient.findFirst({
+  //
+  // El contacto que confirma la identidad puede ser el propio del paciente o,
+  // para un menor sin contacto propio, el de su responsable (PatientContact).
+  const candidates = await prisma.patient.findMany({
     where: {
       ownerDoctorId: input.doctorId,
       firstName: { equals: firstName, mode: "insensitive" },
-      lastName: { equals: lastName, mode: "insensitive" },
-      OR: [...(email ? [{ email }] : []), ...(phone ? [{ phone }] : [])]
+      lastName: { equals: lastName, mode: "insensitive" }
+    },
+    include: {
+      contacts: { where: { isPrimary: true }, take: 1 }
     }
+  });
+
+  const existingPatient = candidates.find((candidate) => {
+    if (email && candidate.email === email) {
+      return true;
+    }
+    if (phone && candidate.phone === phone) {
+      return true;
+    }
+    const primaryContact = candidate.contacts[0];
+    if (primaryContact) {
+      if (guardianEmail && primaryContact.email === guardianEmail) {
+        return true;
+      }
+      if (guardianPhone && primaryContact.phone === guardianPhone) {
+        return true;
+      }
+    }
+    return false;
   });
 
   if (existingPatient) {
@@ -516,7 +546,8 @@ export async function bookPublicAppointment(input: {
 
   const patient = await findOrCreatePatient({
     doctorId: hold.doctorId,
-    patient: input.patient
+    patient: input.patient,
+    contact: input.contact
   });
 
   const doctorProfileTz = await prisma.doctorProfile.findUnique({
@@ -594,16 +625,29 @@ export async function bookPublicAppointment(input: {
   });
 
   if (input.contact?.fullName) {
-    await prisma.patientContact.create({
-      data: {
-        patientId: patient.id,
-        fullName: input.contact.fullName.trim(),
-        relationship: input.contact.relationship?.trim(),
-        phone: input.contact.phone?.trim(),
-        email: input.contact.email?.trim().toLowerCase(),
-        isPrimary: true
-      }
+    // Responsable (tutor) idempotente: una sola entrada primaria por paciente.
+    // Reagendar o volver a agendar para el mismo paciente actualiza al
+    // responsable en vez de duplicarlo.
+    const contactData = {
+      fullName: input.contact.fullName.trim(),
+      relationship: input.contact.relationship?.trim(),
+      phone: input.contact.phone?.trim(),
+      email: input.contact.email?.trim().toLowerCase()
+    };
+    const existingContact = await prisma.patientContact.findFirst({
+      where: { patientId: patient.id, isPrimary: true },
+      select: { id: true }
     });
+    if (existingContact) {
+      await prisma.patientContact.update({
+        where: { id: existingContact.id },
+        data: contactData
+      });
+    } else {
+      await prisma.patientContact.create({
+        data: { patientId: patient.id, isPrimary: true, ...contactData }
+      });
+    }
   }
 
   await prisma.legalAcceptance.createMany({
@@ -636,10 +680,15 @@ export async function bookPublicAppointment(input: {
   const reminderShouldQueue = reminderAt > new Date();
   const appointmentLabel = appointment.scheduledStart.toISOString();
 
-  // Quien agenda (puede ser un tutor) recibe las notificaciones, aunque su
-  // correo no se haya guardado en el expediente del paciente por ser del tutor.
-  const notifyPhone = input.patient.phone?.trim() || patient.phone || null;
-  const notifyEmail = input.patient.email?.trim().toLowerCase() || patient.email || null;
+  // Quien agenda (puede ser un tutor) recibe las notificaciones: se prefiere el
+  // contacto propio del paciente, luego el del responsable, luego lo guardado.
+  const notifyPhone =
+    input.patient.phone?.trim() || input.contact?.phone?.trim() || patient.phone || null;
+  const notifyEmail =
+    input.patient.email?.trim().toLowerCase() ||
+    input.contact?.email?.trim().toLowerCase() ||
+    patient.email ||
+    null;
 
   for (const contact of [
     notifyPhone ? { channel: "SMS" as const, destination: notifyPhone } : null,

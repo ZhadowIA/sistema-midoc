@@ -399,6 +399,97 @@ describe("public booking flow", () => {
     }
   });
 
+  it("captures the guardian as a contact for a minor and updates it on re-booking", async () => {
+    const email = uniqueEmail("doctor-minor");
+    const slug = uniqueSlug("dra-minor");
+    const guardianEmail = uniqueEmail("responsable");
+    const slotDate = nextWeekdayDate(5);
+    const dateFrom = slotDate.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Paula",
+        lastName: "Mena",
+        phone: "6140000501",
+        professionalName: "Dra. Paula Mena",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await createDoctorSubscription({ doctorUserId: account.user.id, planCode: "ESSENTIAL" });
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        professionalName: "Dra. Paula Mena",
+        specialty: ClinicalProfile.GENERAL_MEDICINE,
+        isPublic: true
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta pediatrica",
+        priceCents: 50000,
+        durationMinutes: 30
+      });
+
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: slotDate.getUTCDay(),
+        startTime: "11:00",
+        endTime: "12:00",
+        slotInterval: 30
+      });
+
+      const availability = await listPublicAvailability({ slug, serviceId: service.id, dateFrom, days: 1 });
+
+      // Agenda para un menor: paciente con fecha de nacimiento, contacto del tutor.
+      const firstHold = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: availability.slots[0]!.slotStart
+      });
+      const booking = await bookPublicAppointment({
+        holdToken: firstHold.token,
+        patient: { firstName: "Mateo", lastName: "Rios", birthDate: "2018-05-10" },
+        contact: { fullName: "Marta Rios", relationship: "Madre", phone: "6147770000", email: guardianEmail },
+        legal: { acceptedTerms: true, acceptedPrivacy: true }
+      });
+
+      // El paciente es el menor (con fecha de nacimiento), no el tutor.
+      expect(booking.patient.firstName).toBe("Mateo");
+      expect(booking.patient.birthDate).not.toBeNull();
+      expect(booking.patient.email).toBeNull();
+
+      // El responsable queda como contacto primario del paciente.
+      const contacts = await prisma.patientContact.findMany({ where: { patientId: booking.patient.id } });
+      expect(contacts).toHaveLength(1);
+      expect(contacts[0]!.fullName).toBe("Marta Rios");
+      expect(contacts[0]!.relationship).toBe("Madre");
+      expect(contacts[0]!.isPrimary).toBe(true);
+
+      // Reagendar para el mismo menor ACTUALIZA al responsable, no lo duplica.
+      const secondHold = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: availability.slots[1]!.slotStart
+      });
+      const rebooking = await bookPublicAppointment({
+        holdToken: secondHold.token,
+        patient: { firstName: "Mateo", lastName: "Rios", birthDate: "2018-05-10" },
+        contact: { fullName: "Marta Rios", relationship: "Tutora", phone: "6147770000", email: guardianEmail },
+        legal: { acceptedTerms: true, acceptedPrivacy: true }
+      });
+
+      expect(rebooking.patient.id).toBe(booking.patient.id);
+      const afterRebooking = await prisma.patientContact.findMany({ where: { patientId: booking.patient.id } });
+      expect(afterRebooking).toHaveLength(1);
+      expect(afterRebooking[0]!.relationship).toBe("Tutora");
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
   it("only lets one of two concurrent holds win the same slot", async () => {
     const email = uniqueEmail("doctor-race");
     const slug = uniqueSlug("dra-race");

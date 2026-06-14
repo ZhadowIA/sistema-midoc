@@ -82,6 +82,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 15 | Transcripcion local real (Whisper) | `superpowers:writing-plans` | whisper.cpp real, descarga de modelo y respaldo en nube gobernado. | 🔜 PLANEADO |
 | 16 | Proveedores de IA reales en staging (BAA) | `codex-security:security-scan` | Adaptadores reales de LLM/transcripcion con gobernanza intacta. | 🔜 PLANEADO |
 | 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
+| 18 | Agendado con responsable/tutor | `superpowers:test-driven-development` | El sistema distingue paciente con tutor de paciente sin tutor. | 🚧 EN PROGRESO |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -730,6 +731,43 @@ Decision de base (2026-06-13, doc 11): Gemini 3 Flash como base por costo; los L
 | Push recomendado | Hacer push cuando SMS y correo reales entreguen desde dominios propios y el cobro de la suscripcion opere con gating real, con pruebas contra fakes del contrato. |
 
 Decisiones (2026-06-13, doc 08): SMS = Twilio, correo = Resend. La pasarela de pago concreta queda por elegir (candidatos: Stripe, Mercado Pago).
+
+## Paso 18 - Agendado con responsable/tutor
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que el agendado distinga explicitamente "agendo para mi" de "agendo para otra persona / un menor a mi cargo", capturando al responsable (tutor) como entidad propia, sin mezclar su contacto con la identidad del paciente. Extiende los pasos 3 (agenda publica) y 6 (paciente). |
+| Requisitos relacionados | RF09, RF10 (extiende pasos 3 y 6). |
+| Entrada necesaria | Agenda publica (paso 3) y deteccion anti-duplicados (paso 13) funcionando. |
+| Skills IA recomendadas | `smart-explore`, `coding-standards`, `superpowers:test-driven-development`, `superpowers:verification-before-completion` |
+| Se construye | Selector "para mi / para otra persona" en el formulario de agendado; bloque del responsable (nombre, parentesco, telefono, correo) y fecha de nacimiento del paciente; persistencia del responsable como `PatientContact`; el responsable viaja por sync a la app del medico, que lo muestra. La identidad del paciente nunca se confunde con la del tutor. |
+| Se valida con | Agendar para un menor con datos del tutor crea un expediente con el nombre del menor y un responsable asociado; la confirmacion y la app del medico muestran al paciente y, aparte, a su responsable. |
+| Compuerta de avance | El correo/telefono del tutor no se asignan a la identidad del paciente; el responsable es CONTACTO (nube minima), nunca contenido clinico; el anti-duplicados sigue pesando el nombre por encima del contacto. |
+| Push recomendado | Hacer push cuando el formulario distinga ambos casos, el responsable se persista sin duplicar y la app del medico lo muestre, con pruebas. |
+
+Antecedente: el agendado publico reutilizaba un expediente por correo/telefono sin exigir el nombre, por lo que al agendar para un hijo con el contacto del tutor la confirmacion mostraba al tutor. El fix (`fix: agendar con el contacto de un tutor ya no devuelve al paciente del tutor`, 2026-06-14) corrigio el match (exige nombre) y dejo de asignar el correo del tutor al paciente; este paso lo formaliza capturando al responsable como entidad propia.
+
+Decisiones (2026-06-14): el caso se dispara por **toggle explicito** del que agenda, reforzado por la **fecha de nacimiento** (si es menor, el responsable es obligatorio). Se captura la fecha de nacimiento del paciente en el formulario.
+
+Rebanadas:
+
+- **Rebanada 1 (portal):** toggle + datos del responsable + fecha de nacimiento; `PatientContact` idempotente; notificaciones al responsable cuando el paciente no tiene contacto propio. Pruebas de integracion (para mi / para otra persona).
+- **Rebanada 2 (app del medico):** el responsable viaja por sync, migracion local y se muestra en la cita y el expediente.
+- **Rebanada 3 (refinamiento):** menor por fecha de nacimiento exige responsable; etiqueta "menor con tutor"; consideraciones ARCO (quien ejerce los derechos del menor).
+
+Estado: 🚧 EN PROGRESO — rebanada 1 (portal) entregada (2026-06-14); rebanadas 2 (app del medico) y 3 (refinamiento de menores) pendientes. Construido sobre los pasos 3, 6 y 13.
+
+Entregado (rebanada 1 — portal: distinguir paciente con/sin responsable, 2026-06-14):
+
+- **Selector en el formulario (`booking-client.tsx`).** "Para mi" vs "Para otra persona / un menor". En el segundo caso se piden los datos del paciente (con **fecha de nacimiento**) y un bloque separado del **responsable** (nombre, parentesco, telefono, correo).
+- **El responsable es entidad propia (`PatientContact`).** Viaja como `contact` y se guarda como contacto primario del paciente, idempotente: reagendar para el mismo paciente actualiza al responsable en vez de duplicarlo. Su contacto no se mezcla con la identidad del paciente.
+- **Reutilizacion correcta para menores.** `findOrCreatePatient` confirma identidad por NOMBRE + contacto, donde el contacto puede ser el propio del paciente o el del responsable; asi un menor sin contacto propio se reconoce por su responsable y no se duplica.
+- **Notificaciones al responsable.** Cuando el paciente no tiene contacto propio, las notificaciones (y el evento de sync) usan el contacto del responsable.
+- **Residencia.** El responsable es CONTACTO (nube minima), nunca contenido clinico.
+
+Verificacion (rebanada 1): 8 pruebas de integracion de agendado en verde (incluye: agendar para un menor crea al menor con su fecha de nacimiento y un responsable primario; reagendar actualiza al responsable sin duplicar; un nombre distinto con el contacto del tutor sigue siendo paciente nuevo), `tsc`/`eslint` limpios y `next build` ok.
+
+Pendiente (rebanadas 2 y 3): el responsable viaja por sync y se muestra en la app del medico (migracion local + UI); refinamiento de menores por fecha de nacimiento (responsable obligatorio, etiqueta "menor con tutor") y consideraciones ARCO.
 
 ## MVP recomendado
 
