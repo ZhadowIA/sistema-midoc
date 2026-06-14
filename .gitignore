@@ -21,6 +21,10 @@ pnpm-debug.log*
 **/build/
 **/*.tsbuildinfo
 
+# Python
+**/__pycache__/
+**/*.pyc
+
 # OS / editor
 .DS_Store
 Thumbs.db
