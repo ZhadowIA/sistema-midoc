@@ -82,7 +82,8 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 15 | Transcripcion local real (Whisper) | `superpowers:writing-plans` | whisper.cpp real, descarga de modelo y respaldo en nube gobernado. | 🔜 PLANEADO |
 | 16 | Proveedores de IA reales en staging (BAA) | `codex-security:security-scan` | Adaptadores reales de LLM/transcripcion con gobernanza intacta. | 🔜 PLANEADO |
 | 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
-| 18 | Agendado con responsable/tutor | `superpowers:test-driven-development` | El sistema distingue paciente con tutor de paciente sin tutor. | 🚧 EN PROGRESO |
+| 18 | Agendado con responsable/tutor | `superpowers:test-driven-development` | El sistema distingue paciente con tutor de paciente sin tutor. | ✅ DONE |
+| 19 | Pulido del flujo publico, preconsulta y sincronizacion | `impeccable` | Perfil/agenda fieles, preconsulta diferida (antecedentes o guiada por IA), recordatorio con cancelacion y sync con aviso. | 🔜 PLANEADO |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -783,6 +784,52 @@ Entregado (rebanada 3 — refinamiento de menores y ARCO, 2026-06-14):
 - **Consideraciones ARCO (`arco.rs`).** La exportacion del expediente incluye al responsable (`guardian`), la marca `is_minor` y una nota explicita `rights_exercised_by` que documenta quien ejerce los derechos ARCO de un menor (su responsable, con parentesco), o advierte si falta.
 
 Verificacion (rebanada 3): 112 pruebas de Rust en verde (+3: derivacion de menor por fecha de nacimiento con su limite a los 18 y fechas invalidas; exportacion ARCO de un menor documenta a su responsable; exportacion de un adulto sin nota de menor), `cargo clippy` sin advertencias nuevas, `tsc + vite build` del escritorio ok; 8 pruebas de integracion del portal en verde (la nueva asercion rechaza agendar a un menor sin responsable y luego agenda con el), `eslint`/`tsc` del portal limpios y `next build` ok.
+
+## Paso 19 - Pulido del flujo publico, preconsulta y sincronizacion
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Cerrar los huecos de usabilidad y confianza detectados en el piloto del flujo publico (perfil, agenda, agendado), incorporar la preconsulta diferida con bifurcacion antecedentes / guiada por IA, el recordatorio de cita con cancelacion, y dar a la app del medico sincronizacion automatica con aviso de cambios pendientes. Extiende los pasos 2, 3, 6, 7 y 11. |
+| Requisitos relacionados | RF03, RF04, RF05, RF08, RF13, RF16, RF21, RF39, RF40, RNF03, RNF04, RNF05, RNF15 (extiende pasos 2, 3, 6, 7 y 11). |
+| Entrada necesaria | Perfil y disponibilidad (paso 2), agenda publica con hold (paso 3), paciente/precheckin y buzon cifrado (paso 6), comunicaciones (paso 7), IA gobernada con consentimiento/seudonimizacion/trazas (paso 11) y sincronizacion app <-> portal funcionando. |
+| Skills IA recomendadas | `smart-explore`, `impeccable`, `ui-ux-pro-max`, `coding-standards`, `superpowers:writing-plans`, `superpowers:test-driven-development`, `superpowers:verification-before-completion`, `codex-security:security-scan` |
+| Se construye | Portal: correccion de la foto de perfil recortada por el banner y del mapa de ubicacion (manejo de la API key de Google Maps con fallback); calendario de agenda que solo permite dias con disponibilidad real; carga automatica de horarios al elegir dia (sin boton "Buscar horarios"); hold que no bloquea al mismo paciente al cambiar de horario dentro de su sesion; validacion de telefono (10 digitos + clave de pais autodetectada y editable); preconsulta diferida tras un aviso con boton "Contestar", con bifurcacion "primera visita -> formulario de antecedentes" vs "ya contesto antes -> preconsulta guiada por IA"; reagendado con el mismo selector de calendario del agendado inicial; recordatorio SMS/correo 24 h antes con enlace corto de cancelacion. App del medico: sincronizacion automatica al abrir y badge rojo en el boton "Sincronizar" cuando hay cambios pendientes. |
+| Se valida con | Un paciente ve el perfil con la foto y el mapa correctos; solo puede elegir dias con horarios; al elegir un dia los horarios cargan solos y puede cambiar de horario sin que se le bloqueen los de su propia sesion; captura un telefono valido con su clave de pais; tras confirmar la cita decide contestar la preconsulta, responde la bifurcacion y completa antecedentes (mismo formulario del medico) o la preconsulta guiada por IA (maximo 5 preguntas adaptativas); recibe un recordatorio 24 h antes con link para cancelar; el medico abre su app y se sincroniza solo, con aviso visible cuando hay cambios pendientes. |
+| Compuerta de avance | La preconsulta y los antecedentes son contenido CLINICO: viajan por el buzon temporal cifrado E2E y la nube nunca los persiste ni los lee en claro; la IA de preconsulta corre bajo consentimiento, seudonimizada, sin persistir contenido ni en logs/telemetria (regla 4), con proveedor real solo en staging con BAA (paso 16). Solo nombre, contacto y datos de cita salen al proveedor de notificaciones. La residencia clinica sigue siendo la app local. |
+| Push recomendado | Hacer push por rebanada cerrada y verificada; cada correccion del flujo publico es independiente y se puede integrar por separado. |
+
+Checklist de salida:
+
+- Foto de perfil sin recorte por el banner y mapa de ubicacion funcional (con fallback claro si falta/expira la API key).
+- Calendario de agenda que deshabilita los dias sin disponibilidad real del medico.
+- Carga automatica de horarios al seleccionar un dia (sin boton "Buscar horarios").
+- El hold de 10 min no bloquea al mismo paciente al navegar entre horarios de su propia sesion.
+- Validacion de telefono: 10 digitos + clave de pais autodetectada y editable.
+- Preconsulta diferida tras aviso y boton "Contestar", con bifurcacion antecedentes / guiada por IA.
+- Formulario de antecedentes identico al que el medico llena/consulta en su desktop app.
+- Preconsulta guiada por IA: maximo 5 preguntas adaptativas, sin repetir, lenguaje de paciente, arranque desde el motivo de consulta.
+- Reagendado con el mismo selector de calendario del agendado inicial.
+- Recordatorio 24 h antes (SMS/correo) con enlace corto de cancelacion.
+- App del medico: sincronizacion automatica al abrir y badge de cambios pendientes en "Sincronizar".
+
+Clasificacion de datos: perfil/mapa/agenda/telefono son OPERATIVO/publico o CONTACTO (no PHI). Preconsulta y antecedentes son CLINICO transitorio en buzon cifrado E2E. El recordatorio solo lleva nombre, contacto y datos de cita. Nada clinico se persiste en la nube, logs ni telemetria.
+
+Rebanadas:
+
+- **Rebanada 1 (portal, UI) — Perfil publico: foto y ubicacion.** Corregir el recorte de la foto por el banner (CSS/layout del encabezado) y el mapa: validar y configurar la API key de Google Maps, con estado de fallback legible (direccion + enlace) cuando falte o sea invalida en vez del error crudo.
+- **Rebanada 2 (portal) — Calendario fiel a la disponibilidad.** El selector de fecha solo habilita dias con horarios reales segun las reglas de disponibilidad y excepciones del medico; los dias sin cupo se muestran deshabilitados (no clickeables), no como disponibles vacios.
+- **Rebanada 3 (portal) — Carga automatica de horarios + hold por sesion.** Cargar los horarios al seleccionar un dia (eliminar la friccion de "Buscar horarios"); el hold temporal no debe bloquear al mismo paciente al cambiar de horario dentro de su sesion (liberar/transferir el hold previo de la misma sesion antes de tomar el nuevo).
+- **Rebanada 4 (portal) — Validacion de telefono internacional.** Campo de telefono con 10 digitos validados, clave de pais autodetectada (por defecto Mexico/locale) y editable. CONTACTO; sin PHI.
+- **Rebanada 5 (portal) — Reagendado con el mismo calendario.** Al cambiar de horario de una cita existente, reutilizar el mismo componente de calendario/horarios del agendado inicial en vez del input nativo `dd/mm/aaaa`.
+- **Rebanada 6 (portal) — Preconsulta diferida con bifurcacion.** Tras confirmar la cita, no mostrar el formulario de inicio: mostrar el aviso "Para agilizar la consulta con su medico, ayudenos contestando este formulario pre-consulta" con boton "Contestar". Al contestar, primera pregunta: "Es su primera visita con este medico o ha contestado antes el formulario de antecedentes?" que bifurca el flujo.
+- **Rebanada 7 (portal + buzon) — Formulario de antecedentes (paridad con el medico).** Si responde "No" (primera vez), mostrar el mismo formulario de antecedentes que el medico tiene en su desktop app; las respuestas viajan por el buzon temporal cifrado E2E y la app del medico las descarga (y purga del buzon).
+- **Rebanada 8 (portal, IA gobernada) — Preconsulta guiada por IA.** Si responde "Si", chat guiado por IA: arranca desde el motivo de consulta escrito (o pregunta por los sintomas si no hay sintomatologia clara), maximo 5 preguntas adaptativas a las respuestas, sin repetir y en lenguaje que el paciente entienda. Bajo gobernanza del paso 11: consentimiento explicito, seudonimizacion, sin persistir contenido en la nube/logs (regla 4); proveedor fake/determinista hasta el cableado real en staging con BAA (paso 16). El resultado se sella en el buzon como la preconsulta.
+- **Rebanada 9 (portal) — Recordatorio 24 h con cancelacion.** Job que envia SMS/correo 24 h antes de la cita (sobre el paso 7), con enlace corto de cancelacion (expiracion y un solo uso) que reusa el flujo de cancelacion existente.
+- **Rebanada 10 (app del medico) — Sync automatica al abrir + aviso de cambios.** Sincronizar la agenda en automatico al abrir/desbloquear la app; mostrar un badge (circulito rojo) en la esquina del boton "Sincronizar" cuando haya cambios pendientes por bajar/subir, y limpiarlo tras sincronizar.
+
+Estado: 🔜 PLANEADO. Construido sobre los pasos 2, 3, 6, 7 y 11.
+
+> Nota de residencia (rebanada 8): la preconsulta guiada por IA es el unico punto donde contenido clinico transita la nube para generar la siguiente pregunta. Debe tratarse como transitorio: consentimiento del paciente, seudonimizacion, prohibido persistir respuestas o prompts en logs/telemetria, y el resultado final sellado en el buzon cifrado (sealed box con la llave publica del medico) para que solo la app del medico lo lea. El adaptador real de IA se cablea en staging con BAA (paso 16); hasta entonces se usa un proveedor determinista para construir y probar el contrato.
 
 ## MVP recomendado
 
