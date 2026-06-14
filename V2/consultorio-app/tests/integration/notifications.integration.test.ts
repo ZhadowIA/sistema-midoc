@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   ClinicalProfile,
+  NotificationChannel,
   NotificationKind,
   NotificationStatus,
   PatientStatus,
@@ -22,7 +23,9 @@ import {
 } from "../../src/services/doctor/doctor-profile-service";
 import { createUploadLink } from "../../src/services/documents/document-service";
 import {
+  phoneNotificationChannel,
   processNotificationQueue,
+  queueNotification,
   resolveShortLink
 } from "../../src/services/notifications/notification-service";
 
@@ -224,6 +227,55 @@ describe("notification flow (paso 7)", () => {
       expect(notifications).toHaveLength(2);
       expect(notifications[0]?.status).toBe(NotificationStatus.PENDING);
       expect(notifications.find((item) => item.channel === "SMS")?.shortLinkId).toBeTruthy();
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("defaults phone notifications to SMS unless WhatsApp is enabled", () => {
+    expect(phoneNotificationChannel()).toBe(NotificationChannel.SMS);
+  });
+
+  it("queues and delivers a WhatsApp notification through its own provider, with a short link and no subject", async () => {
+    const email = uniqueEmail("doctor-whatsapp");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Iris",
+        lastName: "Vega",
+        professionalName: "Dra. Iris Vega",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      const queued = await queueNotification({
+        doctorId: account.user.id,
+        channel: NotificationChannel.WHATSAPP,
+        kind: NotificationKind.APPOINTMENT_CONFIRMATION,
+        destination: "+5216141234567",
+        actionUrl: "https://example.com/perfil/iris/cita/abc123",
+        template: { patientFirstName: "Ana", appointmentLabel: "2026-07-01" }
+      });
+
+      // WhatsApp comparte el comportamiento de un canal telefonico: enlace corto
+      // y sin asunto (el asunto es exclusivo del correo).
+      expect(queued.channel).toBe(NotificationChannel.WHATSAPP);
+      expect(queued.shortLinkId).toBeTruthy();
+      expect(queued.body).toContain("/s/");
+      expect(queued.body).not.toContain("/perfil/");
+      expect(queued.subject).toBeNull();
+
+      const stats = await processNotificationQueue({ limit: 20, doctorId: account.user.id });
+      expect(stats.sent).toBeGreaterThanOrEqual(1);
+
+      // Se entrega por el proveedor de WhatsApp (mock por defecto), no por el de SMS.
+      const sent = await prisma.notification.findUniqueOrThrow({ where: { id: queued.id } });
+      expect(sent.status).toBe(NotificationStatus.SENT);
+      expect(sent.provider).toBe("MOCK");
+      expect(sent.providerMessageId).toMatch(/^mock-/);
     } finally {
       await cleanupUserByEmail(email);
     }

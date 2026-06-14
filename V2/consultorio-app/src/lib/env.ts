@@ -10,6 +10,16 @@ const envSchema = z.object({
   SMS_PROVIDER: z.string().min(1),
   SMS_BASE_URL: z.url(),
   SMS_API_KEY: z.string().min(1),
+  // WhatsApp via Twilio reusa las credenciales de Twilio (SMS_API_KEY); solo
+  // cambia el proveedor y el remitente. Defaults para no romper entornos sin
+  // WhatsApp configurado.
+  WHATSAPP_PROVIDER: z.string().min(1).default("mock"),
+  // Remitente de WhatsApp en formato Twilio, p. ej. "whatsapp:+14155238886".
+  // Opcional: solo se usa cuando el proveedor real esta cableado (paso 17).
+  WHATSAPP_FROM: z.string().min(1).optional(),
+  // Canal por defecto para notificaciones a un telefono: SMS (actual) o
+  // WHATSAPP (opt-in). El correo siempre va por EMAIL aparte.
+  PHONE_NOTIFICATION_CHANNEL: z.enum(["SMS", "WHATSAPP"]).default("SMS"),
   EMAIL_PROVIDER: z.string().min(1),
   EMAIL_BASE_URL: z.url(),
   EMAIL_API_KEY: z.string().min(1),

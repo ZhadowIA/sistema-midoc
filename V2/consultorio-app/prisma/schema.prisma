@@ -148,6 +148,7 @@ enum UploadLinkStatus {
 enum NotificationChannel {
   SMS
   EMAIL
+  WHATSAPP
 }
 
 enum NotificationKind {

@@ -20,7 +20,7 @@ Sistema MiDoc/
 
 V2 is **local-first**: all clinical data (records, SOAP notes, prescriptions, documents) lives encrypted on the doctor's computer inside the installable desktop app. The cloud portal only handles public booking, the doctor's public profile, a temporary encrypted inbox (pre-consultation forms and patient uploads, purged after the desktop app syncs them down), SMS/email notifications, and the SaaS subscription. **No clinical data is ever persisted permanently in the cloud.** Everything is TypeScript.
 
-There is no WhatsApp bot in V2 — notifications use SMS and email.
+V2 does not reuse V1's unofficial WhatsApp bot (`whatsapp-web.js`). Notifications default to SMS and email; WhatsApp is available as an opt-in notification channel through **Twilio** (the same provider/credentials as SMS, using the official WhatsApp Business API), selected via `PHONE_NOTIFICATION_CHANNEL`. The real Twilio WhatsApp sending (approved WhatsApp Business Account + Meta-approved templates) is wired alongside real SMS in paso 17; until then it runs through the mock provider. Only name, contact and appointment data ever leave to the notification provider — never clinical content.
 
 ## Mandatory reading before working on V2
 

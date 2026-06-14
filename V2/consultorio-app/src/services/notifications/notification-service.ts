@@ -19,6 +19,27 @@ class NotificationServiceError extends ServiceError {}
 const MAX_NOTIFICATION_ATTEMPTS = 3;
 const DEFAULT_BATCH_LIMIT = 25;
 
+// Canales que llegan a un telefono: comparten plantillas sin asunto y enlaces
+// cortos. WhatsApp se entrega via Twilio (mismo proveedor que SMS).
+const PHONE_CHANNELS: NotificationChannel[] = [
+  NotificationChannel.SMS,
+  NotificationChannel.WHATSAPP
+];
+
+function isPhoneChannel(channel: NotificationChannel) {
+  return PHONE_CHANNELS.includes(channel);
+}
+
+/**
+ * Canal con que se notifica a un telefono, segun configuracion del entorno:
+ * SMS (default) o WHATSAPP (opt-in). El correo se decide aparte por el llamador.
+ */
+export function phoneNotificationChannel(): NotificationChannel {
+  return env.PHONE_NOTIFICATION_CHANNEL === "WHATSAPP"
+    ? NotificationChannel.WHATSAPP
+    : NotificationChannel.SMS;
+}
+
 type TemplateContext = {
   actionUrl?: string;
   doctorName?: string | null;
@@ -128,7 +149,7 @@ export async function queueNotification(input: QueueNotificationInput) {
   let shortLinkId: string | null = null;
   let actionUrl = input.actionUrl;
 
-  if (input.channel === NotificationChannel.SMS && input.actionUrl) {
+  if (isPhoneChannel(input.channel) && input.actionUrl) {
     const shortLink = await createShortLink({
       doctorId: input.doctorId,
       patientId: input.patientId,
@@ -181,6 +202,19 @@ function getMockFailureCount(notification: Notification) {
   return 0;
 }
 
+function providerForChannel(channel: NotificationChannel) {
+  switch (channel) {
+    case NotificationChannel.SMS:
+      return env.SMS_PROVIDER;
+    case NotificationChannel.WHATSAPP:
+      return env.WHATSAPP_PROVIDER;
+    case NotificationChannel.EMAIL:
+      return env.EMAIL_PROVIDER;
+    default:
+      return env.EMAIL_PROVIDER;
+  }
+}
+
 async function deliverNotification(notification: Notification) {
   const mockFailTimes = getMockFailureCount(notification);
 
@@ -188,8 +222,7 @@ async function deliverNotification(notification: Notification) {
     throw new NotificationServiceError("Mock provider transient failure.", 502);
   }
 
-  const provider =
-    notification.channel === NotificationChannel.SMS ? env.SMS_PROVIDER.toUpperCase() : env.EMAIL_PROVIDER.toUpperCase();
+  const provider = providerForChannel(notification.channel).toUpperCase();
 
   return {
     provider,

@@ -16,6 +16,9 @@ param termsVersion string
 param privacyVersion string
 param smsProvider string
 param smsBaseUrl string
+param whatsappProvider string
+param whatsappFrom string
+param phoneNotificationChannel string
 param emailProvider string
 param emailBaseUrl string
 param emailFrom string
@@ -257,12 +260,20 @@ var nonSecretEnv = [
   { name: 'PRIVACY_VERSION', value: privacyVersion }
   { name: 'SMS_PROVIDER', value: smsProvider }
   { name: 'SMS_BASE_URL', value: smsBaseUrl }
+  { name: 'WHATSAPP_PROVIDER', value: whatsappProvider }
+  { name: 'PHONE_NOTIFICATION_CHANNEL', value: phoneNotificationChannel }
   { name: 'EMAIL_PROVIDER', value: emailProvider }
   { name: 'EMAIL_BASE_URL', value: emailBaseUrl }
   { name: 'EMAIL_FROM', value: emailFrom }
   { name: 'PAYMENTS_PROVIDER', value: paymentsProvider }
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
 ]
+
+// WHATSAPP_FROM solo se emite si tiene valor: un string vacio rompe la
+// validacion Zod (`.min(1)`); su ausencia es valida (canal opt-in).
+var whatsappFromEnv = empty(whatsappFrom)
+  ? []
+  : [{ name: 'WHATSAPP_FROM', value: whatsappFrom }]
 
 var secretEnv = [
   { name: 'DATABASE_URL', secretRef: 'database-url' }
@@ -307,7 +318,7 @@ resource portalApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'portal'
           image: image
           resources: { cpu: json('0.5'), memory: '1Gi' }
-          env: concat(nonSecretEnv, secretEnv)
+          env: concat(nonSecretEnv, whatsappFromEnv, secretEnv)
         }
       ]
       scale: { minReplicas: 1, maxReplicas: 3 }

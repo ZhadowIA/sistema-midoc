@@ -17,6 +17,10 @@ param termsVersion string = '2026-05'
 param privacyVersion string = '2026-05'
 param smsProvider string = 'mock'
 param smsBaseUrl string = 'https://sms.example.com'
+param whatsappProvider string = 'mock'
+param whatsappFrom string = ''
+@allowed(['SMS', 'WHATSAPP'])
+param phoneNotificationChannel string = 'SMS'
 param emailProvider string = 'mock'
 param emailBaseUrl string = 'https://email.example.com'
 param emailFrom string = 'no-responder@midoc.example.com'
@@ -66,6 +70,9 @@ module resources 'resources.bicep' = {
     privacyVersion: privacyVersion
     smsProvider: smsProvider
     smsBaseUrl: smsBaseUrl
+    whatsappProvider: whatsappProvider
+    whatsappFrom: whatsappFrom
+    phoneNotificationChannel: phoneNotificationChannel
     emailProvider: emailProvider
     emailBaseUrl: emailBaseUrl
     emailFrom: emailFrom

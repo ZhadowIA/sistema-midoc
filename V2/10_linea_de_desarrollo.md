@@ -325,6 +325,14 @@ Checklist de salida:
 - Estados: pendiente, enviado, fallido y reintentado.
 - Errores visibles para soporte.
 
+Extension (2026-06-14) — WhatsApp como canal opt-in via Twilio:
+
+- **Decision.** Se reincorpora WhatsApp (descartado en V1 por usar el bot no oficial `whatsapp-web.js`) pero por la **API oficial de WhatsApp Business a traves de Twilio** — mismo proveedor y credenciales que el SMS. Es un canal mas sobre la capa de notificaciones existente, no una pieza aparte.
+- **Modelo.** `NotificationChannel` agrega `WHATSAPP` (migracion `add_whatsapp_channel`). WhatsApp comparte el comportamiento de un canal telefonico (enlace corto, sin asunto) y se entrega por su propio proveedor (`WHATSAPP_PROVIDER`). `phoneNotificationChannel()` decide SMS (default) o WHATSAPP segun `PHONE_NOTIFICATION_CHANNEL`; los llamadores (agenda, documentos) lo usan en vez de fijar SMS.
+- **Infra.** `WHATSAPP_PROVIDER`, `WHATSAPP_FROM` y `PHONE_NOTIFICATION_CHANNEL` cableados como config no secreta en Bicep (el remitente de WhatsApp es publico). `WHATSAPP_FROM` solo se emite si tiene valor.
+- **Pendiente para paso 17.** El **envio real** exige cuenta de WhatsApp Business (WABA) aprobada por Meta y **plantillas pre-aprobadas** para mensajes iniciados por el negocio; eso se cablea con el Twilio real. Hasta entonces corre por el proveedor mock. Residencia intacta: solo nombre, contacto y datos de cita salen al proveedor; nunca contenido clinico.
+- **Verificacion.** 74 pruebas del portal en verde (+2: el canal WhatsApp encola con enlace corto y sin asunto, y se entrega por su proveedor; el canal telefonico default es SMS), `eslint`/`tsc` limpios, `next build` ok y `az bicep build` sin errores.
+
 ## Paso 8 - Odontologia
 
 | Campo | Definicion |

@@ -24,7 +24,7 @@ import {
   type LocalDate
 } from "../../lib/timezone";
 import { emitSyncEvent } from "../sync/sync-service";
-import { queueNotification } from "../notifications/notification-service";
+import { phoneNotificationChannel, queueNotification } from "../notifications/notification-service";
 
 const HOLD_TTL_MS = 1000 * 60 * 10;
 const SLOT_TAKEN_MESSAGE = "El horario seleccionado ya no esta disponible.";
@@ -726,7 +726,7 @@ export async function bookPublicAppointment(input: {
     null;
 
   for (const contact of [
-    notifyPhone ? { channel: "SMS" as const, destination: notifyPhone } : null,
+    notifyPhone ? { channel: phoneNotificationChannel(), destination: notifyPhone } : null,
     notifyEmail ? { channel: "EMAIL" as const, destination: notifyEmail } : null
   ]) {
     if (!contact) {

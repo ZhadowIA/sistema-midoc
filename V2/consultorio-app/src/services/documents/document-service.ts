@@ -11,7 +11,7 @@ import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { generateOpaqueToken } from "../../lib/security/token";
 import { emitSyncEvent, getActiveDeviceDocumentKey } from "../sync/sync-service";
-import { queueNotification } from "../notifications/notification-service";
+import { phoneNotificationChannel, queueNotification } from "../notifications/notification-service";
 
 class DocumentServiceError extends ServiceError {}
 
@@ -114,7 +114,7 @@ export async function createUploadLink(
   const uploadUrl = `${env.APP_BASE_URL}/carga/${token}`;
 
   for (const contact of [
-    patient.phone ? { channel: "SMS" as const, destination: patient.phone } : null,
+    patient.phone ? { channel: phoneNotificationChannel(), destination: patient.phone } : null,
     patient.email ? { channel: "EMAIL" as const, destination: patient.email } : null
   ]) {
     if (!contact) {
