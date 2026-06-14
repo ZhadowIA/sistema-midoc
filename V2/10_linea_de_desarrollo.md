@@ -13,7 +13,14 @@
 
 **Paso 13 completado** (post-MVP, app del médico): directorio clínico de pacientes y expediente longitudinal con línea del tiempo editable. Rebanadas 1 (directorio), 2 (línea del tiempo), 3 (independencia agenda/directorio + anti-duplicados) y 4 (agenda semanal por bloques + "Atender" abre expediente) entregadas el 2026-06-12/13.
 
-**Siguientes prioridades fuera de la línea:** pasarela de pago real para la suscripción, panel de administración de planes y endurecimiento de producción/staging con proveedores reales (BAA).
+**Decisiones de proveedores (2026-06-13):** SMS = **Twilio**, correo = **Resend** (doc 08). IA: base **Gemini 3 Flash** por costo con fallback (Gemini 3.1 Pro / GPT-5.5); transcripción **Whisper local** primero y nube (AssemblyAI/Deepgram) como respaldo con consentimiento; MedLM/HealthScribe descartados para MVP porque los generalistas los superan en benchmark (doc 11). La seguridad de medicación se resuelve con herramientas **deterministas** (DDInter, openFDA, RxNorm/RxClass), no con IA.
+
+**Extensión de la línea (pasos 14-17, planeados 2026-06-13):** estos pasos llevan a producción los pendientes acordados, en orden de dependencia:
+
+- **Paso 14 — Seguridad de medicación determinista (sin IA).** Interacciones, alergias cruzadas y duplicidad terapéutica con fuentes públicas auditables. No depende de contratos externos; puede arrancar de inmediato.
+- **Paso 15 — Transcripción local real (Whisper) y descarga de modelo.** Sustituye el proveedor fake por whisper.cpp real, con descarga gestionada del modelo recomendado y respaldo en nube. Construye sobre la recomendación de modelo ya entregada (paso 11 rebanada 7).
+- **Paso 16 — Cableado de proveedores de IA reales en staging (BAA).** Adaptadores reales de LLM (Gemini base + fallback) y transcripción en nube, bajo BAA/contrato, con la gobernanza local intacta.
+- **Paso 17 — Endurecimiento de producción: notificaciones y pago reales.** Twilio y Resend reales con dominios propios, y pasarela de pago real para la suscripción.
 
 ## Por que usar linea de desarrollo y no roadmap
 
@@ -71,6 +78,10 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 🚧 IN PROGRESS (fundacion + SOAP asistido) |
 | 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | ✅ DONE |
 | 13 | Directorio y expediente longitudinal | `impeccable` | Directorio de pacientes y linea del tiempo clinica editable. | ✅ DONE |
+| 14 | Seguridad de medicacion determinista | `codex-security:security-scan` | Interacciones, alergias cruzadas y duplicidad sin IA, con fuente citada. | 🔜 PLANEADO |
+| 15 | Transcripcion local real (Whisper) | `superpowers:writing-plans` | whisper.cpp real, descarga de modelo y respaldo en nube gobernado. | 🔜 PLANEADO |
+| 16 | Proveedores de IA reales en staging (BAA) | `codex-security:security-scan` | Adaptadores reales de LLM/transcripcion con gobernanza intacta. | 🔜 PLANEADO |
+| 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -452,7 +463,15 @@ Entregado (rebanada 6 — transcripcion de consulta por audio/voz, RF40, 2026-06
 - **Costos y reporte SaaS.** La corrida cuenta en `usage_summary`; `pending_usage_reports` la reporta como `TRANSCRIPTION` con referencias `LOCAL_AI_AUDIO_INPUT`/`LOCAL_AI_TRANSCRIPT_OUTPUT`, nunca con audio ni texto transcrito.
 - **UI y mock.** La pantalla de Atencion expone consentimiento de voz, selector de audio y acciones "Usar en subjetivo"/"Descartar"; el mock de navegador simula el mismo comportamiento para verificacion sin Tauri nativo.
 
-Pendiente (no requerido por la compuerta, rebanada futura): adaptador de proveedor real en staging con BAA/contrato, pruebas contra fakes del contrato real y benchmark de audios representativos autorizados o simulados.
+Entregado (rebanada 7 — recomendacion de modelo Whisper local segun hardware, 2026-06-13):
+
+- **Seleccion automatica de modelo (`transcription.rs`).** La app detecta RAM, nucleos de CPU y si hay GPU dedicada acelerable, y sugiere el tamano de Whisper local (small/medium/large-v3) para que el medico no tenga que entender de tamanos de modelo. Politica de seleccion pura y testeable; deteccion de GPU por SO (Windows CIM, Linux lspci, macOS system_profiler), conservadora ante fallo. Cuando el equipo queda por debajo del minimo comodo, sugiere la nube con consentimiento sin bloquear el modo offline.
+- **Comando y UI.** `transcription_recommendation` (no toca datos clinicos) y pantalla "Transcripcion" que muestra el modelo sugerido, specs del equipo, aceleracion (GPU/CPU) y velocidad (casi en vivo / por lotes).
+- **Frontera de alcance.** Esta rebanada solo recomienda; la integracion real de whisper.cpp, la descarga del modelo y el cableado del audio real son el paso 15.
+
+Verificacion (rebanada 7): 81 pruebas de Rust en verde (+12: politica de seleccion por RAM/CPU/GPU y sus fronteras, clasificador de GPU dedicada vs integrada/virtual, agregador conservador), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok y prueba en navegador (pantalla "Transcripcion" con modelo sugerido y specs).
+
+Pendiente (no requerido por la compuerta, ver pasos 15 y 16): integracion real de whisper.cpp con descarga de modelo (paso 15) y adaptadores de proveedor real (LLM y transcripcion en nube) en staging con BAA/contrato (paso 16), con pruebas contra fakes del contrato real y benchmark de casos representativos autorizados o simulados.
 
 ## Paso 12 - SaaS y compliance avanzado
 
@@ -581,6 +600,83 @@ Verificacion (rebanada 4): pruebas de Rust en verde (+4: `resolve_appointment_pa
 
 Con esto la compuerta de push del paso 13 queda cubierta: directorio para llegar a cualquier paciente sin cita, expediente longitudinal con linea del tiempo editable, y agenda semanal independiente del expediente con importacion anti-duplicados que abre el expediente del paciente — todo en la base local cifrada sin enviar datos clinicos a la nube.
 
+## Paso 14 - Seguridad de medicacion determinista (sin IA)
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Resolver con datos deterministas y auditables —no con IA generativa— la seguridad de la prescripcion: interacciones farmaco-farmaco, alergias cruzadas, duplicidad terapeutica y referencia de dosis/etiqueta. Reduce la dependencia de IA y elimina alucinaciones en lo critico (doc 11). |
+| Requisitos relacionados | Extiende receta (pasos 4 y 5); RNF05 (seguridad clinica). |
+| Entrada necesaria | Receta y expediente (pasos 4 y 5) funcionando. |
+| Skills IA recomendadas | `smart-explore`, `coding-standards`, `superpowers:test-driven-development`, `superpowers:verification-before-completion`, `codex-security:security-scan` |
+| Se construye | En la app del medico: normalizacion de farmacos a RxCUI (RxNorm), verificador de interacciones (DDInter local + openFDA como respaldo de texto), alerta de alergia cruzada contra el expediente y duplicidad terapeutica por clase (RxClass), con referencia de etiqueta/dosis. Base de farmacos/interacciones empaquetada o descargable y versionada localmente; la prescripcion del paciente nunca sale del equipo. |
+| Se valida con | Al prescribir, el sistema marca interacciones con severidad, alergias en conflicto y duplicidades, **citando la fuente**; el medico decide. Funciona offline con la base local. |
+| Compuerta de avance | Ninguna verificacion de seguridad depende de IA; cada alerta cita una fuente determinista y trazable; la prescripcion no sale del equipo (regla de residencia 1). |
+| Push recomendado | Hacer push cuando interacciones, alergias cruzadas y duplicidad funcionen offline con fuente citada, version de base visible y pruebas. |
+
+Checklist de salida:
+
+- Normalizacion de farmacos a RxCUI (RxNorm).
+- Interacciones farmaco-farmaco con severidad (DDInter); respaldo de texto (openFDA).
+- Alerta de alergia cruzada contra las alergias del expediente.
+- Deteccion de duplicidad terapeutica por clase (RxClass).
+- Base de interacciones versionada localmente y actualizable, con aviso de version.
+- Auditoria local de cada alerta mostrada u omitida.
+
+Clasificacion de datos: la base de farmacos/interacciones es REFERENCIA publica (no PHI); las verificaciones corren localmente sobre datos CLINICO (la prescripcion). Nada sale a la nube.
+
+> Nota: la API de interacciones de la NLM/RxNav fue descontinuada en enero 2024; por eso la fuente de interacciones es DDInter (descargable) + openFDA. RxNorm/RxClass siguen vigentes (doc 11).
+
+## Paso 15 - Transcripcion local real (Whisper) y descarga de modelo
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Sustituir el proveedor fake de transcripcion por Whisper corriendo en el equipo del medico, con descarga gestionada del modelo recomendado, y dejar la nube (AssemblyAI/Deepgram) como respaldo con consentimiento. |
+| Requisitos relacionados | RF40, RNF15 (extiende el paso 11). |
+| Entrada necesaria | Transcripcion gobernada con fake (paso 11 rebanada 6) y recomendacion de modelo segun hardware (paso 11 rebanada 7). |
+| Skills IA recomendadas | `smart-explore`, `coding-standards`, `superpowers:writing-plans`, `superpowers:test-driven-development`, `superpowers:verification-before-completion` |
+| Se construye | Integracion de whisper.cpp (binding o binario empaquetado) y `WhisperLocalProvider` que implementa el trait `TranscriptionProvider` ya existente; gestor de descarga del modelo recomendado (checksum, progreso, reanudacion, validacion de espacio en disco) hacia `app_data_dir`; conexion del audio real al provider; adaptador de respaldo en nube con consentimiento de voz y seudonimizacion. |
+| Se valida con | El medico descarga el modelo sugerido, graba una consulta y obtiene la transcripcion **offline**; ante equipo insuficiente puede usar la nube con consentimiento. El audio sigue siendo transitorio (no se persiste). |
+| Compuerta de avance | La transcripcion corre offline por defecto; el audio no se persiste; el envio a nube exige consentimiento de voz vigente y datos seudonimizados; licencias compatibles con distribucion comercial (whisper.cpp es MIT). |
+| Push recomendado | Hacer push cuando la transcripcion local real funcione de inicio a fin con descarga de modelo verificada y respaldo en nube gobernado, con pruebas. |
+
+Checklist de salida:
+
+- Binding/binario de whisper.cpp empaquetado, con licencia verificada.
+- Gestor de descarga: checksum, progreso, reanudacion y validacion de espacio.
+- `WhisperLocalProvider` cableado al flujo de audio real (reemplaza al fake).
+- Respaldo en nube (AssemblyAI/Deepgram) con consentimiento y seudonimizacion.
+- Pruebas: descarga interrumpida y checksum invalido, provider real contra fakes del contrato, audio no persistido.
+
+## Paso 16 - Proveedores de IA reales en staging (BAA)
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Cablear los proveedores reales de LLM y transcripcion en staging bajo BAA/contrato, manteniendo intacta la gobernanza local (consentimiento, seudonimizacion, trazas, control de costo, fallback y revision humana). |
+| Requisitos relacionados | RF41, RNF15. |
+| Entrada necesaria | Capa multi-proveedor y benchmark (paso 11); seguridad de medicacion (paso 14), para no delegar lo critico a IA. |
+| Skills IA recomendadas | `superpowers:writing-plans`, `coding-standards`, `superpowers:test-driven-development`, `superpowers:verification-before-completion`, `codex-security:security-scan` |
+| Se construye | Adaptadores reales: LLM base **Gemini 3 Flash** con fallback (Gemini 3.1 Pro / GPT-5.5) para SOAP, resumen, instrucciones y documentacion; configuracion de costo real por proveedor; benchmark con casos representativos autorizados o simulados para confirmar la eleccion. Solo en staging con BAA; nunca en local sin acuerdo (regla 4). |
+| Se valida con | El benchmark compara los proveedores reales por calidad/costo/latencia/cumplimiento y documenta la decision; las salidas siguen siendo borrador con revision humana. |
+| Compuerta de avance | No se envia PHI a ningun proveedor sin BAA/contrato y seudonimizacion; la seleccion se hace con evidencia propia, no por marketing del proveedor (RNF15). |
+| Push recomendado | Hacer push cuando los adaptadores reales pasen el contrato contra fakes, el benchmark documente la decision y la gobernanza siga intacta. |
+
+Decision de base (2026-06-13, doc 11): Gemini 3 Flash como base por costo; los LLM generalistas superan a las herramientas clinicas especializadas en benchmark (Nature Medicine 2026), por lo que MedLM/HealthScribe quedan descartados para el MVP. GPT-5.5 / Gemini Pro / Opus se reservan como fallback de seguridad para casos delicados.
+
+## Paso 17 - Produccion: notificaciones y pago reales
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Reemplazar los proveedores fake de notificaciones por los reales decididos y habilitar el cobro de la suscripcion. |
+| Requisitos relacionados | RF21, RF28, RF31. |
+| Entrada necesaria | Comunicaciones (paso 7) y SaaS/suscripcion (paso 12), hoy con fakes y ciclo de vida interno. |
+| Skills IA recomendadas | `coding-standards`, `superpowers:test-driven-development`, `codex-security:security-scan`, `analytics` |
+| Se construye | En el portal: adaptador real de SMS (**Twilio**) con enlaces cortos y dominio propio; adaptador real de correo (**Resend**) con SPF, DKIM y DMARC; pasarela de pago real para la suscripcion y panel de administracion de planes. |
+| Se valida con | Un mensaje real llega por SMS y por correo desde dominios propios; un cliente paga la suscripcion y el gating por capacidad refleja el estado real del pago. |
+| Compuerta de avance | Solo nombre, contacto y datos de cita salen a los proveedores de notificacion (regla 4); secretos en boveda; sin contenido clinico en mensajes, logs ni telemetria. |
+| Push recomendado | Hacer push cuando SMS y correo reales entreguen desde dominios propios y el cobro de la suscripcion opere con gating real, con pruebas contra fakes del contrato. |
+
+Decisiones (2026-06-13, doc 08): SMS = Twilio, correo = Resend. La pasarela de pago concreta queda por elegir (candidatos: Stripe, Mercado Pago).
+
 ## MVP recomendado
 
 El MVP debe cerrar los pasos 0 a 7 y dejar odontologia como paso 8 si el tiempo no permite incluirla desde el primer piloto. El MVP incluye necesariamente las piezas local-first: app de escritorio instalable con base cifrada, sincronizacion con purga de buzon y respaldo con restauracion probada — sin ellas la promesa de residencia de datos no se cumple. El MVP recomendado contiene:
@@ -602,7 +698,7 @@ El MVP debe cerrar los pasos 0 a 7 y dejar odontologia como paso 8 si el tiempo 
 
 La transcripcion de consulta por IA no forma parte del MVP recomendado. Debe entrar en IA clinica gobernada, despues de tener consentimiento, auditoria, flujo manual estable y politica de retencion o descarte de audio.
 
-La seleccion final de proveedores de IA tampoco debe cerrarse en el MVP. GPT/OpenAI y Deepgram pueden mantenerse como base inicial, pero la V2 debe preparar una capa multi-proveedor para comparar OpenAI, Google MedLM, AWS HealthScribe, Deepgram, AssemblyAI y Nabla con datos representativos antes de decidir.
+La seleccion final de proveedores de IA tampoco debe cerrarse en el MVP: se cablea sobre la capa multi-proveedor en staging con BAA (paso 16). La decision de base vigente (2026-06-13, doc 11) es **Gemini 3 Flash** como LLM por costo —los generalistas superan a las herramientas clinicas especializadas en benchmark— y **Whisper local** para transcripcion, con nube (AssemblyAI/Deepgram) como respaldo con consentimiento. La capa multi-proveedor permite comparar y cambiar sin reescribir los flujos; la eleccion definitiva se confirma con benchmark sobre datos representativos.
 
 ## Orden tactico sugerido
 
