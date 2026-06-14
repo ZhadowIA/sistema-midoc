@@ -755,7 +755,7 @@ Rebanadas:
 - **Rebanada 2 (app del medico):** el responsable viaja por sync, migracion local y se muestra en la cita y el expediente.
 - **Rebanada 3 (refinamiento):** menor por fecha de nacimiento exige responsable; etiqueta "menor con tutor"; consideraciones ARCO (quien ejerce los derechos del menor).
 
-Estado: 🚧 EN PROGRESO — rebanada 1 (portal) entregada (2026-06-14); rebanadas 2 (app del medico) y 3 (refinamiento de menores) pendientes. Construido sobre los pasos 3, 6 y 13.
+Estado: 🚧 EN PROGRESO — rebanadas 1 (portal) y 2 (app del medico) entregadas (2026-06-14); rebanada 3 (refinamiento de menores) pendiente. Construido sobre los pasos 3, 6 y 13.
 
 Entregado (rebanada 1 — portal: distinguir paciente con/sin responsable, 2026-06-14):
 
@@ -767,7 +767,16 @@ Entregado (rebanada 1 — portal: distinguir paciente con/sin responsable, 2026-
 
 Verificacion (rebanada 1): 8 pruebas de integracion de agendado en verde (incluye: agendar para un menor crea al menor con su fecha de nacimiento y un responsable primario; reagendar actualiza al responsable sin duplicar; un nombre distinto con el contacto del tutor sigue siendo paciente nuevo), `tsc`/`eslint` limpios y `next build` ok.
 
-Pendiente (rebanadas 2 y 3): el responsable viaja por sync y se muestra en la app del medico (migracion local + UI); refinamiento de menores por fecha de nacimiento (responsable obligatorio, etiqueta "menor con tutor") y consideraciones ARCO.
+Entregado (rebanada 2 — app del medico: el responsable viaja por sync y se conserva en el expediente, 2026-06-14):
+
+- **El responsable viaja en el evento de sync (`public-booking-service.ts` → `APPOINTMENT_BOOKED`).** El payload lleva un objeto `responsible` (nombre, parentesco, telefono, correo) aparte del paciente, mas la `birthDate` del paciente. El responsable es CONTACTO; nunca contenido clinico.
+- **Migracion local v15 (`db.rs`).** Columnas nuevas en `appointments` (`patient_birth_date`, `guardian_*`) y en `patients` (`guardian_*`); forward-compatible. La aplicacion del evento (`sync.rs`) las persiste y, al reagendar, conserva el responsable con `COALESCE`.
+- **Se conserva en el expediente como entidad propia (`clinical.rs`).** Al importar al paciente desde una cita (`import_appointment_patient`), el responsable y la fecha de nacimiento pasan al expediente. `PatientRecord` expone `guardian: Option<Guardian>`. La identidad del paciente nunca se confunde con la del tutor.
+- **Se muestra en el expediente (`Expediente.tsx`).** El banner del paciente muestra "Responsable: Nombre (parentesco) · contacto" cuando existe.
+
+Verificacion (rebanada 2): 109 pruebas de Rust en verde (+2: el agendado de un menor lleva al responsable como entidad propia con la identidad del menor; la importacion desde la cita conserva responsable y fecha de nacimiento en el expediente), `cargo clippy` sin advertencias nuevas, `tsc + vite build` del escritorio ok; 8 pruebas de integracion del portal en verde (la nueva asercion comprueba que `APPOINTMENT_BOOKED` lleva `responsible` y `birthDate`), `eslint`/`tsc` del portal limpios y `next build` ok.
+
+Pendiente (rebanada 3): refinamiento de menores por fecha de nacimiento (responsable obligatorio, etiqueta "menor con tutor") y consideraciones ARCO (quien ejerce los derechos del menor).
 
 ## MVP recomendado
 

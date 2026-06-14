@@ -461,6 +461,24 @@ describe("public booking flow", () => {
       expect(booking.patient.birthDate).not.toBeNull();
       expect(booking.patient.email).toBeNull();
 
+      // El evento de sync lleva al responsable como entidad propia (paso 18,
+      // rebanada 2): la app del medico lo conserva sin mezclarlo con el paciente.
+      const bookedEvents = await prisma.syncEvent.findMany({
+        where: { doctorId: account.user.id, type: "APPOINTMENT_BOOKED" }
+      });
+      const payload = bookedEvents
+        .map((event) => event.payload as {
+          appointmentId: string;
+          patient: { firstName: string; birthDate: string | null; email: string | null };
+          responsible: { name: string; relationship: string | null; email: string | null } | null;
+        })
+        .find((p) => p.appointmentId === booking.appointment.id)!;
+      expect(payload.patient.firstName).toBe("Mateo");
+      expect(payload.patient.birthDate).toBe("2018-05-10");
+      expect(payload.responsible?.name).toBe("Marta Rios");
+      expect(payload.responsible?.relationship).toBe("Madre");
+      expect(payload.responsible?.email).toBe(guardianEmail);
+
       // El responsable queda como contacto primario del paciente.
       const contacts = await prisma.patientContact.findMany({ where: { patientId: booking.patient.id } });
       expect(contacts).toHaveLength(1);

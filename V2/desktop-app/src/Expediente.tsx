@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
 
+interface Guardian {
+  name: string;
+  relationship: string | null;
+  phone: string | null;
+  email: string | null;
+}
+
 interface PatientRecord {
   id: string;
   first_name: string;
@@ -11,6 +18,12 @@ interface PatientRecord {
   allergies: string | null;
   medical_background: string | null;
   family_background: string | null;
+  guardian: Guardian | null;
+}
+
+function guardianContactLine(guardian: Guardian): string {
+  const parts = [guardian.phone, guardian.email].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : "Sin contacto";
 }
 
 interface HistoryEntry {
@@ -298,6 +311,14 @@ export function Expediente({
               {p.birth_date ? ` · Nac: ${formatEventDate(p.birth_date)}` : ""}
             </p>
           </div>
+          {p.guardian ? (
+            <p className="meta patient-guardian">
+              Responsable: <strong>{p.guardian.name}</strong>
+              {p.guardian.relationship ? ` (${p.guardian.relationship})` : ""}
+              {" · "}
+              {guardianContactLine(p.guardian)}
+            </p>
+          ) : null}
           {p.allergies ? <p className="alert-allergies">Alergias: {p.allergies}</p> : null}
         </section>
 

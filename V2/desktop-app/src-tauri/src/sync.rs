@@ -114,16 +114,25 @@ pub fn apply_event(conn: &Connection, event: &InboxEvent) -> Result<(), SyncErro
     match event.event_type.as_str() {
         "APPOINTMENT_BOOKED" => {
             let patient = payload.get("patient").cloned().unwrap_or_default();
+            // El responsable (tutor) llega como entidad aparte: nombre, parentesco
+            // y su contacto. Es CONTACTO, jamas se mezcla con el paciente.
+            let responsible = payload.get("responsible").cloned().unwrap_or_default();
             conn.execute(
                 "INSERT INTO appointments (
                     id, status, scheduled_start, scheduled_end, service_name, reason,
                     patient_id, patient_first_name, patient_last_name, patient_phone,
-                    patient_email, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    patient_email, patient_birth_date, guardian_name, guardian_relationship,
+                    guardian_phone, guardian_email, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
                  ON CONFLICT(id) DO UPDATE SET
                     status = excluded.status,
                     scheduled_start = excluded.scheduled_start,
                     scheduled_end = excluded.scheduled_end,
+                    patient_birth_date = COALESCE(excluded.patient_birth_date, patient_birth_date),
+                    guardian_name = COALESCE(excluded.guardian_name, guardian_name),
+                    guardian_relationship = COALESCE(excluded.guardian_relationship, guardian_relationship),
+                    guardian_phone = COALESCE(excluded.guardian_phone, guardian_phone),
+                    guardian_email = COALESCE(excluded.guardian_email, guardian_email),
                     updated_at = excluded.updated_at",
                 params![
                     text(payload, "appointmentId"),
@@ -137,6 +146,11 @@ pub fn apply_event(conn: &Connection, event: &InboxEvent) -> Result<(), SyncErro
                     text(&patient, "lastName").unwrap_or_default(),
                     text(&patient, "phone"),
                     text(&patient, "email"),
+                    text(&patient, "birthDate"),
+                    text(&responsible, "name"),
+                    text(&responsible, "relationship"),
+                    text(&responsible, "phone"),
+                    text(&responsible, "email"),
                     now
                 ],
             )?;
@@ -646,6 +660,65 @@ mod tests {
             )
             .unwrap();
         assert!(responses.contains("Dolor lumbar"));
+    }
+
+    #[test]
+    fn booking_for_a_minor_carries_the_guardian_as_its_own_entity() {
+        let mut conn = test_conn("guardian");
+
+        let event = InboxEvent {
+            seq: 1,
+            event_type: "APPOINTMENT_BOOKED".into(),
+            payload: Some(serde_json::json!({
+                "appointmentId": "appt-minor",
+                "status": "PENDING",
+                "scheduledStart": "2026-07-01T15:00:00.000Z",
+                "scheduledEnd": "2026-07-01T15:30:00.000Z",
+                "serviceName": "Consulta",
+                "reason": "Control del nino",
+                "patient": {
+                    "id": "pat-minor",
+                    "firstName": "Lucia",
+                    "lastName": "Paz",
+                    "birthDate": "2018-03-04",
+                    // Contacto de la cita = el del tutor (el menor no tiene propio).
+                    "phone": "6140002222",
+                    "email": null
+                },
+                "responsible": {
+                    "name": "Hugo Paz",
+                    "relationship": "Padre",
+                    "phone": "6140002222",
+                    "email": "hugo@example.com"
+                }
+            })),
+        };
+
+        apply_batch(&mut conn, &[event]).unwrap();
+
+        let (first, birth, g_name, g_rel, g_email): (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT patient_first_name, patient_birth_date, guardian_name,
+                        guardian_relationship, guardian_email
+                 FROM appointments WHERE id = 'appt-minor'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+
+        // La identidad del paciente es la del menor, no la del tutor.
+        assert_eq!(first, "Lucia");
+        assert_eq!(birth.as_deref(), Some("2018-03-04"));
+        // El responsable viaja como entidad propia.
+        assert_eq!(g_name.as_deref(), Some("Hugo Paz"));
+        assert_eq!(g_rel.as_deref(), Some("Padre"));
+        assert_eq!(g_email.as_deref(), Some("hugo@example.com"));
     }
 
     #[test]

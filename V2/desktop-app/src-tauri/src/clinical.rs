@@ -72,6 +72,32 @@ pub struct Encounter {
     pub signed_hash: Option<String>,
 }
 
+/// Responsable/tutor del paciente (paso 18). Entidad propia: su contacto nunca
+/// se mezcla con la identidad del paciente. Solo CONTACTO, nunca clinico.
+#[derive(Debug, Serialize)]
+pub struct Guardian {
+    pub name: String,
+    pub relationship: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+}
+
+/// Construye el responsable a partir de las columnas planas: solo existe si
+/// tiene nombre (el resto es opcional).
+fn guardian_from(
+    name: Option<String>,
+    relationship: Option<String>,
+    phone: Option<String>,
+    email: Option<String>,
+) -> Option<Guardian> {
+    name.filter(|n| !n.trim().is_empty()).map(|name| Guardian {
+        name,
+        relationship,
+        phone,
+        email,
+    })
+}
+
 #[derive(Debug, Serialize)]
 pub struct PatientRecord {
     pub id: String,
@@ -83,6 +109,27 @@ pub struct PatientRecord {
     pub allergies: Option<String>,
     pub medical_background: Option<String>,
     pub family_background: Option<String>,
+    pub guardian: Option<Guardian>,
+}
+
+/// Columnas del expediente del paciente en el orden que espera `patient_from_row`.
+const PATIENT_COLUMNS: &str = "id, first_name, last_name, phone, email, birth_date, \
+    allergies, medical_background, family_background, \
+    guardian_name, guardian_relationship, guardian_phone, guardian_email";
+
+fn patient_from_row(row: &rusqlite::Row) -> rusqlite::Result<PatientRecord> {
+    Ok(PatientRecord {
+        id: row.get(0)?,
+        first_name: row.get(1)?,
+        last_name: row.get(2)?,
+        phone: row.get(3)?,
+        email: row.get(4)?,
+        birth_date: row.get(5)?,
+        allergies: row.get(6)?,
+        medical_background: row.get(7)?,
+        family_background: row.get(8)?,
+        guardian: guardian_from(row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?),
+    })
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
@@ -221,19 +268,29 @@ fn import_appointment_patient(
     conn: &Connection,
     appointment_id: &str,
 ) -> Result<String, ClinicalError> {
-    let (patient_id, first_name, last_name, phone, email): (
+    #[allow(clippy::type_complexity)]
+    let (patient_id, first_name, last_name, phone, email, birth_date, g_name, g_rel, g_phone, g_email): (
         Option<String>,
         String,
         String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
         Option<String>,
         Option<String>,
     ) = conn
         .query_row(
-            "SELECT patient_id, patient_first_name, patient_last_name, patient_phone, patient_email
+            "SELECT patient_id, patient_first_name, patient_last_name, patient_phone, patient_email,
+                    patient_birth_date, guardian_name, guardian_relationship, guardian_phone, guardian_email
              FROM appointments WHERE id = ?1",
             params![appointment_id],
             |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+                Ok((
+                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
+                    row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?,
+                ))
             },
         )
         .optional()?
@@ -243,11 +300,17 @@ fn import_appointment_patient(
         ClinicalError::Invalid("la cita no tiene paciente asociado".into())
     })?;
 
+    // El responsable de la cita se conserva en el expediente como entidad propia.
     conn.execute(
-        "INSERT INTO patients (id, first_name, last_name, phone, email, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+        "INSERT INTO patients (id, first_name, last_name, phone, email, birth_date,
+                guardian_name, guardian_relationship, guardian_phone, guardian_email,
+                created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
          ON CONFLICT(id) DO NOTHING",
-        params![patient_id, first_name, last_name, phone, email, now()],
+        params![
+            patient_id, first_name, last_name, phone, email, birth_date,
+            g_name, g_rel, g_phone, g_email, now()
+        ],
     )?;
 
     Ok(patient_id)
@@ -617,23 +680,9 @@ pub fn get_encounter_detail(
 
     let patient = conn
         .query_row(
-            "SELECT id, first_name, last_name, phone, email, birth_date,
-                    allergies, medical_background, family_background
-             FROM patients WHERE id = ?1",
+            &format!("SELECT {PATIENT_COLUMNS} FROM patients WHERE id = ?1"),
             params![encounter.patient_id],
-            |row| {
-                Ok(PatientRecord {
-                    id: row.get(0)?,
-                    first_name: row.get(1)?,
-                    last_name: row.get(2)?,
-                    phone: row.get(3)?,
-                    email: row.get(4)?,
-                    birth_date: row.get(5)?,
-                    allergies: row.get(6)?,
-                    medical_background: row.get(7)?,
-                    family_background: row.get(8)?,
-                })
-            },
+            patient_from_row,
         )
         .optional()?
         .ok_or(ClinicalError::NotFound)?;
@@ -806,23 +855,9 @@ pub fn get_patient_profile(
 ) -> Result<PatientProfile, ClinicalError> {
     let patient = conn
         .query_row(
-            "SELECT id, first_name, last_name, phone, email, birth_date,
-                    allergies, medical_background, family_background
-             FROM patients WHERE id = ?1",
+            &format!("SELECT {PATIENT_COLUMNS} FROM patients WHERE id = ?1"),
             params![patient_id],
-            |row| {
-                Ok(PatientRecord {
-                    id: row.get(0)?,
-                    first_name: row.get(1)?,
-                    last_name: row.get(2)?,
-                    phone: row.get(3)?,
-                    email: row.get(4)?,
-                    birth_date: row.get(5)?,
-                    allergies: row.get(6)?,
-                    medical_background: row.get(7)?,
-                    family_background: row.get(8)?,
-                })
-            },
+            patient_from_row,
         )
         .optional()?
         .ok_or(ClinicalError::NotFound)?;
@@ -993,6 +1028,7 @@ pub fn create_patient(
         allergies: None,
         medical_background: None,
         family_background: None,
+        guardian: None,
     })
 }
 
@@ -1356,6 +1392,37 @@ mod tests {
         let detail = get_encounter_detail(&conn, &first.id).unwrap();
         assert_eq!(detail.patient.first_name, "Hugo");
         assert_eq!(detail.appointment_reason.as_deref(), Some("Dolor lumbar"));
+    }
+
+    #[test]
+    fn importing_a_minor_from_an_appointment_keeps_the_guardian_in_the_record() {
+        let conn = test_conn("guardian-import");
+        conn.execute(
+            "INSERT INTO appointments (id, status, scheduled_start, scheduled_end,
+                service_name, reason, patient_id, patient_first_name, patient_last_name,
+                patient_phone, patient_birth_date, guardian_name, guardian_relationship,
+                guardian_phone, guardian_email, updated_at)
+             VALUES ('appt-m', 'CONFIRMED', '2026-07-01T15:00:00Z', '2026-07-01T15:30:00Z',
+                'Consulta', 'Control', 'pat-m', 'Lucia', 'Paz', '6140002222', '2018-03-04',
+                'Hugo Paz', 'Padre', '6140002222', 'hugo@example.com', '0')",
+            [],
+        )
+        .unwrap();
+
+        let encounter = open_encounter_for_appointment(&conn, "appt-m").unwrap();
+        let detail = get_encounter_detail(&conn, &encounter.id).unwrap();
+
+        // La identidad es la del menor; el responsable es entidad propia.
+        assert_eq!(detail.patient.first_name, "Lucia");
+        assert_eq!(detail.patient.birth_date.as_deref(), Some("2018-03-04"));
+        let guardian = detail.patient.guardian.expect("el responsable debe viajar");
+        assert_eq!(guardian.name, "Hugo Paz");
+        assert_eq!(guardian.relationship.as_deref(), Some("Padre"));
+        assert_eq!(guardian.email.as_deref(), Some("hugo@example.com"));
+
+        // El paciente sin responsable no inventa uno.
+        let profile = get_patient_profile(&conn, "pat-m").unwrap();
+        assert!(profile.patient.guardian.is_some());
     }
 
     #[test]

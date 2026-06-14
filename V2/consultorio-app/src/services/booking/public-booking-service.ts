@@ -767,6 +767,17 @@ export async function bookPublicAppointment(input: {
     }
   });
 
+  // Responsable (tutor) que viaja a la app del medico como entidad propia, sin
+  // mezclarse con la identidad del paciente. Solo CONTACTO, nunca clinico.
+  const responsible = input.contact?.fullName?.trim()
+    ? {
+        name: input.contact.fullName.trim(),
+        relationship: input.contact.relationship?.trim() || null,
+        phone: input.contact.phone?.trim() || null,
+        email: input.contact.email?.trim().toLowerCase() || null
+      }
+    : null;
+
   // Evento para la app del medico: datos de cita y contacto (no clinicos).
   await emitSyncEvent(hold.doctorId, "APPOINTMENT_BOOKED", {
     appointmentId: appointment.id,
@@ -779,11 +790,16 @@ export async function bookPublicAppointment(input: {
       id: patient.id,
       firstName: patient.firstName,
       lastName: patient.lastName,
+      // Fecha de nacimiento del paciente (la captura quien agenda para otra
+      // persona/un menor); ayuda a distinguir identidad y a la app del medico.
+      birthDate: patient.birthDate ? patient.birthDate.toISOString().slice(0, 10) : null,
       // Contacto de la cita (el del tutor si agendo para otra persona), para que
       // la app del medico tenga como ubicar/avisar, sin alterar la identidad.
       phone: notifyPhone,
       email: notifyEmail
-    }
+    },
+    // El responsable es entidad aparte: nombre, parentesco y su contacto.
+    responsible
   });
 
   return {

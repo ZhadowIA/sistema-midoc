@@ -388,6 +388,20 @@ const MIGRATIONS: &[&str] = &[
         source TEXT NOT NULL,
         source_version TEXT NOT NULL
     );",
+    // v15: responsable/tutor del paciente (paso 18, rebanada 2). Cuando se agenda
+    // para otra persona/un menor, el responsable viaja en la cita como CONTACTO
+    // (nunca clinico) y se conserva en el expediente como entidad propia, sin
+    // mezclarse con la identidad del paciente. Tambien llega la fecha de
+    // nacimiento del paciente capturada al agendar. Clase: CONTACTO/CLINICO.
+    "ALTER TABLE appointments ADD COLUMN patient_birth_date TEXT;
+    ALTER TABLE appointments ADD COLUMN guardian_name TEXT;
+    ALTER TABLE appointments ADD COLUMN guardian_relationship TEXT;
+    ALTER TABLE appointments ADD COLUMN guardian_phone TEXT;
+    ALTER TABLE appointments ADD COLUMN guardian_email TEXT;
+    ALTER TABLE patients ADD COLUMN guardian_name TEXT;
+    ALTER TABLE patients ADD COLUMN guardian_relationship TEXT;
+    ALTER TABLE patients ADD COLUMN guardian_phone TEXT;
+    ALTER TABLE patients ADD COLUMN guardian_email TEXT;",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
