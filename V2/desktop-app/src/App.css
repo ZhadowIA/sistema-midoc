@@ -1161,3 +1161,7 @@ textarea:disabled {
 .med-duplicate {
   border-left-color: #64748b;
 }
+
+.med-label {
+  border-left-color: #2563eb;
+}

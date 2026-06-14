@@ -79,6 +79,18 @@ pub struct DuplicateTherapyAlert {
     pub drug_class: String,
 }
 
+/// Nota informativa de respaldo (openFDA): cuando no hay una interaccion
+/// estructurada (DDInter) para un par, pero la etiqueta FDA de uno de los
+/// farmacos menciona al otro. Es evidencia para consultar, no una alerta dura.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelNote {
+    pub drug_a: String,
+    pub drug_b: String,
+    pub text: String,
+    pub source: String,
+}
+
 /// Reporte determinista de seguridad de la prescripcion. Es una ayuda: el
 /// criterio final es del medico.
 #[derive(Debug, Clone, Serialize)]
@@ -89,6 +101,8 @@ pub struct SafetyReport {
     pub interactions: Vec<InteractionAlert>,
     pub allergy_alerts: Vec<AllergyAlert>,
     pub duplicate_therapy: Vec<DuplicateTherapyAlert>,
+    /// Respaldo informativo de openFDA (no cuenta como alerta dura).
+    pub label_notes: Vec<LabelNote>,
     pub reference_version: String,
     pub has_alerts: bool,
 }
@@ -243,6 +257,8 @@ pub fn check_prescription(
 
     // 2. Interacciones farmaco-farmaco (pares de ingredientes distintos).
     let mut interactions: Vec<InteractionAlert> = Vec::new();
+    let mut structured_pairs: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
     for i in 0..recognized.len() {
         for j in (i + 1)..recognized.len() {
             let ingredient_a = recognized[i].ingredient.as_deref().unwrap_or_default();
@@ -260,6 +276,7 @@ pub fn check_prescription(
                 )
                 .optional()?;
             if let Some((severity, description, source, source_version)) = row {
+                structured_pairs.insert((a, b));
                 interactions.push(InteractionAlert {
                     drug_a: recognized[i].display_name.clone().unwrap_or_default(),
                     drug_b: recognized[j].display_name.clone().unwrap_or_default(),
@@ -317,6 +334,26 @@ pub fn check_prescription(
         }
     }
 
+    // 5. Respaldo openFDA: para pares SIN interaccion estructurada, si la
+    // etiqueta FDA de un farmaco menciona al otro, se ofrece como evidencia.
+    let mut label_notes: Vec<LabelNote> = Vec::new();
+    for i in 0..recognized.len() {
+        for j in (i + 1)..recognized.len() {
+            let ing_i = recognized[i].ingredient.as_deref().unwrap_or_default();
+            let ing_j = recognized[j].ingredient.as_deref().unwrap_or_default();
+            if ing_i == ing_j {
+                continue;
+            }
+            let (a, b) = canonical_pair(ing_i, ing_j);
+            if structured_pairs.contains(&(a, b)) {
+                continue; // ya hay interaccion estructurada (DDInter/sembrada)
+            }
+            if let Some(note) = label_fallback(conn, recognized[i], recognized[j])? {
+                label_notes.push(note);
+            }
+        }
+    }
+
     let has_alerts =
         !interactions.is_empty() || !allergy_alerts.is_empty() || !duplicate_therapy.is_empty();
     let alert_count = interactions.len() + allergy_alerts.len() + duplicate_therapy.len();
@@ -328,9 +365,46 @@ pub fn check_prescription(
         interactions,
         allergy_alerts,
         duplicate_therapy,
+        label_notes,
         reference_version: reference_version(conn)?,
         has_alerts,
     })
+}
+
+/// Texto de etiqueta (openFDA) de un ingrediente, si existe.
+fn label_text(conn: &Connection, ingredient: &str) -> Result<Option<(String, String)>, MedicationError> {
+    conn.query_row(
+        "SELECT interactions_text, source FROM drug_label_text WHERE ingredient = ?1",
+        params![ingredient],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )
+    .optional()
+    .map_err(MedicationError::from)
+}
+
+/// Busca una nota de respaldo para un par sin interaccion estructurada: si la
+/// etiqueta de uno menciona al otro (por ingrediente), la devuelve.
+fn label_fallback(
+    conn: &Connection,
+    drug_a: &NormalizedDrug,
+    drug_b: &NormalizedDrug,
+) -> Result<Option<LabelNote>, MedicationError> {
+    let ing_a = drug_a.ingredient.as_deref().unwrap_or_default();
+    let ing_b = drug_b.ingredient.as_deref().unwrap_or_default();
+    let display_a = drug_a.display_name.clone().unwrap_or_default();
+    let display_b = drug_b.display_name.clone().unwrap_or_default();
+
+    if let Some((text, source)) = label_text(conn, ing_a)? {
+        if find_word(&text.to_lowercase(), ing_b).is_some() {
+            return Ok(Some(LabelNote { drug_a: display_a, drug_b: display_b, text, source }));
+        }
+    }
+    if let Some((text, source)) = label_text(conn, ing_b)? {
+        if find_word(&text.to_lowercase(), ing_a).is_some() {
+            return Ok(Some(LabelNote { drug_a: display_b, drug_b: display_a, text, source }));
+        }
+    }
+    Ok(None)
 }
 
 /* ---------- Importacion de datos reales (rebanada 2) ---------- */
@@ -359,6 +433,7 @@ pub struct InteractionRow {
 pub struct ImportSummary {
     pub medications: usize,
     pub interactions: usize,
+    pub labels: usize,
     pub version: String,
 }
 
@@ -368,6 +443,15 @@ pub struct ReferenceStatus {
     pub version: String,
     pub medications: i64,
     pub interactions: i64,
+    pub labels: i64,
+}
+
+/// Fila de texto de etiqueta (openFDA): interacciones declaradas en la etiqueta
+/// FDA de un ingrediente.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabelRow {
+    pub ingredient: String,
+    pub interactions_text: String,
 }
 
 /// Separa una linea CSV simple (sin comillas con comas embebidas), recortando.
@@ -531,8 +615,82 @@ pub fn import_reference(
     Ok(ImportSummary {
         medications: medications.len(),
         interactions: interactions.len(),
+        labels: 0,
         version: version.to_string(),
     })
+}
+
+/// Parsea el JSON de la API de etiquetas de openFDA (drug/label). Extrae, por
+/// cada ingrediente (`openfda.generic_name`), el texto de interacciones
+/// (`drug_interactions`). Tolerante a campos ausentes.
+pub fn parse_openfda_labels(json: &str) -> Result<Vec<LabelRow>, MedicationError> {
+    if json.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let parsed: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| MedicationError::Invalid(format!("JSON de openFDA invalido: {e}")))?;
+    let results = match parsed.get("results").and_then(|r| r.as_array()) {
+        Some(results) => results,
+        None => return Ok(Vec::new()),
+    };
+
+    let mut rows = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for result in results {
+        let interactions_text = result
+            .get("drug_interactions")
+            .and_then(|v| v.as_array())
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|p| p.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+        if interactions_text.trim().is_empty() {
+            continue;
+        }
+        let generic_names = result
+            .get("openfda")
+            .and_then(|o| o.get("generic_name"))
+            .and_then(|v| v.as_array());
+        if let Some(names) = generic_names {
+            for name in names.iter().filter_map(|n| n.as_str()) {
+                let ingredient = normalize_name(name);
+                if ingredient.is_empty() || !seen.insert(ingredient.clone()) {
+                    continue;
+                }
+                rows.push(LabelRow {
+                    ingredient,
+                    interactions_text: interactions_text.clone(),
+                });
+            }
+        }
+    }
+    Ok(rows)
+}
+
+/// Reemplaza el texto de etiquetas (openFDA) con los datos importados.
+pub fn import_label_text(
+    conn: &Connection,
+    labels: &[LabelRow],
+    version: &str,
+) -> Result<usize, MedicationError> {
+    if labels.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM drug_label_text", [])?;
+    for label in labels {
+        tx.execute(
+            "INSERT OR REPLACE INTO drug_label_text (ingredient, interactions_text, source, source_version)
+             VALUES (?1, ?2, 'openFDA', ?3)",
+            params![label.ingredient, label.interactions_text, version],
+        )?;
+    }
+    tx.commit()?;
+    Ok(labels.len())
 }
 
 /// Datos crudos de una actualizacion (CSV ya descargados, sin parsear). La
@@ -542,6 +700,7 @@ pub fn import_reference(
 pub struct MedicationDataset {
     pub medications_csv: String,
     pub ddinter_csv: String,
+    pub openfda_json: String,
     pub version: String,
 }
 
@@ -582,7 +741,12 @@ pub fn update_reference(
         )));
     }
 
-    import_reference(conn, &medications, &interactions, &dataset.version)
+    let mut summary = import_reference(conn, &medications, &interactions, &dataset.version)?;
+    // El texto de etiquetas (openFDA) es respaldo informativo: sin minimo de
+    // cordura. Solo se reemplaza si la fuente trajo datos.
+    let labels = parse_openfda_labels(&dataset.openfda_json)?;
+    summary.labels = import_label_text(conn, &labels, &dataset.version)?;
+    Ok(summary)
 }
 
 pub fn reference_status(conn: &Connection) -> Result<ReferenceStatus, MedicationError> {
@@ -590,10 +754,13 @@ pub fn reference_status(conn: &Connection) -> Result<ReferenceStatus, Medication
         conn.query_row("SELECT count(*) FROM medication_reference", [], |row| row.get(0))?;
     let interactions: i64 =
         conn.query_row("SELECT count(*) FROM drug_interactions", [], |row| row.get(0))?;
+    let labels: i64 =
+        conn.query_row("SELECT count(*) FROM drug_label_text", [], |row| row.get(0))?;
     Ok(ReferenceStatus {
         version: reference_version(conn)?,
         medications,
         interactions,
+        labels,
     })
 }
 
@@ -879,6 +1046,7 @@ mod tests {
         MedicationDataset {
             medications_csv: meds,
             ddinter_csv: ddinter,
+            openfda_json: String::new(),
             version: version.to_string(),
         }
     }
@@ -908,10 +1076,67 @@ mod tests {
         assert_eq!(after.medications, before.medications);
     }
 
+    /* ---------- Rebanada 4: respaldo openFDA ---------- */
+
+    const OPENFDA_SAMPLE: &str = r#"{
+      "results": [
+        {
+          "openfda": { "generic_name": ["Paracetamol"] },
+          "drug_interactions": ["Puede potenciar el efecto de la warfarina con uso prolongado."]
+        },
+        {
+          "openfda": { "generic_name": ["Cafeina"] },
+          "drug_interactions": []
+        }
+      ]
+    }"#;
+
+    #[test]
+    fn parses_openfda_labels_skipping_empty_interactions() {
+        let rows = parse_openfda_labels(OPENFDA_SAMPLE).unwrap();
+        assert_eq!(rows.len(), 1); // la cafeina se omite (sin texto)
+        assert_eq!(rows[0].ingredient, "paracetamol");
+        assert!(rows[0].interactions_text.to_lowercase().contains("warfarina"));
+    }
+
+    #[test]
+    fn label_note_appears_only_when_no_structured_pair_and_label_mentions_the_other() {
+        let conn = test_conn("label-fallback");
+        let labels = parse_openfda_labels(OPENFDA_SAMPLE).unwrap();
+        import_label_text(&conn, &labels, "openfda-2026-06").unwrap();
+
+        // Paracetamol + Warfarina: no hay interaccion estructurada sembrada para
+        // ese par, pero la etiqueta del paracetamol menciona warfarina.
+        let report = check_prescription(&conn, "enc-1", &meds(&["Paracetamol", "Warfarina"]), None).unwrap();
+        assert!(report.interactions.is_empty(), "no debe haber interaccion estructurada");
+        assert_eq!(report.label_notes.len(), 1);
+        assert_eq!(report.label_notes[0].source, "openFDA");
+        assert_eq!(report.label_notes[0].drug_a, "Paracetamol");
+        assert_eq!(report.label_notes[0].drug_b, "Warfarina");
+        // No cuenta como alerta dura.
+        assert!(!report.has_alerts);
+    }
+
+    #[test]
+    fn structured_interaction_suppresses_label_note() {
+        let conn = test_conn("label-suppressed");
+        // Etiqueta del ibuprofeno que menciona warfarina.
+        let labels = vec![LabelRow {
+            ingredient: "ibuprofeno".into(),
+            interactions_text: "Evitar con warfarina por riesgo de sangrado.".into(),
+        }];
+        import_label_text(&conn, &labels, "openfda-2026-06").unwrap();
+        // Ibuprofeno + Warfarina YA tiene interaccion estructurada (sembrada),
+        // asi que NO debe duplicarse como nota de etiqueta.
+        let report = check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Warfarina"]), None).unwrap();
+        assert_eq!(report.interactions.len(), 1);
+        assert!(report.label_notes.is_empty());
+    }
+
     #[test]
     fn update_rejects_empty_source() {
         let conn = test_conn("update-empty");
-        let empty = MedicationDataset { medications_csv: String::new(), ddinter_csv: String::new(), version: "x".into() };
+        let empty = MedicationDataset { medications_csv: String::new(), ddinter_csv: String::new(), openfda_json: String::new(), version: "x".into() };
         assert!(matches!(
             update_reference(&conn, &empty, MIN_MEDICATIONS, MIN_INTERACTIONS),
             Err(MedicationError::Invalid(_))

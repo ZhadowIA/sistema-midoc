@@ -47,7 +47,7 @@ const mockState = {
   aiRunSeq: 0,
   aiBudgetCents: 0,
   aiRuns: [] as Array<{ id: string; usage_type: string; cost_cents: number; status: string; reported: boolean }>,
-  medicationRef: { version: "seed-v1", medications: 27, interactions: 15 },
+  medicationRef: { version: "seed-v1", medications: 27, interactions: 15, labels: 0 },
   benchmarks: [] as Array<Record<string, unknown>>,
   arcoRequests: [] as Array<Record<string, unknown>>,
   timelineSeq: 0,
@@ -927,12 +927,24 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         const rank = (s: string) => ({ CONTRAINDICATED: 4, MAJOR: 3, MODERATE: 2, MINOR: 1 }[s] ?? 0);
         return rank(String(y.severity)) - rank(String(x.severity));
       });
+      // Respaldo openFDA simulado: paracetamol + warfarina sin interaccion estructurada.
+      const ingredients = recognized.map((r) => r.ingredient);
+      const labelNotes: Array<Record<string, unknown>> = [];
+      if (ingredients.includes("paracetamol") && ingredients.includes("warfarina") && mockState.medicationRef.labels > 0) {
+        labelNotes.push({
+          drugA: "Paracetamol",
+          drugB: "Warfarina",
+          text: "Puede potenciar el efecto de la warfarina con uso prolongado.",
+          source: "openFDA"
+        });
+      }
       return {
         normalized,
         unrecognized,
         interactions: interactionAlerts,
         allergyAlerts,
         duplicateTherapy,
+        labelNotes,
         referenceVersion: "seed-v1",
         hasAlerts: interactionAlerts.length + allergyAlerts.length + duplicateTherapy.length > 0
       } as T;
@@ -949,20 +961,34 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         .map((l) => l.trim())
         .filter((l) => l.length > 0 && !/drug_a/i.test(l));
       const version = String(args?.version ?? "").trim();
+      let labelRows = 0;
+      try {
+        const parsed = JSON.parse(String(args?.openfdaJson ?? "") || "{}");
+        labelRows = Array.isArray(parsed.results)
+          ? parsed.results.filter(
+              (r: { drug_interactions?: unknown[] }) => Array.isArray(r.drug_interactions) && r.drug_interactions.length > 0
+            ).length
+          : 0;
+      } catch {
+        labelRows = 0;
+      }
       if (medRows.length > 0) mockState.medicationRef.medications = medRows.length;
       if (ddRows.length > 0) mockState.medicationRef.interactions = ddRows.length;
+      if (labelRows > 0) mockState.medicationRef.labels = labelRows;
       mockState.medicationRef.version = version;
-      return { medications: medRows.length, interactions: ddRows.length, version } as T;
+      return { medications: medRows.length, interactions: ddRows.length, labels: labelRows, version } as T;
     }
     case "update_medication_reference": {
       // En navegador no hay red: simula una descarga a escala realista de DDInter.
       const version = String(args?.version ?? "").trim() || "oficial-demo";
       const medsUrl = String(args?.medicationsUrl ?? "").trim();
       const ddUrl = String(args?.ddinterUrl ?? "").trim();
+      const fdaUrl = String(args?.openfdaUrl ?? "").trim();
       const medications = medsUrl ? 1287 : mockState.medicationRef.medications;
       const interactions = ddUrl ? 3402 : mockState.medicationRef.interactions;
-      mockState.medicationRef = { version, medications, interactions };
-      return { medications, interactions, version } as T;
+      const labels = fdaUrl ? 940 : mockState.medicationRef.labels;
+      mockState.medicationRef = { version, medications, interactions, labels };
+      return { medications, interactions, labels, version } as T;
     }
     case "extract_prescription_medications": {
       const known = ["ibuprofeno", "naproxeno", "warfarina", "sildenafil", "nitroglicerina", "amoxicilina", "paracetamol"];

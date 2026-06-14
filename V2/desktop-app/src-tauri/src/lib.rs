@@ -1053,13 +1053,18 @@ fn import_medication_reference(
     state: tauri::State<'_, AppDb>,
     medications_csv: String,
     ddinter_csv: String,
+    openfda_json: String,
     version: String,
 ) -> Result<medication::ImportSummary, String> {
     let medications = medication::parse_medication_csv(&medications_csv).map_err(|e| e.to_string())?;
     let interactions = medication::parse_ddinter_csv(&ddinter_csv).map_err(|e| e.to_string())?;
+    let labels = medication::parse_openfda_labels(&openfda_json).map_err(|e| e.to_string())?;
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
-    medication::import_reference(conn, &medications, &interactions, &version).map_err(|e| e.to_string())
+    let mut summary =
+        medication::import_reference(conn, &medications, &interactions, &version).map_err(|e| e.to_string())?;
+    summary.labels = medication::import_label_text(conn, &labels, &version).map_err(|e| e.to_string())?;
+    Ok(summary)
 }
 
 /// Actualiza la base de referencia de medicamentos descargando los datos de
@@ -1073,6 +1078,7 @@ async fn update_medication_reference(
     state: tauri::State<'_, AppDb>,
     medications_url: String,
     ddinter_url: String,
+    openfda_url: String,
     version: String,
 ) -> Result<medication::ImportSummary, String> {
     // Descarga (red): se hace antes de tomar el lock; no se retiene el lock
@@ -1080,10 +1086,12 @@ async fn update_medication_reference(
     let client = reqwest::Client::new();
     let medications_csv = fetch_text(&client, medications_url.trim(), "medicamentos").await?;
     let ddinter_csv = fetch_text(&client, ddinter_url.trim(), "interacciones").await?;
+    let openfda_json = fetch_text(&client, openfda_url.trim(), "etiquetas").await?;
 
     let dataset = medication::MedicationDataset {
         medications_csv,
         ddinter_csv,
+        openfda_json,
         version,
     };
 

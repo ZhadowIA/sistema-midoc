@@ -78,7 +78,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 🚧 IN PROGRESS (fundacion + SOAP asistido) |
 | 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | ✅ DONE |
 | 13 | Directorio y expediente longitudinal | `impeccable` | Directorio de pacientes y linea del tiempo clinica editable. | ✅ DONE |
-| 14 | Seguridad de medicacion determinista | `codex-security:security-scan` | Interacciones, alergias cruzadas y duplicidad sin IA, con fuente citada. | 🚧 EN PROGRESO (motor + dataset sembrado) |
+| 14 | Seguridad de medicacion determinista | `codex-security:security-scan` | Interacciones, alergias cruzadas y duplicidad sin IA, con fuente citada. | ✅ DONE |
 | 15 | Transcripcion local real (Whisper) | `superpowers:writing-plans` | whisper.cpp real, descarga de modelo y respaldo en nube gobernado. | 🔜 PLANEADO |
 | 16 | Proveedores de IA reales en staging (BAA) | `codex-security:security-scan` | Adaptadores reales de LLM/transcripcion con gobernanza intacta. | 🔜 PLANEADO |
 | 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
@@ -626,7 +626,7 @@ Clasificacion de datos: la base de farmacos/interacciones es REFERENCIA publica 
 
 > Nota: la API de interacciones de la NLM/RxNav fue descontinuada en enero 2024; por eso la fuente de interacciones es DDInter (descargable) + openFDA. RxNorm/RxClass siguen vigentes (doc 11).
 
-Estado: 🚧 EN PROGRESO — rebanadas 1 (motor determinista + dataset sembrado), 2 (importacion de datos reales + extraccion desde la receta) y 3 (pipeline de actualizacion desde fuentes oficiales con vetting) entregadas (2026-06-13/14). Construido sobre el paso 4.
+Estado: ✅ DONE — rebanadas 1 (motor determinista + dataset sembrado), 2 (importacion de datos reales + extraccion desde la receta), 3 (pipeline de actualizacion desde fuentes oficiales con vetting) y 4 (respaldo de openFDA) entregadas (2026-06-13/14). Construido sobre el paso 4.
 
 Entregado (rebanada 1 — motor determinista de seguridad con dataset sembrado, 2026-06-13):
 
@@ -658,7 +658,19 @@ Entregado (rebanada 3 — pipeline de actualizacion desde fuentes oficiales, 202
 
 Verificacion (rebanada 3): 100 pruebas de Rust en verde (+3: actualizacion sana que versiona, rechazo de dataset sospechosamente pequeno que deja la base intacta, rechazo de fuente vacia), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok y prueba en navegador (actualizar desde URLs → base a `oficial-2026-06-14 · 1287 · 3402`).
 
-Pendiente (rebanada 4): openFDA como texto de respaldo de interacciones cuando DDInter no tiene el par; mapeo de nombres comerciales a ingrediente via RxNorm; dataset vetado empaquetado en el instalador y actualizacion programada.
+Entregado (rebanada 4 — respaldo de openFDA, 2026-06-14):
+
+- **Texto de etiqueta FDA como respaldo (`drug_label_text`, migracion v14).** Cuando no hay una interaccion **estructurada** (DDInter/sembrada) para un par de farmacos prescritos, pero la etiqueta FDA de uno menciona al otro, se ofrece ese texto como **evidencia informativa** (no como alerta dura). Clase REFERENCIA publica; una fila por ingrediente.
+- **Parser de openFDA (`parse_openfda_labels`).** Extrae de la API drug/label, por `openfda.generic_name`, el texto de `drug_interactions`. Tolerante a campos ausentes; omite etiquetas sin texto. Puro y testeable.
+- **Integracion en la verificacion.** `check_prescription` rastrea los pares con interaccion estructurada y, solo para los pares **sin** una, busca el respaldo de etiqueta (`label_fallback`). Las notas de etiqueta no cuentan como `has_alerts`.
+- **Wiring en ambos pipelines.** Tanto el import manual (`import_medication_reference`) como la actualizacion desde fuentes (`update_medication_reference`, con `openfda_json`/`openfda_url`) cargan el texto de etiquetas; `reference_status` reporta el conteo de etiquetas.
+- **UI y mock.** La pestana Medicamentos muestra el conteo de etiquetas, acepta JSON/URL de openFDA en import/actualizacion; el panel de seguridad muestra las notas de etiqueta (azul informativo, distintas de las alertas). El mock de navegador espeja el respaldo.
+
+Verificacion (rebanada 4): 103 pruebas de Rust en verde (+3: parseo de openFDA que omite etiquetas vacias, nota de etiqueta solo cuando no hay par estructurado y la etiqueta menciona al otro, interaccion estructurada que suprime la nota de etiqueta), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok y prueba en navegador (importar etiqueta de paracetamol → Paracetamol+Warfarina muestra "Posible interaccion segun etiqueta" con fuente openFDA).
+
+Con esto la compuerta de push del paso 14 queda cubierta: verificacion determinista con severidad y fuente citada, importacion y actualizacion versionada de datos reales con vetting, extraccion desde la receta y respaldo de openFDA — todo local, sin enviar datos del paciente a la nube.
+
+Pendiente futuro (no requerido por la compuerta, rebanada 5): mapeo de nombres comerciales a ingrediente via RxNorm (hoy soportado parcialmente importando alias como filas adicionales de `medication_reference`); dataset vetado empaquetado en el instalador y actualizacion programada.
 
 ## Paso 15 - Transcripcion local real (Whisper) y descarga de modelo
 

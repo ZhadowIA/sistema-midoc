@@ -12,11 +12,13 @@ interface ReferenceStatus {
   version: string;
   medications: number;
   interactions: number;
+  labels: number;
 }
 
 interface ImportSummary {
   medications: number;
   interactions: number;
+  labels: number;
   version: string;
 }
 
@@ -25,8 +27,10 @@ export function MedicationReference() {
   const [medicationsCsv, setMedicationsCsv] = useState("");
   const [ddinterCsv, setDdinterCsv] = useState("");
   const [version, setVersion] = useState("");
+  const [openfdaJson, setOpenfdaJson] = useState("");
   const [medicationsUrl, setMedicationsUrl] = useState("");
   const [ddinterUrl, setDdinterUrl] = useState("");
+  const [openfdaUrl, setOpenfdaUrl] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -54,10 +58,11 @@ export function MedicationReference() {
       const summary = await call<ImportSummary>("update_medication_reference", {
         medicationsUrl,
         ddinterUrl,
+        openfdaUrl,
         version: updateVersion
       });
       setMessage(
-        `Base actualizada desde fuentes: ${summary.medications} medicamentos y ${summary.interactions} interacciones (version ${summary.version}).`
+        `Base actualizada desde fuentes: ${summary.medications} medicamentos, ${summary.interactions} interacciones y ${summary.labels} etiquetas (version ${summary.version}).`
       );
       await refresh();
     } catch (e) {
@@ -79,10 +84,11 @@ export function MedicationReference() {
       const summary = await call<ImportSummary>("import_medication_reference", {
         medicationsCsv,
         ddinterCsv,
+        openfdaJson,
         version
       });
       setMessage(
-        `Importados ${summary.medications} medicamentos y ${summary.interactions} interacciones (version ${summary.version}).`
+        `Importados ${summary.medications} medicamentos, ${summary.interactions} interacciones y ${summary.labels} etiquetas (version ${summary.version}).`
       );
       await refresh();
     } catch (e) {
@@ -106,7 +112,7 @@ export function MedicationReference() {
       {status && (
         <p className="meta">
           Base actual: <strong>{status.version}</strong> · {status.medications} medicamentos ·{" "}
-          {status.interactions} interacciones.
+          {status.interactions} interacciones · {status.labels} etiquetas (openFDA).
         </p>
       )}
       {message && (
@@ -139,6 +145,16 @@ export function MedicationReference() {
             value={ddinterCsv}
             disabled={busy}
             onChange={(e) => setDdinterCsv(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>JSON de etiquetas openFDA (opcional, respaldo de interacciones)</span>
+          <textarea
+            rows={3}
+            placeholder={'{"results":[{"openfda":{"generic_name":["Paracetamol"]},"drug_interactions":["…"]}]}'}
+            value={openfdaJson}
+            disabled={busy}
+            onChange={(e) => setOpenfdaJson(e.target.value)}
           />
         </label>
         <label className="field">
@@ -190,11 +206,26 @@ export function MedicationReference() {
             onChange={(e) => setDdinterUrl(e.target.value)}
           />
         </label>
+        <label className="field">
+          <span>URL del JSON de etiquetas (openFDA, opcional)</span>
+          <input
+            type="url"
+            placeholder="https://…/openfda.json"
+            value={openfdaUrl}
+            disabled={busy}
+            onChange={(e) => setOpenfdaUrl(e.target.value)}
+          />
+        </label>
         <div className="button-row">
           <button
             className="action-button"
             onClick={() => void updateFromSources()}
-            disabled={busy || (medicationsUrl.trim().length === 0 && ddinterUrl.trim().length === 0)}
+            disabled={
+              busy ||
+              (medicationsUrl.trim().length === 0 &&
+                ddinterUrl.trim().length === 0 &&
+                openfdaUrl.trim().length === 0)
+            }
           >
             {busy ? "Actualizando…" : "Actualizar base"}
           </button>

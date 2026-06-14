@@ -38,12 +38,20 @@ interface DuplicateTherapyAlert {
   drugClass: string;
 }
 
+interface LabelNote {
+  drugA: string;
+  drugB: string;
+  text: string;
+  source: string;
+}
+
 interface SafetyReport {
   normalized: NormalizedDrug[];
   unrecognized: string[];
   interactions: InteractionAlert[];
   allergyAlerts: AllergyAlert[];
   duplicateTherapy: DuplicateTherapyAlert[];
+  labelNotes: LabelNote[];
   referenceVersion: string;
   hasAlerts: boolean;
 }
@@ -143,7 +151,7 @@ export function MedicationSafety({
 
         {report && (
           <div className="stack">
-            {!report.hasAlerts && report.unrecognized.length === 0 && (
+            {!report.hasAlerts && report.unrecognized.length === 0 && report.labelNotes.length === 0 && (
               <p className="form-success" role="status">
                 Sin interacciones, alergias ni duplicidades detectadas en la base local.
               </p>
@@ -175,6 +183,19 @@ export function MedicationSafety({
               <div className="med-alert med-duplicate" key={`dup-${i}`}>
                 <strong>Duplicidad terapeutica: {alert.drugA} + {alert.drugB}</strong>
                 <p>Ambos pertenecen a la clase {alert.drugClass}.</p>
+              </div>
+            ))}
+
+            {report.labelNotes.map((note, i) => (
+              <div className="med-alert med-label" key={`lbl-${i}`}>
+                <strong>
+                  Posible interaccion segun etiqueta: {note.drugA} + {note.drugB}
+                </strong>
+                <p>{note.text}</p>
+                <p className="meta">
+                  Sin interaccion estructurada para este par; evidencia de la etiqueta. Fuente:{" "}
+                  {note.source}.
+                </p>
               </div>
             ))}
 

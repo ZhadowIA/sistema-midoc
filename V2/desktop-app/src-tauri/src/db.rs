@@ -378,6 +378,16 @@ const MIGRATIONS: &[&str] = &[
         ('sertralina','tramadol','MAJOR','Riesgo de sindrome serotoninergico y descenso del umbral convulsivo.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
         ('ibuprofeno','litio','MAJOR','Los AINE elevan los niveles de litio (riesgo de toxicidad).','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
         ('litio','naproxeno','MAJOR','Los AINE elevan los niveles de litio (riesgo de toxicidad).','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1');",
+    // v14: texto de etiqueta de openFDA como respaldo (paso 14, rebanada 4).
+    // Cuando DDInter no tiene el par estructurado, se ofrece el texto de
+    // interacciones de la etiqueta FDA del farmaco como evidencia informativa.
+    // Clase REFERENCIA publica (no PHI); una fila por ingrediente.
+    "CREATE TABLE drug_label_text (
+        ingredient TEXT PRIMARY KEY NOT NULL,
+        interactions_text TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_version TEXT NOT NULL
+    );",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
