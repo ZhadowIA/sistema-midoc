@@ -78,7 +78,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 🚧 IN PROGRESS (fundacion + SOAP asistido) |
 | 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | ✅ DONE |
 | 13 | Directorio y expediente longitudinal | `impeccable` | Directorio de pacientes y linea del tiempo clinica editable. | ✅ DONE |
-| 14 | Seguridad de medicacion determinista | `codex-security:security-scan` | Interacciones, alergias cruzadas y duplicidad sin IA, con fuente citada. | 🔜 PLANEADO |
+| 14 | Seguridad de medicacion determinista | `codex-security:security-scan` | Interacciones, alergias cruzadas y duplicidad sin IA, con fuente citada. | 🚧 EN PROGRESO (motor + dataset sembrado) |
 | 15 | Transcripcion local real (Whisper) | `superpowers:writing-plans` | whisper.cpp real, descarga de modelo y respaldo en nube gobernado. | 🔜 PLANEADO |
 | 16 | Proveedores de IA reales en staging (BAA) | `codex-security:security-scan` | Adaptadores reales de LLM/transcripcion con gobernanza intacta. | 🔜 PLANEADO |
 | 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
@@ -625,6 +625,20 @@ Checklist de salida:
 Clasificacion de datos: la base de farmacos/interacciones es REFERENCIA publica (no PHI); las verificaciones corren localmente sobre datos CLINICO (la prescripcion). Nada sale a la nube.
 
 > Nota: la API de interacciones de la NLM/RxNav fue descontinuada en enero 2024; por eso la fuente de interacciones es DDInter (descargable) + openFDA. RxNorm/RxClass siguen vigentes (doc 11).
+
+Estado: 🚧 EN PROGRESO — rebanada 1 (motor determinista + dataset sembrado) entregada (2026-06-13). Construido sobre el paso 4.
+
+Entregado (rebanada 1 — motor determinista de seguridad con dataset sembrado, 2026-06-13):
+
+- **Motor de verificacion local (`medication.rs`).** `check_prescription` toma la lista de medicamentos y las alergias del expediente y devuelve un reporte determinista: interacciones farmaco-farmaco con severidad (CONTRAINDICATED/MAJOR/MODERATE/MINOR), alergias cruzadas (por nombre o por clase terapeutica) y duplicidad terapeutica (misma clase). Cada alerta cita su fuente y version de base. Sin IA.
+- **Base de referencia sembrada (migracion v13).** `medication_reference` (farmaco → ingrediente, nombre y clase) y `drug_interactions` (pares de ingredientes en orden canonico, con severidad/descripcion/fuente). Clase REFERENCIA: conocimiento clinico publico empaquetado, no PHI. Conjunto representativo de interacciones clinicas conocidas (AINE+warfarina, IECA+ahorrador de potasio, nitrato+sildenafil, macrolido+estatina, ISRS+tramadol, AINE+litio) y clases para duplicidad/alergia cruzada.
+- **Normalizacion y orden independiente.** El nombre escrito se normaliza (minusculas, espacios) y se busca en la base; los no reconocidos se reportan para revision (no se verifica lo que no se conoce). La interaccion se encuentra sin importar el orden en que se escribieron los farmacos (par canonico).
+- **Residencia y auditoria.** La prescripcion no sale del equipo; la bitacora local registra solo la cantidad de alertas y el id del encuentro (nunca nombres de farmacos ni contenido clinico, REGLA §4).
+- **Comando y UI.** `check_medication_safety(encounter_id, medications)` toma las alergias del paciente del encuentro. Panel "Seguridad de la prescripcion" en la seccion Receta de la consulta: lista de medicamentos, alertas por severidad con color y fuente, no reconocidos y version de base. El mock de navegador espeja el motor.
+
+Verificacion (rebanada 1): 91 pruebas de Rust en verde (+10: reconoce farmaco sembrado y marca desconocido, interaccion MAJOR con fuente e independiente del orden, contraindicada, alergia cruzada por clase, duplicidad por clase, combinacion segura sin alertas, lista vacia rechazada, auditoria sin contenido clinico, pares puros y match de alergia), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok y prueba en navegador (Ibuprofeno+Warfarina → interaccion Grave con fuente; Amoxicilina en paciente alergico a Penicilina → alerta de alergia por clase).
+
+Pendiente (rebanada 2+): importacion real de RxNorm/RxClass (normalizacion y clases), DDInter (interacciones con severidad) y openFDA (texto de respaldo), con base versionada/actualizable y aviso de version; extraccion de farmacos desde el texto de la receta.
 
 ## Paso 15 - Transcripcion local real (Whisper) y descarga de modelo
 

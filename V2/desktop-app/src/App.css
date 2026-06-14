@@ -1126,3 +1126,38 @@ textarea:disabled {
   margin: 0;
   font-weight: 600;
 }
+
+.med-alert {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: var(--radius-panel);
+  padding: 10px 12px;
+  background: var(--surface);
+}
+
+.med-alert strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.med-alert p {
+  margin: 2px 0;
+}
+
+.med-contraindicated {
+  border-left-color: #b91c1c;
+}
+
+.med-major,
+.med-allergy {
+  border-left-color: #ea580c;
+}
+
+.med-moderate {
+  border-left-color: #ca8a04;
+}
+
+.med-minor,
+.med-duplicate {
+  border-left-color: #64748b;
+}

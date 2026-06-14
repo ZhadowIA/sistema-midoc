@@ -3,6 +3,7 @@ mod arco;
 mod clinical;
 mod crypto;
 mod db;
+mod medication;
 mod operations;
 mod sync;
 mod transcription;
@@ -1011,6 +1012,28 @@ fn ai_list_benchmarks(state: tauri::State<'_, AppDb>) -> Result<Vec<ai::Benchmar
     with_ai(&state, ai::list_benchmarks)
 }
 
+/// Verifica la seguridad de una lista de medicamentos (interacciones, alergias
+/// cruzadas y duplicidad terapeutica) de forma determinista, sin IA. Toma las
+/// alergias del expediente del paciente del encuentro. La prescripcion no sale
+/// del equipo.
+#[tauri::command]
+fn check_medication_safety(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    medications: Vec<String>,
+) -> Result<medication::SafetyReport, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let detail = clinical::get_encounter_detail(conn, &encounter_id).map_err(|e| e.to_string())?;
+    medication::check_prescription(
+        conn,
+        &encounter_id,
+        &medications,
+        detail.patient.allergies.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
 /// Detecta el hardware del equipo y sugiere el tamano de modelo Whisper local
 /// para transcripcion. No requiere la base (no toca datos clinicos): solo lee
 /// RAM y nucleos de CPU. Se usa al configurar la transcripcion para que el
@@ -1139,6 +1162,7 @@ pub fn run() {
             ai_run_benchmark,
             ai_list_benchmarks,
             transcription_recommendation,
+            check_medication_safety,
             arco_list_requests,
             arco_record_request,
             arco_mark_fulfilled,

@@ -310,6 +310,74 @@ const MIGRATIONS: &[&str] = &[
         linked_at TEXT NOT NULL
     );
     CREATE INDEX idx_patient_links_patient ON patient_links (patient_id);",
+    // v13: seguridad de medicacion determinista (paso 14). Base de referencia
+    // publica (farmacos, clases e interacciones) — clase REFERENCIA, no PHI: es
+    // conocimiento clinico publico empaquetado, no datos del paciente. Las
+    // verificaciones corren localmente sobre la prescripcion (CLINICO) y nunca
+    // salen del equipo. En esta rebanada la base es un conjunto SEMBRADO
+    // representativo de interacciones clinicas conocidas; la importacion real de
+    // RxNorm/RxClass/DDInter/openFDA es una rebanada posterior.
+    "CREATE TABLE medication_reference (
+        name TEXT PRIMARY KEY NOT NULL,      -- nombre normalizado (minusculas) que se busca
+        ingredient TEXT NOT NULL,            -- ingrediente canonico
+        display_name TEXT NOT NULL,          -- nombre para mostrar
+        drug_class TEXT                      -- clase terapeutica (duplicidad/alergia cruzada)
+    );
+    CREATE INDEX idx_medication_reference_ingredient ON medication_reference (ingredient);
+    CREATE TABLE drug_interactions (
+        ingredient_a TEXT NOT NULL,          -- orden canonico: a <= b
+        ingredient_b TEXT NOT NULL,
+        severity TEXT NOT NULL,              -- CONTRAINDICATED | MAJOR | MODERATE | MINOR
+        description TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_version TEXT NOT NULL,
+        PRIMARY KEY (ingredient_a, ingredient_b)
+    );
+    INSERT INTO app_meta (key, value) VALUES ('medication_reference_version', 'seed-v1');
+    INSERT INTO medication_reference (name, ingredient, display_name, drug_class) VALUES
+        ('ibuprofeno','ibuprofeno','Ibuprofeno','AINE'),
+        ('naproxeno','naproxeno','Naproxeno','AINE'),
+        ('ketorolaco','ketorolaco','Ketorolaco','AINE'),
+        ('aspirina','acido acetilsalicilico','Aspirina','AINE'),
+        ('acido acetilsalicilico','acido acetilsalicilico','Acido acetilsalicilico','AINE'),
+        ('warfarina','warfarina','Warfarina','Anticoagulante'),
+        ('lisinopril','lisinopril','Lisinopril','IECA'),
+        ('enalapril','enalapril','Enalapril','IECA'),
+        ('losartan','losartan','Losartan','ARA II'),
+        ('valsartan','valsartan','Valsartan','ARA II'),
+        ('espironolactona','espironolactona','Espironolactona','Diuretico ahorrador de potasio'),
+        ('sildenafil','sildenafil','Sildenafil','Inhibidor PDE5'),
+        ('nitroglicerina','nitroglicerina','Nitroglicerina','Nitrato'),
+        ('isosorbida','dinitrato de isosorbida','Dinitrato de isosorbida','Nitrato'),
+        ('claritromicina','claritromicina','Claritromicina','Macrolido'),
+        ('simvastatina','simvastatina','Simvastatina','Estatina'),
+        ('atorvastatina','atorvastatina','Atorvastatina','Estatina'),
+        ('tramadol','tramadol','Tramadol','Opioide'),
+        ('fluoxetina','fluoxetina','Fluoxetina','ISRS'),
+        ('sertralina','sertralina','Sertralina','ISRS'),
+        ('litio','litio','Litio','Estabilizador del animo'),
+        ('amoxicilina','amoxicilina','Amoxicilina','Penicilina'),
+        ('ampicilina','ampicilina','Ampicilina','Penicilina'),
+        ('omeprazol','omeprazol','Omeprazol','IBP'),
+        ('pantoprazol','pantoprazol','Pantoprazol','IBP'),
+        ('metformina','metformina','Metformina','Biguanida'),
+        ('paracetamol','paracetamol','Paracetamol','Analgesico');
+    INSERT INTO drug_interactions (ingredient_a, ingredient_b, severity, description, source, source_version) VALUES
+        ('acido acetilsalicilico','warfarina','MAJOR','Mayor riesgo de sangrado por efecto antiagregante y anticoagulante combinado.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('ibuprofeno','warfarina','MAJOR','Los AINE aumentan el riesgo de sangrado con warfarina.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('naproxeno','warfarina','MAJOR','Los AINE aumentan el riesgo de sangrado con warfarina.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('ketorolaco','warfarina','MAJOR','Los AINE aumentan el riesgo de sangrado con warfarina.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('ibuprofeno','lisinopril','MODERATE','Los AINE reducen el efecto antihipertensivo y pueden afectar la funcion renal.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('enalapril','ibuprofeno','MODERATE','Los AINE reducen el efecto antihipertensivo y pueden afectar la funcion renal.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('espironolactona','lisinopril','MAJOR','Riesgo de hiperpotasemia por combinar IECA con ahorrador de potasio.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('enalapril','espironolactona','MAJOR','Riesgo de hiperpotasemia por combinar IECA con ahorrador de potasio.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('nitroglicerina','sildenafil','CONTRAINDICATED','Hipotension grave por combinar nitrato con inhibidor de PDE5.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('dinitrato de isosorbida','sildenafil','CONTRAINDICATED','Hipotension grave por combinar nitrato con inhibidor de PDE5.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('claritromicina','simvastatina','MAJOR','Riesgo de miopatia o rabdomiolisis por inhibir el metabolismo de la estatina.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('fluoxetina','tramadol','MAJOR','Riesgo de sindrome serotoninergico y descenso del umbral convulsivo.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('sertralina','tramadol','MAJOR','Riesgo de sindrome serotoninergico y descenso del umbral convulsivo.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('ibuprofeno','litio','MAJOR','Los AINE elevan los niveles de litio (riesgo de toxicidad).','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('litio','naproxeno','MAJOR','Los AINE elevan los niveles de litio (riesgo de toxicidad).','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1');",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

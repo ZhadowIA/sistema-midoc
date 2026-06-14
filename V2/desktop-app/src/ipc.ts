@@ -875,6 +875,67 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     }
     case "ai_list_benchmarks":
       return mockState.benchmarks as T;
+    case "check_medication_safety": {
+      // Espeja el motor del backend con un subconjunto del dataset sembrado.
+      const refs: Record<string, { ingredient: string; display: string; cls: string }> = {
+        ibuprofeno: { ingredient: "ibuprofeno", display: "Ibuprofeno", cls: "AINE" },
+        naproxeno: { ingredient: "naproxeno", display: "Naproxeno", cls: "AINE" },
+        warfarina: { ingredient: "warfarina", display: "Warfarina", cls: "Anticoagulante" },
+        sildenafil: { ingredient: "sildenafil", display: "Sildenafil", cls: "Inhibidor PDE5" },
+        nitroglicerina: { ingredient: "nitroglicerina", display: "Nitroglicerina", cls: "Nitrato" },
+        amoxicilina: { ingredient: "amoxicilina", display: "Amoxicilina", cls: "Penicilina" },
+        paracetamol: { ingredient: "paracetamol", display: "Paracetamol", cls: "Analgesico" }
+      };
+      const interactions: Record<string, { severity: string; description: string }> = {
+        "ibuprofeno|warfarina": { severity: "MAJOR", description: "Los AINE aumentan el riesgo de sangrado con warfarina." },
+        "naproxeno|warfarina": { severity: "MAJOR", description: "Los AINE aumentan el riesgo de sangrado con warfarina." },
+        "nitroglicerina|sildenafil": { severity: "CONTRAINDICATED", description: "Hipotension grave por combinar nitrato con inhibidor de PDE5." }
+      };
+      const input = (args?.medications as string[]) ?? [];
+      const normalized = input.map((raw) => {
+        const ref = refs[raw.trim().toLowerCase()];
+        return ref
+          ? { input: raw, ingredient: ref.ingredient, displayName: ref.display, drugClass: ref.cls, recognized: true }
+          : { input: raw, ingredient: null, displayName: null, drugClass: null, recognized: false };
+      });
+      const recognized = normalized.filter((n) => n.recognized);
+      const interactionAlerts: Array<Record<string, unknown>> = [];
+      const duplicateTherapy: Array<Record<string, unknown>> = [];
+      for (let i = 0; i < recognized.length; i++) {
+        for (let j = i + 1; j < recognized.length; j++) {
+          const [a, b] = [recognized[i].ingredient!, recognized[j].ingredient!].sort();
+          const hit = interactions[`${a}|${b}`];
+          if (hit) {
+            interactionAlerts.push({ drugA: recognized[i].displayName, drugB: recognized[j].displayName, severity: hit.severity, description: hit.description, source: "Conjunto sembrado MiDoc (interaccion clinica conocida)", sourceVersion: "seed-v1" });
+          }
+          if (recognized[i].drugClass && recognized[i].drugClass === recognized[j].drugClass && recognized[i].ingredient !== recognized[j].ingredient) {
+            duplicateTherapy.push({ drugA: recognized[i].displayName, drugB: recognized[j].displayName, drugClass: recognized[i].drugClass });
+          }
+        }
+      }
+      const allergyAlerts: Array<Record<string, unknown>> = [];
+      const allergies = (mockState.encounter.patient.allergies ?? "").toLowerCase();
+      for (const drug of recognized) {
+        const cls = (drug.drugClass ?? "").toLowerCase();
+        if (allergies && cls && (allergies.includes(cls) || cls.includes(allergies))) {
+          allergyAlerts.push({ drug: drug.displayName, matchedAllergy: allergies, viaClass: drug.drugClass, source: "Alergias registradas en el expediente" });
+        }
+      }
+      const unrecognized = normalized.filter((n) => !n.recognized).map((n) => n.input);
+      interactionAlerts.sort((x, y) => {
+        const rank = (s: string) => ({ CONTRAINDICATED: 4, MAJOR: 3, MODERATE: 2, MINOR: 1 }[s] ?? 0);
+        return rank(String(y.severity)) - rank(String(x.severity));
+      });
+      return {
+        normalized,
+        unrecognized,
+        interactions: interactionAlerts,
+        allergyAlerts,
+        duplicateTherapy,
+        referenceVersion: "seed-v1",
+        hasAlerts: interactionAlerts.length + allergyAlerts.length + duplicateTherapy.length > 0
+      } as T;
+    }
     case "transcription_recommendation":
       // Equipo de demostracion: 16 GB sin GPU → modelo mediano por lotes.
       return {

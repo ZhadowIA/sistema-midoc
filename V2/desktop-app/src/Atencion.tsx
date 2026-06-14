@@ -11,6 +11,7 @@ import {
   type DentalPayload,
   type GeneralMedicinePayload
 } from "./clinicalProfiles";
+import { MedicationSafety } from "./MedicationSafety";
 import { call } from "./ipc";
 
 type SpecialtyPayload = GeneralMedicinePayload | DentalPayload;
@@ -952,6 +953,7 @@ export function Atencion({
               </div>
             ) : null}
           </div>
+          <MedicationSafety encounterId={encounterId} disabled={signed} />
         </section>
             ) : null}
 
