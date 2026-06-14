@@ -838,6 +838,15 @@ Entregado (rebanada 2 — calendario fiel a la disponibilidad, 2026-06-14):
 
 Verificacion (rebanada 2): 73 pruebas del portal en verde (+1: `listAvailableDays` incluye el dia con regla y excluye el dia siguiente sin regla; cada dia devuelto tiene >= 1 slot), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (junio: solo lun-vie activos, fines de semana y dias pasados deshabilitados; al navegar a julio se recalculan los dias).
 
+Entregado (rebanada 3 — carga automatica de horarios + hold por sesion, 2026-06-14):
+
+- **Carga automatica de horarios (`booking-client.tsx`).** Se elimina el boton "Buscar horarios": al elegir dia o servicio, los horarios se cargan solos (efecto sobre `[serviceId, dateFrom]`), con estado de carga propio y mensaje claro cuando el dia no tiene cupo.
+- **Hold por sesion sin auto-bloqueo (`public-booking-service.ts`).** `createAppointmentHold` acepta `previousHoldToken`: dentro de la transaccion serializable libera el hold previo de la misma sesion (estado `RELEASED`) antes de tomar el nuevo, asi cambiar de horario no se bloquea a si mismo ni deja el horario anterior ocupado. `listPublicAvailability` acepta `ignoreHoldToken` para que el horario que el paciente ya aparto siga visible en su propia vista; la ruta de disponibilidad y la de holds exponen ambos parametros.
+- **UI.** El cliente pasa su hold actual como `ignoreHoldToken` al recargar horarios y como `previousHoldToken` al apartar uno nuevo. La proteccion de doble reserva entre pacientes distintos se mantiene intacta (el conflicto sigue mirando holds ACTIVE de otros).
+- **Residencia.** Sin PHI; solo horarios y tokens opacos de hold.
+
+Verificacion (rebanada 3): 74 pruebas del portal en verde (+1: la misma sesion cambia de hold sin auto-bloquearse — su hold previo queda `RELEASED`, el horario anterior se libera y reapartar el mismo con su token funciona; `ignoreHoldToken` revela su propio horario), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (horarios auto-cargados sin boton; apartar 08:00 y cambiar a 08:30 libera el 08:00 y ambos siguen disponibles para el mismo paciente; sin errores de consola).
+
 > Nota de residencia (rebanada 8): la preconsulta guiada por IA es el unico punto donde contenido clinico transita la nube para generar la siguiente pregunta. Debe tratarse como transitorio: consentimiento del paciente, seudonimizacion, prohibido persistir respuestas o prompts en logs/telemetria, y el resultado final sellado en el buzon cifrado (sealed box con la llave publica del medico) para que solo la app del medico lo lea. El adaptador real de IA se cablea en staging con BAA (paso 16); hasta entonces se usa un proveedor determinista para construir y probar el contrato.
 
 ## MVP recomendado

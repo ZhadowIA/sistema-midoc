@@ -216,6 +216,12 @@ export async function listPublicAvailability(input: {
   serviceId: string;
   dateFrom: string;
   days?: number;
+  /**
+   * Token de un hold propio del paciente a ignorar al calcular cupo: su propia
+   * reserva temporal no debe bloquearle su vista al cambiar de horario dentro de
+   * la misma sesion.
+   */
+  ignoreHoldToken?: string;
 }) {
   const profile = await getPublicDoctorOrThrow(input.slug);
   const service = profile.services.find((item) => item.id === input.serviceId);
@@ -263,7 +269,9 @@ export async function listPublicAvailability(input: {
         slotStart: {
           gte: dateFrom,
           lt: until
-        }
+        },
+        // El propio hold del paciente no bloquea su vista (cambio de horario).
+        ...(input.ignoreHoldToken ? { token: { not: input.ignoreHoldToken } } : {})
       },
       select: {
         slotStart: true,
@@ -376,6 +384,11 @@ export async function createAppointmentHold(input: {
   slug: string;
   serviceId: string;
   slotStart: string;
+  /**
+   * Hold previo del paciente en la misma sesion: se libera antes de tomar el
+   * nuevo para que cambiar de horario no se bloquee a si mismo.
+   */
+  previousHoldToken?: string;
 }) {
   const profile = await getPublicDoctorOrThrow(input.slug);
   const service = profile.services.find((item) => item.id === input.serviceId);
@@ -391,12 +404,14 @@ export async function createAppointmentHold(input: {
     throw new PublicBookingServiceError("Invalid slot start.");
   }
 
-  // La fecha de busqueda es la fecha local del medico para ese instante.
+  // La fecha de busqueda es la fecha local del medico para ese instante. El
+  // hold previo de la sesion no debe contar como ocupado al validar el nuevo.
   const availability = await listPublicAvailability({
     slug: input.slug,
     serviceId: input.serviceId,
     dateFrom: formatLocalDate(getLocalDate(slotStart, profile.timeZone)),
-    days: 1
+    days: 1,
+    ignoreHoldToken: input.previousHoldToken
   });
 
   const slotIsAvailable = availability.slots.some((slot) => slot.slotStart === slotStart.toISOString());
@@ -410,6 +425,22 @@ export async function createAppointmentHold(input: {
   // Transaccion serializable: dos pacientes pidiendo el mismo horario a la
   // vez no pueden crear dos holds activos.
   const hold = await runSerializable(async (tx) => {
+    // Liberar el hold previo de la sesion primero: deja libre su horario y evita
+    // que aparezca como conflicto al tomar el nuevo.
+    if (input.previousHoldToken) {
+      await tx.appointmentHold.updateMany({
+        where: {
+          doctorId: profile.userId,
+          token: input.previousHoldToken,
+          status: HoldStatus.ACTIVE
+        },
+        data: {
+          status: HoldStatus.RELEASED,
+          releasedAt: new Date()
+        }
+      });
+    }
+
     const conflictingHold = await tx.appointmentHold.findFirst({
           where: {
             doctorId: profile.userId,

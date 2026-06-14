@@ -160,6 +160,92 @@ describe("public booking flow", () => {
     }
   });
 
+  it("lets the same session change its hold without self-blocking (paso 19, rebanada 3)", async () => {
+    const email = uniqueEmail("doctor-session-hold");
+    const slug = uniqueSlug("dra-session");
+    const slotDate = nextWeekdayDate(2);
+    const dateFrom = slotDate.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Sara",
+        lastName: "Lopez",
+        professionalName: "Dra. Sara Lopez",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        professionalName: "Dra. Sara Lopez",
+        specialty: ClinicalProfile.GENERAL_MEDICINE,
+        isPublic: true
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta general",
+        priceCents: 90000,
+        durationMinutes: 30
+      });
+
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: slotDate.getUTCDay(),
+        startTime: "09:00",
+        endTime: "11:00",
+        slotInterval: 30
+      });
+
+      const availability = await listPublicAvailability({ slug, serviceId: service.id, dateFrom, days: 1 });
+      const slotA = availability.slots[0]!.slotStart;
+      const slotB = availability.slots[1]!.slotStart;
+
+      const holdA = await createAppointmentHold({ slug, serviceId: service.id, slotStart: slotA });
+
+      // Su propio hold bloquea slotA en la vista general, pero no si se ignora su token.
+      const afterA = await listPublicAvailability({ slug, serviceId: service.id, dateFrom, days: 1 });
+      expect(afterA.slots.some((slot) => slot.slotStart === slotA)).toBe(false);
+      const afterAignore = await listPublicAvailability({
+        slug,
+        serviceId: service.id,
+        dateFrom,
+        days: 1,
+        ignoreHoldToken: holdA.token
+      });
+      expect(afterAignore.slots.some((slot) => slot.slotStart === slotA)).toBe(true);
+
+      // Cambia de horario liberando el hold previo de la misma sesion.
+      const holdB = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: slotB,
+        previousHoldToken: holdA.token
+      });
+      expect(holdB.token).not.toBe(holdA.token);
+
+      const releasedA = await prisma.appointmentHold.findUnique({ where: { id: holdA.id } });
+      expect(releasedA?.status).toBe(HoldStatus.RELEASED);
+
+      // slotA vuelve a estar libre y slotB queda ocupado.
+      const afterB = await listPublicAvailability({ slug, serviceId: service.id, dateFrom, days: 1 });
+      expect(afterB.slots.some((slot) => slot.slotStart === slotA)).toBe(true);
+      expect(afterB.slots.some((slot) => slot.slotStart === slotB)).toBe(false);
+
+      // Reapartar el mismo slotB con su propio token no se bloquea a si mismo.
+      const holdB2 = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: slotB,
+        previousHoldToken: holdB.token
+      });
+      expect(holdB2.token).toBeTruthy();
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
   it("lists slots, creates a hold, books, confirms, and stores precheckin", async () => {
     const email = uniqueEmail("doctor-booking");
     const slug = uniqueSlug("dra-booking");

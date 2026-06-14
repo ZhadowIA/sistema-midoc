@@ -45,6 +45,7 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
   const [availableDays, setAvailableDays] = useState<string[]>([]);
   const [loadingDays, setLoadingDays] = useState(true);
   const [slots, setSlots] = useState<AvailabilityResponse["slots"]>([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<string>("");
   const [holdToken, setHoldToken] = useState<string>("");
   const [message, setMessage] = useState<string>("");
@@ -108,35 +109,49 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
     };
   }, [serviceId, visibleMonth, slug]);
 
-  async function loadSlots() {
+  // Carga automatica de horarios al elegir dia o servicio (sin boton "Buscar").
+  // Pasa el hold propio como ignoreHoldToken para que el horario que el paciente
+  // ya aparto siga visible al volver a ese dia.
+  useEffect(() => {
     if (!serviceId || !dateFrom) {
       return;
     }
 
-    setBusy(true);
-    setSearchError("");
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoadingSlots(true);
 
-    try {
-      const response = await fetch(
-        `/api/public/doctors/${profile.doctor.publicSlug}/availability?serviceId=${serviceId}&dateFrom=${dateFrom}&days=1`
-      );
-      const data = await response.json();
+    const ignore = holdToken ? `&ignoreHoldToken=${holdToken}` : "";
+    fetch(`/api/public/doctors/${slug}/availability?serviceId=${serviceId}&dateFrom=${dateFrom}&days=1${ignore}`)
+      .then(async (response) => ({ ok: response.ok, data: await response.json() }))
+      .then(({ ok, data }) => {
+        if (cancelled) {
+          return;
+        }
+        if (!ok) {
+          setSearchError(data.error || "No fue posible consultar horarios.");
+          setSlots([]);
+          return;
+        }
+        setSearchError("");
+        setSlots(Array.isArray(data.slots) ? data.slots : []);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSearchError("No fue posible consultar horarios.");
+          setSlots([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingSlots(false);
+        }
+      });
 
-      if (!response.ok) {
-        throw new Error(data.error || "No fue posible consultar horarios.");
-      }
-
-      setSlots(data.slots);
-      setSelectedSlot("");
-      setHoldToken("");
-      setSearchError("");
-    } catch (error) {
-      setSearchError(error instanceof Error ? error.message : "No fue posible consultar horarios.");
-      setSlots([]);
-    } finally {
-      setBusy(false);
-    }
-  }
+    return () => {
+      cancelled = true;
+    };
+  }, [serviceId, dateFrom, holdToken, slug]);
 
   async function reserveSlot(slotStart: string) {
     setBusy(true);
@@ -150,7 +165,9 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
         },
         body: JSON.stringify({
           serviceId,
-          slotStart
+          slotStart,
+          // Libera el hold previo de esta sesion al cambiar de horario.
+          previousHoldToken: holdToken || undefined
         })
       });
       const data = await response.json();
@@ -260,10 +277,6 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
               }}
             />
           </div>
-
-          <button className="action-button" onClick={loadSlots} disabled={busy}>
-            {busy ? "Buscando..." : "Buscar horarios"}
-          </button>
         </div>
 
         {searchError ? (
@@ -273,7 +286,13 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
           </div>
         ) : null}
 
-        {slots.length > 0 ? (
+        {loadingSlots ? (
+          <div className="no-slots">
+            <p>
+              <IconCalendar className="dp-inline-icon" /> Cargando horarios…
+            </p>
+          </div>
+        ) : slots.length > 0 ? (
           <div className="slots-available">
             <p className="slots-info">Horarios disponibles ({slots.length})</p>
             <div className="slot-grid">
@@ -282,6 +301,7 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
                   className={selectedSlot === slot.slotStart ? "slot-button active" : "slot-button"}
                   key={slot.slotStart}
                   onClick={() => reserveSlot(slot.slotStart)}
+                  disabled={busy}
                   type="button"
                 >
                   {new Intl.DateTimeFormat("es-MX", {
@@ -292,11 +312,11 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
               ))}
             </div>
           </div>
-        ) : !busy ? (
+        ) : !searchError ? (
           <div className="no-slots">
             <p>
-              <IconCalendar className="dp-inline-icon" /> Selecciona una fecha para ver horarios
-              disponibles
+              <IconCalendar className="dp-inline-icon" /> No hay horarios disponibles para este día.
+              Elige otro en el calendario.
             </p>
           </div>
         ) : null}

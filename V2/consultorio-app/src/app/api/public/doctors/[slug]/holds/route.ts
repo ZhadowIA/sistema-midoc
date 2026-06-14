@@ -7,7 +7,10 @@ import { createAppointmentHold } from "../../../../../../services/booking/public
 
 const holdSchema = z.object({
   serviceId: z.string().min(1),
-  slotStart: z.string().datetime()
+  slotStart: z.string().datetime(),
+  // Hold previo del paciente en la misma sesion (para liberarlo al cambiar de
+  // horario). Opcional.
+  previousHoldToken: z.string().min(1).optional()
 });
 
 export async function POST(
@@ -25,7 +28,8 @@ export async function POST(
     const hold = await createAppointmentHold({
       slug,
       serviceId: payload.serviceId,
-      slotStart: payload.slotStart
+      slotStart: payload.slotStart,
+      previousHoldToken: payload.previousHoldToken
     });
 
     return NextResponse.json({
