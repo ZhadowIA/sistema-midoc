@@ -847,6 +847,15 @@ Entregado (rebanada 3 — carga automatica de horarios + hold por sesion, 2026-0
 
 Verificacion (rebanada 3): 74 pruebas del portal en verde (+1: la misma sesion cambia de hold sin auto-bloquearse — su hold previo queda `RELEASED`, el horario anterior se libera y reapartar el mismo con su token funciona; `ignoreHoldToken` revela su propio horario), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (horarios auto-cargados sin boton; apartar 08:00 y cambiar a 08:30 libera el 08:00 y ambos siguen disponibles para el mismo paciente; sin errores de consola).
 
+Entregado (rebanada 4 — validacion de telefono internacional, 2026-06-14):
+
+- **Helper compartido (`lib/phone.ts`).** Lista curada de paises con clave de marcacion, `detectCountry(locale)` (region del locale; Mexico por defecto), `isValidNationalNumber` (exactamente 10 digitos), `onlyDigits` y `formatFullPhone` (p. ej. "+52 5512345678").
+- **Componente (`phone-field.tsx`).** Selector de clave de pais + input de 10 digitos (filtra no-numericos, `maxLength` 10, `inputMode` numerico), con error inline al perder foco si el numero es invalido o falta cuando es obligatorio.
+- **Formulario (`booking-client.tsx`).** El telefono del paciente y el del responsable usan `PhoneField`; la clave de pais se autodetecta tras montar (sin desajuste de hidratacion) y es editable. El submit valida 10 digitos antes de enviar y manda el telefono ya normalizado con su clave. El servidor permanece lenient (`min(7)`), sin romper el contrato existente.
+- **Residencia.** El telefono es CONTACTO; sin PHI.
+
+Verificacion (rebanada 4): 78 pruebas del portal en verde (+4 unitarias de `phone.ts`: validacion de 10 digitos, deteccion de pais por locale, formato con clave), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (selector MX +52 por defecto con paises; se filtran no-numericos; un numero corto marca error inline y `aria-invalid`; 10 digitos lo limpia; el toggle "para otra persona" muestra el campo del responsable).
+
 > Nota de residencia (rebanada 8): la preconsulta guiada por IA es el unico punto donde contenido clinico transita la nube para generar la siguiente pregunta. Debe tratarse como transitorio: consentimiento del paciente, seudonimizacion, prohibido persistir respuestas o prompts en logs/telemetria, y el resultado final sellado en el buzon cifrado (sealed box con la llave publica del medico) para que solo la app del medico lo lea. El adaptador real de IA se cablea en staging con BAA (paso 16); hasta entonces se usa un proveedor determinista para construir y probar el contrato.
 
 ## MVP recomendado

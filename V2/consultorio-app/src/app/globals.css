@@ -455,6 +455,34 @@ a.service-card:hover {
   color: var(--muted);
 }
 
+/* ---------- Campo de telefono (clave de pais + 10 digitos) ---------- */
+
+.phone-input {
+  display: flex;
+  gap: 8px;
+}
+
+.phone-input .phone-dial {
+  width: auto;
+  flex: 0 0 auto;
+  min-width: 92px;
+}
+
+.phone-input .phone-number {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.phone-input-error .phone-dial,
+.phone-input-error .phone-number {
+  border-color: var(--danger);
+}
+
+.phone-hint {
+  font-size: 0.8rem;
+  color: var(--danger);
+}
+
 .form-error,
 .form-success {
   margin: 0;

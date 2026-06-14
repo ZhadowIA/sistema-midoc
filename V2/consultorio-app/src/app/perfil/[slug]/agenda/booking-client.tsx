@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Calendar } from "./calendar";
+import { PhoneField } from "./phone-field";
+import { DEFAULT_COUNTRY, detectCountry, formatFullPhone, isValidNationalNumber } from "../../../../lib/phone";
 import { IconCalendar } from "../icons";
 
 type PublicProfile = {
@@ -66,6 +68,17 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
     phone: "",
     email: ""
   });
+  // Clave de pais del telefono: Mexico por defecto, autodetectada del locale tras
+  // montar (evita desajuste de hidratacion) y editable por el usuario.
+  const [patientCountry, setPatientCountry] = useState(DEFAULT_COUNTRY);
+  const [guardianCountry, setGuardianCountry] = useState(DEFAULT_COUNTRY);
+
+  useEffect(() => {
+    const detected = detectCountry();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPatientCountry(detected);
+    setGuardianCountry(detected);
+  }, []);
 
   // Mes visible del calendario (YYYY-MM): al cambiar de servicio o de mes se
   // consultan los dias con cupo real para deshabilitar el resto.
@@ -194,6 +207,22 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
       return;
     }
 
+    // El telefono del paciente es obligatorio cuando agenda para si mismo; el del
+    // responsable lo es cuando agenda para otra persona. Si hay numero, debe ser
+    // de 10 digitos.
+    const patientPhoneRequired = bookingFor === "self";
+    if (
+      (patientPhoneRequired && !patient.phone) ||
+      (patient.phone && !isValidNationalNumber(patient.phone))
+    ) {
+      setMessage("Revisa el teléfono del paciente: deben ser 10 dígitos.");
+      return;
+    }
+    if (bookingFor === "other" && (!guardian.phone || !isValidNationalNumber(guardian.phone))) {
+      setMessage("Revisa el teléfono del responsable: deben ser 10 dígitos.");
+      return;
+    }
+
     setBusy(true);
     setMessage("");
 
@@ -208,7 +237,7 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
           patient: {
             firstName: patient.firstName,
             lastName: patient.lastName,
-            phone: patient.phone || undefined,
+            phone: patient.phone ? formatFullPhone(patientCountry, patient.phone) : undefined,
             email: patient.email || undefined,
             birthDate: patient.birthDate || undefined
           },
@@ -220,7 +249,7 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
               ? {
                   fullName: guardian.fullName,
                   relationship: guardian.relationship || undefined,
-                  phone: guardian.phone || undefined,
+                  phone: guardian.phone ? formatFullPhone(guardianCountry, guardian.phone) : undefined,
                   email: guardian.email || undefined
                 }
               : undefined,
@@ -375,16 +404,15 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
             />
           </label>
 
-          <label className="field">
-            <span>{bookingFor === "other" ? "Teléfono del paciente" : "Teléfono*"}</span>
-            <input
-              required={bookingFor === "self"}
-              type="tel"
-              placeholder={bookingFor === "other" ? "Opcional" : "Tu teléfono"}
-              value={patient.phone}
-              onChange={(event) => setPatient((current) => ({ ...current, phone: event.target.value }))}
-            />
-          </label>
+          <PhoneField
+            label={bookingFor === "other" ? "Teléfono del paciente" : "Teléfono*"}
+            countryCode={patientCountry}
+            national={patient.phone}
+            required={bookingFor === "self"}
+            placeholder={bookingFor === "other" ? "Opcional (10 dígitos)" : "10 dígitos"}
+            onCountryChange={setPatientCountry}
+            onNationalChange={(digits) => setPatient((current) => ({ ...current, phone: digits }))}
+          />
 
           <label className="field">
             <span>Correo electrónico</span>
@@ -420,16 +448,15 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
                 />
               </label>
 
-              <label className="field">
-                <span>Teléfono del responsable*</span>
-                <input
-                  required
-                  type="tel"
-                  placeholder="Teléfono de contacto"
-                  value={guardian.phone}
-                  onChange={(event) => setGuardian((current) => ({ ...current, phone: event.target.value }))}
-                />
-              </label>
+              <PhoneField
+                label="Teléfono del responsable*"
+                countryCode={guardianCountry}
+                national={guardian.phone}
+                required
+                placeholder="10 dígitos"
+                onCountryChange={setGuardianCountry}
+                onNationalChange={(digits) => setGuardian((current) => ({ ...current, phone: digits }))}
+              />
 
               <label className="field">
                 <span>Correo del responsable</span>
