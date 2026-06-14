@@ -83,7 +83,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 16 | Proveedores de IA reales en staging (BAA) | `codex-security:security-scan` | Adaptadores reales de LLM/transcripcion con gobernanza intacta. | 🔜 PLANEADO |
 | 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
 | 18 | Agendado con responsable/tutor | `superpowers:test-driven-development` | El sistema distingue paciente con tutor de paciente sin tutor. | ✅ DONE |
-| 19 | Pulido del flujo publico, preconsulta y sincronizacion | `impeccable` | Perfil/agenda fieles, preconsulta diferida (antecedentes o guiada por IA), recordatorio con cancelacion y sync con aviso. | 🔜 PLANEADO |
+| 19 | Pulido del flujo publico, preconsulta y sincronizacion | `impeccable` | Perfil/agenda fieles, preconsulta diferida (antecedentes o guiada por IA), recordatorio con cancelacion y sync con aviso. | 🚧 IN PROGRESS (rebanada 1) |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -827,7 +827,15 @@ Rebanadas:
 - **Rebanada 9 (portal) — Recordatorio 24 h con cancelacion.** Job que envia SMS/correo 24 h antes de la cita (sobre el paso 7), con enlace corto de cancelacion (expiracion y un solo uso) que reusa el flujo de cancelacion existente.
 - **Rebanada 10 (app del medico) — Sync automatica al abrir + aviso de cambios.** Sincronizar la agenda en automatico al abrir/desbloquear la app; mostrar un badge (circulito rojo) en la esquina del boton "Sincronizar" cuando haya cambios pendientes por bajar/subir, y limpiarlo tras sincronizar.
 
-Estado: 🔜 PLANEADO. Construido sobre los pasos 2, 3, 6, 7 y 11.
+Estado: 🚧 EN PROGRESO — rebanada 1 (perfil publico: foto y ubicacion) entregada (2026-06-14). Construido sobre los pasos 2, 3, 6, 7 y 11.
+
+Entregado (rebanada 1 — perfil publico: foto y ubicacion, 2026-06-14):
+
+- **Mapa con API key por entorno y fallback (`perfil/[slug]/page.tsx`, `lib/env.ts`).** La llave de Google Maps estaba hardcodeada en el codigo (fuga de secreto y sin fallback); ahora se lee de `GOOGLE_MAPS_API_KEY` (opcional en el esquema Zod del entorno). Sin llave configurada, el perfil muestra un enlace de fallback legible a Google Maps (direccion + "Ver ubicacion en Google Maps") en vez del iframe roto. La llave filtrada debe rotarse/restringirse por referrer en la consola de Google.
+- **Foto de perfil sobre el banner (`globals.css`).** El cover es `position: relative` (posicionado), por lo que en algunos navegadores se pintaba por encima del avatar no posicionado y recortaba su parte superior. Se fuerza al avatar por encima (`position: relative; z-index: 1` en `.dp-avatar-wrap`).
+- **Residencia.** Perfil/mapa son OPERATIVO/publico (no PHI). La llave de Maps no es PHI; es dato publico restringido por referrer del lado de Google.
+
+Verificacion (rebanada 1): `eslint` y `tsc --noEmit` limpios, 72 pruebas del portal en verde, `next build` ok, y verificacion manual en navegador (fallback del mapa con enlace correcto a Google Maps; avatar con `z-index` sobre el banner, sin recorte, en desktop y movil).
 
 > Nota de residencia (rebanada 8): la preconsulta guiada por IA es el unico punto donde contenido clinico transita la nube para generar la siguiente pregunta. Debe tratarse como transitorio: consentimiento del paciente, seudonimizacion, prohibido persistir respuestas o prompts en logs/telemetria, y el resultado final sellado en el buzon cifrado (sealed box con la llave publica del medico) para que solo la app del medico lo lea. El adaptador real de IA se cablea en staging con BAA (paso 16); hasta entonces se usa un proveedor determinista para construir y probar el contrato.
 
