@@ -39,6 +39,7 @@ whatsapp-bot/.wwebjs_cache/
 # Local agent workspace artifacts
 .claude/
 .atl/
+.superpowers/
 
 # Temporary files
 tmp_*.js
