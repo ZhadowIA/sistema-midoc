@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+import { Calendar } from "../../agenda/calendar";
 
 type AppointmentDetails = {
   appointment: {
@@ -52,6 +54,12 @@ const timeFormatter = new Intl.DateTimeFormat("es-MX", {
   timeStyle: "short"
 });
 
+function tomorrowString() {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 export function AppointmentClient({ token, slug, serviceId, details }: AppointmentClientProps) {
   const precheckinResponses =
     details.precheckin?.responses && typeof details.precheckin.responses === "object"
@@ -75,8 +83,59 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
   const [slots, setSlots] = useState<SlotOption[]>([]);
   const [slotsLoaded, setSlotsLoaded] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState("");
+  const [availableDays, setAvailableDays] = useState<string[]>([]);
+  const [loadingDays, setLoadingDays] = useState(false);
 
   const isFinal = status === "CANCELLED" || status === "COMPLETED";
+
+  // Dias con cupo real del medico para el mes visible del calendario de
+  // reagendado (mismo criterio que el agendado inicial).
+  const visibleMonth = rescheduleDate.slice(0, 7);
+
+  useEffect(() => {
+    if (!rescheduleOpen || !serviceId || !visibleMonth) {
+      return;
+    }
+
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoadingDays(true);
+
+    fetch(`/api/public/doctors/${slug}/available-days?serviceId=${serviceId}&dateFrom=${visibleMonth}-01&days=31`)
+      .then(async (response) => ({ ok: response.ok, data: await response.json() }))
+      .then(({ ok, data }) => {
+        if (cancelled) {
+          return;
+        }
+        setAvailableDays(ok && Array.isArray(data.days) ? data.days : []);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAvailableDays([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingDays(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rescheduleOpen, serviceId, visibleMonth, slug]);
+
+  function toggleReschedule() {
+    setRescheduleOpen((open) => {
+      const next = !open;
+      if (next && !rescheduleDate) {
+        // Abrir con un dia por defecto carga el calendario y sus horarios, igual
+        // que el agendado inicial.
+        void loadSlots(tomorrowString());
+      }
+      return next;
+    });
+  }
 
   async function callAction(path: string, init?: RequestInit) {
     const response = await fetch(path, init);
@@ -252,7 +311,7 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
             <button
               className="ghost-button"
               disabled={busy || !serviceId}
-              onClick={() => setRescheduleOpen((open) => !open)}
+              onClick={toggleReschedule}
             >
               {rescheduleOpen ? "Cerrar cambio de horario" : "Cambiar horario"}
             </button>
@@ -264,14 +323,13 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
 
         {rescheduleOpen && !isFinal ? (
           <div className="inline-form">
-            <div className="field">
-              <label htmlFor="reschedule-date">Elige una fecha nueva</label>
-              <input
-                id="reschedule-date"
-                type="date"
-                min={new Date().toISOString().slice(0, 10)}
-                value={rescheduleDate}
-                onChange={(event) => void loadSlots(event.currentTarget.value)}
+            <div className="field calendar-field">
+              <span>Elige una fecha nueva</span>
+              <Calendar
+                selectedDate={rescheduleDate || tomorrowString()}
+                availableDays={availableDays}
+                loading={loadingDays}
+                onDateSelect={(date) => void loadSlots(date)}
               />
             </div>
 

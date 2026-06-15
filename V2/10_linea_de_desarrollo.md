@@ -856,6 +856,14 @@ Entregado (rebanada 4 — validacion de telefono internacional, 2026-06-14):
 
 Verificacion (rebanada 4): 78 pruebas del portal en verde (+4 unitarias de `phone.ts`: validacion de 10 digitos, deteccion de pais por locale, formato con clave), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (selector MX +52 por defecto con paises; se filtran no-numericos; un numero corto marca error inline y `aria-invalid`; 10 digitos lo limpia; el toggle "para otra persona" muestra el campo del responsable).
 
+Entregado (rebanada 5 — reagendado con el mismo calendario, 2026-06-14):
+
+- **Mismo selector que el agendado inicial (`cita/[token]/appointment-client.tsx`).** El cambio de horario de una cita existente reemplaza el `input type="date"` nativo por el componente `Calendar` (con fidelidad de dias disponibles: solo dias con cupo real habilitados, reusando `/available-days`) y la grilla de horarios. Al abrir "Cambiar horario" se carga un dia por defecto con sus horarios, igual que el agendado inicial; elegir un dia recarga los horarios.
+- **Sin cambios de backend.** Reusa los endpoints existentes (`/available-days`, `/availability`, `/reschedule`); es un cambio de presentacion.
+- **Residencia.** Fechas/horarios OPERATIVO/publico; sin PHI.
+
+Verificacion (rebanada 5): 78 pruebas del portal en verde (sin nuevas: cambio de UI que reusa componentes/endpoints ya cubiertos; el reagendado ya esta probado en `public-booking`), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (la cita muestra el `Calendar` en vez del input nativo; dias sin cupo deshabilitados; elegir dia 17 -> 08:00 y confirmar cambia el horario de la cita; sin errores de consola).
+
 > Nota de residencia (rebanada 8): la preconsulta guiada por IA es el unico punto donde contenido clinico transita la nube para generar la siguiente pregunta. Debe tratarse como transitorio: consentimiento del paciente, seudonimizacion, prohibido persistir respuestas o prompts en logs/telemetria, y el resultado final sellado en el buzon cifrado (sealed box con la llave publica del medico) para que solo la app del medico lo lea. El adaptador real de IA se cablea en staging con BAA (paso 16); hasta entonces se usa un proveedor determinista para construir y probar el contrato.
 
 ## MVP recomendado
