@@ -330,6 +330,50 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
     })
 }
 
+#[derive(serde::Serialize)]
+struct SyncPending {
+    /// Hay eventos del portal por bajar (peek del buzon, sin aplicar).
+    pending_download: bool,
+    /// Hay reportes de uso de IA locales por subir.
+    pending_upload: bool,
+}
+
+/// Indica si hay cambios pendientes para alimentar el badge del boton
+/// "Sincronizar", sin aplicar nada. La consulta de bajada es un peek de red
+/// (best-effort): si no hay red, no se marca pendiente para no alarmar offline.
+#[tauri::command]
+async fn sync_pending(state: tauri::State<'_, AppDb>) -> Result<SyncPending, String> {
+    let (server_url, token, cursor, pending_upload) = {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let server_url = sync::get_state(conn, "server_url").map_err(|e| e.to_string())?;
+        let token = sync::get_state(conn, "device_token").map_err(|e| e.to_string())?;
+        let (Some(server_url), Some(token)) = (server_url, token) else {
+            // Sin vincular: nada pendiente.
+            return Ok(SyncPending {
+                pending_download: false,
+                pending_upload: false,
+            });
+        };
+        let cursor = sync::get_cursor(conn).map_err(|e| e.to_string())?;
+        let pending_upload = !ai::pending_usage_reports(conn, 1)
+            .map_err(|e| e.to_string())?
+            .is_empty();
+        (server_url, token, cursor, pending_upload)
+    };
+
+    // Peek de red sin retener el lock ni avanzar el cursor (no hace ACK).
+    let pending_download = match sync::fetch_inbox(&server_url, &token, cursor).await {
+        Ok(inbox) => !inbox.events.is_empty(),
+        Err(_) => false,
+    };
+
+    Ok(SyncPending {
+        pending_download,
+        pending_upload,
+    })
+}
+
 /// Publica un resumen autorizado para el paciente: cifra el contenido con una
 /// llave nueva (secretbox), lo sube al portal y devuelve el enlace temporal con
 /// la llave en el fragmento. La llave nunca llega al servidor.
@@ -1271,6 +1315,7 @@ pub fn run() {
             sync_status,
             link_account,
             sync_now,
+            sync_pending,
             publish_authorized_summary,
             list_appointments,
             open_encounter,

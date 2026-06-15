@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { call } from "./ipc";
 import { Atencion } from "./Atencion";
 import { Recepcion } from "./Recepcion";
@@ -208,6 +208,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Badge del boton "Sincronizar": hay cambios pendientes por bajar/subir.
+  const [pendingSync, setPendingSync] = useState(false);
+  const autoSyncedRef = useRef(false);
   const [activeEncounter, setActiveEncounter] = useState<string | null>(null);
   const [activePatient, setActivePatient] = useState<string | null>(null);
   const [resolution, setResolution] = useState<{
@@ -244,6 +247,34 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     void refresh();
   }, [refresh]);
 
+  // Peek de cambios pendientes para el badge (no aplica nada).
+  const refreshPending = useCallback(async () => {
+    try {
+      const pending = await call<{ pending_download: boolean; pending_upload: boolean }>("sync_pending");
+      setPendingSync(pending.pending_download || pending.pending_upload);
+    } catch {
+      // Sin red o sin vincular: no alarmar con el badge.
+      setPendingSync(false);
+    }
+  }, []);
+
+  // Sincronizacion automatica al abrir/desbloquear (una vez) cuando esta
+  // vinculada, y consulta periodica de pendientes para el badge.
+  useEffect(() => {
+    if (!status?.linked) {
+      return;
+    }
+    if (!autoSyncedRef.current) {
+      autoSyncedRef.current = true;
+      void syncNow();
+    }
+    void refreshPending();
+    const interval = setInterval(() => void refreshPending(), 60_000);
+    return () => clearInterval(interval);
+    // syncNow es estable dentro del componente; solo re-evaluamos al cambiar el vinculo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.linked, refreshPending]);
+
   async function syncNow() {
     setBusy(true);
     setMessage("");
@@ -263,6 +294,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       }
       setMessage(parts.length > 0 ? `${parts.join(" · ")}.` : "Sin novedades en el portal.");
       await refresh();
+      await refreshPending();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -373,8 +405,11 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
         </span>
         <div className="button-row">
           {status?.linked ? (
-            <button className="action-button" onClick={() => void syncNow()} disabled={busy}>
+            <button className="action-button sync-button" onClick={() => void syncNow()} disabled={busy}>
               {busy ? "Sincronizando…" : "Sincronizar"}
+              {pendingSync && !busy ? (
+                <span className="sync-badge" role="status" aria-label="Cambios pendientes por sincronizar" />
+              ) : null}
             </button>
           ) : null}
           <button className="ghost-button" onClick={() => void lock()}>

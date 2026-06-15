@@ -885,6 +885,14 @@ Entregado (rebanada 9 — recordatorio 24 h con cancelacion, 2026-06-14):
 
 Verificacion (rebanada 9): 80 pruebas del portal en verde (la prueba de notificaciones ahora comprueba que el recordatorio lleva `accion=cancelar` y que el de SMS usa enlace corto con expiracion), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (abrir la cita con `?accion=cancelar` muestra el aviso con la fecha; "Si, cancelar" deja la cita en estado Cancelada sin dialogo bloqueante).
 
+Entregado (rebanada 10 — sync automatica al abrir + badge de cambios pendientes, app del medico, 2026-06-14):
+
+- **Sync automatica al abrir/desbloquear (`App.tsx`).** Con la app desbloqueada y vinculada, sincroniza la agenda una sola vez automaticamente (ref para no repetir), ademas del boton manual.
+- **Badge de cambios pendientes (`lib.rs` + `App.tsx` + `App.css`).** Nuevo comando `sync_pending` que hace un peek sin aplicar: `pending_download` (eventos en el buzon del portal, GET sin ACK) y `pending_upload` (reportes de uso de IA locales por subir). Best-effort: sin red no marca pendiente. La UI consulta al abrir y cada 60 s, muestra un circulito rojo en la esquina del boton "Sincronizar" cuando hay pendientes y lo limpia tras sincronizar.
+- **Residencia.** El peek no descarga ni descifra contenido; solo cuenta eventos.
+
+Verificacion (rebanada 10): 112 pruebas de Rust en verde (las piezas base `fetch_inbox`/`pending_usage_reports` ya estaban cubiertas), `cargo clippy` sin advertencias nuevas, `tsc + vite build` del escritorio ok. La ejecucion visual completa de la app Tauri no se corrio aqui (sin runtime de escritorio); la verificacion es compilacion + pruebas, como en rebanadas previas del escritorio.
+
 > Nota de residencia (rebanada 8): la preconsulta guiada por IA es el unico punto donde contenido clinico transita la nube para generar la siguiente pregunta. Debe tratarse como transitorio: consentimiento del paciente, seudonimizacion, prohibido persistir respuestas o prompts en logs/telemetria, y el resultado final sellado en el buzon cifrado (sealed box con la llave publica del medico) para que solo la app del medico lo lea. El adaptador real de IA se cablea en staging con BAA (paso 16); hasta entonces se usa un proveedor determinista para construir y probar el contrato.
 
 ## MVP recomendado
