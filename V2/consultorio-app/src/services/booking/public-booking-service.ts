@@ -1219,22 +1219,25 @@ export async function submitPrecheckin(input: {
   return submission;
 }
 
-/** Tope del sealed box de antecedentes (~1.4x el JSON en claro tras base64). */
-const MEDICAL_HISTORY_CIPHERTEXT_MAX_BYTES = 64 * 1024;
+/** Tope del sealed box clinico (~1.4x el JSON en claro tras base64). */
+const SEALED_PRECHECKIN_CIPHERTEXT_MAX_BYTES = 64 * 1024;
 
 /**
- * Guarda los antecedentes del paciente como sealed box (X25519) y emite el
+ * Guarda contenido clinico del paciente como sealed box (X25519) y emite el
  * evento de sync SIN contenido en claro. La nube nunca ve las respuestas: solo
  * el `ciphertext`, que la app del medico descarga, descifra y purga (paso 19,
- * rebanada 7). Mismo patron que los documentos del buzon (paso 6).
+ * rebanadas 7 y 8). Mismo patron que los documentos del buzon (paso 6).
  */
-export async function submitMedicalHistory(input: {
+async function submitSealedPrecheckin(input: {
   confirmationToken: string;
   ciphertext: string;
+  kind: typeof PrecheckinKind.MEDICAL_HISTORY | typeof PrecheckinKind.AI_PRECONSULTA;
+  invalidMessage: string;
+  noDeviceMessage: string;
 }) {
   const sealed = Buffer.from(input.ciphertext, "base64");
-  if (sealed.length === 0 || sealed.length > MEDICAL_HISTORY_CIPHERTEXT_MAX_BYTES) {
-    throw new PublicBookingServiceError("Contenido de antecedentes invalido.", 400);
+  if (sealed.length === 0 || sealed.length > SEALED_PRECHECKIN_CIPHERTEXT_MAX_BYTES) {
+    throw new PublicBookingServiceError(input.invalidMessage, 400);
   }
 
   const appointment = await prisma.appointment.findUnique({
@@ -1249,17 +1252,14 @@ export async function submitMedicalHistory(input: {
   // (el portal ya oculta el formulario, esto cubre el envio directo a la API).
   const deviceKey = await getActiveDeviceDocumentKey(appointment.doctorId);
   if (!deviceKey) {
-    throw new PublicBookingServiceError(
-      "El consultorio aun no puede recibir antecedentes de forma segura.",
-      409
-    );
+    throw new PublicBookingServiceError(input.noDeviceMessage, 409);
   }
 
   const existing = await prisma.precheckinSubmission.findFirst({
     where: {
       appointmentId: appointment.id,
       patientId: appointment.patientId,
-      kind: PrecheckinKind.MEDICAL_HISTORY
+      kind: input.kind
     },
     orderBy: { createdAt: "desc" }
   });
@@ -1267,7 +1267,7 @@ export async function submitMedicalHistory(input: {
   // CLINICO: `responses` queda nulo; el contenido vive solo en `ciphertext`.
   const data = {
     status: PrecheckinStatus.SUBMITTED,
-    kind: PrecheckinKind.MEDICAL_HISTORY,
+    kind: input.kind,
     responses: Prisma.DbNull,
     ciphertext: sealed,
     sizeBytes: sealed.length,
@@ -1295,6 +1295,28 @@ export async function submitMedicalHistory(input: {
   });
 
   return { id: submission.id };
+}
+
+/** Antecedentes (historia clinica) sellados E2E (paso 19, rebanada 7). */
+export async function submitMedicalHistory(input: { confirmationToken: string; ciphertext: string }) {
+  return submitSealedPrecheckin({
+    confirmationToken: input.confirmationToken,
+    ciphertext: input.ciphertext,
+    kind: PrecheckinKind.MEDICAL_HISTORY,
+    invalidMessage: "Contenido de antecedentes invalido.",
+    noDeviceMessage: "El consultorio aun no puede recibir antecedentes de forma segura."
+  });
+}
+
+/** Resultado de la preconsulta guiada por IA, sellado E2E (paso 19, rebanada 8). */
+export async function submitAiPreconsulta(input: { confirmationToken: string; ciphertext: string }) {
+  return submitSealedPrecheckin({
+    confirmationToken: input.confirmationToken,
+    ciphertext: input.ciphertext,
+    kind: PrecheckinKind.AI_PRECONSULTA,
+    invalidMessage: "Contenido de preconsulta invalido.",
+    noDeviceMessage: "El consultorio aun no puede recibir la preconsulta de forma segura."
+  });
 }
 
 export async function listDoctorAppointments(doctorUserId: string) {

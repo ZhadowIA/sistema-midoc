@@ -5,7 +5,10 @@ import { PatientStatus, PrismaClient } from "@prisma/client";
 import _sodium from "libsodium-wrappers";
 
 import { createDoctorAccount } from "../../src/services/auth/auth-service";
-import { submitMedicalHistory } from "../../src/services/booking/public-booking-service";
+import {
+  submitAiPreconsulta,
+  submitMedicalHistory
+} from "../../src/services/booking/public-booking-service";
 import {
   ackSyncEvents,
   authenticateSyncDevice,
@@ -27,10 +30,14 @@ function bearerRequest(token: string) {
 }
 
 /** Sella un payload con la llave publica del dispositivo, como el navegador. */
-async function sealFor(publicKeyBase64: string, payload: unknown): Promise<string> {
+async function sealFor(
+  publicKeyBase64: string,
+  payload: unknown,
+  kind = "medical-history"
+): Promise<string> {
   await _sodium.ready;
   const sodium = _sodium;
-  const meta = new TextEncoder().encode(JSON.stringify({ kind: "medical-history" }));
+  const meta = new TextEncoder().encode(JSON.stringify({ kind }));
   const body = new TextEncoder().encode(JSON.stringify(payload));
   const envelope = new Uint8Array(4 + meta.length + body.length);
   new DataView(envelope.buffer).setUint32(0, meta.length, false);
@@ -187,6 +194,45 @@ describe("medical history sealed precheckin (paso 19, rebanada 7)", () => {
           ciphertext: randomBytes(120).toString("base64")
         })
       ).rejects.toMatchObject({ status: 409 });
+    } finally {
+      await cleanupUserByEmail(ctx.email);
+    }
+  });
+
+  it("seals the AI preconsulta result and delivers it E2E (rebanada 8)", async () => {
+    const ctx = await seedDoctorWithDeviceAndAppointment("ai-doctor");
+    const payload = { motivo: "tos seca", conversation: [{ question: "¿desde cuándo?", answer: "3 días" }] };
+
+    try {
+      await _sodium.ready;
+      const publicKeyB64 = _sodium.to_base64(ctx.keypair.publicKey, _sodium.base64_variants.ORIGINAL);
+      const ciphertext = await sealFor(publicKeyB64, payload, "ai-preconsulta");
+      const { id } = await submitAiPreconsulta({ confirmationToken: ctx.confirmationToken, ciphertext });
+
+      const stored = await prisma.precheckinSubmission.findUnique({ where: { id } });
+      expect(stored?.kind).toBe("AI_PRECONSULTA");
+      expect(stored?.responses).toBeNull();
+      expect(stored?.ciphertext).not.toBeNull();
+      // El contenido clinico no aparece en claro en la fila.
+      expect(JSON.stringify({ ...stored, ciphertext: undefined })).not.toContain("tos seca");
+
+      // El dispositivo descarga el sealed box (filtro ampliado a AI_PRECONSULTA).
+      const device = await authenticateSyncDevice(bearerRequest(ctx.deviceToken));
+      const download = await getMailboxPrecheckinForDevice(device, id);
+      const opened = _sodium.crypto_box_seal_open(
+        _sodium.from_base64(download.ciphertext, _sodium.base64_variants.ORIGINAL),
+        ctx.keypair.publicKey,
+        ctx.keypair.privateKey
+      );
+      const metaLen = new DataView(opened.buffer, opened.byteOffset).getUint32(0, false);
+      expect(JSON.parse(new TextDecoder().decode(opened.slice(4 + metaLen)))).toEqual(payload);
+
+      // ACK: purga el ciphertext en la nube.
+      const inbox = await getSyncInbox(device, 0);
+      await ackSyncEvents(device, inbox.nextCursor);
+      const purged = await prisma.precheckinSubmission.findUnique({ where: { id } });
+      expect(purged?.ciphertext).toBeNull();
+      expect(purged?.purgedAt).not.toBeNull();
     } finally {
       await cleanupUserByEmail(ctx.email);
     }

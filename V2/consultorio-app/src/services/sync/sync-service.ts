@@ -383,7 +383,7 @@ export async function getMailboxPrecheckinForDevice(device: SyncDevice, precheck
   const submission = await prisma.precheckinSubmission.findFirst({
     where: {
       id: precheckinId,
-      kind: PrecheckinKind.MEDICAL_HISTORY,
+      kind: { in: [PrecheckinKind.MEDICAL_HISTORY, PrecheckinKind.AI_PRECONSULTA] },
       appointment: { doctorId: device.doctorId }
     },
     select: { id: true, ciphertext: true, sizeBytes: true, purgedAt: true }

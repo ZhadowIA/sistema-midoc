@@ -196,14 +196,30 @@ function humanizeKey(key: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
+type AiConversationTurn = { question?: string; answer?: string };
+
 /**
  * Aplana la preconsulta a pares legibles. Soporta el formato plano (placeholder
- * de la rebanada 6) y el de antecedentes anidado (rebanada 7): cada grupo
- * produce entradas "Grupo · Campo".
+ * de la rebanada 6), el de antecedentes anidado (rebanada 7) y el resultado de
+ * la preconsulta guiada por IA (rebanada 8: motivo + conversacion Q&A).
  */
 function formatPrecheckin(raw: string): Array<[string, string]> {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
+
+    // Resultado de la IA: motivo + lista de preguntas/respuestas.
+    if (Array.isArray(parsed.conversation)) {
+      const rows: Array<[string, string]> = [];
+      const motivo = String(parsed.motivo ?? "").trim();
+      if (motivo) rows.push(["Motivo", motivo]);
+      (parsed.conversation as AiConversationTurn[]).forEach((turn, index) => {
+        const question = String(turn.question ?? "").trim();
+        const answer = String(turn.answer ?? "").trim();
+        if (question || answer) rows.push([question || `Pregunta ${index + 1}`, answer]);
+      });
+      return rows;
+    }
+
     const rows: Array<[string, string]> = [];
     for (const [key, value] of Object.entries(parsed)) {
       if (value === null || value === undefined) continue;

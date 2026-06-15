@@ -827,7 +827,7 @@ Rebanadas:
 - **Rebanada 9 (portal) — Recordatorio 24 h con cancelacion.** Job que envia SMS/correo 24 h antes de la cita (sobre el paso 7), con enlace corto de cancelacion (expiracion y un solo uso) que reusa el flujo de cancelacion existente.
 - **Rebanada 10 (app del medico) — Sync automatica al abrir + aviso de cambios.** Sincronizar la agenda en automatico al abrir/desbloquear la app; mostrar un badge (circulito rojo) en la esquina del boton "Sincronizar" cuando haya cambios pendientes por bajar/subir, y limpiarlo tras sincronizar.
 
-Estado: 🚧 EN PROGRESO. Construido sobre los pasos 2, 3, 6, 7 y 11.
+Estado: ✅ COMPLETADO (rebanadas 1-10 entregadas y verificadas). Construido sobre los pasos 2, 3, 6, 7 y 11.
 
 Entregado (rebanada 1 — perfil publico: foto y ubicacion, 2026-06-15):
 
@@ -882,7 +882,7 @@ Entregado (rebanada 6 — preconsulta diferida con bifurcacion, 2026-06-14):
 
 Verificacion (rebanada 6): cambio de UI sin backend; `eslint`/`tsc` limpios, `next build` ok, 80 pruebas en verde, y verificacion en navegador (aviso -> Contestar -> bifurcacion con las dos opciones y cancelar -> formulario con nota de ruta; el formulario no se muestra antes de contestar).
 
-Nota tecnica (rebanadas 7-8): la preconsulta GENERICA (placeholder de la rebanada 6) sigue viajando como `SyncEvent` `PRECHECKIN_SUBMITTED` en texto plano (purgado tras ACK). La compuerta del paso 19 exige E2E: antecedentes (rebanada 7, ✅ entregada abajo) y el resultado de la IA (rebanada 8, pendiente) deben viajar como sealed box (X25519, patron del paso 6 para documentos) que la nube no puede leer, con descarga y purga desde la app del medico.
+Nota tecnica (rebanadas 7-8): cerrada. Antecedentes (rebanada 7) y el resultado de la IA (rebanada 8) ya viajan como sealed box (X25519, patron del paso 6 para documentos) que la nube no puede leer, con descarga y purga desde la app del medico. Solo la preconsulta GENERICA (placeholder de la rebanada 6) seguiria en texto plano, pero ambas ramas de la bifurcacion (antecedentes / IA) ya estan especializadas y selladas, asi que el placeholder ya no se usa en el flujo del paciente.
 
 Entregado (rebanada 7 — formulario de antecedentes con paridad y buzon E2E, 2026-06-15):
 
@@ -894,6 +894,17 @@ Entregado (rebanada 7 — formulario de antecedentes con paridad y buzon E2E, 20
 - **Residencia.** Antecedentes = CLINICO en transito; la nube solo guarda `ciphertext` que no puede abrir, y lo purga tras el ACK. Residencia definitiva en la app local.
 
 Verificacion (rebanada 7): portal 82 pruebas en verde (+2 de integracion: la nube guarda solo `ciphertext` —sin texto plano—, el evento va `sealed` sin respuestas, el dispositivo descifra el sobre y recupera el payload exacto, y tras el ACK el `ciphertext`/payload quedan purgados con re-descarga 410; rechazo 409 sin llave de dispositivo), `eslint`/`tsc` limpios, `next build` ok; desktop 113 pruebas de Rust en verde (+1: antecedentes sellados se guardan como `medical-history` e idempotentes), `cargo clippy` sin advertencias nuevas, `tsc + vite build` del escritorio ok. Verificacion en navegador con libsodium real: con llave de dispositivo el formulario aparece, gineco/andrologicos se muestran segun el sexo, y al enviar la fila queda con `responses=null`, `ciphertext` presente y sin fuga de texto plano; el evento lleva `sealed:true` sin respuestas; sin errores de consola.
+
+Entregado (rebanada 8 — preconsulta guiada por IA, gobernada y sellada E2E, 2026-06-15):
+
+- **Adaptador de IA agnostico (`services/ai/preconsulta-ai.ts`, `lib/env.ts`).** Contrato unico `PreconsultaAiProvider` con tres implementaciones seleccionables por `AI_PROVIDER`: `fake` (determinista, sin red, default para dev/pruebas), `openai` (SDK oficial `openai`, `OPENAI_API_KEY`) y `anthropic` (SDK oficial `@anthropic-ai/sdk`, modelo por defecto `claude-opus-4-8`). Los SDKs son dependencias opcionales (import dinamico con `turbopackIgnore`): el build por defecto no las necesita. Gobernanza (paso 11): el contenido entra seudonimizado, sin PII, y NO se persiste en nube/logs (regla 4); proveedor real solo en staging con BAA (paso 16).
+- **Chat guiado (`cita/[token]/preconsulta-ai/route.ts`, `ai-preconsulta-chat.tsx`).** Tras la bifurcacion (rama "ya contesto antes"), consentimiento explicito y luego un chat: arranca del motivo, maximo 5 preguntas adaptativas, sin repetir, en lenguaje de paciente. El endpoint NO guarda nada: calcula y devuelve la siguiente pregunta.
+- **Resultado sellado E2E (`public-booking-service.ts`, `preconsulta-ai/submit/route.ts`, `schema.prisma`).** Nuevo `PrecheckinKind.AI_PRECONSULTA`. El resultado (motivo + Q&A) se sella en el navegador (sealed box X25519) y se guarda como `ciphertext` (`responses` nulo), reusando el `submitSealedPrecheckin` compartido con los antecedentes (rebanada 7). El evento de sync va `sealed:true` sin respuestas; la entrega al dispositivo (`getMailboxPrecheckinForDevice`) y la purga tras ACK cubren ambos tipos.
+- **Recepcion y vista (desktop `sync.rs`, `Atencion.tsx`).** `store_mailbox_precheckin` lee el `kind` del meta del sobre (antecedentes vs preconsulta IA) y lo guarda en `precheckins.kind`. La vista del medico aplana el resultado IA a Motivo + pares pregunta/respuesta.
+- **Sin dispositivo no aparece.** Igual que la rebanada 7: sin llave de dispositivo el portal oculta la preconsulta y el API rechaza con 409.
+- **Residencia.** La preconsulta IA es el unico punto donde contenido clinico transita la nube (transitorio, seudonimizado, sin persistir); el resultado final vive sellado y se purga tras el ACK. Residencia definitiva en la app local.
+
+Verificacion (rebanada 8): portal 86 pruebas en verde (+3 fake provider unitarias: arranca por sintoma sin motivo, no repite, termina al maximo; +1 integracion IA: la nube guarda solo `ciphertext` —sin texto plano—, evento `sealed`, el dispositivo descifra el payload exacto via el filtro ampliado a `AI_PRECONSULTA`, y purga tras ACK), `eslint`/`tsc` limpios, `next build` ok; desktop 114 pruebas de Rust en verde (+1: el `kind` se lee del meta del sobre, `ai-preconsulta`), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok. Verificacion en navegador: con el proveedor real `openai` el adaptador llama a OpenAI de verdad (el flujo se valido contra la API; la cuenta de prueba devolvio 429 por cuota, confirmando la llamada real); con el proveedor `fake` el camino feliz completo (consentimiento -> 5 preguntas sin repetir -> sellado -> envio) deja la fila `AI_PRECONSULTA` con `responses=null`, `ciphertext` presente y sin fuga de texto plano, evento `sealed:true` sin respuestas; sin errores de consola.
 
 Entregado (rebanada 9 — recordatorio 24 h con cancelacion, 2026-06-14):
 

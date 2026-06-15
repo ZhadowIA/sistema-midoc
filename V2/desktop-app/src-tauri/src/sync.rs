@@ -612,27 +612,45 @@ pub fn store_mailbox_document(
 }
 
 /// Guarda los antecedentes (historia clinica) ya descifrados en la base local.
-/// El sobre lleva `{kind:"medical-history"}` en el meta y el JSON de respuestas
-/// como contenido. Idempotente por appointment_id (re-entrega no duplica;
-/// reenvio del paciente actualiza). CLINICO: vive solo aqui.
+/// El sobre lleva en el meta `{kind:"medical-history"}` (antecedentes) o
+/// `{kind:"ai-preconsulta"}` (resultado de la IA), y el JSON de respuestas como
+/// contenido. Idempotente por appointment_id (re-entrega no duplica; reenvio del
+/// paciente actualiza). CLINICO: vive solo aqui.
 pub fn store_mailbox_precheckin(
     conn: &Connection,
     appointment_id: &str,
     plaintext: &[u8],
 ) -> Result<(), SyncError> {
-    let (_file_name, _mime_type, _category, content) = parse_envelope(plaintext)?;
+    let (kind, content) = parse_precheckin_envelope(plaintext)?;
     let responses_json = String::from_utf8(content)
-        .map_err(|e| SyncError::Server(format!("antecedentes no son UTF-8: {e}")))?;
+        .map_err(|e| SyncError::Server(format!("preconsulta no es UTF-8: {e}")))?;
     conn.execute(
         "INSERT INTO precheckins (appointment_id, responses_json, kind, received_at)
-         VALUES (?1, ?2, 'medical-history', ?3)
+         VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(appointment_id) DO UPDATE SET
             responses_json = excluded.responses_json,
             kind = excluded.kind,
             received_at = excluded.received_at",
-        params![appointment_id, responses_json, chrono_now()],
+        params![appointment_id, responses_json, kind, chrono_now()],
     )?;
     Ok(())
+}
+
+/// Lee `kind` del meta del sobre y el contenido. Default `medical-history` por
+/// compatibilidad con sobres sin `kind`.
+fn parse_precheckin_envelope(bytes: &[u8]) -> Result<(String, Vec<u8>), SyncError> {
+    if bytes.len() < 4 {
+        return Err(SyncError::Server("preconsulta corrupta".into()));
+    }
+    let meta_len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    if bytes.len() < 4 + meta_len {
+        return Err(SyncError::Server("preconsulta corrupta".into()));
+    }
+    let meta: serde_json::Value = serde_json::from_slice(&bytes[4..4 + meta_len])
+        .map_err(|e| SyncError::Server(format!("metadatos invalidos: {e}")))?;
+    let kind = text(&meta, "kind").unwrap_or_else(|| "medical-history".into());
+    let content = bytes[4 + meta_len..].to_vec();
+    Ok((kind, content))
 }
 
 #[cfg(test)]
@@ -872,7 +890,11 @@ mod tests {
     }
 
     fn precheckin_envelope(content: &[u8]) -> Vec<u8> {
-        let meta = serde_json::json!({ "kind": "medical-history" }).to_string();
+        precheckin_envelope_kind("medical-history", content)
+    }
+
+    fn precheckin_envelope_kind(kind: &str, content: &[u8]) -> Vec<u8> {
+        let meta = serde_json::json!({ "kind": kind }).to_string();
         let meta_bytes = meta.as_bytes();
         let mut out = Vec::new();
         out.extend_from_slice(&(meta_bytes.len() as u32).to_be_bytes());
@@ -904,6 +926,25 @@ mod tests {
         assert_eq!(kind, "medical-history");
         // El contenido clinico se guarda tal cual (el JSON descifrado), no "{}".
         assert_eq!(responses, json2);
+    }
+
+    #[test]
+    fn stores_sealed_ai_preconsulta_with_kind_from_envelope() {
+        let conn = test_conn("precheckin-ai");
+        let json = r#"{"motivo":"tos","conversation":[{"question":"q","answer":"a"}]}"#;
+        let plaintext = precheckin_envelope_kind("ai-preconsulta", json.as_bytes());
+
+        store_mailbox_precheckin(&conn, "appt-ai", &plaintext).unwrap();
+
+        let (responses, kind): (String, String) = conn
+            .query_row(
+                "SELECT responses_json, kind FROM precheckins WHERE appointment_id = 'appt-ai'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "ai-preconsulta");
+        assert_eq!(responses, json);
     }
 
     #[test]

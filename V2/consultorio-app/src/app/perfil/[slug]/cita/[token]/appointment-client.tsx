@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Calendar } from "../../agenda/calendar";
 import { addDaysLocalDateString } from "../../../../../lib/local-date";
 import { MedicalHistoryForm } from "./medical-history-form";
+import { AiPreconsultaChat } from "./ai-preconsulta-chat";
 
 type AppointmentDetails = {
   appointment: {
@@ -86,11 +87,6 @@ export function AppointmentClient({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [responses, setResponses] = useState({
-    motivo: String(precheckinResponses.motivo ?? ""),
-    antecedentes: String(precheckinResponses.antecedentes ?? ""),
-    sintomas: String(precheckinResponses.sintomas ?? "")
-  });
   // Preconsulta diferida: no se muestra el formulario de inicio. Primero un aviso
   // con "Contestar", luego la bifurcacion (primera visita -> antecedentes;
   // ya contesto -> preconsulta guiada). Si ya hay respuestas previas, se entra
@@ -101,6 +97,7 @@ export function AppointmentClient({
   const [precheckinStarted, setPrecheckinStarted] = useState(hasPreviousResponses);
   const [firstVisit, setFirstVisit] = useState<boolean | null>(null);
   const [medicalHistorySaved, setMedicalHistorySaved] = useState(false);
+  const [aiPreconsultaSaved, setAiPreconsultaSaved] = useState(false);
   // El enlace de cancelacion del recordatorio abre la cita con este aviso al frente.
   const [showCancelPrompt, setShowCancelPrompt] = useState(Boolean(cancelIntent));
 
@@ -266,26 +263,6 @@ export function AppointmentClient({
       setMessage("Tu cita cambio de horario. Confirma tu asistencia en el nuevo horario.");
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "No fue posible reagendar la cita.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function submitPrecheckin(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setMessage("");
-    setError("");
-
-    try {
-      await callAction(`/api/public/appointments/${token}/precheckin`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ responses })
-      });
-      setMessage("Preconsulta guardada. Tu medico la vera antes de la cita.");
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "No fue posible guardar la preconsulta.");
     } finally {
       setBusy(false);
     }
@@ -475,43 +452,25 @@ export function AppointmentClient({
           ) : (
             <>
               <p className="precheckin-path-note">
-                Ya nos visitó antes: cuéntenos el motivo de hoy.{" "}
-                <button className="link-button" type="button" onClick={() => setFirstVisit(null)}>
-                  Cambiar
-                </button>
+                Ya nos visitó antes: preconsulta guiada.{" "}
+                {!aiPreconsultaSaved ? (
+                  <button className="link-button" type="button" onClick={() => setFirstVisit(null)}>
+                    Cambiar
+                  </button>
+                ) : null}
               </p>
-              <form className="booking-form" onSubmit={submitPrecheckin}>
-            <label className="field field-full">
-              <span>Motivo principal</span>
-              <textarea
-                rows={3}
-                value={responses.motivo}
-                onChange={(event) => setResponses((current) => ({ ...current, motivo: event.target.value }))}
-              />
-            </label>
-            <label className="field field-full">
-              <span>Antecedentes relevantes</span>
-              <textarea
-                rows={3}
-                value={responses.antecedentes}
-                onChange={(event) =>
-                  setResponses((current) => ({ ...current, antecedentes: event.target.value }))
-                }
-              />
-            </label>
-            <label className="field field-full">
-              <span>Sintomas actuales</span>
-              <textarea
-                rows={3}
-                value={responses.sintomas}
-                onChange={(event) => setResponses((current) => ({ ...current, sintomas: event.target.value }))}
-              />
-            </label>
-
-            <button className="action-button" disabled={busy} type="submit">
-              {busy ? "Guardando…" : "Guardar preconsulta"}
-            </button>
-              </form>
+              {aiPreconsultaSaved ? (
+                <p className="form-success" role="status">
+                  Preconsulta enviada de forma cifrada. Tu médico la recibirá al sincronizar.
+                </p>
+              ) : (
+                <AiPreconsultaChat
+                  token={token}
+                  publicKey={documentPublicKey}
+                  initialMotivo={details.appointment.reason ?? ""}
+                  onSaved={() => setAiPreconsultaSaved(true)}
+                />
+              )}
             </>
           )}
         </article>

@@ -2002,6 +2002,35 @@ a.service-card:hover {
   grid-column: 1 / -1;
 }
 
+.ai-preconsulta-consent {
+  display: grid;
+  gap: 12px;
+}
+
+.ai-preconsulta-history {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.ai-preconsulta-history li {
+  border-left: 2px solid var(--line);
+  padding-left: 12px;
+}
+
+.ai-preconsulta-history .ai-q {
+  margin: 0;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.ai-preconsulta-history .ai-a {
+  margin: 2px 0 0;
+  color: var(--muted);
+}
+
 .cancel-prompt {
   display: grid;
   gap: 12px;

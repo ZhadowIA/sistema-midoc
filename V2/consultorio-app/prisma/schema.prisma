@@ -123,6 +123,7 @@ enum PrecheckinStatus {
 enum PrecheckinKind {
   GENERIC
   MEDICAL_HISTORY
+  AI_PRECONSULTA
 }
 
 enum DocumentCategory {
