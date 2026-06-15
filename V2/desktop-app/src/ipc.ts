@@ -909,14 +909,15 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         reported: false
       });
       const audio = args?.audio as { mediaType?: string; fileName?: string } | undefined;
+      const viaCloud = args?.useCloud === true;
       return {
         run_id: voiceRunId,
         usage_type: "TRANSCRIPTION",
-        provider: "fake-transcriptor",
-        model_version: "fake-transcription-1",
+        provider: viaCloud ? "cloud-demo" : "whisper-local-medium",
+        model_version: viaCloud ? "cloud-demo" : "whisper-local-medium",
         estimated_cost_cents: 1,
         latency_ms: 2,
-        transcript_text: `Transcripcion (borrador): audio ${audio?.mediaType ?? "audio/webm"}${audio?.fileName ? ` · ${audio.fileName}` : ""}. Revise terminos clinicos, medicamentos, dosis y hablantes antes de usarla.`,
+        transcript_text: `Transcripcion (borrador, ${viaCloud ? "nube" : "local"}): audio ${audio?.mediaType ?? "audio/wav"}. Revise terminos clinicos, medicamentos, dosis y hablantes antes de usarla.`,
         audio_retention_policy: "discarded_after_transcription"
       } as T;
     }

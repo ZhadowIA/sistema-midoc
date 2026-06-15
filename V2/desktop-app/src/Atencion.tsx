@@ -268,6 +268,7 @@ export function Atencion({
   const [aiDraft, setAiDraft] = useState<SoapDraft | null>(null);
   const [aiText, setAiText] = useState<TextDraft | null>(null);
   const [aiTranscription, setAiTranscription] = useState<TranscriptionDraft | null>(null);
+  const [useCloudTranscription, setUseCloudTranscription] = useState(false);
   const [aiUsage, setAiUsage] = useState<UsageSummary | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
   const [activeSection, setActiveSection] = useState<SectionId>("nota");
@@ -514,10 +515,11 @@ export function Atencion({
           encounterId,
           audio: {
             fileName: file.name,
-            mediaType: file.type || "audio/webm",
+            mediaType: file.type || "audio/wav",
             audioBase64,
             durationSeconds: null
-          }
+          },
+          useCloud: useCloudTranscription
         })
       )
       .then((draft) => {
@@ -842,9 +844,19 @@ export function Atencion({
                 />
               </label>
               <span className="meta">
-                WAV mono 16 kHz · transcripcion local · descarte inmediato del audio.
+                WAV mono 16 kHz · {useCloudTranscription ? "respaldo en nube (bajo BAA)" : "transcripcion local"} · descarte inmediato del audio.
               </span>
             </div>
+
+            <label className="week-cancelled-toggle">
+              <input
+                type="checkbox"
+                checked={useCloudTranscription}
+                disabled={busy || !aiVoiceConsent}
+                onChange={(e) => setUseCloudTranscription(e.currentTarget.checked)}
+              />
+              <span>Usar respaldo en nube (equipo lento; el audio sale del equipo)</span>
+            </label>
 
             {aiTranscription ? (
               <div className="ai-draft">

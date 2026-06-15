@@ -703,7 +703,7 @@ Checklist de salida:
 - Respaldo en nube (AssemblyAI/Deepgram) con consentimiento y seudonimizacion.
 - Pruebas: descarga interrumpida y checksum invalido, provider real contra fakes del contrato, audio no persistido.
 
-Estado: 🚧 EN PROGRESO — rebanadas 1 (gestor de descarga del modelo) y 2 (`WhisperLocalProvider` + decode de audio + cableado) entregadas (2026-06-15). Construido sobre el paso 11 (rebanadas 6 y 7). Decisiones de arranque (2026-06-15): la grabacion de audio sera en la app de escritorio (controlamos el formato, capturando WAV/PCM amigable a Whisper, lo que evita un decodificador pesado); el binding sera `whisper-rs` (MIT). Rebanada 3 (respaldo en nube gobernado) pendiente.
+Estado: ✅ DONE (compuerta de push cubierta) — rebanadas 1 (gestor de descarga del modelo), 2 (`WhisperLocalProvider` + decode de audio + cableado, binding real verificado de extremo a extremo) y 3 (respaldo en nube gobernado) entregadas (2026-06-15). Construido sobre el paso 11 (rebanadas 6 y 7). Decisiones de arranque (2026-06-15): la grabacion de audio es en la app de escritorio (WAV/PCM amigable a Whisper, sin decodificador pesado); binding `whisper-rs` 0.16 (MIT). El endpoint en nube real se cablea en staging con BAA (paso 16).
 
 Entregado (rebanada 1 — gestor de descarga del modelo, 2026-06-15):
 
@@ -724,6 +724,18 @@ Entregado (rebanada 2 — `WhisperLocalProvider` + decode de audio + cableado, 2
 - **Residencia.** Transcripcion 100% local (sin audio ni texto a la nube); el audio se decodifica en memoria y se descarta; el borrador queda en la base cifrada con revision humana.
 
 Verificacion (rebanada 2): 127 pruebas de Rust en verde por defecto (+3: decode de WAV mono 16k, downmix de estereo a mono, rechazo de no-WAV / 44.1 kHz / 8 bits), `cargo clippy --lib` sin advertencias nuevas (persisten las 2 preexistentes), `tsc + vite build` ok. **Binding real verificado de extremo a extremo** en Windows MSVC tras instalar LLVM: `cargo build --features whisper-local` compila y enlaza whisper.cpp + bindings + provider; `cargo clippy --features whisper-local` sin advertencias nuevas; y un test de integracion (`transcribes_real_audio_without_error`, ignorado por defecto) corre **inferencia real** con el modelo `ggml-tiny` descargado (whisper.cpp carga el modelo, decodifica el WAV y emite segmentos), pasando en verde. La cadena nativa (CMake + LLVM) solo se requiere para la build de distribucion con el feature.
+
+Entregado (rebanada 3 — respaldo de transcripcion en nube gobernado, 2026-06-15):
+
+- **Proveedor en nube (`cloud_transcription.rs`).** `CloudTranscriptionProvider` implementa el trait con un POST sincrono del audio (estilo Deepgram: un request que devuelve el texto), usando `reqwest::blocking` (el comando `ai_transcribe_audio` es sincrono, corre en un hilo de Tauri). `parse_transcript` extrae el texto de la respuesta (`results.channels[].alternatives[].transcript`) — funcion pura y testeable. `estimate_cost_cents` estima el costo por duracion.
+- **Gobernanza y seudonimizacion del envio.** Es la unica via en la que el audio sale del equipo, asi que: exige consentimiento de voz vigente (lo aplica `transcribe_audio`); **solo se envian los bytes del audio y el tipo de medio, nunca el nombre de archivo ni identificadores del paciente**; el audio no se persiste; la traza local guarda solo metadata.
+- **Configuracion diferida a staging (regla 5).** `CloudConfig::from_env` lee `MIDOC_CLOUD_STT_{PROVIDER,API_KEY,ENDPOINT}`; sin configuracion la via en nube se rechaza con una guia (el proveedor real se cablea en staging con BAA, paso 16). El parser se prueba contra respuestas fake.
+- **Seleccion y UI.** `ai_transcribe_audio` acepta `use_cloud`; `resolve_transcription_provider` enruta a nube o a Whisper local. En la consulta, una casilla "Usar respaldo en nube" (deshabilitada sin consentimiento de voz) cambia la via; la nota del panel indica local vs nube (bajo BAA). El mock de navegador espeja ambas vias.
+- **Residencia.** Local por defecto (sin salir del equipo); la nube es opt-in, gobernada, transitoria y bajo BAA; el resultado queda como borrador en la base cifrada con revision humana.
+
+Verificacion (rebanada 3): 130 pruebas de Rust en verde (+3: parseo de transcripcion estilo Deepgram, rechazo de respuestas vacias/malformadas, costo por duracion con piso), `cargo clippy --lib` sin advertencias nuevas, `tsc + vite build` ok, y verificacion en navegador (panel "Asistencia de IA": la casilla de nube aparece deshabilitada sin consentimiento de voz, con la nota "transcripcion local"; sin errores de consola). El envio real a un proveedor en nube se valida en staging con BAA.
+
+Con esto la compuerta de push del paso 15 queda cubierta: descarga de modelo verificada, transcripcion local real (binding compilado y con inferencia real verificada) y respaldo en nube gobernado, todo con pruebas y residencia local por defecto.
 
 ## Paso 16 - Proveedores de IA reales en staging (BAA)
 

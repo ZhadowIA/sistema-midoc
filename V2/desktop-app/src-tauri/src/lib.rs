@@ -2,6 +2,7 @@ mod ai;
 mod arco;
 mod audio;
 mod clinical;
+mod cloud_transcription;
 mod crypto;
 mod db;
 mod medication;
@@ -1209,14 +1210,29 @@ fn ai_assist_text(
     })
 }
 
-/// Elige el proveedor de transcripcion. Con el feature `whisper-local`, usa el
-/// modelo Whisper descargado (rebanada 1) para transcribir EN EL DISPOSITIVO; si
-/// el modelo aun no se descargo, guia al medico a descargarlo. Sin el feature
-/// (build por defecto/pruebas), explica que esta build no incluye el binding
-/// nativo (se compila en la build de distribucion / staging).
+/// Elige el proveedor de transcripcion segun la via solicitada.
+///
+/// - Nube (`use_cloud`): respaldo gobernado. Requiere configuracion
+///   (`MIDOC_CLOUD_STT_*`, cableada en staging con BAA); el audio sale del equipo
+///   solo aqui, bajo consentimiento de voz (lo aplica `ai::transcribe_audio`). Sin
+///   configuracion, se rechaza con una guia.
+/// - Local (por defecto): con el feature `whisper-local`, usa el modelo Whisper
+///   descargado (rebanada 1) y transcribe EN EL DISPOSITIVO; si el modelo aun no
+///   se descargo, guia a descargarlo. Sin el feature, explica que esta build no
+///   incluye el binding nativo (se compila en la build de distribucion).
 fn resolve_transcription_provider(
     app: &tauri::AppHandle,
+    use_cloud: bool,
 ) -> Result<Box<dyn ai::TranscriptionProvider>, String> {
+    if use_cloud {
+        let config = cloud_transcription::CloudConfig::from_env().ok_or(
+            "El respaldo de transcripcion en nube no esta configurado en esta version. Se habilita en la build de distribucion con el proveedor bajo BAA.",
+        )?;
+        return Ok(Box::new(cloud_transcription::CloudTranscriptionProvider::new(
+            config,
+        )));
+    }
+
     #[cfg(feature = "whisper-local")]
     {
         let rec = transcription::recommendation();
@@ -1251,11 +1267,12 @@ fn ai_transcribe_audio(
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
     audio: AudioTranscriptionPayload,
+    use_cloud: Option<bool>,
 ) -> Result<ai::TranscriptionDraft, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(audio.audio_base64.as_bytes())
         .map_err(|_| "audio invalido".to_string())?;
-    let provider = resolve_transcription_provider(&app)?;
+    let provider = resolve_transcription_provider(&app, use_cloud.unwrap_or(false))?;
     with_ai(&state, |conn| {
         ai::transcribe_audio(
             conn,
