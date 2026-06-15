@@ -1976,6 +1976,32 @@ a.service-card:hover {
   color: var(--muted);
 }
 
+.mh-group {
+  margin: 0 0 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+
+.mh-group > legend {
+  padding: 0 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.mh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.mh-grid .field-full {
+  grid-column: 1 / -1;
+}
+
 .cancel-prompt {
   display: grid;
   gap: 12px;

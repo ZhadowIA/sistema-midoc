@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Calendar } from "../../agenda/calendar";
 import { addDaysLocalDateString } from "../../../../../lib/local-date";
+import { MedicalHistoryForm } from "./medical-history-form";
 
 type AppointmentDetails = {
   appointment: {
@@ -32,6 +33,11 @@ type AppointmentClientProps = {
   slug: string;
   serviceId: string | null;
   details: AppointmentDetails;
+  /**
+   * Llave publica del dispositivo del medico. Si es null, no hay dispositivo
+   * vinculado: la preconsulta NO se muestra (no se puede entregar segura).
+   */
+  documentPublicKey: string | null;
   /** Llega desde el enlace de cancelacion del recordatorio (`?accion=cancelar`). */
   cancelIntent?: boolean;
 };
@@ -66,6 +72,7 @@ export function AppointmentClient({
   slug,
   serviceId,
   details,
+  documentPublicKey,
   cancelIntent
 }: AppointmentClientProps) {
   const precheckinResponses =
@@ -93,6 +100,7 @@ export function AppointmentClient({
   );
   const [precheckinStarted, setPrecheckinStarted] = useState(hasPreviousResponses);
   const [firstVisit, setFirstVisit] = useState<boolean | null>(null);
+  const [medicalHistorySaved, setMedicalHistorySaved] = useState(false);
   // El enlace de cancelacion del recordatorio abre la cita con este aviso al frente.
   const [showCancelPrompt, setShowCancelPrompt] = useState(Boolean(cancelIntent));
 
@@ -403,7 +411,7 @@ export function AppointmentClient({
         ) : null}
       </article>
 
-      {!isFinal ? (
+      {!isFinal && documentPublicKey ? (
         <article className="panel">
           <div className="panel-header">
             <span className="section-kicker">Preconsulta</span>
@@ -442,12 +450,32 @@ export function AppointmentClient({
                 Cancelar
               </button>
             </div>
+          ) : firstVisit ? (
+            <>
+              <p className="precheckin-path-note">
+                Primera visita: cuéntenos sus antecedentes.{" "}
+                {!medicalHistorySaved ? (
+                  <button className="link-button" type="button" onClick={() => setFirstVisit(null)}>
+                    Cambiar
+                  </button>
+                ) : null}
+              </p>
+              {medicalHistorySaved ? (
+                <p className="form-success" role="status">
+                  Antecedentes enviados de forma cifrada. Tu médico los recibirá al sincronizar.
+                </p>
+              ) : (
+                <MedicalHistoryForm
+                  token={token}
+                  publicKey={documentPublicKey}
+                  onSaved={() => setMedicalHistorySaved(true)}
+                />
+              )}
+            </>
           ) : (
             <>
               <p className="precheckin-path-note">
-                {firstVisit
-                  ? "Primera visita: cuéntenos sus antecedentes."
-                  : "Ya nos visitó antes: cuéntenos el motivo de hoy."}{" "}
+                Ya nos visitó antes: cuéntenos el motivo de hoy.{" "}
                 <button className="link-button" type="button" onClick={() => setFirstVisit(null)}>
                   Cambiar
                 </button>

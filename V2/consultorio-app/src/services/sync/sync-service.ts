@@ -3,6 +3,7 @@ import {
   AiUsageStatus,
   AiUsageType,
   MailboxDocumentStatus,
+  PrecheckinKind,
   Prisma,
   SyncDeviceStatus,
   SyncEventType,
@@ -302,10 +303,11 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
       },
       data: { payload: Prisma.DbNull, purgedAt: now }
     }),
-    // ...y del buzon (las respuestas de preconsulta se vacian en nube)...
+    // ...y del buzon (las respuestas de preconsulta se vacian en nube; el
+    // ciphertext de los antecedentes sellados se elimina, frontera legal)...
     prisma.precheckinSubmission.updateMany({
       where: { id: { in: precheckinIds } },
-      data: { responses: {} }
+      data: { responses: {}, ciphertext: null, deliveredAt: now, purgedAt: now }
     }),
     // ...y el ciphertext de los documentos se elimina (frontera legal: tras el
     // ACK el documento solo existe en el equipo del medico).
@@ -369,6 +371,37 @@ export async function getMailboxDocumentForDevice(device: SyncDevice, documentId
     id: document.id,
     sizeBytes: document.sizeBytes,
     ciphertext: Buffer.from(document.ciphertext).toString("base64")
+  };
+}
+
+/**
+ * Devuelve el ciphertext (sealed box) de los antecedentes de un paciente para el
+ * dispositivo del medico. Mismo contrato que los documentos: solo el dueño puede
+ * descargarlo, solo mientras no se haya purgado, y la nube no puede descifrarlo.
+ */
+export async function getMailboxPrecheckinForDevice(device: SyncDevice, precheckinId: string) {
+  const submission = await prisma.precheckinSubmission.findFirst({
+    where: {
+      id: precheckinId,
+      kind: PrecheckinKind.MEDICAL_HISTORY,
+      appointment: { doctorId: device.doctorId }
+    },
+    select: { id: true, ciphertext: true, sizeBytes: true, purgedAt: true }
+  });
+
+  if (!submission) {
+    throw new SyncServiceError("Antecedentes no encontrados.", 404);
+  }
+
+  if (!submission.ciphertext || submission.purgedAt) {
+    // Ya entregado y purgado: el dispositivo lo re-pide tras un ACK perdido.
+    throw new SyncServiceError("Antecedentes ya entregados.", 410);
+  }
+
+  return {
+    id: submission.id,
+    sizeBytes: submission.sizeBytes ?? submission.ciphertext.length,
+    ciphertext: Buffer.from(submission.ciphertext).toString("base64")
   };
 }
 

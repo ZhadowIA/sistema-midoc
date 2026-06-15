@@ -5,6 +5,7 @@ import {
   LegalDocumentType,
   NotificationKind,
   PatientStatus,
+  PrecheckinKind,
   PrecheckinStatus
 } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -23,7 +24,7 @@ import {
   parseLocalDate,
   type LocalDate
 } from "../../lib/timezone";
-import { emitSyncEvent } from "../sync/sync-service";
+import { emitSyncEvent, getActiveDeviceDocumentKey } from "../sync/sync-service";
 import { queueNotification } from "../notifications/notification-service";
 
 const HOLD_TTL_MS = 1000 * 60 * 10;
@@ -941,11 +942,17 @@ export async function getPublicAppointmentByToken(confirmationToken: string) {
     return null;
   }
 
+  // Llave publica del dispositivo del medico: el formulario de antecedentes la
+  // usa para sellar (sealed box). Si no hay dispositivo vinculado, el portal NO
+  // muestra el formulario (no se puede entregar de forma segura).
+  const documentPublicKey = await getActiveDeviceDocumentKey(appointment.doctorId);
+
   return {
     appointment,
     patient: appointment.patient,
     service: appointment.service,
-    precheckin: appointment.precheckins[0] ?? null
+    precheckin: appointment.precheckins[0] ?? null,
+    documentPublicKey
   };
 }
 
@@ -1210,6 +1217,84 @@ export async function submitPrecheckin(input: {
   });
 
   return submission;
+}
+
+/** Tope del sealed box de antecedentes (~1.4x el JSON en claro tras base64). */
+const MEDICAL_HISTORY_CIPHERTEXT_MAX_BYTES = 64 * 1024;
+
+/**
+ * Guarda los antecedentes del paciente como sealed box (X25519) y emite el
+ * evento de sync SIN contenido en claro. La nube nunca ve las respuestas: solo
+ * el `ciphertext`, que la app del medico descarga, descifra y purga (paso 19,
+ * rebanada 7). Mismo patron que los documentos del buzon (paso 6).
+ */
+export async function submitMedicalHistory(input: {
+  confirmationToken: string;
+  ciphertext: string;
+}) {
+  const sealed = Buffer.from(input.ciphertext, "base64");
+  if (sealed.length === 0 || sealed.length > MEDICAL_HISTORY_CIPHERTEXT_MAX_BYTES) {
+    throw new PublicBookingServiceError("Contenido de antecedentes invalido.", 400);
+  }
+
+  const appointment = await prisma.appointment.findUnique({
+    where: { confirmationToken: input.confirmationToken }
+  });
+
+  if (!appointment) {
+    throw new PublicBookingServiceError("Appointment not found.", 404);
+  }
+
+  // Sin dispositivo vinculado no se puede entregar de forma segura: rechazar
+  // (el portal ya oculta el formulario, esto cubre el envio directo a la API).
+  const deviceKey = await getActiveDeviceDocumentKey(appointment.doctorId);
+  if (!deviceKey) {
+    throw new PublicBookingServiceError(
+      "El consultorio aun no puede recibir antecedentes de forma segura.",
+      409
+    );
+  }
+
+  const existing = await prisma.precheckinSubmission.findFirst({
+    where: {
+      appointmentId: appointment.id,
+      patientId: appointment.patientId,
+      kind: PrecheckinKind.MEDICAL_HISTORY
+    },
+    orderBy: { createdAt: "desc" }
+  });
+
+  // CLINICO: `responses` queda nulo; el contenido vive solo en `ciphertext`.
+  const data = {
+    status: PrecheckinStatus.SUBMITTED,
+    kind: PrecheckinKind.MEDICAL_HISTORY,
+    responses: Prisma.DbNull,
+    ciphertext: sealed,
+    sizeBytes: sealed.length,
+    deliveredAt: null,
+    purgedAt: null,
+    submittedAt: new Date()
+  };
+
+  const submission = existing
+    ? await prisma.precheckinSubmission.update({ where: { id: existing.id }, data })
+    : await prisma.precheckinSubmission.create({
+        data: {
+          appointmentId: appointment.id,
+          patientId: appointment.patientId,
+          ...data
+        }
+      });
+
+  // El evento NO lleva respuestas: solo el id para que la app descargue el
+  // sealed box. La nube no puede leer el contenido.
+  await emitSyncEvent(appointment.doctorId, "PRECHECKIN_SUBMITTED", {
+    appointmentId: appointment.id,
+    precheckinId: submission.id,
+    sealed: true
+  });
+
+  return { id: submission.id };
 }
 
 export async function listDoctorAppointments(doctorUserId: string) {

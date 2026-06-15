@@ -230,28 +230,47 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
         // de avanzar el cursor: si la descarga falla aqui, el cursor no se
         // mueve y el proximo sync re-entrega el lote completo (idempotente).
         let mut documents: Vec<(String, Option<String>, Option<String>, String)> = Vec::new();
+        // Antecedentes sellados: (appointmentId, ciphertext base64).
+        let mut precheckins: Vec<(String, String)> = Vec::new();
         for event in &inbox.events {
-            if event.event_type != "DOCUMENT_UPLOADED" {
-                continue;
-            }
             let Some(payload) = &event.payload else {
                 continue; // Evento ya purgado en nube: nada que descargar.
             };
-            let Some(doc_id) = payload.get("mailboxDocumentId").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            let ciphertext = sync::fetch_document(&server_url, &token, doc_id)
-                .await
-                .map_err(|e| e.to_string())?;
-            let patient_id = payload
-                .get("patientId")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            let appointment_id = payload
-                .get("appointmentId")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            documents.push((doc_id.to_string(), patient_id, appointment_id, ciphertext));
+            match event.event_type.as_str() {
+                "DOCUMENT_UPLOADED" => {
+                    let Some(doc_id) = payload.get("mailboxDocumentId").and_then(|v| v.as_str())
+                    else {
+                        continue;
+                    };
+                    let ciphertext = sync::fetch_document(&server_url, &token, doc_id)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let patient_id = payload
+                        .get("patientId")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let appointment_id = payload
+                        .get("appointmentId")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    documents.push((doc_id.to_string(), patient_id, appointment_id, ciphertext));
+                }
+                "PRECHECKIN_SUBMITTED"
+                    if payload.get("sealed").and_then(|v| v.as_bool()) == Some(true) =>
+                {
+                    let (Some(precheckin_id), Some(appointment_id)) = (
+                        payload.get("precheckinId").and_then(|v| v.as_str()),
+                        payload.get("appointmentId").and_then(|v| v.as_str()),
+                    ) else {
+                        continue;
+                    };
+                    let ciphertext = sync::fetch_precheckin(&server_url, &token, precheckin_id)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    precheckins.push((appointment_id.to_string(), ciphertext));
+                }
+                _ => {}
+            }
         }
 
         {
@@ -270,6 +289,13 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
                     &plaintext,
                 )
                 .map_err(|e| e.to_string())?;
+            }
+            // Descifrar y guardar los antecedentes sellados.
+            for (appointment_id, ciphertext) in &precheckins {
+                let plaintext =
+                    crypto::unseal_document(conn, ciphertext).map_err(|e| e.to_string())?;
+                sync::store_mailbox_precheckin(conn, appointment_id, &plaintext)
+                    .map_err(|e| e.to_string())?;
             }
             sync::set_state(conn, "cursor", &inbox.next_cursor.to_string())
                 .map_err(|e| e.to_string())?;

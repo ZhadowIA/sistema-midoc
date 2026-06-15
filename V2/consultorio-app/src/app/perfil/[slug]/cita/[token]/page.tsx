@@ -24,6 +24,7 @@ export default async function PublicAppointmentPage({
       slug={slug}
       serviceId={details.appointment.serviceId}
       details={details}
+      documentPublicKey={details.documentPublicKey}
       cancelIntent={accion === "cancelar"}
     />
   );

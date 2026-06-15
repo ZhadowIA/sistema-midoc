@@ -175,12 +175,50 @@ type SectionId =
   | "modulo"
   | "receta";
 
+// Titulos legibles de los grupos del formulario de antecedentes (paridad con el
+// contrato del portal). Las claves de campo se humanizan automaticamente.
+const PRECHECKIN_GROUP_LABELS: Record<string, string> = {
+  sex: "Sexo biologico",
+  identification: "Identificacion",
+  familyHistory: "Heredofamiliares",
+  nonPathological: "No patologicos",
+  pathological: "Patologicos",
+  gyneco: "Ginecoobstetricos",
+  andro: "Andrologicos",
+  allergies: "Alergias",
+  currentMedications: "Medicamentos cronicos"
+};
+
+const SEX_LABELS: Record<string, string> = { F: "Femenino", M: "Masculino" };
+
+function humanizeKey(key: string): string {
+  const spaced = key.replace(/([a-z])([A-Z])/g, "$1 $2");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/**
+ * Aplana la preconsulta a pares legibles. Soporta el formato plano (placeholder
+ * de la rebanada 6) y el de antecedentes anidado (rebanada 7): cada grupo
+ * produce entradas "Grupo · Campo".
+ */
 function formatPrecheckin(raw: string): Array<[string, string]> {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return Object.entries(parsed)
-      .filter(([, value]) => value !== null && String(value).trim() !== "")
-      .map(([key, value]) => [key, String(value)]);
+    const rows: Array<[string, string]> = [];
+    for (const [key, value] of Object.entries(parsed)) {
+      if (value === null || value === undefined) continue;
+      const groupLabel = PRECHECKIN_GROUP_LABELS[key] ?? humanizeKey(key);
+      if (typeof value === "object") {
+        for (const [field, fieldValue] of Object.entries(value as Record<string, unknown>)) {
+          const text = String(fieldValue ?? "").trim();
+          if (text) rows.push([`${groupLabel} · ${humanizeKey(field)}`, text]);
+        }
+      } else {
+        const text = key === "sex" ? (SEX_LABELS[String(value)] ?? "") : String(value).trim();
+        if (text) rows.push([groupLabel, text]);
+      }
+    }
+    return rows;
   } catch {
     return [["respuestas", raw]];
   }
