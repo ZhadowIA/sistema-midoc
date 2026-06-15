@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { addDaysLocalDateString } from "../../../lib/local-date";
 import { getPublicDoctorProfile } from "../../../services/doctor/doctor-profile-service";
 import { BookingClient } from "./agenda/booking-client";
 import { ReviewsSection } from "./reviews-section";
@@ -24,9 +25,7 @@ function formatMoney(priceCents: number, currency: string) {
 }
 
 function nextDateString() {
-  const date = new Date();
-  date.setDate(date.getDate() + 1);
-  return date.toISOString().slice(0, 10);
+  return addDaysLocalDateString(1);
 }
 
 function StarRating({ rating }: { rating: number }) {

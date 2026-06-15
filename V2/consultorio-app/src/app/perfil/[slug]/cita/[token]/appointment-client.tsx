@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { Calendar } from "../../agenda/calendar";
+import { addDaysLocalDateString } from "../../../../../lib/local-date";
 
 type AppointmentDetails = {
   appointment: {
@@ -55,9 +56,7 @@ const timeFormatter = new Intl.DateTimeFormat("es-MX", {
 });
 
 function tomorrowString() {
-  const date = new Date();
-  date.setDate(date.getDate() + 1);
-  return date.toISOString().slice(0, 10);
+  return addDaysLocalDateString(1);
 }
 
 export function AppointmentClient({ token, slug, serviceId, details }: AppointmentClientProps) {

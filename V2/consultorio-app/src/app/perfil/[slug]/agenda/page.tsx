@@ -1,12 +1,11 @@
 import { notFound } from "next/navigation";
 
+import { addDaysLocalDateString } from "../../../../lib/local-date";
 import { getPublicDoctorProfile } from "../../../../services/doctor/doctor-profile-service";
 import { BookingClient } from "./booking-client";
 
 function nextDateString() {
-  const date = new Date();
-  date.setDate(date.getDate() + 1);
-  return date.toISOString().slice(0, 10);
+  return addDaysLocalDateString(1);
 }
 
 export default async function BookingPage({

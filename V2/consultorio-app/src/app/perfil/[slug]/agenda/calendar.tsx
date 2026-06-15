@@ -1,5 +1,6 @@
 "use client";
 
+import { parseLocalDate, toLocalDateString } from "../../../../lib/local-date";
 import { IconChevronLeft, IconChevronRight } from "../icons";
 
 interface CalendarProps {
@@ -29,10 +30,8 @@ export function Calendar({ selectedDate, onDateSelect, availableDays, loading }:
 
   const availableSet = availableDays ? new Set(availableDays) : null;
 
-  const selected = new Date(selectedDate);
-  selected.setHours(0, 0, 0, 0);
-
-  const currentDate = new Date(selected);
+  // Parseo LOCAL: `new Date("YYYY-MM-DD")` seria UTC y correria el mes/dia.
+  const currentDate = parseLocalDate(selectedDate);
   const daysInMonth = getDaysInMonth(currentDate);
   const firstDay = getFirstDayOfMonth(currentDate);
 
@@ -50,18 +49,18 @@ export function Calendar({ selectedDate, onDateSelect, availableDays, loading }:
   const handlePrevMonth = () => {
     const newDate = new Date(currentDate);
     newDate.setMonth(newDate.getMonth() - 1);
-    onDateSelect(newDate.toISOString().slice(0, 10));
+    onDateSelect(toLocalDateString(newDate));
   };
 
   const handleNextMonth = () => {
     const newDate = new Date(currentDate);
     newDate.setMonth(newDate.getMonth() + 1);
-    onDateSelect(newDate.toISOString().slice(0, 10));
+    onDateSelect(toLocalDateString(newDate));
   };
 
   const handleDayClick = (day: number) => {
     const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-    onDateSelect(newDate.toISOString().slice(0, 10));
+    onDateSelect(toLocalDateString(newDate));
   };
 
   return (
@@ -91,7 +90,7 @@ export function Calendar({ selectedDate, onDateSelect, availableDays, loading }:
           }
 
           const dayDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-          const dateString = dayDate.toISOString().slice(0, 10);
+          const dateString = toLocalDateString(dayDate);
           const isSelected = dateString === selectedDate;
           const isPast = dayDate < today;
           // Sin lista de dias disponibles no se filtra por cupo. Con lista, un
