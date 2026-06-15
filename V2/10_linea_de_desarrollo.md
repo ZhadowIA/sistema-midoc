@@ -864,6 +864,18 @@ Entregado (rebanada 5 — reagendado con el mismo calendario, 2026-06-14):
 
 Verificacion (rebanada 5): 78 pruebas del portal en verde (sin nuevas: cambio de UI que reusa componentes/endpoints ya cubiertos; el reagendado ya esta probado en `public-booking`), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (la cita muestra el `Calendar` en vez del input nativo; dias sin cupo deshabilitados; elegir dia 17 -> 08:00 y confirmar cambia el horario de la cita; sin errores de consola).
 
+Fix de zona horaria (2026-06-14): el calendario usaba `toISOString().slice(0,10)` (UTC) para formatear y `new Date("YYYY-MM-DD")` (UTC) para parsear, corriendo el dia uno hacia atras en husos negativos por la noche. Nuevo `lib/local-date.ts` (`toLocalDateString`/`parseLocalDate`); `Calendar`, `nextDateString` y `tomorrowString` usan componentes locales. 80 pruebas en verde (+2), verificado en navegador (hoy 14 a las 17h selecciona el 15; clic en 18 queda en 18).
+
+Entregado (rebanada 6 — preconsulta diferida con bifurcacion, 2026-06-14):
+
+- **Aviso diferido (`cita/[token]/appointment-client.tsx`).** Tras confirmar la cita ya no se muestra el formulario de inicio: aparece el aviso "Para agilizar la consulta con su medico, ayudenos contestando este formulario pre-consulta" con boton "Contestar".
+- **Bifurcacion.** Al contestar, la primera pregunta es "¿Es su primera visita con este medico o ya contesto antes el formulario de antecedentes?" con dos opciones; "Es mi primera visita" enruta al formulario de antecedentes (rebanada 7) y "Ya contesto antes" a la preconsulta guiada por IA (rebanada 8). Se puede cancelar o cambiar de ruta. Si ya hay respuestas previas se entra directo al formulario.
+- **Estado actual.** En esta rebanada ambas ramas muestran el formulario de preconsulta existente (motivo/antecedentes/sintomas); las rebanadas 7 y 8 especializan cada rama y mueven el contenido al buzon cifrado E2E.
+
+Verificacion (rebanada 6): cambio de UI sin backend; `eslint`/`tsc` limpios, `next build` ok, 80 pruebas en verde, y verificacion en navegador (aviso -> Contestar -> bifurcacion con las dos opciones y cancelar -> formulario con nota de ruta; el formulario no se muestra antes de contestar).
+
+Nota tecnica (rebanadas 7-8): la preconsulta actual viaja como `SyncEvent` `PRECHECKIN_SUBMITTED` en texto plano (purgado tras ACK), NO sellado. La compuerta del paso 19 exige E2E: antecedentes (rebanada 7) y el resultado de la IA (rebanada 8) deben viajar como sealed box (X25519, patron del paso 6 para documentos) que la nube no puede leer, con descarga y purga desde la app del medico.
+
 > Nota de residencia (rebanada 8): la preconsulta guiada por IA es el unico punto donde contenido clinico transita la nube para generar la siguiente pregunta. Debe tratarse como transitorio: consentimiento del paciente, seudonimizacion, prohibido persistir respuestas o prompts en logs/telemetria, y el resultado final sellado en el buzon cifrado (sealed box con la llave publica del medico) para que solo la app del medico lo lea. El adaptador real de IA se cablea en staging con BAA (paso 16); hasta entonces se usa un proveedor determinista para construir y probar el contrato.
 
 ## MVP recomendado

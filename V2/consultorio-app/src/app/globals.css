@@ -1931,6 +1931,33 @@ a.service-card:hover {
   padding-top: 16px;
 }
 
+/* ---------- Preconsulta diferida (paso 19) ---------- */
+
+.precheckin-intro,
+.precheckin-branch {
+  display: grid;
+  gap: 14px;
+  justify-items: start;
+}
+
+.precheckin-intro p,
+.precheckin-question {
+  margin: 0;
+  color: var(--muted);
+  max-width: 60ch;
+}
+
+.precheckin-question {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.precheckin-path-note {
+  margin: 0 0 12px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
 .skeleton-row {
   height: 56px;
   border-radius: var(--radius-panel);

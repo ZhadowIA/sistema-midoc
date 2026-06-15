@@ -76,6 +76,15 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
     antecedentes: String(precheckinResponses.antecedentes ?? ""),
     sintomas: String(precheckinResponses.sintomas ?? "")
   });
+  // Preconsulta diferida: no se muestra el formulario de inicio. Primero un aviso
+  // con "Contestar", luego la bifurcacion (primera visita -> antecedentes;
+  // ya contesto -> preconsulta guiada). Si ya hay respuestas previas, se entra
+  // directo al formulario.
+  const hasPreviousResponses = Boolean(
+    precheckinResponses.motivo || precheckinResponses.antecedentes || precheckinResponses.sintomas
+  );
+  const [precheckinStarted, setPrecheckinStarted] = useState(hasPreviousResponses);
+  const [firstVisit, setFirstVisit] = useState<boolean | null>(null);
 
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [rescheduleDate, setRescheduleDate] = useState("");
@@ -371,7 +380,49 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
             <h2>Comparte contexto clinico basico</h2>
           </div>
 
-          <form className="booking-form" onSubmit={submitPrecheckin}>
+          {!precheckinStarted ? (
+            <div className="precheckin-intro">
+              <p>
+                Para agilizar la consulta con su médico, ayúdenos contestando este formulario
+                pre-consulta. Es opcional y solo lo verá su médico.
+              </p>
+              <button className="action-button" type="button" onClick={() => setPrecheckinStarted(true)}>
+                Contestar
+              </button>
+            </div>
+          ) : firstVisit === null ? (
+            <div className="precheckin-branch">
+              <p className="precheckin-question">
+                ¿Es su primera visita con este médico o ya contestó antes el formulario de
+                antecedentes?
+              </p>
+              <div className="button-row">
+                <button className="action-button" type="button" onClick={() => setFirstVisit(true)}>
+                  Es mi primera visita
+                </button>
+                <button className="ghost-button" type="button" onClick={() => setFirstVisit(false)}>
+                  Ya contesté antes
+                </button>
+              </div>
+              <button
+                className="link-button"
+                type="button"
+                onClick={() => setPrecheckinStarted(false)}
+              >
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <>
+              <p className="precheckin-path-note">
+                {firstVisit
+                  ? "Primera visita: cuéntenos sus antecedentes."
+                  : "Ya nos visitó antes: cuéntenos el motivo de hoy."}{" "}
+                <button className="link-button" type="button" onClick={() => setFirstVisit(null)}>
+                  Cambiar
+                </button>
+              </p>
+              <form className="booking-form" onSubmit={submitPrecheckin}>
             <label className="field field-full">
               <span>Motivo principal</span>
               <textarea
@@ -402,7 +453,9 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
             <button className="action-button" disabled={busy} type="submit">
               {busy ? "Guardando…" : "Guardar preconsulta"}
             </button>
-          </form>
+              </form>
+            </>
+          )}
         </article>
       ) : null}
     </section>
