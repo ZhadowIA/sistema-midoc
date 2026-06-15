@@ -74,15 +74,15 @@ impl TranscriptionProvider for WhisperLocalProvider {
             .full(params, &decoded.samples)
             .map_err(|e| AiError::Invalid(format!("fallo la transcripcion: {e}")))?;
 
-        let segments = state
-            .full_n_segments()
-            .map_err(|e| AiError::Invalid(format!("no se pudo leer el resultado: {e}")))?;
+        let segments = state.full_n_segments();
         let mut text = String::new();
         for i in 0..segments {
-            let segment = state
-                .full_get_segment_text(i)
-                .map_err(|e| AiError::Invalid(format!("no se pudo leer un segmento: {e}")))?;
-            text.push_str(&segment);
+            if let Some(segment) = state.get_segment(i) {
+                let piece = segment
+                    .to_str()
+                    .map_err(|e| AiError::Invalid(format!("no se pudo leer un segmento: {e}")))?;
+                text.push_str(piece);
+            }
         }
 
         Ok(AiResponse {
@@ -92,5 +92,65 @@ impl TranscriptionProvider for WhisperLocalProvider {
             estimated_cost_cents: 0,
             latency_ms: start.elapsed().as_millis() as i64,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WAV PCM16 mono 16 kHz de silencio, para ejercitar el pipeline real sin
+    /// depender de un audio con voz.
+    fn silent_wav_16k(seconds: usize) -> Vec<u8> {
+        let sample_count = 16_000 * seconds;
+        let data_len = (sample_count * 2) as u32;
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data_len).to_le_bytes());
+        out.extend_from_slice(b"WAVE");
+        out.extend_from_slice(b"fmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&16_000u32.to_le_bytes());
+        out.extend_from_slice(&32_000u32.to_le_bytes());
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&data_len.to_le_bytes());
+        out.extend(std::iter::repeat(0u8).take((sample_count * 2) as usize));
+        out
+    }
+
+    /// Ejercita el pipeline real (cargar modelo + decodificar + transcribir) con
+    /// un modelo GGML local. Ignorado por defecto: requiere descargar el modelo y
+    /// la cadena nativa; se corre con `MIDOC_TEST_WHISPER_MODEL=<ruta>` y
+    /// `cargo test --features whisper-local -- --ignored`.
+    #[test]
+    #[ignore = "requiere un modelo GGML local en MIDOC_TEST_WHISPER_MODEL"]
+    fn transcribes_real_audio_without_error() {
+        let Ok(model) = std::env::var("MIDOC_TEST_WHISPER_MODEL") else {
+            return;
+        };
+        let provider = WhisperLocalProvider::new("tiny", PathBuf::from(model));
+        let bytes = silent_wav_16k(1);
+        let audio = AudioInput {
+            file_name: Some("silencio.wav".into()),
+            media_type: "audio/wav".into(),
+            bytes,
+            duration_seconds: Some(1),
+        };
+        let request = TranscriptionRequest {
+            media_type: "audio/wav".into(),
+            byte_len: audio.bytes.len(),
+            duration_seconds: Some(1),
+        };
+        let response = provider
+            .transcribe(&request, &audio)
+            .expect("la transcripcion local debe completar sin error");
+        // El silencio puede dar texto vacio o un marcador; basta con que el
+        // pipeline corra y devuelva una respuesta bien formada.
+        assert_eq!(response.estimated_cost_cents, 0);
+        assert!(response.model_version.starts_with("whisper-local-"));
     }
 }
