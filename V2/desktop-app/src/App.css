@@ -191,6 +191,26 @@ button {
   background: var(--primary-hover);
 }
 
+.model-download {
+  display: grid;
+  gap: 8px;
+}
+
+.model-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  overflow: hidden;
+}
+
+.model-progress-bar {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  border-radius: 999px;
+  transition: width var(--speed) var(--ease);
+}
+
 .ghost-button {
   border: 1px solid var(--line);
   background: var(--bg);

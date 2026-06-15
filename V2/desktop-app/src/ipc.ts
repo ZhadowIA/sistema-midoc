@@ -50,6 +50,12 @@ interface MockNote {
   specialty: unknown;
 }
 
+const MOCK_MODEL_SIZES: Record<string, number> = {
+  small: 500 * 1024 * 1024,
+  medium: 1500 * 1024 * 1024,
+  "large-v3": 3000 * 1024 * 1024
+};
+
 const mockState = {
   profiles: [
     {
@@ -59,6 +65,11 @@ const mockState = {
       last_used_at: null as string | null
     }
   ],
+  // Descarga de modelos Whisper simulada: el estado avanza en cada sondeo.
+  transcriptionModels: {} as Record<
+    string,
+    { downloaded: number; total: number; present: boolean; downloading: boolean; error: string | null }
+  >,
   linked: true,
   clinicalProfile: "ODONTOLOGY",
   slotMinutes: 30,
@@ -1105,6 +1116,45 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         reason:
           "Equipo con 16 GB o mas y CPU de 8+ nucleos: el modelo mediano ofrece buena precision clinica con transcripcion agil."
       } as T;
+    case "transcription_model_status": {
+      const ids = ["small", "medium", "large-v3"];
+      return ids.map((modelId) => {
+        const total = MOCK_MODEL_SIZES[modelId];
+        const m = mockState.transcriptionModels[modelId];
+        if (m && m.downloading && !m.present) {
+          // Simula avance de la descarga en cada sondeo (~6 pasos).
+          m.downloaded = Math.min(m.total, m.downloaded + Math.ceil(m.total / 6));
+          if (m.downloaded >= m.total) {
+            m.present = true;
+            m.downloading = false;
+          }
+        }
+        return {
+          modelId,
+          fileName: `ggml-${modelId}.bin`,
+          expectedSizeBytes: total,
+          downloadedBytes: m ? m.downloaded : 0,
+          present: m ? m.present : false,
+          verified: false, // sin checksum fijado en el mock
+          downloading: m ? m.downloading : false,
+          error: m ? m.error : null
+        };
+      }) as T;
+    }
+    case "download_transcription_model": {
+      const modelId = String(args?.modelId ?? "");
+      if (!(modelId in MOCK_MODEL_SIZES)) {
+        throw `modelo no reconocido: ${modelId}`;
+      }
+      mockState.transcriptionModels[modelId] = {
+        downloaded: 0,
+        total: MOCK_MODEL_SIZES[modelId],
+        present: false,
+        downloading: true,
+        error: null
+      };
+      return undefined as T;
+    }
     case "ai_usage_summary": {
       const byMap = new Map<string, { run_count: number; cost_cents: number }>();
       for (const r of mockState.aiRuns) {

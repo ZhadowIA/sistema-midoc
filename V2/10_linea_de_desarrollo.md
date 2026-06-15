@@ -703,6 +703,17 @@ Checklist de salida:
 - Respaldo en nube (AssemblyAI/Deepgram) con consentimiento y seudonimizacion.
 - Pruebas: descarga interrumpida y checksum invalido, provider real contra fakes del contrato, audio no persistido.
 
+Estado: 🚧 EN PROGRESO — rebanada 1 (gestor de descarga del modelo) entregada (2026-06-15). Construido sobre el paso 11 (rebanadas 6 y 7). Decisiones de arranque (2026-06-15): la grabacion de audio sera en la app de escritorio (controlamos el formato, capturando WAV/PCM amigable a Whisper, lo que evita un decodificador pesado); el binding sera `whisper-rs` (MIT). Rebanadas 2 (`WhisperLocalProvider` + audio real) y 3 (respaldo en nube gobernado) pendientes.
+
+Entregado (rebanada 1 — gestor de descarga del modelo, 2026-06-15):
+
+- **Catalogo de descarga (`transcription_model.rs`).** Para cada modelo soportado (`small`/`medium`/`large-v3`, reusando `WhisperModel` del paso 11) define el asset descargable: nombre de archivo GGML, URL (por defecto el repositorio publico de pesos de whisper.cpp; configurable por build con `MIDOC_WHISPER_*_URL`), checksum SHA-256 fijable por build (`MIDOC_WHISPER_*_SHA256`) y tamano aproximado. Nucleo puro y testeable: resolucion de asset, rutas bajo `models/`, holgura de disco, offset de reanudacion, verificacion de checksum en streaming y construccion del estado.
+- **Residencia.** Los pesos son REFERENCIA publica (no PHI) y se comparten entre perfiles: viven en `app_data_dir/models/` (no por perfil). La descarga no envia ningun dato del paciente; el contrato real con la fuente se verifica en staging (regla 5).
+- **Comandos (`lib.rs`).** `transcription_model_status` (presencia, verificacion por checksum, progreso por sondeo) y `download_transcription_model` (descarga/reanuda a `.part` con `Range`, valida espacio en disco con `sysinfo`, informa progreso en memoria, verifica el checksum si esta fijado y renombra al archivo final; si no coincide, descarta). Frontera de red fina con `reqwest` por trozos.
+- **UI (`TranscriptionSetup.tsx`).** Bajo la recomendacion del modelo, boton "Descargar modelo (~X GB)", barra de progreso por sondeo mientras descarga y estado "Modelo descargado y listo" al terminar (con marca de verificado si hay checksum fijado). El mock de navegador simula el avance de la descarga.
+
+Verificacion (rebanada 1): 124 pruebas de Rust en verde (+8: assets reconocen modelos y rechazan ids invalidos, URL por defecto apunta a whisper.cpp, rutas bajo `models/`, holgura de disco, reanudacion/reinicio del `.part`, `matches_sha256` exige hash fijado, `verify_file` en streaming, estados presente/parcial/no-verificado), `cargo clippy --lib` sin advertencias nuevas (persisten las 2 preexistentes de `clinical.rs` y el enum de comandos), `tsc + vite build` ok, y verificacion en navegador con el mock (recomendacion del modelo → descargar → progreso 1.22/1.46 GB que avanza por sondeo → "descargado y listo", sin errores de consola).
+
 ## Paso 16 - Proveedores de IA reales en staging (BAA)
 
 | Campo | Definicion |

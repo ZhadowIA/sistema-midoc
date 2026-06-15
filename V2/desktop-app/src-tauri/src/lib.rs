@@ -7,6 +7,7 @@ mod medication;
 mod operations;
 mod sync;
 mod transcription;
+mod transcription_model;
 
 #[cfg(test)]
 mod consultation_e2e;
@@ -14,7 +15,9 @@ mod consultation_e2e;
 #[cfg(test)]
 mod restore_drill;
 
+use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -23,6 +26,19 @@ use tauri::Manager;
 
 /// Open database connection, held for the lifetime of the unlocked session.
 struct AppDb(Mutex<Option<rusqlite::Connection>>);
+
+/// Progreso de descarga de modelos Whisper por `model_id`. Vive fuera de la base
+/// cifrada: los pesos son REFERENCIA publica, no datos clinicos. El frontend lo
+/// consulta por sondeo (`transcription_model_status`) mientras descarga.
+#[derive(Clone, Default)]
+struct DownloadProgress {
+    downloaded: u64,
+    total: u64,
+    done: bool,
+    error: Option<String>,
+}
+
+struct ModelDownloads(Mutex<HashMap<String, DownloadProgress>>);
 
 const DEFAULT_PROFILE_ID: &str = "default";
 const PROFILE_REGISTRY_FILE: &str = "doctor_profiles.json";
@@ -1445,6 +1461,197 @@ fn transcription_recommendation() -> transcription::TranscriptionRecommendation 
     transcription::recommendation()
 }
 
+/* ---------- Descarga del modelo Whisper local (paso 15) ---------- */
+
+/// Espacio libre (bytes) en el volumen que contiene `path`. Best-effort: ante
+/// cualquier duda devuelve `None` (no se bloquea la descarga por no poder medir).
+fn available_disk_bytes(path: &Path) -> Option<u64> {
+    use sysinfo::Disks;
+    let disks = Disks::new_with_refreshed_list();
+    // El disco cuyo punto de montaje sea el prefijo mas largo de `path`.
+    disks
+        .iter()
+        .filter(|disk| path.starts_with(disk.mount_point()))
+        .max_by_key(|disk| disk.mount_point().as_os_str().len())
+        .map(|disk| disk.available_space())
+}
+
+/// Estado de los modelos Whisper: presencia en disco, verificacion y progreso de
+/// descarga en curso. El frontend lo sondea para pintar el avance.
+#[tauri::command]
+fn transcription_model_status(
+    app: tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+) -> Result<Vec<transcription_model::ModelStatus>, String> {
+    let base_dir = app_data_dir(&app)?;
+    let progress = downloads.0.lock().unwrap().clone();
+
+    let mut out = Vec::new();
+    for asset in transcription_model::all_assets() {
+        let final_path = transcription_model::model_path(&base_dir, &asset.file_name);
+        let part = transcription_model::part_path(&final_path);
+        let final_present = final_path.exists();
+        let final_len = fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
+        let part_len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+
+        let prog = progress.get(&asset.model_id);
+        let downloading = prog.map(|p| !p.done && p.error.is_none()).unwrap_or(false);
+        let error = prog.and_then(|p| p.error.clone());
+        // Un archivo presente con checksum fijado que coincide se considera
+        // verificado. Sin checksum fijado en el build, queda como no verificado.
+        let verified = final_present
+            && transcription_model::verify_file(&final_path, &asset.sha256).unwrap_or(false);
+        // Si hay descarga en curso, el progreso manda sobre el tamano del .part.
+        let part_for_status = prog
+            .filter(|p| !p.done)
+            .map(|p| p.downloaded)
+            .unwrap_or(part_len);
+
+        let mut status = transcription_model::build_status(
+            &asset,
+            final_present,
+            final_len,
+            part_for_status,
+            verified,
+            downloading,
+            error,
+        );
+        // Durante la descarga, el total informado por el servidor (si lo hay) es
+        // mas fiel que el tamano aproximado del catalogo.
+        if let Some(p) = prog.filter(|p| !p.done && p.total > 0) {
+            status.expected_size_bytes = p.total;
+        }
+        out.push(status);
+    }
+    Ok(out)
+}
+
+/// Descarga (o reanuda) los pesos del modelo Whisper indicado a la carpeta
+/// compartida de modelos. Frontera de red: el contrato real con la fuente se
+/// verifica en staging (regla 5). No toca la base cifrada ni envia datos del
+/// paciente; solo baja REFERENCIA publica. Actualiza el progreso en memoria para
+/// que el frontend lo sondee, y al terminar verifica el checksum (si esta fijado).
+#[tauri::command]
+async fn download_transcription_model(
+    app: tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+    model_id: String,
+) -> Result<(), String> {
+    let asset = transcription_model::asset_for(&model_id)
+        .ok_or_else(|| format!("modelo no reconocido: {model_id}"))?;
+    let base_dir = app_data_dir(&app)?;
+    let dir = transcription_model::models_dir(&base_dir);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let final_path = transcription_model::model_path(&base_dir, &asset.file_name);
+    if final_path.exists() {
+        return Ok(());
+    }
+    let part = transcription_model::part_path(&final_path);
+    let part_len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+
+    // Valida espacio en disco (best-effort): si se puede medir y no alcanza, no
+    // se inicia la descarga.
+    if let Some(free) = available_disk_bytes(&dir) {
+        let required = transcription_model::required_free_bytes(asset.size_bytes);
+        if !transcription_model::has_enough_disk(free, required) {
+            return Err(format!(
+                "espacio insuficiente: se necesitan ~{} MB libres para {}",
+                required / (1024 * 1024),
+                asset.file_name
+            ));
+        }
+    }
+
+    let set_progress = |downloaded: u64, total: u64, done: bool, error: Option<String>| {
+        let mut map = downloads.0.lock().unwrap();
+        map.insert(
+            model_id.clone(),
+            DownloadProgress {
+                downloaded,
+                total,
+                done,
+                error,
+            },
+        );
+    };
+
+    let resume = transcription_model::resume_from(part_len, asset.size_bytes);
+    set_progress(resume, asset.size_bytes, false, None);
+
+    match stream_to_part(&asset, &part, resume, &set_progress).await {
+        Ok(total) => {
+            // Verifica el checksum si esta fijado; si no coincide, descarta.
+            if !asset.sha256.is_empty()
+                && !transcription_model::verify_file(&part, &asset.sha256).unwrap_or(false)
+            {
+                let _ = fs::remove_file(&part);
+                let msg = "la descarga no coincide con el checksum esperado".to_string();
+                set_progress(0, asset.size_bytes, true, Some(msg.clone()));
+                return Err(msg);
+            }
+            fs::rename(&part, &final_path).map_err(|e| e.to_string())?;
+            set_progress(total, total, true, None);
+            Ok(())
+        }
+        Err(e) => {
+            set_progress(part_len, asset.size_bytes, true, Some(e.clone()));
+            Err(e)
+        }
+    }
+}
+
+/// Descarga por HTTP el asset al archivo `.part`, reanudando desde `resume` con un
+/// Range. Va informando el progreso. Devuelve el total de bytes al terminar.
+async fn stream_to_part(
+    asset: &transcription_model::ModelAsset,
+    part: &Path,
+    resume: u64,
+    set_progress: &impl Fn(u64, u64, bool, Option<String>),
+) -> Result<u64, String> {
+    let client = reqwest::Client::new();
+    let mut request = client.get(&asset.url);
+    if resume > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={resume}-"));
+    }
+    let mut response = request
+        .send()
+        .await
+        .map_err(|e| format!("no se pudo iniciar la descarga: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("la fuente respondio {}", response.status()));
+    }
+
+    // Total = lo ya descargado + lo que falta segun el servidor (si lo informa).
+    let total = response
+        .content_length()
+        .map(|r| resume + r)
+        .filter(|t| *t > 0)
+        .unwrap_or(asset.size_bytes);
+
+    let mut file = if resume > 0 {
+        fs::OpenOptions::new()
+            .append(true)
+            .open(part)
+            .map_err(|e| e.to_string())?
+    } else {
+        fs::File::create(part).map_err(|e| e.to_string())?
+    };
+
+    let mut downloaded = resume;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("descarga interrumpida: {e}"))?
+    {
+        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+        set_progress(downloaded, total.max(downloaded), false, None);
+    }
+    file.flush().map_err(|e| e.to_string())?;
+    Ok(downloaded)
+}
+
 /* ---------- Derechos ARCO (paso 12) ---------- */
 
 fn with_arco<T>(
@@ -1507,6 +1714,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppDb(Mutex::new(None)))
+        .manage(ModelDownloads(Mutex::new(HashMap::new())))
         .invoke_handler(tauri::generate_handler![
             list_doctor_profiles,
             create_doctor_profile,
@@ -1567,6 +1775,8 @@ pub fn run() {
             ai_run_benchmark,
             ai_list_benchmarks,
             transcription_recommendation,
+            transcription_model_status,
+            download_transcription_model,
             check_medication_safety,
             medication_reference_status,
             import_medication_reference,
