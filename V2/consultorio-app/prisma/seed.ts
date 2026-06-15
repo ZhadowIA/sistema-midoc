@@ -1,8 +1,11 @@
-import { ClinicalProfile, PrismaClient, UserRole, UserStatus } from "@prisma/client";
+import { ClinicalProfile, LegalDocumentType, PrismaClient, UserRole, UserStatus } from "@prisma/client";
+import { hashPassword } from "../src/lib/security/password";
 
 const prisma = new PrismaClient();
 
 async function main() {
+  const hashedPassword = await hashPassword("Admin@123456");
+
   await prisma.user.upsert({
     where: { email: "admin@consultorio.com" },
     update: {
@@ -10,11 +13,12 @@ async function main() {
       lastName: "Consultorio",
       role: UserRole.DOCTOR,
       status: UserStatus.ACTIVE,
+      passwordHash: hashedPassword,
+      phone: undefined,
       doctorProfile: {
         upsert: {
           update: {
             professionalName: "Dr. Admin Consultorio",
-            publicSlug: "dr-admin-consultorio",
             specialty: ClinicalProfile.GENERAL_MEDICINE,
             isPublic: false
           },
@@ -29,6 +33,7 @@ async function main() {
     },
     create: {
       email: "admin@consultorio.com",
+      passwordHash: hashedPassword,
       firstName: "Admin",
       lastName: "Consultorio",
       role: UserRole.DOCTOR,
@@ -40,9 +45,23 @@ async function main() {
           specialty: ClinicalProfile.GENERAL_MEDICINE,
           isPublic: false
         }
+      },
+      legalAcceptances: {
+        create: [
+          {
+            documentType: LegalDocumentType.TERMS,
+            version: "2026-05"
+          },
+          {
+            documentType: LegalDocumentType.PRIVACY,
+            version: "2026-05"
+          }
+        ]
       }
     }
   });
+
+  console.log("✓ Usuario de prueba creado: admin@consultorio.com");
 }
 
 main()

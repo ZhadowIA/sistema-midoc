@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": { "value": "${AZURE_ENV_NAME}" },
+    "location": { "value": "${AZURE_LOCATION}" },
+    "portalImageName": { "value": "${SERVICE_PORTAL_IMAGE_NAME}" },
+    "termsVersion": { "value": "${TERMS_VERSION=2026-05}" },
+    "privacyVersion": { "value": "${PRIVACY_VERSION=2026-05}" },
+    "smsProvider": { "value": "${SMS_PROVIDER=mock}" },
+    "smsBaseUrl": { "value": "${SMS_BASE_URL=https://sms.example.com}" },
+    "emailProvider": { "value": "${EMAIL_PROVIDER=mock}" },
+    "emailBaseUrl": { "value": "${EMAIL_BASE_URL=https://email.example.com}" },
+    "emailFrom": { "value": "${EMAIL_FROM=no-responder@midoc.example.com}" },
+    "paymentsProvider": { "value": "${PAYMENTS_PROVIDER=MOCK}" },
+    "postgresAdminLogin": { "value": "${POSTGRES_ADMIN_LOGIN=midocadmin}" },
+    "nextAuthSecret": { "value": "${NEXTAUTH_SECRET}" },
+    "questionnaireTokenSecret": { "value": "${QUESTIONNAIRE_TOKEN_SECRET}" },
+    "twoFactorEncryptionKey": { "value": "${TWO_FACTOR_ENCRYPTION_KEY}" },
+    "notificationCronSecret": { "value": "${NOTIFICATION_CRON_SECRET}" },
+    "paymentsWebhookSecret": { "value": "${PAYMENTS_WEBHOOK_SECRET}" },
+    "smsApiKey": { "value": "${SMS_API_KEY}" },
+    "emailApiKey": { "value": "${EMAIL_API_KEY}" },
+    "postgresAdminPassword": { "value": "${POSTGRES_ADMIN_PASSWORD}" }
+  }
+}

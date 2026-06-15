@@ -1,0 +1,6 @@
+# azd: estado de entorno (puede contener secretos). Se conserva solo el plan.
+.azure/*
+!.azure/deployment-plan.md
+
+# ARM compilado desde main.bicep (artefacto; azd lo genera)
+infra/main.json

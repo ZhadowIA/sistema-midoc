@@ -19,6 +19,12 @@ import { assertRateLimit } from "../../lib/rate-limit";
 import { hashPassword, verifyPassword } from "../../lib/security/password";
 import { generateOpaqueToken, hashOpaqueToken } from "../../lib/security/token";
 import { queueNotification } from "../notifications/notification-service";
+import {
+  consumeTwoFactorChallenge,
+  isTwoFactorEnabled,
+  issueTwoFactorChallenge,
+  verifyTwoFactorCode
+} from "./two-factor-service";
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const PASSWORD_RESET_TTL_MS = 1000 * 60 * 15;
@@ -172,6 +178,19 @@ export async function signInDoctor(input: {
     throw new AuthServiceError("Invalid credentials.", 401);
   }
 
+  // Si el 2FA esta activo, no se crea sesion: se emite un desafio de segundo factor.
+  if (await isTwoFactorEnabled(user.id)) {
+    return {
+      requiresTwoFactor: true as const,
+      twoFactorToken: issueTwoFactorChallenge(user.id)
+    };
+  }
+
+  const session = await createSessionForUser(user);
+  return { requiresTwoFactor: false as const, user, ...session };
+}
+
+async function createSessionForUser(user: User) {
   const sessionToken = generateOpaqueToken();
   const tokenHash = hashOpaqueToken(sessionToken);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
@@ -200,11 +219,28 @@ export async function signInDoctor(input: {
     source: "auth-service"
   });
 
-  return {
-    user,
-    sessionToken,
-    expiresAt
-  };
+  return { sessionToken, expiresAt };
+}
+
+/**
+ * Completa un login que requiere 2FA: valida el desafio y el codigo (TOTP o
+ * recuperacion) y crea la sesion.
+ */
+export async function completeTwoFactorLogin(input: { twoFactorToken: string; code: string }) {
+  const userId = consumeTwoFactorChallenge(input.twoFactorToken);
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user || user.role !== UserRole.DOCTOR || user.status !== UserStatus.ACTIVE) {
+    throw new AuthServiceError("Invalid credentials.", 401);
+  }
+
+  const valid = await verifyTwoFactorCode(userId, input.code);
+  if (!valid) {
+    throw new AuthServiceError("Codigo invalido.", 401);
+  }
+
+  const session = await createSessionForUser(user);
+  return { user, ...session };
 }
 
 export async function validateAuthSession(sessionToken: string): Promise<User | null> {
@@ -424,12 +460,21 @@ export async function createDoctorSubscription(input: {
     throw new AuthServiceError("Doctor account not found.", 404);
   }
 
+  const defaultCapabilities = {
+    agenda: true,
+    documents: true,
+    notifications: true,
+    ai: true,
+    presential: true
+  };
+
   const plan = await prisma.subscriptionPlan.upsert({
     where: {
       code: input.planCode
     },
     update: {
-      status: PlanStatus.ACTIVE
+      status: PlanStatus.ACTIVE,
+      capabilities: defaultCapabilities
     },
     create: {
       code: input.planCode,
@@ -438,10 +483,7 @@ export async function createDoctorSubscription(input: {
       billingInterval: "monthly",
       priceCents: 0,
       currency: "MXN",
-      capabilities: {
-        scheduling: true,
-        sms: true
-      }
+      capabilities: defaultCapabilities
     }
   });
 

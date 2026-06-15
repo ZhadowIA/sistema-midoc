@@ -19,8 +19,10 @@ import {
   ackSyncEvents,
   authenticateSyncDevice,
   getActiveDeviceDocumentKey,
+  getSyncDeviceProfile,
   getSyncInbox,
-  linkSyncDevice
+  linkSyncDevice,
+  recordAiUsageBatch
 } from "../../src/services/sync/sync-service";
 
 const prisma = new PrismaClient();
@@ -186,6 +188,61 @@ describe("desktop sync (fase A)", () => {
   });
 });
 
+describe("device profile metadata (paso 13, rebanada 4)", () => {
+  it("exposes specialty, consultation duration and active working hours to the device", async () => {
+    const email = uniqueEmail("doctor-profile-sync");
+    const slug = uniqueSlug("dra-profile");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Eva",
+        lastName: "Soto",
+        professionalName: "Dra. Eva Soto",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        specialty: ClinicalProfile.ODONTOLOGY,
+        consultationDuration: 20,
+        isPublic: true
+      });
+
+      // Dos franjas: la ventana laboral debe ir de la mas temprana a la mas tardia.
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: 1,
+        startTime: "09:00",
+        endTime: "13:00",
+        slotInterval: 20
+      });
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: 1,
+        startTime: "16:00",
+        endTime: "20:00",
+        slotInterval: 20
+      });
+
+      const link = await linkSyncDevice(account.user.id, "PC perfil");
+      const device = await authenticateSyncDevice(bearerRequest(link.deviceToken));
+
+      const { profile } = await getSyncDeviceProfile(device);
+      expect(profile?.specialty).toBe(ClinicalProfile.ODONTOLOGY);
+      expect(profile?.consultationDuration).toBe(20);
+
+      const starts = profile?.availabilityRules.map((rule) => rule.startTime).sort();
+      const ends = profile?.availabilityRules.map((rule) => rule.endTime).sort();
+      expect(starts).toEqual(["09:00", "16:00"]);
+      expect(ends).toEqual(["13:00", "20:00"]);
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+});
+
 describe("device document public key (paso 6, fase B)", () => {
   it("stores a valid X25519 public key and exposes it for the active device", async () => {
     const email = uniqueEmail("doctor-key");
@@ -240,6 +297,82 @@ describe("device document public key (paso 6, fase B)", () => {
       await expect(
         linkSyncDevice(account.user.id, "PC", "no-es-base64-valido!!!")
       ).rejects.toMatchObject({ status: 400 });
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+});
+
+describe("AI usage metadata sync (paso 11)", () => {
+  it("records AI usage by reference only and is idempotent per device doctor", async () => {
+    const email = uniqueEmail("doctor-ai-usage");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Ada",
+        lastName: "Rivas",
+        professionalName: "Dra. Ada Rivas",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+      const { deviceToken } = await linkSyncDevice(account.user.id, "PC IA");
+      const device = await authenticateSyncDevice(bearerRequest(deviceToken));
+
+      const report = {
+        externalRunId: randomUUID(),
+        usageType: "SOAP_ASSIST",
+        status: "APPROVED",
+        providerName: "fake-clinico",
+        providerType: "LLM",
+        modelVersion: "fake-1",
+        promptVersion: "soap-assist/v1",
+        estimatedCostCents: 7,
+        latencyMs: 12,
+        occurredAt: "2026-06-11T12:00:00.000Z",
+        inputReference: {
+          kind: "LOCAL_AI_RUN_INPUT",
+          localRunId: "local-run-1",
+          patientId: "pat-local-1",
+          encounterId: "enc-local-1"
+        },
+        outputReference: {
+          kind: "LOCAL_AI_RUN_OUTPUT",
+          localRunId: "local-run-1",
+          patientId: "pat-local-1",
+          encounterId: "enc-local-1"
+        }
+      };
+
+      await expect(
+        recordAiUsageBatch(device, {
+          runs: [
+            {
+              ...report,
+              inputReference: { ...report.inputReference, clinicalText: "Dolor lumbar" }
+            }
+          ]
+        })
+      ).rejects.toMatchObject({ status: 400 });
+
+      const first = await recordAiUsageBatch(device, { runs: [report] });
+      const second = await recordAiUsageBatch(device, { runs: [report] });
+
+      expect(first.reported).toBe(1);
+      expect(second.reported).toBe(1);
+
+      const logs = await prisma.aiUsageLog.findMany({
+        where: { doctorId: account.user.id, externalRunId: report.externalRunId }
+      });
+      expect(logs).toHaveLength(1);
+      expect(logs[0]?.usageType).toBe("SOAP_SUMMARY");
+      expect(logs[0]?.status).toBe("REVIEWED");
+      expect(logs[0]?.patientId).toBeNull();
+      expect(logs[0]?.encounterId).toBeNull();
+      expect(JSON.stringify(logs[0]?.inputReference)).not.toContain("Dolor lumbar");
+      expect(JSON.stringify(logs[0]?.outputReference)).not.toContain("Dolor lumbar");
     } finally {
       await cleanupUserByEmail(email);
     }

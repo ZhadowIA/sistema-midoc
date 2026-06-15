@@ -18,6 +18,14 @@ export async function POST(request: Request) {
       requestIp: requestIpFrom(request)
     });
 
+    // El password fue correcto pero la cuenta exige segundo factor: aun no hay sesion.
+    if (result.requiresTwoFactor) {
+      return NextResponse.json({
+        requiresTwoFactor: true,
+        twoFactorToken: result.twoFactorToken
+      });
+    }
+
     const response = NextResponse.json({
       user: {
         id: result.user.id,

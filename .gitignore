@@ -21,6 +21,10 @@ pnpm-debug.log*
 **/build/
 **/*.tsbuildinfo
 
+# Python
+**/__pycache__/
+**/*.pyc
+
 # OS / editor
 .DS_Store
 Thumbs.db
@@ -39,6 +43,7 @@ whatsapp-bot/.wwebjs_cache/
 # Local agent workspace artifacts
 .claude/
 .atl/
+.superpowers/
 
 # Temporary files
 tmp_*.js
