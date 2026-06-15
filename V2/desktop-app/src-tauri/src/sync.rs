@@ -41,12 +41,29 @@ pub struct InboxResponse {
 pub struct SyncSummary {
     pub applied_events: u64,
     pub cursor: i64,
+    pub ai_usage_reported: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AiUsageReportSummary {
+    pub reported: u64,
+}
+
+/// Metadatos del perfil del medico que la agenda usa: perfil clinico, tamano de
+/// bloque (duracion de cita) y ventana de horario laboral. Se obtienen al
+/// vincular y se refrescan en cada sincronizacion.
+#[derive(Debug, Default)]
+pub struct ProfileMetadata {
+    pub clinical_profile: Option<String>,
+    pub slot_minutes: Option<i64>,
+    pub work_start_minutes: Option<i64>,
+    pub work_end_minutes: Option<i64>,
 }
 
 #[derive(Debug)]
 pub struct LinkAccountResult {
     pub device_token: String,
-    pub clinical_profile: Option<String>,
+    pub metadata: ProfileMetadata,
 }
 
 /* ---------- Estado local ---------- */
@@ -97,16 +114,25 @@ pub fn apply_event(conn: &Connection, event: &InboxEvent) -> Result<(), SyncErro
     match event.event_type.as_str() {
         "APPOINTMENT_BOOKED" => {
             let patient = payload.get("patient").cloned().unwrap_or_default();
+            // El responsable (tutor) llega como entidad aparte: nombre, parentesco
+            // y su contacto. Es CONTACTO, jamas se mezcla con el paciente.
+            let responsible = payload.get("responsible").cloned().unwrap_or_default();
             conn.execute(
                 "INSERT INTO appointments (
                     id, status, scheduled_start, scheduled_end, service_name, reason,
                     patient_id, patient_first_name, patient_last_name, patient_phone,
-                    patient_email, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    patient_email, patient_birth_date, guardian_name, guardian_relationship,
+                    guardian_phone, guardian_email, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
                  ON CONFLICT(id) DO UPDATE SET
                     status = excluded.status,
                     scheduled_start = excluded.scheduled_start,
                     scheduled_end = excluded.scheduled_end,
+                    patient_birth_date = COALESCE(excluded.patient_birth_date, patient_birth_date),
+                    guardian_name = COALESCE(excluded.guardian_name, guardian_name),
+                    guardian_relationship = COALESCE(excluded.guardian_relationship, guardian_relationship),
+                    guardian_phone = COALESCE(excluded.guardian_phone, guardian_phone),
+                    guardian_email = COALESCE(excluded.guardian_email, guardian_email),
                     updated_at = excluded.updated_at",
                 params![
                     text(payload, "appointmentId"),
@@ -120,6 +146,11 @@ pub fn apply_event(conn: &Connection, event: &InboxEvent) -> Result<(), SyncErro
                     text(&patient, "lastName").unwrap_or_default(),
                     text(&patient, "phone"),
                     text(&patient, "email"),
+                    text(&patient, "birthDate"),
+                    text(&responsible, "name"),
+                    text(&responsible, "relationship"),
+                    text(&responsible, "phone"),
+                    text(&responsible, "email"),
                     now
                 ],
             )?;
@@ -216,6 +247,98 @@ fn extract_clinical_profile(body: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Duracion de cita configurada por el medico (`consultationDuration` del
+/// perfil). Define el tamano de bloque de la agenda semanal en la app.
+fn extract_slot_minutes(body: &serde_json::Value) -> Option<i64> {
+    body.get("profile")
+        .and_then(|profile| profile.get("consultationDuration"))
+        .and_then(|value| value.as_i64())
+        .filter(|minutes| *minutes > 0)
+}
+
+/// Convierte "HH:MM" a minutos desde medianoche.
+fn parse_hhmm_to_minutes(value: &str) -> Option<i64> {
+    let (h, m) = value.trim().split_once(':')?;
+    let h: i64 = h.trim().parse().ok()?;
+    let m: i64 = m.trim().parse().ok()?;
+    if (0..=24).contains(&h) && (0..=59).contains(&m) {
+        Some(h * 60 + m)
+    } else {
+        None
+    }
+}
+
+/// Ventana de horario laboral del medico tomada de sus reglas de disponibilidad
+/// (`availabilityRules` del perfil): el inicio mas temprano y el fin mas tardio
+/// entre las reglas activas. Define el rango de bloques que muestra la agenda.
+fn extract_working_hours(body: &serde_json::Value) -> (Option<i64>, Option<i64>) {
+    let Some(rules) = body
+        .get("profile")
+        .and_then(|profile| profile.get("availabilityRules"))
+        .and_then(|rules| rules.as_array())
+    else {
+        return (None, None);
+    };
+
+    let mut start: Option<i64> = None;
+    let mut end: Option<i64> = None;
+    for rule in rules {
+        // Saltar reglas explicitamente inactivas.
+        if rule.get("isActive").and_then(|v| v.as_bool()) == Some(false) {
+            continue;
+        }
+        if let Some(s) = rule
+            .get("startTime")
+            .and_then(|v| v.as_str())
+            .and_then(parse_hhmm_to_minutes)
+        {
+            start = Some(start.map_or(s, |cur| cur.min(s)));
+        }
+        if let Some(e) = rule
+            .get("endTime")
+            .and_then(|v| v.as_str())
+            .and_then(parse_hhmm_to_minutes)
+        {
+            end = Some(end.map_or(e, |cur| cur.max(e)));
+        }
+    }
+    (start, end)
+}
+
+/// Reune los metadatos del perfil (perfil clinico, duracion de cita y horario
+/// laboral) desde una respuesta con el campo `profile`. Mismo shape en
+/// `/api/admin/profile` (al vincular) y `/api/sync/profile` (al sincronizar).
+fn profile_metadata_from_body(body: &serde_json::Value) -> ProfileMetadata {
+    let (work_start_minutes, work_end_minutes) = extract_working_hours(body);
+    ProfileMetadata {
+        clinical_profile: extract_clinical_profile(body),
+        slot_minutes: extract_slot_minutes(body),
+        work_start_minutes,
+        work_end_minutes,
+    }
+}
+
+/// Trae los metadatos del perfil del medico con el device token (sin sesion),
+/// para refrescar agenda/perfil en cada sincronizacion.
+pub async fn fetch_profile_metadata(
+    server_url: &str,
+    device_token: &str,
+) -> Result<ProfileMetadata, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+    let response = client
+        .get(format!("{base}/api/sync/profile"))
+        .bearer_auth(device_token)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+
+    Ok(profile_metadata_from_body(&response.json().await?))
+}
+
 /// Inicia sesion en el portal y registra este equipo como dispositivo de
 /// sincronizacion. Devuelve el device token (se guarda en la base cifrada).
 pub async fn link_account(
@@ -247,7 +370,7 @@ pub async fn link_account(
         return Err(error_from_response(profile).await);
     }
 
-    let clinical_profile = extract_clinical_profile(&profile.json().await?);
+    let metadata = profile_metadata_from_body(&profile.json::<serde_json::Value>().await?);
 
     // La llave publica del medico viaja al vincular: el portal la entrega a la
     // pagina de carga del paciente para cifrar documentos (sealed box).
@@ -273,7 +396,7 @@ pub async fn link_account(
 
     Ok(LinkAccountResult {
         device_token,
-        clinical_profile,
+        metadata,
     })
 }
 
@@ -298,11 +421,7 @@ pub async fn fetch_inbox(
     Ok(response.json().await?)
 }
 
-pub async fn send_ack(
-    server_url: &str,
-    device_token: &str,
-    cursor: i64,
-) -> Result<(), SyncError> {
+pub async fn send_ack(server_url: &str, device_token: &str, cursor: i64) -> Result<(), SyncError> {
     let client = reqwest::Client::new();
     let base = server_url.trim_end_matches('/');
 
@@ -382,6 +501,30 @@ pub async fn publish_summary(
         .and_then(|v| v.as_str())
         .map(String::from)
         .ok_or_else(|| SyncError::Server("respuesta sin downloadUrl".into()))
+}
+
+/// Reporta al portal solo metadatos/referencias de uso IA. El contenido
+/// clinico, prompts redactados y salidas permanecen en la base local cifrada.
+pub async fn report_ai_usage(
+    server_url: &str,
+    device_token: &str,
+    reports: &[crate::ai::AiUsageReport],
+) -> Result<AiUsageReportSummary, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+
+    let response = client
+        .post(format!("{base}/api/sync/ai-usage"))
+        .bearer_auth(device_token)
+        .json(&serde_json::json!({ "runs": reports }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+
+    Ok(response.json().await?)
 }
 
 /// Sobre [metaLen u32 BE | metaJSON | bytes]. El metaJSON lleva nombre y tipo
@@ -520,6 +663,65 @@ mod tests {
     }
 
     #[test]
+    fn booking_for_a_minor_carries_the_guardian_as_its_own_entity() {
+        let mut conn = test_conn("guardian");
+
+        let event = InboxEvent {
+            seq: 1,
+            event_type: "APPOINTMENT_BOOKED".into(),
+            payload: Some(serde_json::json!({
+                "appointmentId": "appt-minor",
+                "status": "PENDING",
+                "scheduledStart": "2026-07-01T15:00:00.000Z",
+                "scheduledEnd": "2026-07-01T15:30:00.000Z",
+                "serviceName": "Consulta",
+                "reason": "Control del nino",
+                "patient": {
+                    "id": "pat-minor",
+                    "firstName": "Lucia",
+                    "lastName": "Paz",
+                    "birthDate": "2018-03-04",
+                    // Contacto de la cita = el del tutor (el menor no tiene propio).
+                    "phone": "6140002222",
+                    "email": null
+                },
+                "responsible": {
+                    "name": "Hugo Paz",
+                    "relationship": "Padre",
+                    "phone": "6140002222",
+                    "email": "hugo@example.com"
+                }
+            })),
+        };
+
+        apply_batch(&mut conn, &[event]).unwrap();
+
+        let (first, birth, g_name, g_rel, g_email): (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT patient_first_name, patient_birth_date, guardian_name,
+                        guardian_relationship, guardian_email
+                 FROM appointments WHERE id = 'appt-minor'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+
+        // La identidad del paciente es la del menor, no la del tutor.
+        assert_eq!(first, "Lucia");
+        assert_eq!(birth.as_deref(), Some("2018-03-04"));
+        // El responsable viaja como entidad propia.
+        assert_eq!(g_name.as_deref(), Some("Hugo Paz"));
+        assert_eq!(g_rel.as_deref(), Some("Padre"));
+        assert_eq!(g_email.as_deref(), Some("hugo@example.com"));
+    }
+
+    #[test]
     fn reschedule_updates_times_and_unknown_events_are_ignored() {
         let mut conn = test_conn("reschedule");
 
@@ -586,7 +788,15 @@ mod tests {
                 "SELECT count(*), max(file_name), max(mime_type), max(size_bytes), max(content)
                  FROM documents WHERE id = 'doc-1'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .unwrap();
         assert_eq!(count, 1);
@@ -623,7 +833,10 @@ mod tests {
             }
         });
 
-        assert_eq!(extract_clinical_profile(&body).as_deref(), Some("ODONTOLOGY"));
+        assert_eq!(
+            extract_clinical_profile(&body).as_deref(),
+            Some("ODONTOLOGY")
+        );
     }
 
     #[test]
@@ -637,6 +850,63 @@ mod tests {
 
         assert_eq!(extract_clinical_profile(&missing), None);
         assert_eq!(extract_clinical_profile(&invalid), None);
+    }
+
+    #[test]
+    fn extracts_slot_minutes_from_portal_workspace_response() {
+        let body = serde_json::json!({
+            "profile": {
+                "consultationDuration": 20
+            }
+        });
+        assert_eq!(extract_slot_minutes(&body), Some(20));
+
+        // Ausente o no positivo => sin valor (se usara el default en el front).
+        assert_eq!(extract_slot_minutes(&serde_json::json!({ "profile": {} })), None);
+        assert_eq!(
+            extract_slot_minutes(&serde_json::json!({ "profile": { "consultationDuration": 0 } })),
+            None
+        );
+    }
+
+    #[test]
+    fn extracts_working_hours_window_from_active_rules() {
+        let body = serde_json::json!({
+            "profile": {
+                "availabilityRules": [
+                    { "startTime": "09:00", "endTime": "13:00", "isActive": true },
+                    { "startTime": "16:00", "endTime": "20:00", "isActive": true },
+                    { "startTime": "07:00", "endTime": "08:00", "isActive": false }
+                ]
+            }
+        });
+        // Inicio mas temprano y fin mas tardio entre las reglas ACTIVAS.
+        assert_eq!(extract_working_hours(&body), (Some(9 * 60), Some(20 * 60)));
+
+        // Sin reglas => sin ventana (el front usa un horario por defecto).
+        assert_eq!(
+            extract_working_hours(&serde_json::json!({ "profile": {} })),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn builds_profile_metadata_from_body() {
+        let body = serde_json::json!({
+            "profile": {
+                "specialty": "ODONTOLOGY",
+                "consultationDuration": 20,
+                "availabilityRules": [
+                    { "startTime": "09:00", "endTime": "13:00", "isActive": true },
+                    { "startTime": "16:00", "endTime": "20:00", "isActive": true }
+                ]
+            }
+        });
+        let meta = profile_metadata_from_body(&body);
+        assert_eq!(meta.clinical_profile.as_deref(), Some("ODONTOLOGY"));
+        assert_eq!(meta.slot_minutes, Some(20));
+        assert_eq!(meta.work_start_minutes, Some(9 * 60));
+        assert_eq!(meta.work_end_minutes, Some(20 * 60));
     }
 
     // ---------- E2E contra portal vivo (Capa 2) ----------
@@ -789,7 +1059,9 @@ mod tests {
                 break;
             }
             apply_batch(&mut conn, &inbox.events).unwrap();
-            send_ack(&base, &device_token, inbox.next_cursor).await.unwrap();
+            send_ack(&base, &device_token, inbox.next_cursor)
+                .await
+                .unwrap();
             cursor = inbox.next_cursor;
         }
 
@@ -806,9 +1078,11 @@ mod tests {
 
         // 6) La preconsulta clinica vive localmente...
         let responses: String = conn
-            .query_row("SELECT responses_json FROM precheckins LIMIT 1", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT responses_json FROM precheckins LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert!(responses.contains("Dolor lumbar e2e"));
 

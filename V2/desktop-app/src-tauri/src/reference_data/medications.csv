@@ -1,0 +1,174 @@
+name,ingredient,display_name,drug_class
+acetaminophen,acetaminophen,Paracetamol,Analgesico
+paracetamol,acetaminophen,Paracetamol,Analgesico
+acetaminofen,acetaminophen,Paracetamol,Analgesico
+tylenol,acetaminophen,Paracetamol,Analgesico
+tempra,acetaminophen,Paracetamol,Analgesico
+ibuprofen,ibuprofen,Ibuprofeno,AINE
+ibuprofeno,ibuprofen,Ibuprofeno,AINE
+advil,ibuprofen,Ibuprofeno,AINE
+motrin,ibuprofen,Ibuprofeno,AINE
+naproxen,naproxen,Naproxeno,AINE
+naproxeno,naproxen,Naproxeno,AINE
+aleve,naproxen,Naproxeno,AINE
+aspirin,aspirin,Aspirina,AINE
+aspirina,aspirin,Aspirina,AINE
+acido acetilsalicilico,aspirin,Aspirina,AINE
+ketorolac,ketorolac,Ketorolaco,AINE
+ketorolaco,ketorolac,Ketorolaco,AINE
+diclofenac,diclofenac,Diclofenaco,AINE
+diclofenaco,diclofenac,Diclofenaco,AINE
+celecoxib,celecoxib,Celecoxib,AINE COX-2
+celebrex,celecoxib,Celecoxib,AINE COX-2
+warfarin,warfarin,Warfarina,Anticoagulante
+warfarina,warfarin,Warfarina,Anticoagulante
+coumadin,warfarin,Warfarina,Anticoagulante
+jantoven,warfarin,Warfarina,Anticoagulante
+apixaban,apixaban,Apixaban,Anticoagulante
+eliquis,apixaban,Apixaban,Anticoagulante
+rivaroxaban,rivaroxaban,Rivaroxaban,Anticoagulante
+xarelto,rivaroxaban,Rivaroxaban,Anticoagulante
+dabigatran,dabigatran,Dabigatran,Anticoagulante
+pradaxa,dabigatran,Dabigatran,Anticoagulante
+clopidogrel,clopidogrel,Clopidogrel,Antiagregante
+plavix,clopidogrel,Clopidogrel,Antiagregante
+lisinopril,lisinopril,Lisinopril,IECA
+prinivil,lisinopril,Lisinopril,IECA
+zestril,lisinopril,Lisinopril,IECA
+enalapril,enalapril,Enalapril,IECA
+vasotec,enalapril,Enalapril,IECA
+losartan,losartan,Losartan,ARA II
+cozaar,losartan,Losartan,ARA II
+valsartan,valsartan,Valsartan,ARA II
+diovan,valsartan,Valsartan,ARA II
+spironolactone,spironolactone,Espironolactona,Diuretico ahorrador de potasio
+espironolactona,spironolactone,Espironolactona,Diuretico ahorrador de potasio
+aldactone,spironolactone,Espironolactona,Diuretico ahorrador de potasio
+hydrochlorothiazide,hydrochlorothiazide,Hidroclorotiazida,Diuretico tiazidico
+hidroclorotiazida,hydrochlorothiazide,Hidroclorotiazida,Diuretico tiazidico
+furosemide,furosemide,Furosemida,Diuretico de asa
+furosemida,furosemide,Furosemida,Diuretico de asa
+lasix,furosemide,Furosemida,Diuretico de asa
+metoprolol,metoprolol,Metoprolol,Betabloqueador
+lopressor,metoprolol,Metoprolol,Betabloqueador
+toprol,metoprolol,Metoprolol,Betabloqueador
+propranolol,propranolol,Propranolol,Betabloqueador
+inderal,propranolol,Propranolol,Betabloqueador
+amlodipine,amlodipine,Amlodipino,Calcioantagonista
+amlodipino,amlodipine,Amlodipino,Calcioantagonista
+norvasc,amlodipine,Amlodipino,Calcioantagonista
+verapamil,verapamil,Verapamilo,Calcioantagonista
+verapamilo,verapamil,Verapamilo,Calcioantagonista
+calan,verapamil,Verapamilo,Calcioantagonista
+verelan,verapamil,Verapamilo,Calcioantagonista
+sildenafil,sildenafil,Sildenafil,Inhibidor PDE5
+viagra,sildenafil,Sildenafil,Inhibidor PDE5
+tadalafil,tadalafil,Tadalafil,Inhibidor PDE5
+cialis,tadalafil,Tadalafil,Inhibidor PDE5
+nitroglycerin,nitroglycerin,Nitroglicerina,Nitrato
+nitroglicerina,nitroglycerin,Nitroglicerina,Nitrato
+isosorbide dinitrate,isosorbide dinitrate,Dinitrato de isosorbida,Nitrato
+isosorbida,isosorbide dinitrate,Dinitrato de isosorbida,Nitrato
+atorvastatin,atorvastatin,Atorvastatina,Estatina
+atorvastatina,atorvastatin,Atorvastatina,Estatina
+lipitor,atorvastatin,Atorvastatina,Estatina
+simvastatin,simvastatin,Simvastatina,Estatina
+simvastatina,simvastatin,Simvastatina,Estatina
+zocor,simvastatin,Simvastatina,Estatina
+rosuvastatin,rosuvastatin,Rosuvastatina,Estatina
+rosuvastatina,rosuvastatin,Rosuvastatina,Estatina
+crestor,rosuvastatin,Rosuvastatina,Estatina
+clarithromycin,clarithromycin,Claritromicina,Macrolido
+claritromicina,clarithromycin,Claritromicina,Macrolido
+biaxin,clarithromycin,Claritromicina,Macrolido
+azithromycin,azithromycin,Azitromicina,Macrolido
+azitromicina,azithromycin,Azitromicina,Macrolido
+zithromax,azithromycin,Azitromicina,Macrolido
+erythromycin,erythromycin,Eritromicina,Macrolido
+eritromicina,erythromycin,Eritromicina,Macrolido
+amoxicillin,amoxicillin,Amoxicilina,Penicilina
+amoxicilina,amoxicillin,Amoxicilina,Penicilina
+amoxil,amoxicillin,Amoxicilina,Penicilina
+ampicillin,ampicillin,Ampicilina,Penicilina
+ampicilina,ampicillin,Ampicilina,Penicilina
+cephalexin,cephalexin,Cefalexina,Cefalosporina
+cefalexina,cephalexin,Cefalexina,Cefalosporina
+keflex,cephalexin,Cefalexina,Cefalosporina
+ciprofloxacin,ciprofloxacin,Ciprofloxacino,Fluoroquinolona
+ciprofloxacino,ciprofloxacin,Ciprofloxacino,Fluoroquinolona
+cipro,ciprofloxacin,Ciprofloxacino,Fluoroquinolona
+levofloxacin,levofloxacin,Levofloxacino,Fluoroquinolona
+levofloxacino,levofloxacin,Levofloxacino,Fluoroquinolona
+levaquin,levofloxacin,Levofloxacino,Fluoroquinolona
+metronidazole,metronidazole,Metronidazol,Nitroimidazol
+metronidazol,metronidazole,Metronidazol,Nitroimidazol
+flagyl,metronidazole,Metronidazol,Nitroimidazol
+trimethoprim,trimethoprim,Trimetoprim,Antifolato
+trimetoprim,trimethoprim,Trimetoprim,Antifolato
+sulfamethoxazole,sulfamethoxazole,Sulfametoxazol,Sulfonamida
+sulfametoxazol,sulfamethoxazole,Sulfametoxazol,Sulfonamida
+fluconazole,fluconazole,Fluconazol,Azol antifungico
+fluconazol,fluconazole,Fluconazol,Azol antifungico
+diflucan,fluconazole,Fluconazol,Azol antifungico
+tramadol,tramadol,Tramadol,Opioide
+ultram,tramadol,Tramadol,Opioide
+morphine,morphine,Morfina,Opioide
+morfina,morphine,Morfina,Opioide
+oxycodone,oxycodone,Oxicodona,Opioide
+oxicodona,oxycodone,Oxicodona,Opioide
+oxycontin,oxycodone,Oxicodona,Opioide
+fluoxetine,fluoxetine,Fluoxetina,ISRS
+fluoxetina,fluoxetine,Fluoxetina,ISRS
+prozac,fluoxetine,Fluoxetina,ISRS
+sertraline,sertraline,Sertralina,ISRS
+zoloft,sertraline,Sertralina,ISRS
+escitalopram,escitalopram,Escitalopram,ISRS
+lexapro,escitalopram,Escitalopram,ISRS
+citalopram,citalopram,Citalopram,ISRS
+celexa,citalopram,Citalopram,ISRS
+venlafaxine,venlafaxine,Venlafaxina,IRSN
+venlafaxina,venlafaxine,Venlafaxina,IRSN
+effexor,venlafaxine,Venlafaxina,IRSN
+lithium,lithium,Litio,Estabilizador del animo
+litio,lithium,Litio,Estabilizador del animo
+carbamazepine,carbamazepine,Carbamazepina,Anticonvulsivo
+carbamazepina,carbamazepine,Carbamazepina,Anticonvulsivo
+tegretol,carbamazepine,Carbamazepina,Anticonvulsivo
+phenytoin,phenytoin,Fenitoina,Anticonvulsivo
+fenitoina,phenytoin,Fenitoina,Anticonvulsivo
+dilantin,phenytoin,Fenitoina,Anticonvulsivo
+metformin,metformin,Metformina,Biguanida
+metformina,metformin,Metformina,Biguanida
+glucophage,metformin,Metformina,Biguanida
+glipizide,glipizide,Glipizida,Sulfonilurea
+glipizida,glipizide,Glipizida,Sulfonilurea
+glucotrol,glipizide,Glipizida,Sulfonilurea
+glyburide,glyburide,Gliburida,Sulfonilurea
+glibenclamida,glyburide,Gliburida,Sulfonilurea
+gliburida,glyburide,Gliburida,Sulfonilurea
+insulin,insulin,Insulina,Insulina
+insulina,insulin,Insulina,Insulina
+levothyroxine,levothyroxine,Levotiroxina,Hormona tiroidea
+levotiroxina,levothyroxine,Levotiroxina,Hormona tiroidea
+synthroid,levothyroxine,Levotiroxina,Hormona tiroidea
+eutirox,levothyroxine,Levotiroxina,Hormona tiroidea
+omeprazole,omeprazole,Omeprazol,IBP
+omeprazol,omeprazole,Omeprazol,IBP
+prilosec,omeprazole,Omeprazol,IBP
+pantoprazole,pantoprazole,Pantoprazol,IBP
+pantoprazol,pantoprazole,Pantoprazol,IBP
+protonix,pantoprazole,Pantoprazol,IBP
+prednisone,prednisone,Prednisona,Corticoide
+prednisona,prednisone,Prednisona,Corticoide
+albuterol,albuterol,Salbutamol,Beta-2 agonista
+salbutamol,albuterol,Salbutamol,Beta-2 agonista
+ventolin,albuterol,Salbutamol,Beta-2 agonista
+proair,albuterol,Salbutamol,Beta-2 agonista
+montelukast,montelukast,Montelukast,Antileucotrieno
+singulair,montelukast,Montelukast,Antileucotrieno
+loratadine,loratadine,Loratadina,Antihistaminico
+loratadina,loratadine,Loratadina,Antihistaminico
+claritin,loratadine,Loratadina,Antihistaminico
+cetirizine,cetirizine,Cetirizina,Antihistaminico
+cetirizina,cetirizine,Cetirizina,Antihistaminico
+zyrtec,cetirizine,Cetirizina,Antihistaminico

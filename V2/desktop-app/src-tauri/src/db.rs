@@ -203,6 +203,205 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_payments_session ON payments (cash_session_id);
     CREATE UNIQUE INDEX idx_payments_receipt ON payments (receipt_number);",
+    // v7: IA clinica gobernada (paso 11). El procesamiento de contenido clinico
+    // con IA ocurre AQUI (residencia local): el contenido nunca sale a la nube
+    // sin seudonimizacion y consentimiento. Toda salida de IA es BORRADOR hasta
+    // que el medico la revisa y aprueba (regla: la IA no reemplaza el criterio
+    // medico). Clase: CLINICO (input/output) + OPERATIVO (trazas de costo).
+    //
+    // ai_consents: consentimiento por paciente y alcance, con expiracion/revoca.
+    // ai_runs: traza completa de cada ejecucion — proveedor, modelo, version de
+    // prompt, costo, latencia, consentimiento, estado de revision y feedback.
+    "CREATE TABLE ai_consents (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        scope TEXT NOT NULL,
+        granted_at TEXT NOT NULL,
+        revoked_at TEXT
+    );
+    CREATE INDEX idx_ai_consents_patient ON ai_consents (patient_id, scope);
+    CREATE TABLE ai_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        encounter_id TEXT REFERENCES encounters (id),
+        patient_id TEXT REFERENCES patients (id),
+        usage_type TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model_version TEXT,
+        prompt_version TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'DRAFT',
+        input_redacted TEXT,
+        output TEXT,
+        estimated_cost_cents INTEGER,
+        latency_ms INTEGER,
+        consent_id TEXT REFERENCES ai_consents (id),
+        feedback TEXT,
+        reviewed_at TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_ai_runs_encounter ON ai_runs (encounter_id);",
+    // v8: benchmark clinico de IA (paso 11). Compara proveedores con casos
+    // SIMULADOS (sin PHI) y documenta una decision. Clase: OPERATIVO — solo
+    // local; nunca lleva contenido clinico real.
+    "CREATE TABLE ai_benchmark_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        case_count INTEGER NOT NULL,
+        recommended_provider TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE ai_benchmark_results (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL REFERENCES ai_benchmark_runs (id),
+        provider TEXT NOT NULL,
+        success_count INTEGER NOT NULL,
+        avg_latency_ms INTEGER NOT NULL,
+        total_cost_cents INTEGER NOT NULL,
+        completeness_pct INTEGER NOT NULL
+    );
+    CREATE INDEX idx_ai_benchmark_results_run ON ai_benchmark_results (run_id);",
+    // v9: reporte de metadatos de uso IA al portal (paso 11). Marca local para
+    // idempotencia de envio; el portal recibe solo referencias/costos, nunca
+    // input_redacted ni output. Clase: OPERATIVO.
+    "ALTER TABLE ai_runs ADD COLUMN usage_reported_at TEXT;
+    CREATE INDEX idx_ai_runs_usage_reported ON ai_runs (usage_reported_at);",
+    // v10: solicitudes ARCO (paso 12). El medico atiende ARCO localmente porque
+    // los datos clinicos son suyos y residen en este equipo (decision del
+    // inventario funcional). Registro de la solicitud y su atencion. Clase:
+    // OPERATIVO — solo metadatos de la solicitud, sin contenido clinico. La
+    // cancelacion (borrado) opera sobre el expediente clinico de forma separada.
+    "CREATE TABLE arco_requests (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        request_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        notes TEXT,
+        requested_at TEXT NOT NULL,
+        fulfilled_at TEXT,
+        result_summary TEXT
+    );
+    CREATE INDEX idx_arco_requests_patient ON arco_requests (patient_id);",
+    // v11: linea del tiempo clinica por paciente (paso 13). Eventos relevantes
+    // que el medico cura a mano (diagnosticos, hitos, alertas, etc.), separados
+    // de las notas de consulta. CLINICO: vive solo en la base local cifrada, la
+    // nube no lo conoce. `event_date` es la fecha clinica del evento (la captura
+    // el medico); `created_at`/`updated_at` son de auditoria.
+    "CREATE TABLE timeline_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        event_date TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'NOTE',
+        title TEXT NOT NULL,
+        detail TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_timeline_events_patient ON timeline_events (patient_id, event_date);",
+    // v12: vinculo agenda -> expediente (paso 13). La agenda y el directorio
+    // son independientes: una cita no crea automaticamente un expediente. Al
+    // importar un paciente desde una cita, el medico puede vincular el id del
+    // paciente del portal a un expediente local existente (porque el portal no
+    // garantiza el mismo id para la misma persona). Este mapeo recuerda esa
+    // decision para que la proxima cita de la misma persona se resuelva sola.
+    // Clase: OPERATIVO (solo correlaciona identificadores, sin contenido clinico).
+    "CREATE TABLE patient_links (
+        portal_patient_id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        linked_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_patient_links_patient ON patient_links (patient_id);",
+    // v13: seguridad de medicacion determinista (paso 14). Base de referencia
+    // publica (farmacos, clases e interacciones) — clase REFERENCIA, no PHI: es
+    // conocimiento clinico publico empaquetado, no datos del paciente. Las
+    // verificaciones corren localmente sobre la prescripcion (CLINICO) y nunca
+    // salen del equipo. En esta rebanada la base es un conjunto SEMBRADO
+    // representativo de interacciones clinicas conocidas; la importacion real de
+    // RxNorm/RxClass/DDInter/openFDA es una rebanada posterior.
+    "CREATE TABLE medication_reference (
+        name TEXT PRIMARY KEY NOT NULL,      -- nombre normalizado (minusculas) que se busca
+        ingredient TEXT NOT NULL,            -- ingrediente canonico
+        display_name TEXT NOT NULL,          -- nombre para mostrar
+        drug_class TEXT                      -- clase terapeutica (duplicidad/alergia cruzada)
+    );
+    CREATE INDEX idx_medication_reference_ingredient ON medication_reference (ingredient);
+    CREATE TABLE drug_interactions (
+        ingredient_a TEXT NOT NULL,          -- orden canonico: a <= b
+        ingredient_b TEXT NOT NULL,
+        severity TEXT NOT NULL,              -- CONTRAINDICATED | MAJOR | MODERATE | MINOR
+        description TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_version TEXT NOT NULL,
+        PRIMARY KEY (ingredient_a, ingredient_b)
+    );
+    INSERT INTO app_meta (key, value) VALUES ('medication_reference_version', 'seed-v1');
+    INSERT INTO medication_reference (name, ingredient, display_name, drug_class) VALUES
+        ('ibuprofeno','ibuprofeno','Ibuprofeno','AINE'),
+        ('naproxeno','naproxeno','Naproxeno','AINE'),
+        ('ketorolaco','ketorolaco','Ketorolaco','AINE'),
+        ('aspirina','acido acetilsalicilico','Aspirina','AINE'),
+        ('acido acetilsalicilico','acido acetilsalicilico','Acido acetilsalicilico','AINE'),
+        ('warfarina','warfarina','Warfarina','Anticoagulante'),
+        ('lisinopril','lisinopril','Lisinopril','IECA'),
+        ('enalapril','enalapril','Enalapril','IECA'),
+        ('losartan','losartan','Losartan','ARA II'),
+        ('valsartan','valsartan','Valsartan','ARA II'),
+        ('espironolactona','espironolactona','Espironolactona','Diuretico ahorrador de potasio'),
+        ('sildenafil','sildenafil','Sildenafil','Inhibidor PDE5'),
+        ('nitroglicerina','nitroglicerina','Nitroglicerina','Nitrato'),
+        ('isosorbida','dinitrato de isosorbida','Dinitrato de isosorbida','Nitrato'),
+        ('claritromicina','claritromicina','Claritromicina','Macrolido'),
+        ('simvastatina','simvastatina','Simvastatina','Estatina'),
+        ('atorvastatina','atorvastatina','Atorvastatina','Estatina'),
+        ('tramadol','tramadol','Tramadol','Opioide'),
+        ('fluoxetina','fluoxetina','Fluoxetina','ISRS'),
+        ('sertralina','sertralina','Sertralina','ISRS'),
+        ('litio','litio','Litio','Estabilizador del animo'),
+        ('amoxicilina','amoxicilina','Amoxicilina','Penicilina'),
+        ('ampicilina','ampicilina','Ampicilina','Penicilina'),
+        ('omeprazol','omeprazol','Omeprazol','IBP'),
+        ('pantoprazol','pantoprazol','Pantoprazol','IBP'),
+        ('metformina','metformina','Metformina','Biguanida'),
+        ('paracetamol','paracetamol','Paracetamol','Analgesico');
+    INSERT INTO drug_interactions (ingredient_a, ingredient_b, severity, description, source, source_version) VALUES
+        ('acido acetilsalicilico','warfarina','MAJOR','Mayor riesgo de sangrado por efecto antiagregante y anticoagulante combinado.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('ibuprofeno','warfarina','MAJOR','Los AINE aumentan el riesgo de sangrado con warfarina.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('naproxeno','warfarina','MAJOR','Los AINE aumentan el riesgo de sangrado con warfarina.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('ketorolaco','warfarina','MAJOR','Los AINE aumentan el riesgo de sangrado con warfarina.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('ibuprofeno','lisinopril','MODERATE','Los AINE reducen el efecto antihipertensivo y pueden afectar la funcion renal.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('enalapril','ibuprofeno','MODERATE','Los AINE reducen el efecto antihipertensivo y pueden afectar la funcion renal.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('espironolactona','lisinopril','MAJOR','Riesgo de hiperpotasemia por combinar IECA con ahorrador de potasio.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('enalapril','espironolactona','MAJOR','Riesgo de hiperpotasemia por combinar IECA con ahorrador de potasio.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('nitroglicerina','sildenafil','CONTRAINDICATED','Hipotension grave por combinar nitrato con inhibidor de PDE5.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('dinitrato de isosorbida','sildenafil','CONTRAINDICATED','Hipotension grave por combinar nitrato con inhibidor de PDE5.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('claritromicina','simvastatina','MAJOR','Riesgo de miopatia o rabdomiolisis por inhibir el metabolismo de la estatina.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('fluoxetina','tramadol','MAJOR','Riesgo de sindrome serotoninergico y descenso del umbral convulsivo.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('sertralina','tramadol','MAJOR','Riesgo de sindrome serotoninergico y descenso del umbral convulsivo.','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('ibuprofeno','litio','MAJOR','Los AINE elevan los niveles de litio (riesgo de toxicidad).','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1'),
+        ('litio','naproxeno','MAJOR','Los AINE elevan los niveles de litio (riesgo de toxicidad).','Conjunto sembrado MiDoc (interaccion clinica conocida)','seed-v1');",
+    // v14: texto de etiqueta de openFDA como respaldo (paso 14, rebanada 4).
+    // Cuando DDInter no tiene el par estructurado, se ofrece el texto de
+    // interacciones de la etiqueta FDA del farmaco como evidencia informativa.
+    // Clase REFERENCIA publica (no PHI); una fila por ingrediente.
+    "CREATE TABLE drug_label_text (
+        ingredient TEXT PRIMARY KEY NOT NULL,
+        interactions_text TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_version TEXT NOT NULL
+    );",
+    // v15: responsable/tutor del paciente (paso 18, rebanada 2). Cuando se agenda
+    // para otra persona/un menor, el responsable viaja en la cita como CONTACTO
+    // (nunca clinico) y se conserva en el expediente como entidad propia, sin
+    // mezclarse con la identidad del paciente. Tambien llega la fecha de
+    // nacimiento del paciente capturada al agendar. Clase: CONTACTO/CLINICO.
+    "ALTER TABLE appointments ADD COLUMN patient_birth_date TEXT;
+    ALTER TABLE appointments ADD COLUMN guardian_name TEXT;
+    ALTER TABLE appointments ADD COLUMN guardian_relationship TEXT;
+    ALTER TABLE appointments ADD COLUMN guardian_phone TEXT;
+    ALTER TABLE appointments ADD COLUMN guardian_email TEXT;
+    ALTER TABLE patients ADD COLUMN guardian_name TEXT;
+    ALTER TABLE patients ADD COLUMN guardian_relationship TEXT;
+    ALTER TABLE patients ADD COLUMN guardian_phone TEXT;
+    ALTER TABLE patients ADD COLUMN guardian_email TEXT;",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
@@ -355,9 +554,11 @@ mod tests {
 
         let restored = open_encrypted(&backup, "clave-correcta").unwrap();
         let value: String = restored
-            .query_row("SELECT value FROM app_meta WHERE key = 'backup_probe'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT value FROM app_meta WHERE key = 'backup_probe'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(value, "valor-clinico-local");
 

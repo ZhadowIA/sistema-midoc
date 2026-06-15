@@ -16,7 +16,9 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().email(),
   NOTIFICATION_CRON_SECRET: z.string().min(1),
   PAYMENTS_PROVIDER: z.enum(["MOCK", "STRIPE", "CONEKTA", "OPENPAY"]),
-  PAYMENTS_WEBHOOK_SECRET: z.string().min(1)
+  PAYMENTS_WEBHOOK_SECRET: z.string().min(1),
+  // Llave para cifrar en reposo el secreto TOTP del 2FA. Se deriva a 32 bytes.
+  TWO_FACTOR_ENCRYPTION_KEY: z.string().min(16)
 });
 
 export const env = envSchema.parse(process.env);

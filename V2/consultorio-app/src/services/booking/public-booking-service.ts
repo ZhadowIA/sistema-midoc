@@ -75,6 +75,31 @@ async function runSerializable<T>(fn: (tx: Prisma.TransactionClient) => Promise<
   }
 }
 
+/** Mayoria de edad legal en Mexico: por debajo, los derechos los ejerce un tutor. */
+const MINOR_AGE_THRESHOLD = 18;
+
+/**
+ * `true` si la fecha de nacimiento ("YYYY-MM-DD") corresponde a un menor de edad.
+ * Fechas vacias o invalidas no se consideran menores (no se puede afirmar).
+ */
+function isMinor(birthDate?: string): boolean {
+  if (!birthDate) {
+    return false;
+  }
+  const dob = new Date(`${birthDate.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(dob.getTime())) {
+    return false;
+  }
+  const now = new Date();
+  let age = now.getUTCFullYear() - dob.getUTCFullYear();
+  const monthDay = now.getUTCMonth() * 100 + now.getUTCDate();
+  const dobMonthDay = dob.getUTCMonth() * 100 + dob.getUTCDate();
+  if (monthDay < dobMonthDay) {
+    age -= 1;
+  }
+  return age >= 0 && age < MINOR_AGE_THRESHOLD;
+}
+
 function addMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() + minutes * 60_000);
 }
@@ -411,18 +436,54 @@ async function findOrCreatePatient(input: {
     email?: string;
     birthDate?: string;
   };
+  contact?: {
+    phone?: string;
+    email?: string;
+  };
 }) {
+  const firstName = input.patient.firstName.trim();
+  const lastName = input.patient.lastName.trim();
   const email = input.patient.email?.trim().toLowerCase();
   const phone = input.patient.phone?.trim();
+  const guardianEmail = input.contact?.email?.trim().toLowerCase();
+  const guardianPhone = input.contact?.phone?.trim();
 
-  const existingPatient = await prisma.patient.findFirst({
+  // Solo se reutiliza un expediente cuando coincide el NOMBRE. El telefono y el
+  // correo por si solos no identifican al paciente: pueden ser de un tutor que
+  // agenda para un hijo o un adulto mayor (mismo criterio anti-duplicados de la
+  // app del medico: el nombre pesa mas que el contacto). Asi, un nombre distinto
+  // con el contacto del tutor ya no devuelve al paciente del tutor.
+  //
+  // El contacto que confirma la identidad puede ser el propio del paciente o,
+  // para un menor sin contacto propio, el de su responsable (PatientContact).
+  const candidates = await prisma.patient.findMany({
     where: {
       ownerDoctorId: input.doctorId,
-      OR: [
-        ...(email ? [{ email }] : []),
-        ...(phone ? [{ phone, firstName: input.patient.firstName.trim(), lastName: input.patient.lastName.trim() }] : [])
-      ]
+      firstName: { equals: firstName, mode: "insensitive" },
+      lastName: { equals: lastName, mode: "insensitive" }
+    },
+    include: {
+      contacts: { where: { isPrimary: true }, take: 1 }
     }
+  });
+
+  const existingPatient = candidates.find((candidate) => {
+    if (email && candidate.email === email) {
+      return true;
+    }
+    if (phone && candidate.phone === phone) {
+      return true;
+    }
+    const primaryContact = candidate.contacts[0];
+    if (primaryContact) {
+      if (guardianEmail && primaryContact.email === guardianEmail) {
+        return true;
+      }
+      if (guardianPhone && primaryContact.phone === guardianPhone) {
+        return true;
+      }
+    }
+    return false;
   });
 
   if (existingPatient) {
@@ -437,13 +498,29 @@ async function findOrCreatePatient(input: {
     });
   }
 
+  // Paciente nuevo. El correo es unico por medico (`@@unique([ownerDoctorId,
+  // email])`): si ya pertenece a OTRO paciente (un tutor que agenda para varias
+  // personas), no se asigna a este paciente — el correo es del tutor (contacto),
+  // no del paciente. El telefono no es unico y puede compartirse. Las
+  // notificaciones de esta cita usan de todos modos el contacto capturado.
+  let patientEmail = email ?? null;
+  if (email) {
+    const emailOwner = await prisma.patient.findFirst({
+      where: { ownerDoctorId: input.doctorId, email },
+      select: { id: true }
+    });
+    if (emailOwner) {
+      patientEmail = null;
+    }
+  }
+
   return prisma.patient.create({
     data: {
       ownerDoctorId: input.doctorId,
-      firstName: input.patient.firstName.trim(),
-      lastName: input.patient.lastName.trim(),
+      firstName,
+      lastName,
       phone,
-      email,
+      email: patientEmail,
       birthDate: input.patient.birthDate ? new Date(input.patient.birthDate) : null,
       status: PatientStatus.ACTIVE
     }
@@ -477,6 +554,16 @@ export async function bookPublicAppointment(input: {
     throw new PublicBookingServiceError("Terms and privacy acceptance are required.", 400);
   }
 
+  // Un menor de edad (por su fecha de nacimiento) exige un responsable: sus
+  // derechos los ejerce su tutor. La compuerta del paso 18 lo hace obligatorio
+  // en el servidor, no solo en el formulario.
+  if (isMinor(input.patient.birthDate) && !input.contact?.fullName?.trim()) {
+    throw new PublicBookingServiceError(
+      "Para agendar a un menor de edad se requieren los datos del responsable (tutor).",
+      400
+    );
+  }
+
   await expireStaleHolds();
 
   const hold = await prisma.appointmentHold.findUnique({
@@ -494,7 +581,8 @@ export async function bookPublicAppointment(input: {
 
   const patient = await findOrCreatePatient({
     doctorId: hold.doctorId,
-    patient: input.patient
+    patient: input.patient,
+    contact: input.contact
   });
 
   const doctorProfileTz = await prisma.doctorProfile.findUnique({
@@ -572,16 +660,29 @@ export async function bookPublicAppointment(input: {
   });
 
   if (input.contact?.fullName) {
-    await prisma.patientContact.create({
-      data: {
-        patientId: patient.id,
-        fullName: input.contact.fullName.trim(),
-        relationship: input.contact.relationship?.trim(),
-        phone: input.contact.phone?.trim(),
-        email: input.contact.email?.trim().toLowerCase(),
-        isPrimary: true
-      }
+    // Responsable (tutor) idempotente: una sola entrada primaria por paciente.
+    // Reagendar o volver a agendar para el mismo paciente actualiza al
+    // responsable en vez de duplicarlo.
+    const contactData = {
+      fullName: input.contact.fullName.trim(),
+      relationship: input.contact.relationship?.trim(),
+      phone: input.contact.phone?.trim(),
+      email: input.contact.email?.trim().toLowerCase()
+    };
+    const existingContact = await prisma.patientContact.findFirst({
+      where: { patientId: patient.id, isPrimary: true },
+      select: { id: true }
     });
+    if (existingContact) {
+      await prisma.patientContact.update({
+        where: { id: existingContact.id },
+        data: contactData
+      });
+    } else {
+      await prisma.patientContact.create({
+        data: { patientId: patient.id, isPrimary: true, ...contactData }
+      });
+    }
   }
 
   await prisma.legalAcceptance.createMany({
@@ -614,9 +715,19 @@ export async function bookPublicAppointment(input: {
   const reminderShouldQueue = reminderAt > new Date();
   const appointmentLabel = appointment.scheduledStart.toISOString();
 
+  // Quien agenda (puede ser un tutor) recibe las notificaciones: se prefiere el
+  // contacto propio del paciente, luego el del responsable, luego lo guardado.
+  const notifyPhone =
+    input.patient.phone?.trim() || input.contact?.phone?.trim() || patient.phone || null;
+  const notifyEmail =
+    input.patient.email?.trim().toLowerCase() ||
+    input.contact?.email?.trim().toLowerCase() ||
+    patient.email ||
+    null;
+
   for (const contact of [
-    patient.phone ? { channel: "SMS" as const, destination: patient.phone } : null,
-    patient.email ? { channel: "EMAIL" as const, destination: patient.email } : null
+    notifyPhone ? { channel: "SMS" as const, destination: notifyPhone } : null,
+    notifyEmail ? { channel: "EMAIL" as const, destination: notifyEmail } : null
   ]) {
     if (!contact) {
       continue;
@@ -691,6 +802,17 @@ export async function bookPublicAppointment(input: {
     }
   });
 
+  // Responsable (tutor) que viaja a la app del medico como entidad propia, sin
+  // mezclarse con la identidad del paciente. Solo CONTACTO, nunca clinico.
+  const responsible = input.contact?.fullName?.trim()
+    ? {
+        name: input.contact.fullName.trim(),
+        relationship: input.contact.relationship?.trim() || null,
+        phone: input.contact.phone?.trim() || null,
+        email: input.contact.email?.trim().toLowerCase() || null
+      }
+    : null;
+
   // Evento para la app del medico: datos de cita y contacto (no clinicos).
   await emitSyncEvent(hold.doctorId, "APPOINTMENT_BOOKED", {
     appointmentId: appointment.id,
@@ -703,9 +825,16 @@ export async function bookPublicAppointment(input: {
       id: patient.id,
       firstName: patient.firstName,
       lastName: patient.lastName,
-      phone: patient.phone ?? null,
-      email: patient.email ?? null
-    }
+      // Fecha de nacimiento del paciente (la captura quien agenda para otra
+      // persona/un menor); ayuda a distinguir identidad y a la app del medico.
+      birthDate: patient.birthDate ? patient.birthDate.toISOString().slice(0, 10) : null,
+      // Contacto de la cita (el del tutor si agendo para otra persona), para que
+      // la app del medico tenga como ubicar/avisar, sin alterar la identidad.
+      phone: notifyPhone,
+      email: notifyEmail
+    },
+    // El responsable es entidad aparte: nombre, parentesco y su contacto.
+    responsible
   });
 
   return {

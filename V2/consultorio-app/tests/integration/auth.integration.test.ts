@@ -94,6 +94,10 @@ describe("auth service", () => {
         password: "Str0ngPass!123"
       });
 
+      if (login.requiresTwoFactor) {
+        throw new Error("no se esperaba 2FA");
+      }
+
       expect(login.sessionToken.length).toBeGreaterThan(20);
 
       const sessionUser = await validateAuthSession(login.sessionToken);
@@ -152,6 +156,10 @@ describe("auth service", () => {
         email,
         password: "N3wPass!4567"
       });
+
+      if (secondLogin.requiresTwoFactor) {
+        throw new Error("no se esperaba 2FA");
+      }
 
       expect(secondLogin.user.email).toBe(email);
 

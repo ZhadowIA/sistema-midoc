@@ -1,0 +1,19 @@
+# azd project — portal nube de MiDoc (Next.js standalone en Azure Container Apps).
+# Desplegar con `azd up` desde V2/consultorio-app (lo hace la skill azure-deploy,
+# no se ejecuta en la fase de preparación).
+name: midoc-portal
+metadata:
+  template: midoc-portal@1.0.0
+
+infra:
+  provider: bicep
+  path: infra
+
+services:
+  portal:
+    project: .
+    language: ts
+    host: containerapp
+    docker:
+      path: ./Dockerfile
+      context: .

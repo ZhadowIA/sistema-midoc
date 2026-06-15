@@ -13,8 +13,8 @@ MiDoc usa Next.js, TypeScript, Prisma, PostgreSQL, archivos clinicos, SMS, corre
 | Base de datos | Azure Database for PostgreSQL Flexible Server. |
 | Archivos clinicos | Azure Blob Storage con URLs temporales/SAS. |
 | Secretos | Azure Key Vault o variables seguras del proveedor. |
-| Correo | Resend para salida rapida; Amazon SES si se busca costo bajo y mayor control operativo. |
-| SMS | Proveedor SMS transaccional con dominio/enlaces cortos propios. |
+| Correo | **Resend (decidido 2026-06-13).** Configurar SPF, DKIM y DMARC en dominio propio. |
+| SMS | **Twilio (decidido 2026-06-13).** Mensajeria transaccional con enlaces cortos propios. |
 | Observabilidad | Logs estructurados, alertas 5xx, latencia, pagos, SMS/email, IA y base de datos. |
 
 ## Opciones de despliegue
@@ -55,5 +55,6 @@ MiDoc usa Next.js, TypeScript, Prisma, PostgreSQL, archivos clinicos, SMS, corre
 - Docker documenta contenedores para Next.js con standalone output: https://docs.docker.com/guides/nextjs/containerize/
 - Azure App Service soporta apps Node.js y despliegues administrados: https://learn.microsoft.com/en-us/azure/app-service/configure-language-nodejs
 - Azure Database for PostgreSQL Flexible Server es una base PostgreSQL administrada: https://learn.microsoft.com/en-us/azure/postgresql/flexible-server/overview
-- Resend ofrece SDK/API para correo transaccional en Node.js: https://www.resend.com/
-- Amazon SES permite email transaccional mediante API/SMTP: https://docs.aws.amazon.com/ses/latest/dg/send-email.html
+- Resend ofrece SDK/API para correo transaccional en Node.js (proveedor de correo decidido): https://www.resend.com/
+- Twilio ofrece SMS transaccional con enlaces cortos y plantillas (proveedor de SMS decidido): https://www.twilio.com/docs/messaging
+- Amazon SES permite email transaccional mediante API/SMTP (alternativa de respaldo): https://docs.aws.amazon.com/ses/latest/dg/send-email.html

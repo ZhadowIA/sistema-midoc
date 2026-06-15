@@ -57,7 +57,9 @@ const testDefaults: Record<string, string> = {
   EMAIL_FROM: "no-responder@midoc.example.com",
   SMS_PROVIDER: "mock",
   SMS_BASE_URL: "https://sms.example.com",
-  SMS_API_KEY: "mock-sms-key"
+  SMS_API_KEY: "mock-sms-key",
+  // Placeholder no secreto para 2FA (paso 12): los tests cifran/descifran contra esta llave.
+  TWO_FACTOR_ENCRYPTION_KEY: "test-two-factor-encryption-key-please-change"
 };
 
 let loaded = false;
