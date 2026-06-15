@@ -829,6 +829,14 @@ Rebanadas:
 
 Estado: 🚧 EN PROGRESO. Construido sobre los pasos 2, 3, 6, 7 y 11.
 
+Entregado (rebanada 1 — perfil publico: foto y ubicacion, 2026-06-15):
+
+- **Foto sin recorte por el banner (`globals.css`).** La portada `.dp-cover` es `position: relative` y, por orden de pintado, se dibujaba encima del avatar que sube con `margin-top: -52px`, recortandolo. Se da `position: relative; z-index: 1` a `.dp-hero-body` para que el avatar (y la identidad) queden sobre la portada. Verificado: el avatar solapa la portada 52px y `elementFromPoint` en esa zona devuelve el propio `.dp-avatar`.
+- **Mapa con API key gobernada y fallback (`perfil/[slug]/page.tsx`, `lib/env.ts`, `.env.example`).** Se elimina la API key de Google Maps hardcodeada en el codigo; ahora se lee de `GOOGLE_MAPS_EMBED_API_KEY` (opcional en `env.ts`). Si la llave falta o es invalida, en vez del error crudo del iframe se muestra un fallback legible: la direccion y un enlace "Ver en Google Maps" (`maps/search`) que abre la ubicacion. Nuevo estilo `.dp-map-fallback`.
+- **Residencia.** Perfil/foto/mapa son OPERATIVO/publico; sin PHI.
+
+Verificacion (rebanada 1): 80 pruebas del portal en verde (sin nuevas: correccion de UI/configuracion sin logica de dominio nueva), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (avatar pintado sobre el banner; sin la llave configurada el mapa cae al fallback con direccion y enlace a Google Maps; sin errores de consola).
+
 Entregado (rebanada 2 — calendario fiel a la disponibilidad, 2026-06-14):
 
 - **Dias con cupo real (`public-booking-service.ts`).** Nueva `listAvailableDays(slug, serviceId, dateFrom, days)` que reusa el computo real de slots (reglas semanales, excepciones `DATE_OVERRIDE`, bloqueos, citas, holds y limites de anticipacion) y devuelve las **fechas locales del medico** (YYYY-MM-DD) con al menos un horario. `listPublicAvailability` ahora expone `timeZone` y el tope de ventana sube a 31 dias para cubrir meses completos.

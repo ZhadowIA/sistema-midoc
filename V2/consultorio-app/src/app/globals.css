@@ -1074,6 +1074,10 @@ a.service-card:hover {
 }
 
 .dp-hero-body {
+  position: relative;
+  /* Sobre la portada: .dp-cover es position:relative y se pintaria encima,
+     recortando el avatar que sube con margin-top negativo. */
+  z-index: 1;
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 28px;
@@ -1445,6 +1449,20 @@ a.service-card:hover {
   width: 100%;
   height: 320px;
   border: 0;
+}
+
+.dp-map-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 28px 22px;
+}
+
+.dp-map-fallback-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.94rem;
 }
 
 /* ---------- Galeria ---------- */
