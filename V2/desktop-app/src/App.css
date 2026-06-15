@@ -133,8 +133,8 @@ p {
 
 .panel {
   background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
+  border: none;
+  border-radius: 0;
   padding: 20px;
   display: grid;
   gap: 12px;
@@ -333,8 +333,8 @@ textarea:disabled {
 .auth-card {
   width: min(400px, 100%);
   background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
+  border: none;
+  border-radius: 0;
   padding: 32px;
   display: grid;
   gap: 16px;
