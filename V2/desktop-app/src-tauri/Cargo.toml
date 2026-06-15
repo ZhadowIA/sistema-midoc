@@ -33,6 +33,15 @@ base64 = "0.22.1"
 # Lectura multiplataforma de RAM/CPU para recomendar el modelo Whisper local.
 # Mantenido, auditable y MIT; evita FFI por plataforma para leer memoria total.
 sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] }
+# whisper.cpp para transcripcion local real. Opcional tras el feature
+# `whisper-local`: compilarlo exige cadena nativa (CMake + LLVM/libclang), por lo
+# que el build por defecto y las pruebas no la necesitan; el provider real se
+# compila y valida en staging (igual que los proveedores del paso 16).
+whisper-rs = { version = "0.14", optional = true }
+
+[features]
+# Activa el proveedor de transcripcion Whisper local (requiere cadena nativa).
+whisper-local = ["dep:whisper-rs"]
 
 [dev-dependencies]
 chrono = "0.4.45"

@@ -195,10 +195,15 @@ impl AiProvider for FakeProvider {
     }
 }
 
+/// Transcriptor fake determinista. Doble de pruebas del contrato: el flujo
+/// gobernado real usa el proveedor Whisper local (`whisper-local`); en
+/// produccion ya no se cablea el fake, por eso vive solo bajo `cfg(test)`.
+#[cfg(test)]
 pub struct FakeTranscriptionProvider {
     name: String,
 }
 
+#[cfg(test)]
 impl FakeTranscriptionProvider {
     pub fn new(name: &str) -> Self {
         Self {
@@ -207,12 +212,17 @@ impl FakeTranscriptionProvider {
     }
 }
 
+#[cfg(test)]
 impl TranscriptionProvider for FakeTranscriptionProvider {
     fn name(&self) -> &str {
         &self.name
     }
 
-    fn transcribe(&self, request: &TranscriptionRequest) -> Result<AiResponse, AiError> {
+    fn transcribe(
+        &self,
+        request: &TranscriptionRequest,
+        _audio: &AudioInput,
+    ) -> Result<AiResponse, AiError> {
         let start = std::time::Instant::now();
         let duration = request
             .duration_seconds
@@ -861,7 +871,7 @@ pub fn transcribe_audio(
         duration_seconds: audio.duration_seconds,
     };
     let input_metadata = audio_input_metadata(&audio)?;
-    let response = provider.transcribe(&request)?;
+    let response = provider.transcribe(&request, &audio)?;
 
     let run_id = uuid::Uuid::new_v4().to_string();
     conn.execute(
@@ -1645,6 +1655,11 @@ pub struct AudioInput {
     pub duration_seconds: Option<i64>,
 }
 
+/// Metadata del audio para el proveedor de transcripcion. El proveedor Whisper
+/// local no la necesita (transcribe de las muestras decodificadas); la consume el
+/// fake en pruebas y, mas adelante, el proveedor en nube (rebanada 3). Acotado a
+/// `allow(dead_code)` fuera de pruebas hasta entonces.
+#[cfg_attr(not(test), allow(dead_code))]
 pub struct TranscriptionRequest {
     pub media_type: String,
     pub byte_len: usize,
@@ -1653,5 +1668,12 @@ pub struct TranscriptionRequest {
 
 pub trait TranscriptionProvider: Send + Sync {
     fn name(&self) -> &str;
-    fn transcribe(&self, request: &TranscriptionRequest) -> Result<AiResponse, AiError>;
+    /// Transcribe el audio. Recibe la metadata (`request`) y el audio en bruto
+    /// (`audio`). El proveedor real (Whisper local) decodifica el audio en
+    /// memoria; el proveedor fake lo ignora. El audio nunca se persiste.
+    fn transcribe(
+        &self,
+        request: &TranscriptionRequest,
+        audio: &AudioInput,
+    ) -> Result<AiResponse, AiError>;
 }

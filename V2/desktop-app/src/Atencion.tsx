@@ -833,7 +833,7 @@ export function Atencion({
                 <span>Audio de consulta</span>
                 <input
                   type="file"
-                  accept="audio/*"
+                  accept=".wav,audio/wav,audio/x-wav"
                   disabled={busy || !aiVoiceConsent}
                   onChange={(e) => {
                     transcribeAudioFile(e.currentTarget.files?.[0] ?? null);
@@ -841,7 +841,9 @@ export function Atencion({
                   }}
                 />
               </label>
-              <span className="meta">Retencion: descarte inmediato del audio.</span>
+              <span className="meta">
+                WAV mono 16 kHz · transcripcion local · descarte inmediato del audio.
+              </span>
             </div>
 
             {aiTranscription ? (

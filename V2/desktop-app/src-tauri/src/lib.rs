@@ -1,5 +1,6 @@
 mod ai;
 mod arco;
+mod audio;
 mod clinical;
 mod crypto;
 mod db;
@@ -8,6 +9,8 @@ mod operations;
 mod sync;
 mod transcription;
 mod transcription_model;
+#[cfg(feature = "whisper-local")]
+mod whisper_provider;
 
 #[cfg(test)]
 mod consultation_e2e;
@@ -1206,8 +1209,45 @@ fn ai_assist_text(
     })
 }
 
+/// Elige el proveedor de transcripcion. Con el feature `whisper-local`, usa el
+/// modelo Whisper descargado (rebanada 1) para transcribir EN EL DISPOSITIVO; si
+/// el modelo aun no se descargo, guia al medico a descargarlo. Sin el feature
+/// (build por defecto/pruebas), explica que esta build no incluye el binding
+/// nativo (se compila en la build de distribucion / staging).
+fn resolve_transcription_provider(
+    app: &tauri::AppHandle,
+) -> Result<Box<dyn ai::TranscriptionProvider>, String> {
+    #[cfg(feature = "whisper-local")]
+    {
+        let rec = transcription::recommendation();
+        let asset = transcription_model::asset_for(&rec.model_id)
+            .ok_or("el modelo recomendado no se reconoce")?;
+        let base_dir = app_data_dir(app)?;
+        let path = transcription_model::model_path(&base_dir, &asset.file_name);
+        if !path.exists() {
+            return Err(
+                "Aun no descargas el modelo de transcripcion. Ve a la pestana Transcripcion y descargalo."
+                    .into(),
+            );
+        }
+        Ok(Box::new(whisper_provider::WhisperLocalProvider::new(
+            &rec.model_id,
+            path,
+        )))
+    }
+    #[cfg(not(feature = "whisper-local"))]
+    {
+        let _ = app;
+        Err(
+            "Esta version no incluye la transcripcion local (Whisper). Se habilita en la build de distribucion con el feature whisper-local."
+                .into(),
+        )
+    }
+}
+
 #[tauri::command]
 fn ai_transcribe_audio(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
     audio: AudioTranscriptionPayload,
@@ -1215,7 +1255,7 @@ fn ai_transcribe_audio(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(audio.audio_base64.as_bytes())
         .map_err(|_| "audio invalido".to_string())?;
-    let provider = ai::FakeTranscriptionProvider::new("fake-transcriptor");
+    let provider = resolve_transcription_provider(&app)?;
     with_ai(&state, |conn| {
         ai::transcribe_audio(
             conn,
@@ -1226,7 +1266,7 @@ fn ai_transcribe_audio(
                 bytes,
                 duration_seconds: audio.duration_seconds,
             },
-            &provider,
+            provider.as_ref(),
         )
     })
 }

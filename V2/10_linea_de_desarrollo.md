@@ -703,7 +703,7 @@ Checklist de salida:
 - Respaldo en nube (AssemblyAI/Deepgram) con consentimiento y seudonimizacion.
 - Pruebas: descarga interrumpida y checksum invalido, provider real contra fakes del contrato, audio no persistido.
 
-Estado: 🚧 EN PROGRESO — rebanada 1 (gestor de descarga del modelo) entregada (2026-06-15). Construido sobre el paso 11 (rebanadas 6 y 7). Decisiones de arranque (2026-06-15): la grabacion de audio sera en la app de escritorio (controlamos el formato, capturando WAV/PCM amigable a Whisper, lo que evita un decodificador pesado); el binding sera `whisper-rs` (MIT). Rebanadas 2 (`WhisperLocalProvider` + audio real) y 3 (respaldo en nube gobernado) pendientes.
+Estado: 🚧 EN PROGRESO — rebanadas 1 (gestor de descarga del modelo) y 2 (`WhisperLocalProvider` + decode de audio + cableado) entregadas (2026-06-15). Construido sobre el paso 11 (rebanadas 6 y 7). Decisiones de arranque (2026-06-15): la grabacion de audio sera en la app de escritorio (controlamos el formato, capturando WAV/PCM amigable a Whisper, lo que evita un decodificador pesado); el binding sera `whisper-rs` (MIT). Rebanada 3 (respaldo en nube gobernado) pendiente.
 
 Entregado (rebanada 1 — gestor de descarga del modelo, 2026-06-15):
 
@@ -713,6 +713,17 @@ Entregado (rebanada 1 — gestor de descarga del modelo, 2026-06-15):
 - **UI (`TranscriptionSetup.tsx`).** Bajo la recomendacion del modelo, boton "Descargar modelo (~X GB)", barra de progreso por sondeo mientras descarga y estado "Modelo descargado y listo" al terminar (con marca de verificado si hay checksum fijado). El mock de navegador simula el avance de la descarga.
 
 Verificacion (rebanada 1): 124 pruebas de Rust en verde (+8: assets reconocen modelos y rechazan ids invalidos, URL por defecto apunta a whisper.cpp, rutas bajo `models/`, holgura de disco, reanudacion/reinicio del `.part`, `matches_sha256` exige hash fijado, `verify_file` en streaming, estados presente/parcial/no-verificado), `cargo clippy --lib` sin advertencias nuevas (persisten las 2 preexistentes de `clinical.rs` y el enum de comandos), `tsc + vite build` ok, y verificacion en navegador con el mock (recomendacion del modelo → descargar → progreso 1.22/1.46 GB que avanza por sondeo → "descargado y listo", sin errores de consola).
+
+Entregado (rebanada 2 — `WhisperLocalProvider` + decode de audio + cableado, 2026-06-15):
+
+- **Decode de audio (`audio.rs`).** `decode_wav_pcm16_to_whisper` convierte un WAV PCM de 16 bits a muestras f32 mono a 16 kHz **en memoria** (sin escribir el audio a disco; el audio es transitorio): recorre los chunks `fmt `/`data`, valida formato PCM16, mezcla a mono promediando canales y exige 16 kHz (el resampleo queda fuera de alcance: la app captura ya a 16 kHz). Logica pura y testeable.
+- **Contrato del proveedor extendido (`ai.rs`).** `TranscriptionProvider::transcribe` ahora recibe tambien el audio en bruto (`&AudioInput`); el proveedor real decodifica las muestras y el fake lo ignora. El flujo gobernado `transcribe_audio` no cambia su contrato de residencia (sigue guardando solo metadata, descarta el audio, salida BORRADOR con revision humana).
+- **`WhisperLocalProvider` (`whisper_provider.rs`, feature `whisper-local`).** Implementa el trait corriendo whisper.cpp via `whisper-rs` con el modelo GGML descargado (rebanada 1): decodifica el WAV, carga el modelo, transcribe en español sin red ni costo por uso, y devuelve el texto unido de los segmentos como borrador. El audio nunca se persiste.
+- **Cableado (`lib.rs`).** `ai_transcribe_audio` ya no usa el fake: `resolve_transcription_provider` elige el modelo recomendado descargado y construye el `WhisperLocalProvider`; si el modelo no se ha descargado, guia al medico a la pestana Transcripcion. El input de audio en la consulta acepta WAV (mono 16 kHz) con la nota correspondiente.
+- **Cadena nativa tras un feature (decision de toolchain).** `whisper-rs` es dependencia **opcional** tras el feature `whisper-local`: compilarlo exige CMake + LLVM/libclang. Verificado en este equipo que CMake esta presente (3.31.6) pero **falta libclang**, por lo que `whisper-rs-sys` no compila aqui; el build por defecto y las pruebas no necesitan esa cadena. El provider real se compila y valida en la build de distribucion / staging con la cadena instalada (mismo patron de deferral que el paso 16). El fake de transcripcion queda solo bajo `cfg(test)`.
+- **Residencia.** Transcripcion 100% local (sin audio ni texto a la nube); el audio se decodifica en memoria y se descarta; el borrador queda en la base cifrada con revision humana.
+
+Verificacion (rebanada 2): 127 pruebas de Rust en verde (+3: decode de WAV mono 16k, downmix de estereo a mono, rechazo de no-WAV / 44.1 kHz / 8 bits), `cargo clippy --lib` sin advertencias nuevas (persisten las 2 preexistentes), `tsc + vite build` ok. Build con `--features whisper-local` intentado: CMake ok, falla por libclang ausente (esperado) — el binding se compila en staging con la cadena nativa. La transcripcion real de extremo a extremo (modelo cargado + audio) se valida en esa build (E2E pendiente con el modelo descargado).
 
 ## Paso 16 - Proveedores de IA reales en staging (BAA)
 
