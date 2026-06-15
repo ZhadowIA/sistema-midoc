@@ -73,7 +73,7 @@ function templateMessage(kind: NotificationKind, channel: NotificationChannel, c
     case NotificationKind.APPOINTMENT_REMINDER:
       return {
         subject: channel === NotificationChannel.EMAIL ? "Recordatorio de cita" : null,
-        body: `${patientGreeting}te recordamos tu cita${appointmentLabel}. Revisa los detalles o haz cambios aqui: ${actionUrl}`
+        body: `${patientGreeting}te recordamos tu cita${appointmentLabel}. Si necesitas cancelar, entra aqui: ${actionUrl}${expiresText ? `\nEl enlace vence el ${expiresText}.` : ""}`
       };
     case NotificationKind.PRECHECKIN:
       return {

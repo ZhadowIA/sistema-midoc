@@ -876,6 +876,15 @@ Verificacion (rebanada 6): cambio de UI sin backend; `eslint`/`tsc` limpios, `ne
 
 Nota tecnica (rebanadas 7-8): la preconsulta actual viaja como `SyncEvent` `PRECHECKIN_SUBMITTED` en texto plano (purgado tras ACK), NO sellado. La compuerta del paso 19 exige E2E: antecedentes (rebanada 7) y el resultado de la IA (rebanada 8) deben viajar como sealed box (X25519, patron del paso 6 para documentos) que la nube no puede leer, con descarga y purga desde la app del medico.
 
+Entregado (rebanada 9 — recordatorio 24 h con cancelacion, 2026-06-14):
+
+- **El recordatorio ya existia** (se encola al agendar con `scheduledFor` 24 h antes) y el job de despacho `/api/internal/notifications/dispatch` (cron autorizado) procesa la cola por tiempo. Esta rebanada agrega el **enlace de cancelacion**.
+- **Enlace de cancelacion (`public-booking-service.ts`).** El recordatorio apunta a `cita/<token>?accion=cancelar` con enlace corto que **expira al inicio de la cita**; la cancelacion es de un solo efecto (el servicio rechaza cancelar dos veces). La plantilla del recordatorio menciona la cancelacion y el vencimiento.
+- **Deep-link (`cita/[token]/page.tsx` + `appointment-client.tsx`).** La pagina lee `?accion=cancelar` y muestra un aviso destacado "¿Quieres cancelar esta cita del <fecha>?" con "Si, cancelar"/"No, conservar", reusando el flujo de cancelacion existente. El aviso ya confirma, asi que omite el `window.confirm` redundante (el boton general "Cancelar cita" si lo conserva).
+- **Residencia.** El recordatorio solo lleva nombre, contacto y datos de cita; sin contenido clinico.
+
+Verificacion (rebanada 9): 80 pruebas del portal en verde (la prueba de notificaciones ahora comprueba que el recordatorio lleva `accion=cancelar` y que el de SMS usa enlace corto con expiracion), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (abrir la cita con `?accion=cancelar` muestra el aviso con la fecha; "Si, cancelar" deja la cita en estado Cancelada sin dialogo bloqueante).
+
 > Nota de residencia (rebanada 8): la preconsulta guiada por IA es el unico punto donde contenido clinico transita la nube para generar la siguiente pregunta. Debe tratarse como transitorio: consentimiento del paciente, seudonimizacion, prohibido persistir respuestas o prompts en logs/telemetria, y el resultado final sellado en el buzon cifrado (sealed box con la llave publica del medico) para que solo la app del medico lo lea. El adaptador real de IA se cablea en staging con BAA (paso 16); hasta entonces se usa un proveedor determinista para construir y probar el contrato.
 
 ## MVP recomendado

@@ -1958,6 +1958,22 @@ a.service-card:hover {
   color: var(--muted);
 }
 
+.cancel-prompt {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-panel);
+  background: var(--danger-soft);
+}
+
+.cancel-prompt p {
+  margin: 0;
+  font-weight: 500;
+  color: var(--ink);
+}
+
 .skeleton-row {
   height: 56px;
   border-radius: var(--radius-panel);

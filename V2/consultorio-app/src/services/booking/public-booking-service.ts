@@ -777,6 +777,11 @@ export async function bookPublicAppointment(input: {
     select: { publicSlug: true }
   });
   const appointmentUrl = `${env.APP_BASE_URL}/perfil/${doctorProfile?.publicSlug}/cita/${confirmationToken}`;
+  // El recordatorio lleva un enlace que abre la cita con intencion de cancelar,
+  // reusando el flujo de cancelacion existente. El enlace corto expira al inicio
+  // de la cita; la cancelacion es de un solo efecto (no se puede cancelar dos
+  // veces) en el servicio.
+  const cancelUrl = `${appointmentUrl}?accion=cancelar`;
   const reminderAt = subtractHours(appointment.scheduledStart, 24);
   const reminderShouldQueue = reminderAt > new Date();
   const appointmentLabel = appointment.scheduledStart.toISOString();
@@ -844,14 +849,19 @@ export async function bookPublicAppointment(input: {
         kind: NotificationKind.APPOINTMENT_REMINDER,
         destination: contact.destination,
         scheduledFor: reminderAt,
-        actionUrl: appointmentUrl,
+        actionUrl: cancelUrl,
+        shortLink: {
+          expiresAt: appointment.scheduledStart
+        },
         template: {
           patientFirstName: patient.firstName,
-          appointmentLabel
+          appointmentLabel,
+          expiresAt: appointment.scheduledStart
         },
         metadata: {
           confirmationToken,
-          appointmentUrl
+          appointmentUrl,
+          cancelUrl
         }
       });
     }

@@ -177,6 +177,19 @@ describe("notification flow (paso 7)", () => {
       );
       expect(reminder?.scheduledFor).toBeInstanceOf(Date);
       expect(reminder?.status).toBe(NotificationStatus.PENDING);
+      // Rebanada 9: el recordatorio lleva enlace de cancelacion (intencion en la URL).
+      expect(reminder?.body).toContain("accion=cancelar");
+
+      // El recordatorio por SMS usa enlace corto con expiracion (al inicio de la cita).
+      const smsReminder = notifications.find(
+        (item) => item.kind === NotificationKind.APPOINTMENT_REMINDER && item.channel === "SMS"
+      );
+      expect(smsReminder?.shortLinkId).toBeTruthy();
+      expect(smsReminder?.body).toContain("/s/");
+      if (smsReminder?.shortLinkId) {
+        const shortLink = await prisma.shortLink.findUnique({ where: { id: smsReminder.shortLinkId } });
+        expect(shortLink?.expiresAt).toBeInstanceOf(Date);
+      }
     } finally {
       await cleanupUserByEmail(email);
     }

@@ -32,6 +32,8 @@ type AppointmentClientProps = {
   slug: string;
   serviceId: string | null;
   details: AppointmentDetails;
+  /** Llega desde el enlace de cancelacion del recordatorio (`?accion=cancelar`). */
+  cancelIntent?: boolean;
 };
 
 type SlotOption = {
@@ -59,7 +61,13 @@ function tomorrowString() {
   return addDaysLocalDateString(1);
 }
 
-export function AppointmentClient({ token, slug, serviceId, details }: AppointmentClientProps) {
+export function AppointmentClient({
+  token,
+  slug,
+  serviceId,
+  details,
+  cancelIntent
+}: AppointmentClientProps) {
   const precheckinResponses =
     details.precheckin?.responses && typeof details.precheckin.responses === "object"
       ? (details.precheckin.responses as Record<string, unknown>)
@@ -85,6 +93,8 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
   );
   const [precheckinStarted, setPrecheckinStarted] = useState(hasPreviousResponses);
   const [firstVisit, setFirstVisit] = useState<boolean | null>(null);
+  // El enlace de cancelacion del recordatorio abre la cita con este aviso al frente.
+  const [showCancelPrompt, setShowCancelPrompt] = useState(Boolean(cancelIntent));
 
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [rescheduleDate, setRescheduleDate] = useState("");
@@ -173,15 +183,17 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
     }
   }
 
-  async function cancelAppointment() {
-    const confirmed = window.confirm("¿Seguro que quieres cancelar esta cita?");
-    if (!confirmed) {
+  async function cancelAppointment(options?: { skipConfirm?: boolean }) {
+    // El aviso de cancelacion del recordatorio ya confirma la intencion; evita el
+    // doble dialogo. El boton "Cancelar cita" general si pide confirmacion.
+    if (!options?.skipConfirm && !window.confirm("¿Seguro que quieres cancelar esta cita?")) {
       return;
     }
 
     setBusy(true);
     setMessage("");
     setError("");
+    setShowCancelPrompt(false);
     try {
       const data = await callAction(`/api/public/appointments/${token}/cancel`, {
         method: "POST",
@@ -280,6 +292,24 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
             {details.patient.firstName} {details.patient.lastName}
           </h2>
         </div>
+
+        {showCancelPrompt && !isFinal ? (
+          <div className="cancel-prompt" role="alert">
+            <p>¿Quieres cancelar esta cita del {dateTimeFormatter.format(scheduledStart)}?</p>
+            <div className="button-row">
+              <button
+                className="danger-button"
+                disabled={busy}
+                onClick={() => void cancelAppointment({ skipConfirm: true })}
+              >
+                {busy ? "Cancelando…" : "Sí, cancelar"}
+              </button>
+              <button className="ghost-button" disabled={busy} onClick={() => setShowCancelPrompt(false)}>
+                No, conservar
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="appointment-summary">
           <p>
