@@ -51,6 +51,14 @@ interface MockNote {
 }
 
 const mockState = {
+  profiles: [
+    {
+      id: "default",
+      display_name: "Medico principal",
+      created_at: new Date().toISOString(),
+      last_used_at: null as string | null
+    }
+  ],
   linked: true,
   clinicalProfile: "ODONTOLOGY",
   slotMinutes: 30,
@@ -470,10 +478,43 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
   }
 
   switch (command) {
-    case "unlock_database":
+    case "list_doctor_profiles":
+      return [...mockState.profiles] as T;
+    case "create_doctor_profile": {
+      const displayName = String(args?.displayName ?? "").trim();
+      if (!displayName) {
+        throw "escribe el nombre del medico";
+      }
+      const baseId =
+        displayName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "") || "medico";
+      let id = baseId;
+      let suffix = 2;
+      while (mockState.profiles.some((profile) => profile.id === id)) {
+        id = `${baseId}-${suffix}`;
+        suffix += 1;
+      }
+      const profile = {
+        id,
+        display_name: displayName,
+        created_at: new Date().toISOString(),
+        last_used_at: null as string | null
+      };
+      mockState.profiles.push(profile);
+      return profile as T;
+    }
+    case "unlock_database": {
       if (String(args?.passphrase ?? "").length < 8) {
         throw "la frase de seguridad debe tener al menos 8 caracteres";
       }
+      const profileId = String(args?.profileId ?? "default");
+      const profile = mockState.profiles.find((item) => item.id === profileId);
+      if (!profile) {
+        throw "perfil medico no encontrado";
+      }
+      profile.last_used_at = new Date().toISOString();
       // Primer arranque: el backend instala el catalogo real empaquetado si la
       // base sigue sembrada. El mock espeja ese comportamiento.
       if (mockState.medicationRef.version === "seed-v1") {
@@ -486,9 +527,11 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       }
       return {
         schema_version: 3,
-        db_path: "C:\\…\\midoc.db (demo)",
-        backup_path: "C:\\…\\backups\\midoc-demo.db"
+        db_path: `C:\\...\\${profile.id}\\midoc.db (demo)`,
+        backup_path: `C:\\...\\${profile.id}\\backups\\midoc-demo.db`,
+        profile
       } as T;
+    }
     case "lock_database":
       return undefined as T;
     case "sync_status":

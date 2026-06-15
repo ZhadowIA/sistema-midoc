@@ -14,7 +14,8 @@ mod consultation_e2e;
 #[cfg(test)]
 mod restore_drill;
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use base64::Engine;
@@ -23,11 +24,23 @@ use tauri::Manager;
 /// Open database connection, held for the lifetime of the unlocked session.
 struct AppDb(Mutex<Option<rusqlite::Connection>>);
 
+const DEFAULT_PROFILE_ID: &str = "default";
+const PROFILE_REGISTRY_FILE: &str = "doctor_profiles.json";
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+struct DoctorProfile {
+    id: String,
+    display_name: String,
+    created_at: String,
+    last_used_at: Option<String>,
+}
+
 #[derive(serde::Serialize)]
 struct UnlockResult {
     schema_version: i64,
     db_path: String,
     backup_path: String,
+    profile: DoctorProfile,
 }
 
 #[derive(serde::Serialize)]
@@ -54,15 +67,157 @@ struct AppointmentRow {
     has_precheckin: bool,
 }
 
-fn database_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(dir.join("midoc.db"))
+fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339()
 }
 
-fn backup_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+fn default_profile() -> DoctorProfile {
+    DoctorProfile {
+        id: DEFAULT_PROFILE_ID.into(),
+        display_name: "Medico principal".into(),
+        created_at: now_iso(),
+        last_used_at: None,
+    }
+}
+
+fn validate_profile_id(profile_id: &str) -> Result<(), String> {
+    if profile_id.is_empty() || profile_id.len() > 64 {
+        return Err("perfil medico invalido".into());
+    }
+    if !profile_id
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("perfil medico invalido".into());
+    }
+    Ok(())
+}
+
+fn profile_database_path(base_dir: &Path, profile_id: &str) -> Result<PathBuf, String> {
+    validate_profile_id(profile_id)?;
+    if profile_id == DEFAULT_PROFILE_ID {
+        return Ok(base_dir.join("midoc.db"));
+    }
+    Ok(base_dir.join("profiles").join(profile_id).join("midoc.db"))
+}
+
+fn profile_backup_path(base_dir: &Path, profile_id: &str) -> Result<PathBuf, String> {
+    validate_profile_id(profile_id)?;
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
-    Ok(dir.join("backups").join(format!("midoc-{stamp}.db")))
+    if profile_id == DEFAULT_PROFILE_ID {
+        return Ok(base_dir.join("backups").join(format!("midoc-{stamp}.db")));
+    }
+    Ok(base_dir
+        .join("profiles")
+        .join(profile_id)
+        .join("backups")
+        .join(format!("midoc-{stamp}.db")))
+}
+
+fn profile_registry_path(base_dir: &Path) -> PathBuf {
+    base_dir.join(PROFILE_REGISTRY_FILE)
+}
+
+fn load_profiles_from_dir(base_dir: &Path) -> Result<Vec<DoctorProfile>, String> {
+    let path = profile_registry_path(base_dir);
+    if !path.exists() {
+        return Ok(vec![default_profile()]);
+    }
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut profiles: Vec<DoctorProfile> = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if !profiles.iter().any(|profile| profile.id == DEFAULT_PROFILE_ID) {
+        profiles.insert(0, default_profile());
+    }
+    profiles.sort_by(|a, b| {
+        let a_default = a.id == DEFAULT_PROFILE_ID;
+        let b_default = b.id == DEFAULT_PROFILE_ID;
+        b_default
+            .cmp(&a_default)
+            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+    });
+    Ok(profiles)
+}
+
+fn save_profiles_to_dir(base_dir: &Path, profiles: &[DoctorProfile]) -> Result<(), String> {
+    fs::create_dir_all(base_dir).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(profiles).map_err(|e| e.to_string())?;
+    fs::write(profile_registry_path(base_dir), text).map_err(|e| e.to_string())
+}
+
+fn profile_id_from_display_name(display_name: &str, existing: &[DoctorProfile]) -> String {
+    let mut id = String::new();
+    let mut last_was_dash = false;
+    for ch in display_name.chars().flat_map(|ch| ch.to_lowercase()) {
+        if ch.is_ascii_alphanumeric() {
+            id.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash && !id.is_empty() {
+            id.push('-');
+            last_was_dash = true;
+        }
+    }
+    while id.ends_with('-') {
+        id.pop();
+    }
+    if id.is_empty() {
+        id = "medico".into();
+    }
+    if id.len() > 48 {
+        id.truncate(48);
+        while id.ends_with('-') {
+            id.pop();
+        }
+    }
+
+    let base = id.clone();
+    let mut suffix = 2;
+    while existing.iter().any(|profile| profile.id == id) {
+        id = format!("{base}-{suffix}");
+        suffix += 1;
+    }
+    id
+}
+
+fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|e| e.to_string())
+}
+
+fn backup_path(app: &tauri::AppHandle, profile_id: &str) -> Result<PathBuf, String> {
+    profile_backup_path(&app_data_dir(app)?, profile_id)
+}
+
+#[tauri::command]
+fn list_doctor_profiles(app: tauri::AppHandle) -> Result<Vec<DoctorProfile>, String> {
+    load_profiles_from_dir(&app_data_dir(&app)?)
+}
+
+#[tauri::command]
+fn create_doctor_profile(
+    app: tauri::AppHandle,
+    display_name: String,
+) -> Result<DoctorProfile, String> {
+    let name = display_name.trim();
+    if name.is_empty() {
+        return Err("escribe el nombre del medico".into());
+    }
+
+    let base_dir = app_data_dir(&app)?;
+    let mut profiles = load_profiles_from_dir(&base_dir)?;
+    let profile = DoctorProfile {
+        id: profile_id_from_display_name(name, &profiles),
+        display_name: name.into(),
+        created_at: now_iso(),
+        last_used_at: None,
+    };
+    profiles.push(profile.clone());
+    save_profiles_to_dir(&base_dir, &profiles)?;
+    fs::create_dir_all(
+        profile_database_path(&base_dir, &profile.id)?
+            .parent()
+            .ok_or("ruta de perfil invalida")?,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(profile)
 }
 
 /// Opens (or creates) the encrypted clinical database with the doctor's
@@ -72,25 +227,42 @@ fn backup_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 fn unlock_database(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppDb>,
+    profile_id: Option<String>,
     passphrase: String,
 ) -> Result<UnlockResult, String> {
     if passphrase.len() < 8 {
         return Err("la frase de seguridad debe tener al menos 8 caracteres".into());
     }
-    let path = database_path(&app)?;
+    let base_dir = app_data_dir(&app)?;
+    let selected_profile_id = profile_id.unwrap_or_else(|| DEFAULT_PROFILE_ID.into());
+    validate_profile_id(&selected_profile_id)?;
+    let mut profiles = load_profiles_from_dir(&base_dir)?;
+    let profile_index = profiles
+        .iter()
+        .position(|profile| profile.id == selected_profile_id)
+        .ok_or("perfil medico no encontrado")?;
+    profiles[profile_index].last_used_at = Some(now_iso());
+    let profile = profiles[profile_index].clone();
+    save_profiles_to_dir(&base_dir, &profiles)?;
+
+    let path = profile_database_path(&base_dir, &profile.id)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     let conn = db::open_encrypted(&path, &passphrase).map_err(|e| e.to_string())?;
     let schema_version = db::schema_version(&conn).map_err(|e| e.to_string())?;
     // Primer arranque: instala el catalogo real de medicamentos empaquetado si la
     // base sigue en la version sembrada. No debe bloquear el acceso al expediente,
     // por eso se ignora un eventual fallo (la base sembrada sigue siendo usable).
     let _ = medication::ensure_bundled_reference_installed(&conn);
-    let backup_path = backup_path(&app)?;
+    let backup_path = backup_path(&app, &profile.id)?;
     db::create_encrypted_backup(&conn, &backup_path).map_err(|e| e.to_string())?;
     *state.0.lock().unwrap() = Some(conn);
     Ok(UnlockResult {
         schema_version,
         db_path: path.display().to_string(),
         backup_path: backup_path.display().to_string(),
+        profile,
     })
 }
 
@@ -1336,6 +1508,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(AppDb(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
+            list_doctor_profiles,
+            create_doctor_profile,
             unlock_database,
             lock_database,
             sync_status,
@@ -1407,4 +1581,34 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn profile_database_path_separates_doctors() {
+        let base = Path::new("C:/MiDocData");
+
+        assert_eq!(profile_database_path(base, "default").unwrap(), base.join("midoc.db"));
+        assert_eq!(
+            profile_database_path(base, "dr-ana").unwrap(),
+            base.join("profiles").join("dr-ana").join("midoc.db")
+        );
+        assert_ne!(
+            profile_database_path(base, "dr-ana").unwrap(),
+            profile_database_path(base, "dr-luis").unwrap()
+        );
+    }
+
+    #[test]
+    fn profile_ids_reject_path_traversal() {
+        assert!(validate_profile_id("dr-ana").is_ok());
+        assert!(validate_profile_id("default").is_ok());
+        assert!(validate_profile_id("../otro").is_err());
+        assert!(validate_profile_id("dr/ana").is_err());
+        assert!(validate_profile_id("").is_err());
+    }
 }

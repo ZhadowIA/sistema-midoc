@@ -345,6 +345,16 @@ textarea:disabled {
   font-size: 0.92rem;
 }
 
+.profile-create-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.profile-create-row .ghost-button {
+  white-space: nowrap;
+}
+
 /* ---------- Agenda ---------- */
 
 .appointment-list {

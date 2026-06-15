@@ -925,6 +925,44 @@ Verificacion (rebanada 10): 112 pruebas de Rust en verde (las piezas base `fetch
 
 > Nota de residencia (rebanada 8): la preconsulta guiada por IA es el unico punto donde contenido clinico transita la nube para generar la siguiente pregunta. Debe tratarse como transitorio: consentimiento del paciente, seudonimizacion, prohibido persistir respuestas o prompts en logs/telemetria, y el resultado final sellado en el buzon cifrado (sealed box con la llave publica del medico) para que solo la app del medico lo lea. El adaptador real de IA se cablea en staging con BAA (paso 16); hasta entonces se usa un proveedor determinista para construir y probar el contrato.
 
+## Paso 20 - App del medico: multi-perfil y agenda dia/semana
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Pulir la app del medico tras el piloto: permitir que **varios medicos** compartan una misma computadora, cada uno con su propia base cifrada e independiente; y dar a la agenda una **vista de dia** ademas de la semanal, con opcion de mostrar/ocultar las citas canceladas. Extiende los pasos 1 (base cifrada) y 13 (agenda semanal). |
+| Requisitos relacionados | RNF03, RNF04, RNF05 (aislamiento y cifrado por medico), RF04/RF05 (visualizacion de agenda). Extiende pasos 1 y 13. |
+| Entrada necesaria | App del medico con base cifrada por frase de seguridad (paso 1) y agenda semanal por bloques (paso 13) funcionando. |
+| Se construye | App del medico: registro local de perfiles de medico (`doctor_profiles.json` en el directorio de datos), creacion de perfil desde la pantalla de desbloqueo, base/respaldos por perfil (`profiles/<id>/midoc.db`), seleccion de perfil al abrir; agenda con conmutador Dia/Semana, navegacion coherente (avanza 1 dia o 7 segun la vista) y casilla "Mostrar canceladas" que por defecto las oculta; refinamiento visual (paneles y tarjeta de acceso sin borde/redondeo). |
+| Se valida con | Dos medicos en la misma maquina abren bases distintas con sus propias frases sin verse entre si; crear un perfil nuevo no toca las bases existentes; un `profile_id` con `..`/`/` se rechaza (sin path traversal); en la agenda el medico cambia entre Dia y Semana, navega coherentemente y oculta/muestra canceladas. |
+| Compuerta de avance | El aislamiento por perfil no rompe el cifrado ni la residencia local: cada base sigue cifrada con su propia frase y vive en disco del medico; el registro de perfiles solo guarda id/nombre/fechas (sin PHI, sin frases). La agenda es presentacion (sin nuevo contenido clinico). |
+| Push recomendado | Por rebanada cerrada y verificada; multi-perfil y agenda son independientes. |
+
+Clasificacion de datos: el registro de perfiles (id, nombre del medico, fechas de uso) es OPERATIVO local; no contiene PHI ni frases de seguridad. La agenda dia/semana es presentacion sobre datos ya residentes; sin nuevo contenido clinico.
+
+Rebanadas:
+
+- **Rebanada 1 (app del medico) — Multi-perfil de medico.** Registro local de perfiles, creacion desde el desbloqueo, base y respaldos aislados por perfil, validacion de `profile_id` contra path traversal. El `default` conserva la ruta historica (`midoc.db`) para no romper instalaciones existentes.
+- **Rebanada 2 (app del medico) — Agenda dia/semana + mostrar canceladas.** Conmutador Dia/Semana, navegacion por dia o semana segun la vista, casilla "Mostrar canceladas" (ocultas por defecto), con la logica pura extraida a un modulo testeable; refinamiento visual de paneles/tarjeta de acceso.
+
+Estado: ✅ COMPLETADO (rebanadas 1-2 entregadas y verificadas, 2026-06-15). Construido sobre los pasos 1 y 13.
+
+Entregado (rebanada 1 — multi-perfil de medico, 2026-06-15):
+
+- **Registro local de perfiles (`lib.rs`).** Comandos `list_doctor_profiles` y `create_doctor_profile`; el registro vive en `doctor_profiles.json` en el directorio de datos de la app y solo guarda `id`, `display_name`, `created_at` y `last_used_at` (sin PHI ni frases). El perfil `default` se inyecta siempre y conserva la ruta historica (`midoc.db`); los demas usan `profiles/<id>/midoc.db` y sus respaldos en `profiles/<id>/backups/`.
+- **Aislamiento y anti path-traversal.** `validate_profile_id` exige `[A-Za-z0-9_-]` (<=64) y rechaza vacios, `..` y `/`; `unlock_database` ahora recibe `profile_id`, marca `last_used_at` y abre la base del perfil seleccionado. El id se deriva del nombre del medico de forma estable y con sufijo ante colisiones.
+- **UI de desbloqueo (`App.tsx`, `ipc.ts`).** Selector de medico (preselecciona el ultimo usado), fila "Nuevo medico" + "Crear", y la barra superior del workspace muestra el nombre del medico activo. El mock espeja el comportamiento.
+- **Residencia.** Cada base sigue cifrada con su propia frase y vive en disco del medico; el registro de perfiles es OPERATIVO local sin PHI.
+
+Verificacion (rebanada 1): desktop 116 pruebas de Rust en verde (+2: `profile_database_path` separa medicos y respeta `default`; `validate_profile_id` rechaza path traversal), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok.
+
+Entregado (rebanada 2 — agenda dia/semana + mostrar canceladas, 2026-06-15):
+
+- **Logica pura testeable (`weekAgendaFilters.ts`).** `filterAgendaAppointments` (oculta canceladas salvo opt-in), `getAgendaVisibleDays` (1 dia o la semana lunes-domingo segun la vista) y `moveAgendaAnchorDate` (avanza 1 dia o 7 segun la vista), con test node (`scripts/week-agenda-filter.test.mjs`).
+- **UI de agenda (`WeekAgenda.tsx`, `App.css`).** Conmutador Dia/Semana (`aria-pressed`), navegacion `‹ Hoy ›` coherente con la vista, casilla "Mostrar canceladas" (ocultas por defecto), grilla parametrizada por `--week-day-count` (1 o 7 columnas) y encabezado de dia derivado del dia real. Refinamiento visual: paneles y tarjeta de acceso sin borde/redondeo.
+- **Residencia.** Presentacion sobre datos ya residentes; sin nuevo contenido clinico.
+
+Verificacion (rebanada 2): test node de filtros en verde (oculta/ muestra canceladas, semana lunes-domingo, navegacion dia vs semana), `tsc + vite build` del escritorio ok.
+
 ## MVP recomendado
 
 El MVP debe cerrar los pasos 0 a 7 y dejar odontologia como paso 8 si el tiempo no permite incluirla desde el primer piloto. El MVP incluye necesariamente las piezas local-first: app de escritorio instalable con base cifrada, sincronizacion con purga de buzon y respaldo con restauracion probada — sin ellas la promesa de residencia de datos no se cumple. El MVP recomendado contiene:
