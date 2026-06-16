@@ -51,6 +51,14 @@ jobs:
       QUESTIONNAIRE_TOKEN_SECRET: ci_questionnaire_secret_min_32_chars
       TERMS_VERSION: v1
       PRIVACY_VERSION: v1
+      SMS_PROVIDER: mock
+      SMS_BASE_URL: https://sms.example.com
+      SMS_API_KEY: ci_sms_api_key_min_16_chars
+      EMAIL_PROVIDER: mock
+      EMAIL_BASE_URL: https://email.example.com
+      EMAIL_API_KEY: ci_email_api_key_min_16_chars
+      EMAIL_FROM: no-reply@example.com
+      TWO_FACTOR_ENCRYPTION_KEY: ci_two_factor_encryption_key_32_chars
       PAYMENTS_PROVIDER: STRIPE
       PAYMENTS_WEBHOOK_SECRET: ci_payments_webhook_secret
       STRIPE_SECRET_KEY: sk_test_ci_placeholder_1234567890
