@@ -16,7 +16,7 @@ on:
           - production
 
 env:
-  APP_DIR: consultorio-app
+  APP_DIR: V2/consultorio-app
   IMAGE_NAME: midoc/consultorio-app
   NODE_VERSION: "22.x"
 
@@ -66,7 +66,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: V2/consultorio-app/package-lock.json
+          cache-dependency-path: ${{ env.APP_DIR }}/package-lock.json
 
       - name: Install dependencies
         run: npm ci
