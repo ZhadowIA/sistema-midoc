@@ -36,6 +36,13 @@ export interface SegmentDraft {
   warnings: string[];
 }
 
+export interface SourceTurnReference {
+  id: string;
+  label: string;
+  text: string;
+  missing: boolean;
+}
+
 export interface ScribeNoteContent {
   subjective: string;
   objective: string;
@@ -81,6 +88,35 @@ export function transcriptToTurns(transcript: string): ConsultationTurn[] {
   }
 
   return turns;
+}
+
+function speakerLabel(speaker: ScribeSpeaker): string {
+  return speaker === "MEDICO" ? "Medico" : "Paciente";
+}
+
+export function formatSourceTurnReferences(
+  turns: ConsultationTurn[],
+  sourceTurnIds: string[]
+): SourceTurnReference[] {
+  const byId = new Map(turns.map((turn) => [turn.id, turn]));
+  return sourceTurnIds.map((id) => {
+    const turn = byId.get(id);
+    if (!turn) {
+      return {
+        id,
+        label: `Fuente no encontrada · ${id}`,
+        text: "",
+        missing: true
+      };
+    }
+
+    return {
+      id,
+      label: `${speakerLabel(turn.speaker)} · ${turn.id}`,
+      text: turn.text,
+      missing: false
+    };
+  });
 }
 
 export function buildTemplateSegments(profile: ClinicalProfile): TemplateDefinition {

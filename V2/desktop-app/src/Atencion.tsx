@@ -14,6 +14,7 @@ import {
 import {
   appendSegmentToNote,
   buildTemplateSegments,
+  formatSourceTurnReferences,
   normalizeTemplateDefinition,
   transcriptToTurns,
   type ConsultationTurn,
@@ -1377,6 +1378,19 @@ export function Atencion({
                         </span>
                       </div>
                       <p className="ai-draft-text">{segment.content}</p>
+                      {segment.source_turns.length > 0 ? (
+                        <div className="scribe-source-list">
+                          {formatSourceTurnReferences(scribeTurns, segment.source_turns).map((source) => (
+                            <blockquote
+                              className={source.missing ? "scribe-source missing-source" : "scribe-source"}
+                              key={source.id}
+                            >
+                              <strong>{source.label}</strong>
+                              {source.text ? <span>{source.text}</span> : null}
+                            </blockquote>
+                          ))}
+                        </div>
+                      ) : null}
                       {segment.warnings.length > 0 ? (
                         <ul className="scribe-warning-list">
                           {segment.warnings.map((warning) => (

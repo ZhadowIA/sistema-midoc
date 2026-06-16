@@ -981,6 +981,35 @@ textarea:disabled {
   font-size: 0.9rem;
 }
 
+.scribe-source-list {
+  display: grid;
+  gap: 6px;
+}
+
+.scribe-source {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--primary);
+  background: color-mix(in oklch, var(--surface) 86%, var(--primary-soft));
+  color: var(--ink);
+}
+
+.scribe-source strong {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.scribe-source span {
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.missing-source {
+  border-left-color: var(--danger);
+}
+
 .template-editor {
   display: grid;
   gap: 10px;

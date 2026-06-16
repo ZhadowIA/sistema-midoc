@@ -1142,6 +1142,7 @@ fn validate_template_segments(
 fn parse_structuring_output(
     raw: &str,
     template_segments: &[TemplateSegment],
+    turns: &[ConsultationTurn],
 ) -> Result<ConsultationStructuringOutput, AiError> {
     use std::collections::HashSet;
 
@@ -1151,6 +1152,7 @@ fn parse_structuring_output(
         .iter()
         .map(|segment| segment.id.as_str())
         .collect();
+    let allowed_turns: HashSet<&str> = turns.iter().map(|turn| turn.id.as_str()).collect();
     for segment in &output.segments {
         if !allowed.contains(segment.segment_id.as_str()) {
             return Err(AiError::Invalid(format!(
@@ -1161,6 +1163,20 @@ fn parse_structuring_output(
         if !matches!(segment.confidence.as_str(), "high" | "medium" | "low") {
             return Err(AiError::Invalid(format!(
                 "confianza invalida en segmento: {}",
+                segment.segment_id
+            )));
+        }
+        for source_turn in &segment.source_turns {
+            if !allowed_turns.contains(source_turn.as_str()) {
+                return Err(AiError::Invalid(format!(
+                    "fuente desconocida en segmento {}: {}",
+                    segment.segment_id, source_turn
+                )));
+            }
+        }
+        if segment.source_turns.is_empty() && segment.warnings.is_empty() {
+            return Err(AiError::Invalid(format!(
+                "segmento sin fuentes requiere advertencia: {}",
                 segment.segment_id
             )));
         }
@@ -1219,7 +1235,7 @@ pub fn structure_consultation(
         redacted_input: redacted.clone(),
     };
     let (provider, response) = registry.generate(&request)?;
-    let output = parse_structuring_output(&response.output, &template_segments)?;
+    let output = parse_structuring_output(&response.output, &template_segments, &turns)?;
 
     let run_id = uuid::Uuid::new_v4().to_string();
     conn.execute(
@@ -1853,6 +1869,48 @@ mod tests {
                 &registry
             ),
             Err(AiError::Invalid(message)) if message.contains("segmento desconocido")
+        ));
+    }
+
+    #[test]
+    fn consultation_scribe_rejects_unknown_source_turns() {
+        let conn = test_conn("scribe-unknown-source");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
+        let registry = ProviderRegistry::new(vec![Box::new(RawProvider::new(
+            r#"{"segments":[{"segment_id":"subjective","content":"tos de tres dias","confidence":"high","source_turns":["turn-404"],"warnings":[]}],"missing":[],"warnings":[]}"#,
+        ))]);
+
+        assert!(matches!(
+            structure_consultation(
+                &conn,
+                &encounter_id,
+                scribe_turns(),
+                scribe_segments(),
+                &registry
+            ),
+            Err(AiError::Invalid(message)) if message.contains("fuente desconocida")
+        ));
+    }
+
+    #[test]
+    fn consultation_scribe_requires_warning_when_segment_has_no_sources() {
+        let conn = test_conn("scribe-source-warning");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
+        let registry = ProviderRegistry::new(vec![Box::new(RawProvider::new(
+            r#"{"segments":[{"segment_id":"subjective","content":"tos de tres dias","confidence":"low","source_turns":[],"warnings":[]}],"missing":[],"warnings":[]}"#,
+        ))]);
+
+        assert!(matches!(
+            structure_consultation(
+                &conn,
+                &encounter_id,
+                scribe_turns(),
+                scribe_segments(),
+                &registry
+            ),
+            Err(AiError::Invalid(message)) if message.contains("sin fuentes")
         ));
     }
 

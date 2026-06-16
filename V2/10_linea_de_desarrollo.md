@@ -1016,6 +1016,8 @@ Clasificacion de datos: audio, transcript, dialogo y segmentos son CLINICO y viv
 
 Avance (2026-06-15): MVP de escriba implementado en `desktop-app` con consentimiento `CONSULTATION_SCRIBE`, estructuracion `CONSULTATION_STRUCTURING`, turnos revisables, aplicacion manual por segmento y editor local de plantillas personalizadas en base cifrada (`app_meta`), sin migracion nueva ni persistencia clinica en nube.
 
+Avance (2026-06-16): rebanada de evidencia de revision agregada; cada segmento muestra fuentes legibles del dialogo y el backend rechaza salidas de proveedor con `source_turns` inexistentes o segmentos sin fuentes ni advertencia explicita.
+
 Rebanadas:
 
 - **Rebanada 1 — Contrato de plantilla y salida segmentada.** Definir el contrato local de segmentos para la plantilla activa: `segment_id`, etiqueta, instrucciones, contenido, confianza, turnos fuente, faltantes y advertencias. Validar la salida de IA antes de mostrarla.

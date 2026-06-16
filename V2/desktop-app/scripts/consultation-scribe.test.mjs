@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   appendSegmentToNote,
   buildTemplateSegments,
+  formatSourceTurnReferences,
   normalizeTemplateDefinition,
   transcriptToTurns
 } from "../src/consultationScribe.ts";
@@ -19,6 +20,25 @@ assert.deepEqual(
     { speaker: "PACIENTE", text: "Ibuprofeno." }
   ],
   "convierte una transcripcion en turnos editables Medico/Paciente"
+);
+
+assert.deepEqual(
+  formatSourceTurnReferences(turns, ["turn-2", "turn-99"]),
+  [
+    {
+      id: "turn-2",
+      label: "Paciente · turn-2",
+      text: "Desde hace tres dias.",
+      missing: false
+    },
+    {
+      id: "turn-99",
+      label: "Fuente no encontrada · turn-99",
+      text: "",
+      missing: true
+    }
+  ],
+  "convierte source_turns en fuentes legibles y marca referencias inexistentes"
 );
 
 const generalSegments = buildTemplateSegments("GENERAL_MEDICINE");
