@@ -133,8 +133,8 @@ p {
 
 .panel {
   background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
+  border: none;
+  border-radius: 0;
   padding: 20px;
   display: grid;
   gap: 12px;
@@ -144,6 +144,12 @@ p {
 .panel-header {
   display: grid;
   gap: 4px;
+}
+
+.agenda-panel {
+  border: none;
+  border-radius: 0;
+  padding: 0;
 }
 
 .panel-header p,
@@ -183,6 +189,26 @@ button {
 
 .action-button:hover:not(:disabled) {
   background: var(--primary-hover);
+}
+
+.model-download {
+  display: grid;
+  gap: 8px;
+}
+
+.model-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  overflow: hidden;
+}
+
+.model-progress-bar {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  border-radius: 999px;
+  transition: width var(--speed) var(--ease);
 }
 
 .ghost-button {
@@ -327,8 +353,8 @@ textarea:disabled {
 .auth-card {
   width: min(400px, 100%);
   background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
+  border: none;
+  border-radius: 0;
   padding: 32px;
   display: grid;
   gap: 16px;
@@ -343,6 +369,16 @@ textarea:disabled {
 .auth-card header p {
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.profile-create-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.profile-create-row .ghost-button {
+  white-space: nowrap;
 }
 
 /* ---------- Agenda ---------- */
@@ -912,6 +948,39 @@ textarea:disabled {
   font-size: 0.92rem;
 }
 
+.scribe-turn-list {
+  display: grid;
+  gap: 10px;
+}
+
+.scribe-turn {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.scribe-segment {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.scribe-segment > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.scribe-warning-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 /* Agenda semanal por bloques (paso 13, rebanada 4). 7 columnas = dias; el
    bloque es la duracion de cita del medico. Solo se listan los bloques (slots)
    con citas, en filas; cada cita cae en la celda de su dia. Color = estado. */
@@ -925,6 +994,7 @@ textarea:disabled {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .week-nav .ghost-button {
@@ -935,10 +1005,62 @@ textarea:disabled {
   margin-left: 6px;
 }
 
+.week-view-toggle {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(72px, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.week-view-option {
+  min-height: 32px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--speed) var(--ease),
+    color var(--speed) var(--ease);
+}
+
+.week-view-option + .week-view-option {
+  border-left: 1px solid var(--line);
+}
+
+.week-view-option-active {
+  background: var(--bg);
+  color: var(--primary);
+}
+
+.week-cancelled-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.week-cancelled-toggle input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
 .week-head,
 .week-row {
   display: grid;
-  grid-template-columns: var(--week-time-w) repeat(7, minmax(0, 1fr));
+  grid-template-columns: var(--week-time-w) repeat(var(--week-day-count, 7), minmax(0, 1fr));
 }
 
 .week-head {
@@ -1188,4 +1310,20 @@ textarea:disabled {
 
 .med-label {
   border-left-color: #2563eb;
+}
+
+/* Badge de cambios pendientes en el boton Sincronizar (paso 19, rebanada 10). */
+.sync-button {
+  position: relative;
+}
+
+.sync-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--bg, #fff);
 }

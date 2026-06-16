@@ -24,7 +24,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher-vendored-openssl"] }
 thiserror = "2.0.18"
-reqwest = { version = "0.13.4", features = ["json", "cookies"] }
+reqwest = { version = "0.13.4", features = ["json", "cookies", "blocking"] }
 uuid = { version = "1.23.3", features = ["v4"] }
 chrono = "0.4.45"
 sha2 = "0.11.0"
@@ -32,7 +32,18 @@ dryoc = "0.8.0"
 base64 = "0.22.1"
 # Lectura multiplataforma de RAM/CPU para recomendar el modelo Whisper local.
 # Mantenido, auditable y MIT; evita FFI por plataforma para leer memoria total.
-sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] }
+# whisper.cpp para transcripcion local real. Opcional tras el feature
+# `whisper-local`: compilarlo exige cadena nativa (CMake + LLVM/libclang). El
+# build por defecto y las pruebas NO la necesitan. Verificado en Windows MSVC con
+# LLVM: compila, enlaza y corre inferencia real (test de integracion ignorado
+# `transcribes_real_audio_without_error`). Versiones <0.16 fallaban con el clang
+# actual (layout/opaque en whisper-rs-sys), por eso se fija 0.16.
+whisper-rs = { version = "0.16", optional = true }
+
+[features]
+# Activa el proveedor de transcripcion Whisper local (requiere cadena nativa).
+whisper-local = ["dep:whisper-rs"]
 
 [dev-dependencies]
 chrono = "0.4.45"

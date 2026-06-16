@@ -120,6 +120,12 @@ enum PrecheckinStatus {
   ARCHIVED
 }
 
+enum PrecheckinKind {
+  GENERIC
+  MEDICAL_HISTORY
+  AI_PRECONSULTA
+}
+
 enum DocumentCategory {
   LAB_RESULT
   IMAGING
@@ -687,7 +693,16 @@ model PrecheckinSubmission {
   encounterId  String?
   patientId    String
   status       PrecheckinStatus @default(DRAFT)
+  kind         PrecheckinKind  @default(GENERIC)
+  // GENERIC (rebanada 6, placeholder) sigue en claro hasta que la rama IA se
+  // selle (rebanada 8). MEDICAL_HISTORY (antecedentes) viaja SIEMPRE sellado:
+  // `responses` queda nulo y el contenido vive en `ciphertext` (sealed box
+  // X25519). La nube no puede abrirlo; se entrega por sync y se purga tras ACK.
   responses    Json?
+  ciphertext   Bytes?
+  sizeBytes    Int?
+  deliveredAt  DateTime?
+  purgedAt     DateTime?
   submittedAt  DateTime?
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt

@@ -1,10 +1,19 @@
 "use client";
 
+import { parseLocalDate, toLocalDateString } from "../../../../lib/local-date";
 import { IconChevronLeft, IconChevronRight } from "../icons";
 
 interface CalendarProps {
   selectedDate: string;
   onDateSelect: (date: string) => void;
+  /**
+   * Fechas (YYYY-MM-DD) con cupo real del medico. Si se provee, solo esos dias
+   * (y no pasados) son seleccionables; el resto se muestra deshabilitado. Si es
+   * `undefined`, todos los dias futuros quedan habilitados (sin filtro de cupo).
+   */
+  availableDays?: string[];
+  /** Mientras se consultan los dias disponibles del mes visible. */
+  loading?: boolean;
 }
 
 function getDaysInMonth(date: Date) {
@@ -15,14 +24,14 @@ function getFirstDayOfMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
 }
 
-export function Calendar({ selectedDate, onDateSelect }: CalendarProps) {
+export function Calendar({ selectedDate, onDateSelect, availableDays, loading }: CalendarProps) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const selected = new Date(selectedDate);
-  selected.setHours(0, 0, 0, 0);
+  const availableSet = availableDays ? new Set(availableDays) : null;
 
-  const currentDate = new Date(selected);
+  // Parseo LOCAL: `new Date("YYYY-MM-DD")` seria UTC y correria el mes/dia.
+  const currentDate = parseLocalDate(selectedDate);
   const daysInMonth = getDaysInMonth(currentDate);
   const firstDay = getFirstDayOfMonth(currentDate);
 
@@ -40,22 +49,22 @@ export function Calendar({ selectedDate, onDateSelect }: CalendarProps) {
   const handlePrevMonth = () => {
     const newDate = new Date(currentDate);
     newDate.setMonth(newDate.getMonth() - 1);
-    onDateSelect(newDate.toISOString().slice(0, 10));
+    onDateSelect(toLocalDateString(newDate));
   };
 
   const handleNextMonth = () => {
     const newDate = new Date(currentDate);
     newDate.setMonth(newDate.getMonth() + 1);
-    onDateSelect(newDate.toISOString().slice(0, 10));
+    onDateSelect(toLocalDateString(newDate));
   };
 
   const handleDayClick = (day: number) => {
     const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-    onDateSelect(newDate.toISOString().slice(0, 10));
+    onDateSelect(toLocalDateString(newDate));
   };
 
   return (
-    <div className="calendar-widget">
+    <div className={`calendar-widget ${loading ? "is-loading" : ""}`} aria-busy={loading || undefined}>
       <div className="calendar-header">
         <button className="calendar-nav-btn" onClick={handlePrevMonth} aria-label="Mes anterior" type="button">
           <IconChevronLeft />
@@ -81,23 +90,41 @@ export function Calendar({ selectedDate, onDateSelect }: CalendarProps) {
           }
 
           const dayDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-          const dateString = dayDate.toISOString().slice(0, 10);
+          const dateString = toLocalDateString(dayDate);
           const isSelected = dateString === selectedDate;
           const isPast = dayDate < today;
+          // Sin lista de dias disponibles no se filtra por cupo. Con lista, un
+          // dia futuro fuera de ella esta sin cupo (regla/excepcion/lleno).
+          const isUnavailable = !isPast && availableSet !== null && !availableSet.has(dateString);
+          const isDisabled = isPast || isUnavailable;
 
           return (
             <button
               key={day}
-              className={`day ${isSelected ? "selected" : ""} ${isPast ? "disabled" : ""}`}
-              onClick={() => !isPast && handleDayClick(day)}
-              disabled={isPast}
-              aria-label={`${day} de ${monthName}${isSelected ? " (seleccionado)" : ""}`}
+              className={`day ${isSelected ? "selected" : ""} ${isPast ? "disabled" : ""} ${
+                isUnavailable ? "unavailable" : ""
+              }`}
+              onClick={() => !isDisabled && handleDayClick(day)}
+              disabled={isDisabled}
+              aria-label={`${day} de ${monthName}${isSelected ? " (seleccionado)" : ""}${
+                isUnavailable ? " (sin disponibilidad)" : ""
+              }`}
             >
               {day}
             </button>
           );
         })}
       </div>
+
+      {availableSet !== null ? (
+        <p className="calendar-legend">
+          {loading
+            ? "Cargando disponibilidad…"
+            : availableSet.size === 0
+              ? "Sin días disponibles este mes. Prueba otro mes."
+              : "Solo se muestran activos los días con horarios disponibles."}
+        </p>
+      ) : null}
     </div>
   );
 }

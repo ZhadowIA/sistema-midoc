@@ -12,6 +12,7 @@ export async function GET(
     const serviceId = url.searchParams.get("serviceId");
     const dateFrom = url.searchParams.get("dateFrom");
     const days = url.searchParams.get("days");
+    const ignoreHoldToken = url.searchParams.get("ignoreHoldToken");
 
     if (!serviceId || !dateFrom) {
       return NextResponse.json(
@@ -26,7 +27,8 @@ export async function GET(
       slug,
       serviceId,
       dateFrom,
-      days: days ? Number(days) : undefined
+      days: days ? Number(days) : undefined,
+      ignoreHoldToken: ignoreHoldToken ?? undefined
     });
 
     return NextResponse.json(availability);

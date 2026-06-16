@@ -1,12 +1,17 @@
 mod ai;
 mod arco;
+mod audio;
 mod clinical;
+mod cloud_transcription;
 mod crypto;
 mod db;
 mod medication;
 mod operations;
 mod sync;
 mod transcription;
+mod transcription_model;
+#[cfg(feature = "whisper-local")]
+mod whisper_provider;
 
 #[cfg(test)]
 mod consultation_e2e;
@@ -14,7 +19,10 @@ mod consultation_e2e;
 #[cfg(test)]
 mod restore_drill;
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use base64::Engine;
@@ -23,11 +31,36 @@ use tauri::Manager;
 /// Open database connection, held for the lifetime of the unlocked session.
 struct AppDb(Mutex<Option<rusqlite::Connection>>);
 
+/// Progreso de descarga de modelos Whisper por `model_id`. Vive fuera de la base
+/// cifrada: los pesos son REFERENCIA publica, no datos clinicos. El frontend lo
+/// consulta por sondeo (`transcription_model_status`) mientras descarga.
+#[derive(Clone, Default)]
+struct DownloadProgress {
+    downloaded: u64,
+    total: u64,
+    done: bool,
+    error: Option<String>,
+}
+
+struct ModelDownloads(Mutex<HashMap<String, DownloadProgress>>);
+
+const DEFAULT_PROFILE_ID: &str = "default";
+const PROFILE_REGISTRY_FILE: &str = "doctor_profiles.json";
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+struct DoctorProfile {
+    id: String,
+    display_name: String,
+    created_at: String,
+    last_used_at: Option<String>,
+}
+
 #[derive(serde::Serialize)]
 struct UnlockResult {
     schema_version: i64,
     db_path: String,
     backup_path: String,
+    profile: DoctorProfile,
 }
 
 #[derive(serde::Serialize)]
@@ -54,15 +87,157 @@ struct AppointmentRow {
     has_precheckin: bool,
 }
 
-fn database_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(dir.join("midoc.db"))
+fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339()
 }
 
-fn backup_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+fn default_profile() -> DoctorProfile {
+    DoctorProfile {
+        id: DEFAULT_PROFILE_ID.into(),
+        display_name: "Medico principal".into(),
+        created_at: now_iso(),
+        last_used_at: None,
+    }
+}
+
+fn validate_profile_id(profile_id: &str) -> Result<(), String> {
+    if profile_id.is_empty() || profile_id.len() > 64 {
+        return Err("perfil medico invalido".into());
+    }
+    if !profile_id
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("perfil medico invalido".into());
+    }
+    Ok(())
+}
+
+fn profile_database_path(base_dir: &Path, profile_id: &str) -> Result<PathBuf, String> {
+    validate_profile_id(profile_id)?;
+    if profile_id == DEFAULT_PROFILE_ID {
+        return Ok(base_dir.join("midoc.db"));
+    }
+    Ok(base_dir.join("profiles").join(profile_id).join("midoc.db"))
+}
+
+fn profile_backup_path(base_dir: &Path, profile_id: &str) -> Result<PathBuf, String> {
+    validate_profile_id(profile_id)?;
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
-    Ok(dir.join("backups").join(format!("midoc-{stamp}.db")))
+    if profile_id == DEFAULT_PROFILE_ID {
+        return Ok(base_dir.join("backups").join(format!("midoc-{stamp}.db")));
+    }
+    Ok(base_dir
+        .join("profiles")
+        .join(profile_id)
+        .join("backups")
+        .join(format!("midoc-{stamp}.db")))
+}
+
+fn profile_registry_path(base_dir: &Path) -> PathBuf {
+    base_dir.join(PROFILE_REGISTRY_FILE)
+}
+
+fn load_profiles_from_dir(base_dir: &Path) -> Result<Vec<DoctorProfile>, String> {
+    let path = profile_registry_path(base_dir);
+    if !path.exists() {
+        return Ok(vec![default_profile()]);
+    }
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut profiles: Vec<DoctorProfile> = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if !profiles.iter().any(|profile| profile.id == DEFAULT_PROFILE_ID) {
+        profiles.insert(0, default_profile());
+    }
+    profiles.sort_by(|a, b| {
+        let a_default = a.id == DEFAULT_PROFILE_ID;
+        let b_default = b.id == DEFAULT_PROFILE_ID;
+        b_default
+            .cmp(&a_default)
+            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+    });
+    Ok(profiles)
+}
+
+fn save_profiles_to_dir(base_dir: &Path, profiles: &[DoctorProfile]) -> Result<(), String> {
+    fs::create_dir_all(base_dir).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(profiles).map_err(|e| e.to_string())?;
+    fs::write(profile_registry_path(base_dir), text).map_err(|e| e.to_string())
+}
+
+fn profile_id_from_display_name(display_name: &str, existing: &[DoctorProfile]) -> String {
+    let mut id = String::new();
+    let mut last_was_dash = false;
+    for ch in display_name.chars().flat_map(|ch| ch.to_lowercase()) {
+        if ch.is_ascii_alphanumeric() {
+            id.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash && !id.is_empty() {
+            id.push('-');
+            last_was_dash = true;
+        }
+    }
+    while id.ends_with('-') {
+        id.pop();
+    }
+    if id.is_empty() {
+        id = "medico".into();
+    }
+    if id.len() > 48 {
+        id.truncate(48);
+        while id.ends_with('-') {
+            id.pop();
+        }
+    }
+
+    let base = id.clone();
+    let mut suffix = 2;
+    while existing.iter().any(|profile| profile.id == id) {
+        id = format!("{base}-{suffix}");
+        suffix += 1;
+    }
+    id
+}
+
+fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|e| e.to_string())
+}
+
+fn backup_path(app: &tauri::AppHandle, profile_id: &str) -> Result<PathBuf, String> {
+    profile_backup_path(&app_data_dir(app)?, profile_id)
+}
+
+#[tauri::command]
+fn list_doctor_profiles(app: tauri::AppHandle) -> Result<Vec<DoctorProfile>, String> {
+    load_profiles_from_dir(&app_data_dir(&app)?)
+}
+
+#[tauri::command]
+fn create_doctor_profile(
+    app: tauri::AppHandle,
+    display_name: String,
+) -> Result<DoctorProfile, String> {
+    let name = display_name.trim();
+    if name.is_empty() {
+        return Err("escribe el nombre del medico".into());
+    }
+
+    let base_dir = app_data_dir(&app)?;
+    let mut profiles = load_profiles_from_dir(&base_dir)?;
+    let profile = DoctorProfile {
+        id: profile_id_from_display_name(name, &profiles),
+        display_name: name.into(),
+        created_at: now_iso(),
+        last_used_at: None,
+    };
+    profiles.push(profile.clone());
+    save_profiles_to_dir(&base_dir, &profiles)?;
+    fs::create_dir_all(
+        profile_database_path(&base_dir, &profile.id)?
+            .parent()
+            .ok_or("ruta de perfil invalida")?,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(profile)
 }
 
 /// Opens (or creates) the encrypted clinical database with the doctor's
@@ -72,25 +247,42 @@ fn backup_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 fn unlock_database(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppDb>,
+    profile_id: Option<String>,
     passphrase: String,
 ) -> Result<UnlockResult, String> {
     if passphrase.len() < 8 {
         return Err("la frase de seguridad debe tener al menos 8 caracteres".into());
     }
-    let path = database_path(&app)?;
+    let base_dir = app_data_dir(&app)?;
+    let selected_profile_id = profile_id.unwrap_or_else(|| DEFAULT_PROFILE_ID.into());
+    validate_profile_id(&selected_profile_id)?;
+    let mut profiles = load_profiles_from_dir(&base_dir)?;
+    let profile_index = profiles
+        .iter()
+        .position(|profile| profile.id == selected_profile_id)
+        .ok_or("perfil medico no encontrado")?;
+    profiles[profile_index].last_used_at = Some(now_iso());
+    let profile = profiles[profile_index].clone();
+    save_profiles_to_dir(&base_dir, &profiles)?;
+
+    let path = profile_database_path(&base_dir, &profile.id)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     let conn = db::open_encrypted(&path, &passphrase).map_err(|e| e.to_string())?;
     let schema_version = db::schema_version(&conn).map_err(|e| e.to_string())?;
     // Primer arranque: instala el catalogo real de medicamentos empaquetado si la
     // base sigue en la version sembrada. No debe bloquear el acceso al expediente,
     // por eso se ignora un eventual fallo (la base sembrada sigue siendo usable).
     let _ = medication::ensure_bundled_reference_installed(&conn);
-    let backup_path = backup_path(&app)?;
+    let backup_path = backup_path(&app, &profile.id)?;
     db::create_encrypted_backup(&conn, &backup_path).map_err(|e| e.to_string())?;
     *state.0.lock().unwrap() = Some(conn);
     Ok(UnlockResult {
         schema_version,
         db_path: path.display().to_string(),
         backup_path: backup_path.display().to_string(),
+        profile,
     })
 }
 
@@ -230,28 +422,47 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
         // de avanzar el cursor: si la descarga falla aqui, el cursor no se
         // mueve y el proximo sync re-entrega el lote completo (idempotente).
         let mut documents: Vec<(String, Option<String>, Option<String>, String)> = Vec::new();
+        // Antecedentes sellados: (appointmentId, ciphertext base64).
+        let mut precheckins: Vec<(String, String)> = Vec::new();
         for event in &inbox.events {
-            if event.event_type != "DOCUMENT_UPLOADED" {
-                continue;
-            }
             let Some(payload) = &event.payload else {
                 continue; // Evento ya purgado en nube: nada que descargar.
             };
-            let Some(doc_id) = payload.get("mailboxDocumentId").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            let ciphertext = sync::fetch_document(&server_url, &token, doc_id)
-                .await
-                .map_err(|e| e.to_string())?;
-            let patient_id = payload
-                .get("patientId")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            let appointment_id = payload
-                .get("appointmentId")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            documents.push((doc_id.to_string(), patient_id, appointment_id, ciphertext));
+            match event.event_type.as_str() {
+                "DOCUMENT_UPLOADED" => {
+                    let Some(doc_id) = payload.get("mailboxDocumentId").and_then(|v| v.as_str())
+                    else {
+                        continue;
+                    };
+                    let ciphertext = sync::fetch_document(&server_url, &token, doc_id)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let patient_id = payload
+                        .get("patientId")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let appointment_id = payload
+                        .get("appointmentId")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    documents.push((doc_id.to_string(), patient_id, appointment_id, ciphertext));
+                }
+                "PRECHECKIN_SUBMITTED"
+                    if payload.get("sealed").and_then(|v| v.as_bool()) == Some(true) =>
+                {
+                    let (Some(precheckin_id), Some(appointment_id)) = (
+                        payload.get("precheckinId").and_then(|v| v.as_str()),
+                        payload.get("appointmentId").and_then(|v| v.as_str()),
+                    ) else {
+                        continue;
+                    };
+                    let ciphertext = sync::fetch_precheckin(&server_url, &token, precheckin_id)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    precheckins.push((appointment_id.to_string(), ciphertext));
+                }
+                _ => {}
+            }
         }
 
         {
@@ -270,6 +481,13 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
                     &plaintext,
                 )
                 .map_err(|e| e.to_string())?;
+            }
+            // Descifrar y guardar los antecedentes sellados.
+            for (appointment_id, ciphertext) in &precheckins {
+                let plaintext =
+                    crypto::unseal_document(conn, ciphertext).map_err(|e| e.to_string())?;
+                sync::store_mailbox_precheckin(conn, appointment_id, &plaintext)
+                    .map_err(|e| e.to_string())?;
             }
             sync::set_state(conn, "cursor", &inbox.next_cursor.to_string())
                 .map_err(|e| e.to_string())?;
@@ -327,6 +545,50 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
         applied_events: applied,
         cursor,
         ai_usage_reported,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct SyncPending {
+    /// Hay eventos del portal por bajar (peek del buzon, sin aplicar).
+    pending_download: bool,
+    /// Hay reportes de uso de IA locales por subir.
+    pending_upload: bool,
+}
+
+/// Indica si hay cambios pendientes para alimentar el badge del boton
+/// "Sincronizar", sin aplicar nada. La consulta de bajada es un peek de red
+/// (best-effort): si no hay red, no se marca pendiente para no alarmar offline.
+#[tauri::command]
+async fn sync_pending(state: tauri::State<'_, AppDb>) -> Result<SyncPending, String> {
+    let (server_url, token, cursor, pending_upload) = {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let server_url = sync::get_state(conn, "server_url").map_err(|e| e.to_string())?;
+        let token = sync::get_state(conn, "device_token").map_err(|e| e.to_string())?;
+        let (Some(server_url), Some(token)) = (server_url, token) else {
+            // Sin vincular: nada pendiente.
+            return Ok(SyncPending {
+                pending_download: false,
+                pending_upload: false,
+            });
+        };
+        let cursor = sync::get_cursor(conn).map_err(|e| e.to_string())?;
+        let pending_upload = !ai::pending_usage_reports(conn, 1)
+            .map_err(|e| e.to_string())?
+            .is_empty();
+        (server_url, token, cursor, pending_upload)
+    };
+
+    // Peek de red sin retener el lock ni avanzar el cursor (no hace ACK).
+    let pending_download = match sync::fetch_inbox(&server_url, &token, cursor).await {
+        Ok(inbox) => !inbox.events.is_empty(),
+        Err(_) => false,
+    };
+
+    Ok(SyncPending {
+        pending_download,
+        pending_upload,
     })
 }
 
@@ -916,6 +1178,36 @@ fn ai_revoke_voice_consent(
     })
 }
 
+#[tauri::command]
+fn ai_scribe_consent_status(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<bool, String> {
+    with_ai(&state, |conn| {
+        Ok(ai::active_consent(conn, &patient_id, ai::SCOPE_CONSULTATION_SCRIBE)?.is_some())
+    })
+}
+
+#[tauri::command]
+fn ai_grant_scribe_consent(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<(), String> {
+    with_ai(&state, |conn| {
+        ai::grant_consent(conn, &patient_id, ai::SCOPE_CONSULTATION_SCRIBE).map(|_| ())
+    })
+}
+
+#[tauri::command]
+fn ai_revoke_scribe_consent(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<(), String> {
+    with_ai(&state, |conn| {
+        ai::revoke_consent(conn, &patient_id, ai::SCOPE_CONSULTATION_SCRIBE)
+    })
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AudioTranscriptionPayload {
@@ -923,6 +1215,13 @@ struct AudioTranscriptionPayload {
     media_type: String,
     audio_base64: String,
     duration_seconds: Option<i64>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ConsultationTemplatePayload {
+    #[allow(dead_code)]
+    id: String,
+    segments: Vec<ai::TemplateSegment>,
 }
 
 #[tauri::command]
@@ -948,16 +1247,69 @@ fn ai_assist_text(
     })
 }
 
+/// Elige el proveedor de transcripcion segun la via solicitada.
+///
+/// - Nube (`use_cloud`): respaldo gobernado. Requiere configuracion
+///   (`MIDOC_CLOUD_STT_*`, cableada en staging con BAA); el audio sale del equipo
+///   solo aqui, bajo consentimiento de voz (lo aplica `ai::transcribe_audio`). Sin
+///   configuracion, se rechaza con una guia.
+/// - Local (por defecto): con el feature `whisper-local`, usa el modelo Whisper
+///   descargado (rebanada 1) y transcribe EN EL DISPOSITIVO; si el modelo aun no
+///   se descargo, guia a descargarlo. Sin el feature, explica que esta build no
+///   incluye el binding nativo (se compila en la build de distribucion).
+fn resolve_transcription_provider(
+    app: &tauri::AppHandle,
+    use_cloud: bool,
+) -> Result<Box<dyn ai::TranscriptionProvider>, String> {
+    if use_cloud {
+        let config = cloud_transcription::CloudConfig::from_env().ok_or(
+            "El respaldo de transcripcion en nube no esta configurado en esta version. Se habilita en la build de distribucion con el proveedor bajo BAA.",
+        )?;
+        return Ok(Box::new(cloud_transcription::CloudTranscriptionProvider::new(
+            config,
+        )));
+    }
+
+    #[cfg(feature = "whisper-local")]
+    {
+        let rec = transcription::recommendation();
+        let asset = transcription_model::asset_for(&rec.model_id)
+            .ok_or("el modelo recomendado no se reconoce")?;
+        let base_dir = app_data_dir(app)?;
+        let path = transcription_model::model_path(&base_dir, &asset.file_name);
+        if !path.exists() {
+            return Err(
+                "Aun no descargas el modelo de transcripcion. Ve a la pestana Transcripcion y descargalo."
+                    .into(),
+            );
+        }
+        Ok(Box::new(whisper_provider::WhisperLocalProvider::new(
+            &rec.model_id,
+            path,
+        )))
+    }
+    #[cfg(not(feature = "whisper-local"))]
+    {
+        let _ = app;
+        Err(
+            "Esta version no incluye la transcripcion local (Whisper). Se habilita en la build de distribucion con el feature whisper-local."
+                .into(),
+        )
+    }
+}
+
 #[tauri::command]
 fn ai_transcribe_audio(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
     audio: AudioTranscriptionPayload,
+    use_cloud: Option<bool>,
 ) -> Result<ai::TranscriptionDraft, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(audio.audio_base64.as_bytes())
         .map_err(|_| "audio invalido".to_string())?;
-    let provider = ai::FakeTranscriptionProvider::new("fake-transcriptor");
+    let provider = resolve_transcription_provider(&app, use_cloud.unwrap_or(false))?;
     with_ai(&state, |conn| {
         ai::transcribe_audio(
             conn,
@@ -968,8 +1320,21 @@ fn ai_transcribe_audio(
                 bytes,
                 duration_seconds: audio.duration_seconds,
             },
-            &provider,
+            provider.as_ref(),
         )
+    })
+}
+
+#[tauri::command]
+fn ai_structure_consultation(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    turns: Vec<ai::ConsultationTurn>,
+    template: ConsultationTemplatePayload,
+) -> Result<ai::ConsultationStructuringDraft, String> {
+    let registry = ai::ProviderRegistry::default_local();
+    with_ai(&state, |conn| {
+        ai::structure_consultation(conn, &encounter_id, turns, template.segments, &registry)
     })
 }
 
@@ -1203,6 +1568,197 @@ fn transcription_recommendation() -> transcription::TranscriptionRecommendation 
     transcription::recommendation()
 }
 
+/* ---------- Descarga del modelo Whisper local (paso 15) ---------- */
+
+/// Espacio libre (bytes) en el volumen que contiene `path`. Best-effort: ante
+/// cualquier duda devuelve `None` (no se bloquea la descarga por no poder medir).
+fn available_disk_bytes(path: &Path) -> Option<u64> {
+    use sysinfo::Disks;
+    let disks = Disks::new_with_refreshed_list();
+    // El disco cuyo punto de montaje sea el prefijo mas largo de `path`.
+    disks
+        .iter()
+        .filter(|disk| path.starts_with(disk.mount_point()))
+        .max_by_key(|disk| disk.mount_point().as_os_str().len())
+        .map(|disk| disk.available_space())
+}
+
+/// Estado de los modelos Whisper: presencia en disco, verificacion y progreso de
+/// descarga en curso. El frontend lo sondea para pintar el avance.
+#[tauri::command]
+fn transcription_model_status(
+    app: tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+) -> Result<Vec<transcription_model::ModelStatus>, String> {
+    let base_dir = app_data_dir(&app)?;
+    let progress = downloads.0.lock().unwrap().clone();
+
+    let mut out = Vec::new();
+    for asset in transcription_model::all_assets() {
+        let final_path = transcription_model::model_path(&base_dir, &asset.file_name);
+        let part = transcription_model::part_path(&final_path);
+        let final_present = final_path.exists();
+        let final_len = fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
+        let part_len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+
+        let prog = progress.get(&asset.model_id);
+        let downloading = prog.map(|p| !p.done && p.error.is_none()).unwrap_or(false);
+        let error = prog.and_then(|p| p.error.clone());
+        // Un archivo presente con checksum fijado que coincide se considera
+        // verificado. Sin checksum fijado en el build, queda como no verificado.
+        let verified = final_present
+            && transcription_model::verify_file(&final_path, &asset.sha256).unwrap_or(false);
+        // Si hay descarga en curso, el progreso manda sobre el tamano del .part.
+        let part_for_status = prog
+            .filter(|p| !p.done)
+            .map(|p| p.downloaded)
+            .unwrap_or(part_len);
+
+        let mut status = transcription_model::build_status(
+            &asset,
+            final_present,
+            final_len,
+            part_for_status,
+            verified,
+            downloading,
+            error,
+        );
+        // Durante la descarga, el total informado por el servidor (si lo hay) es
+        // mas fiel que el tamano aproximado del catalogo.
+        if let Some(p) = prog.filter(|p| !p.done && p.total > 0) {
+            status.expected_size_bytes = p.total;
+        }
+        out.push(status);
+    }
+    Ok(out)
+}
+
+/// Descarga (o reanuda) los pesos del modelo Whisper indicado a la carpeta
+/// compartida de modelos. Frontera de red: el contrato real con la fuente se
+/// verifica en staging (regla 5). No toca la base cifrada ni envia datos del
+/// paciente; solo baja REFERENCIA publica. Actualiza el progreso en memoria para
+/// que el frontend lo sondee, y al terminar verifica el checksum (si esta fijado).
+#[tauri::command]
+async fn download_transcription_model(
+    app: tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+    model_id: String,
+) -> Result<(), String> {
+    let asset = transcription_model::asset_for(&model_id)
+        .ok_or_else(|| format!("modelo no reconocido: {model_id}"))?;
+    let base_dir = app_data_dir(&app)?;
+    let dir = transcription_model::models_dir(&base_dir);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let final_path = transcription_model::model_path(&base_dir, &asset.file_name);
+    if final_path.exists() {
+        return Ok(());
+    }
+    let part = transcription_model::part_path(&final_path);
+    let part_len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+
+    // Valida espacio en disco (best-effort): si se puede medir y no alcanza, no
+    // se inicia la descarga.
+    if let Some(free) = available_disk_bytes(&dir) {
+        let required = transcription_model::required_free_bytes(asset.size_bytes);
+        if !transcription_model::has_enough_disk(free, required) {
+            return Err(format!(
+                "espacio insuficiente: se necesitan ~{} MB libres para {}",
+                required / (1024 * 1024),
+                asset.file_name
+            ));
+        }
+    }
+
+    let set_progress = |downloaded: u64, total: u64, done: bool, error: Option<String>| {
+        let mut map = downloads.0.lock().unwrap();
+        map.insert(
+            model_id.clone(),
+            DownloadProgress {
+                downloaded,
+                total,
+                done,
+                error,
+            },
+        );
+    };
+
+    let resume = transcription_model::resume_from(part_len, asset.size_bytes);
+    set_progress(resume, asset.size_bytes, false, None);
+
+    match stream_to_part(&asset, &part, resume, &set_progress).await {
+        Ok(total) => {
+            // Verifica el checksum si esta fijado; si no coincide, descarta.
+            if !asset.sha256.is_empty()
+                && !transcription_model::verify_file(&part, &asset.sha256).unwrap_or(false)
+            {
+                let _ = fs::remove_file(&part);
+                let msg = "la descarga no coincide con el checksum esperado".to_string();
+                set_progress(0, asset.size_bytes, true, Some(msg.clone()));
+                return Err(msg);
+            }
+            fs::rename(&part, &final_path).map_err(|e| e.to_string())?;
+            set_progress(total, total, true, None);
+            Ok(())
+        }
+        Err(e) => {
+            set_progress(part_len, asset.size_bytes, true, Some(e.clone()));
+            Err(e)
+        }
+    }
+}
+
+/// Descarga por HTTP el asset al archivo `.part`, reanudando desde `resume` con un
+/// Range. Va informando el progreso. Devuelve el total de bytes al terminar.
+async fn stream_to_part(
+    asset: &transcription_model::ModelAsset,
+    part: &Path,
+    resume: u64,
+    set_progress: &impl Fn(u64, u64, bool, Option<String>),
+) -> Result<u64, String> {
+    let client = reqwest::Client::new();
+    let mut request = client.get(&asset.url);
+    if resume > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={resume}-"));
+    }
+    let mut response = request
+        .send()
+        .await
+        .map_err(|e| format!("no se pudo iniciar la descarga: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("la fuente respondio {}", response.status()));
+    }
+
+    // Total = lo ya descargado + lo que falta segun el servidor (si lo informa).
+    let total = response
+        .content_length()
+        .map(|r| resume + r)
+        .filter(|t| *t > 0)
+        .unwrap_or(asset.size_bytes);
+
+    let mut file = if resume > 0 {
+        fs::OpenOptions::new()
+            .append(true)
+            .open(part)
+            .map_err(|e| e.to_string())?
+    } else {
+        fs::File::create(part).map_err(|e| e.to_string())?
+    };
+
+    let mut downloaded = resume;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("descarga interrumpida: {e}"))?
+    {
+        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+        set_progress(downloaded, total.max(downloaded), false, None);
+    }
+    file.flush().map_err(|e| e.to_string())?;
+    Ok(downloaded)
+}
+
 /* ---------- Derechos ARCO (paso 12) ---------- */
 
 fn with_arco<T>(
@@ -1265,12 +1821,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppDb(Mutex::new(None)))
+        .manage(ModelDownloads(Mutex::new(HashMap::new())))
         .invoke_handler(tauri::generate_handler![
+            list_doctor_profiles,
+            create_doctor_profile,
             unlock_database,
             lock_database,
             sync_status,
             link_account,
             sync_now,
+            sync_pending,
             publish_authorized_summary,
             list_appointments,
             open_encounter,
@@ -1312,9 +1872,13 @@ pub fn run() {
             ai_voice_consent_status,
             ai_grant_voice_consent,
             ai_revoke_voice_consent,
+            ai_scribe_consent_status,
+            ai_grant_scribe_consent,
+            ai_revoke_scribe_consent,
             ai_assist_soap,
             ai_assist_text,
             ai_transcribe_audio,
+            ai_structure_consultation,
             ai_review_run,
             ai_list_runs,
             ai_usage_summary,
@@ -1322,6 +1886,8 @@ pub fn run() {
             ai_run_benchmark,
             ai_list_benchmarks,
             transcription_recommendation,
+            transcription_model_status,
+            download_transcription_model,
             check_medication_safety,
             medication_reference_status,
             import_medication_reference,
@@ -1336,4 +1902,34 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn profile_database_path_separates_doctors() {
+        let base = Path::new("C:/MiDocData");
+
+        assert_eq!(profile_database_path(base, "default").unwrap(), base.join("midoc.db"));
+        assert_eq!(
+            profile_database_path(base, "dr-ana").unwrap(),
+            base.join("profiles").join("dr-ana").join("midoc.db")
+        );
+        assert_ne!(
+            profile_database_path(base, "dr-ana").unwrap(),
+            profile_database_path(base, "dr-luis").unwrap()
+        );
+    }
+
+    #[test]
+    fn profile_ids_reject_path_traversal() {
+        assert!(validate_profile_id("dr-ana").is_ok());
+        assert!(validate_profile_id("default").is_ok());
+        assert!(validate_profile_id("../otro").is_err());
+        assert!(validate_profile_id("dr/ana").is_err());
+        assert!(validate_profile_id("").is_err());
+    }
 }

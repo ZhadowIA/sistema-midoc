@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { call } from "./ipc";
 
 /**
@@ -6,6 +6,10 @@ import { call } from "./ipc";
  * equipo y sugiere el tamano de modelo adecuado, para que el medico no tenga
  * que entender de tamanos de modelo. La transcripcion corre en el dispositivo
  * (local-first); la nube solo se sugiere como respaldo con consentimiento.
+ *
+ * Antes de transcribir, el medico descarga aqui los pesos del modelo sugerido.
+ * Son REFERENCIA publica (no PHI) y se comparten entre perfiles; la descarga
+ * muestra progreso y se puede reanudar.
  */
 
 interface TranscriptionRecommendation {
@@ -21,24 +25,85 @@ interface TranscriptionRecommendation {
   reason: string;
 }
 
+interface ModelStatus {
+  modelId: string;
+  fileName: string;
+  expectedSizeBytes: number;
+  downloadedBytes: number;
+  present: boolean;
+  verified: boolean;
+  downloading: boolean;
+  error: string | null;
+}
+
 function gb(mb: number): string {
   return `${(mb / 1024).toFixed(mb % 1024 === 0 ? 0 : 1)} GB`;
 }
 
+function bytesToGb(bytes: number): string {
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 export function TranscriptionSetup() {
   const [rec, setRec] = useState<TranscriptionRecommendation | null>(null);
+  const [models, setModels] = useState<ModelStatus[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
+  const pollRef = useRef<number | null>(null);
+
+  const loadModels = useCallback(async () => {
+    try {
+      setModels(await call<ModelStatus[]>("transcription_model_status"));
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
 
   async function detect() {
     setBusy(true);
     setError("");
     try {
       setRec(await call<TranscriptionRecommendation>("transcription_recommendation"));
+      await loadModels();
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  const recommended = rec ? models.find((m) => m.modelId === rec.modelId) ?? null : null;
+
+  // Sondea el estado mientras hay una descarga en curso, para pintar el avance.
+  useEffect(() => {
+    const downloading = recommended?.downloading ?? false;
+    if (downloading && pollRef.current === null) {
+      pollRef.current = window.setInterval(() => void loadModels(), 800);
+    } else if (!downloading && pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    return () => {
+      if (pollRef.current !== null) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [recommended?.downloading, loadModels]);
+
+  async function downloadRecommended() {
+    if (!rec) return;
+    setError("");
+    try {
+      // Marca de inmediato el estado para que arranque el sondeo de progreso.
+      await loadModels();
+      void call("download_transcription_model", { modelId: rec.modelId }).then(
+        () => void loadModels(),
+        (e) => setError(String(e))
+      );
+      await loadModels();
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -99,6 +164,54 @@ export function TranscriptionSetup() {
               </dd>
             </div>
           </dl>
+
+          <div className="model-download">
+            {recommended?.present ? (
+              <p className="form-success" role="status">
+                Modelo descargado y listo para transcribir sin conexion
+                {recommended.verified ? " (verificado)." : "."}
+              </p>
+            ) : recommended?.downloading ? (
+              <div className="stack">
+                <div
+                  className="model-progress"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={recommended.expectedSizeBytes}
+                  aria-valuenow={recommended.downloadedBytes}
+                >
+                  <span
+                    className="model-progress-bar"
+                    style={{
+                      width: `${
+                        recommended.expectedSizeBytes > 0
+                          ? Math.min(
+                              100,
+                              Math.round(
+                                (recommended.downloadedBytes / recommended.expectedSizeBytes) * 100
+                              )
+                            )
+                          : 0
+                      }%`
+                    }}
+                  />
+                </div>
+                <p className="meta">
+                  Descargando… {bytesToGb(recommended.downloadedBytes)} de{" "}
+                  {bytesToGb(recommended.expectedSizeBytes)}
+                </p>
+              </div>
+            ) : (
+              <button className="action-button" onClick={() => void downloadRecommended()}>
+                Descargar modelo (~{gb(rec.diskMb)})
+              </button>
+            )}
+            {recommended?.error && (
+              <p className="form-error" role="alert">
+                {recommended.error}
+              </p>
+            )}
+          </div>
 
           {rec.recommendCloudFallback && (
             <p className="form-success" role="status">

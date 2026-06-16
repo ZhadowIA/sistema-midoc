@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import _sodium from "libsodium-wrappers";
+
+import { sealEnvelope } from "../../../lib/seal-envelope";
 
 type UploadClientProps = {
   token: string;
@@ -22,21 +23,6 @@ const dateFormatter = new Intl.DateTimeFormat("es-MX", {
   dateStyle: "medium",
   timeStyle: "short"
 });
-
-/**
- * Construye el sobre [metaLen BE u32][metaJSON][bytes del archivo]. El nombre y
- * el tipo viajan cifrados aqui dentro; la nube nunca los ve. El mismo formato
- * lo descifra la app del medico (Rust) al sincronizar.
- */
-function buildEnvelope(file: File, fileBytes: Uint8Array): Uint8Array {
-  const meta = JSON.stringify({ fileName: file.name, mimeType: file.type || "application/octet-stream" });
-  const metaBytes = new TextEncoder().encode(meta);
-  const envelope = new Uint8Array(4 + metaBytes.length + fileBytes.length);
-  new DataView(envelope.buffer).setUint32(0, metaBytes.length, false);
-  envelope.set(metaBytes, 4);
-  envelope.set(fileBytes, 4 + metaBytes.length);
-  return envelope;
-}
 
 export function UploadClient(props: UploadClientProps) {
   const [file, setFile] = useState<File | null>(null);
@@ -67,15 +53,11 @@ export function UploadClient(props: UploadClientProps) {
     setBusy(true);
     try {
       const fileBytes = new Uint8Array(await file.arrayBuffer());
-      const envelope = buildEnvelope(file, fileBytes);
-
-      await _sodium.ready;
-      const sodium = _sodium;
-      const publicKey = sodium.from_base64(props.documentPublicKey, sodium.base64_variants.ORIGINAL);
-      // Sealed box: cifrado anonimo con la llave publica del medico. Solo el
-      // medico, con su llave secreta local, puede abrirlo.
-      const sealed = sodium.crypto_box_seal(envelope, publicKey);
-      const ciphertext = sodium.to_base64(sealed, sodium.base64_variants.ORIGINAL);
+      const ciphertext = await sealEnvelope(
+        props.documentPublicKey,
+        { fileName: file.name, mimeType: file.type || "application/octet-stream" },
+        fileBytes
+      );
 
       const response = await fetch(`/api/public/upload/${props.token}`, {
         method: "POST",

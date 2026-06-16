@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 
+import { env } from "../../../lib/env";
+import { addDaysLocalDateString } from "../../../lib/local-date";
 import { getPublicDoctorProfile } from "../../../services/doctor/doctor-profile-service";
 import { BookingClient } from "./agenda/booking-client";
 import { ReviewsSection } from "./reviews-section";
@@ -24,9 +26,7 @@ function formatMoney(priceCents: number, currency: string) {
 }
 
 function nextDateString() {
-  const date = new Date();
-  date.setDate(date.getDate() + 1);
-  return date.toISOString().slice(0, 10);
+  return addDaysLocalDateString(1);
 }
 
 function StarRating({ rating }: { rating: number }) {
@@ -67,6 +67,9 @@ export default async function PublicDoctorProfilePage({
 
   const specialty = profile.doctor.specialty === "ODONTOLOGY" ? "Odontología" : "Medicina General";
   const phoneDigits = profile.doctor.phone?.replace(/\D/g, "") ?? "";
+
+  const mapsApiKey = env.GOOGLE_MAPS_EMBED_API_KEY;
+  const mapsSearchUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
 
   return (
     <section className="public-shell profile-v2">
@@ -277,14 +280,31 @@ export default async function PublicDoctorProfilePage({
               <IconPin className="dp-inline-icon" />
               {location}
             </p>
-            <iframe
-              className="dp-map"
-              title={`Mapa de ${location}`}
-              src={`https://www.google.com/maps/embed/v1/place?key=AIzaSyDzPvzIi81ZYB2-2KPuYRXLhzG6dHWzc9E&q=${encodeURIComponent(location)}`}
-              allowFullScreen={true}
-              loading="lazy"
-              referrerPolicy="no-referrer-when-downgrade"
-            />
+            {mapsApiKey ? (
+              <iframe
+                className="dp-map"
+                title={`Mapa de ${location}`}
+                src={`https://www.google.com/maps/embed/v1/place?key=${mapsApiKey}&q=${encodeURIComponent(location)}`}
+                allowFullScreen={true}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            ) : (
+              <div className="dp-map-fallback">
+                <p className="dp-map-fallback-text">
+                  El mapa interactivo no está disponible por el momento.
+                </p>
+                <a
+                  href={mapsSearchUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="dp-btn dp-btn-ghost"
+                >
+                  <IconPin className="dp-btn-icon" />
+                  Ver en Google Maps
+                </a>
+              </div>
+            )}
           </div>
         </section>
       )}

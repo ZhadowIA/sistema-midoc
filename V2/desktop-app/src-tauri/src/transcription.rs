@@ -36,6 +36,41 @@ impl WhisperModel {
         }
     }
 
+    /// Modelo a partir del identificador estable (`id`). `None` si no se reconoce.
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "small" => Some(WhisperModel::Small),
+            "medium" => Some(WhisperModel::Medium),
+            "large-v3" => Some(WhisperModel::LargeV3),
+            _ => None,
+        }
+    }
+
+    /// Nombre del archivo de pesos GGML de whisper.cpp para este modelo.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            WhisperModel::Small => "ggml-small.bin",
+            WhisperModel::Medium => "ggml-medium.bin",
+            WhisperModel::LargeV3 => "ggml-large-v3.bin",
+        }
+    }
+
+    /// Tamano aproximado de los pesos en bytes. Referencia para validar espacio
+    /// en disco y para el progreso de descarga si el servidor no informa el
+    /// tamano; no es un valor exacto ni de seguridad.
+    pub fn approx_size_bytes(self) -> u64 {
+        self.disk_mb() * 1024 * 1024
+    }
+
+    /// Todos los modelos soportados, de menor a mayor exigencia.
+    pub fn all() -> [WhisperModel; 3] {
+        [
+            WhisperModel::Small,
+            WhisperModel::Medium,
+            WhisperModel::LargeV3,
+        ]
+    }
+
     /// Etiqueta legible para el medico (UI en español).
     pub fn label(self) -> &'static str {
         match self {

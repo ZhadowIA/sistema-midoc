@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { call } from "./ipc";
 import { Atencion } from "./Atencion";
 import { Recepcion } from "./Recepcion";
@@ -21,6 +21,14 @@ interface UnlockResult {
   schema_version: number;
   db_path: string;
   backup_path: string;
+  profile: DoctorProfile;
+}
+
+interface DoctorProfile {
+  id: string;
+  display_name: string;
+  created_at: string;
+  last_used_at: string | null;
 }
 
 interface SyncStatus {
@@ -56,15 +64,59 @@ type ResolveOutcome =
     };
 
 function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => void }) {
+  const [profiles, setProfiles] = useState<DoctorProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [newProfileName, setNewProfileName] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [creatingProfile, setCreatingProfile] = useState(false);
+
+  const loadProfiles = useCallback(async () => {
+    try {
+      const nextProfiles = await call<DoctorProfile[]>("list_doctor_profiles");
+      setProfiles(nextProfiles);
+      setSelectedProfileId((current) => {
+        if (current && nextProfiles.some((profile) => profile.id === current)) {
+          return current;
+        }
+        const lastUsed = nextProfiles.find((profile) => profile.last_used_at);
+        return lastUsed?.id ?? nextProfiles[0]?.id ?? "";
+      });
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadProfiles();
+  }, [loadProfiles]);
+
+  async function createProfile() {
+    const displayName = newProfileName.trim();
+    if (!displayName) return;
+    setCreatingProfile(true);
+    setError("");
+    try {
+      const profile = await call<DoctorProfile>("create_doctor_profile", { displayName });
+      setNewProfileName("");
+      await loadProfiles();
+      setSelectedProfileId(profile.id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCreatingProfile(false);
+    }
+  }
 
   async function unlock() {
     setBusy(true);
     setError("");
     try {
-      const result = await call<UnlockResult>("unlock_database", { passphrase });
+      const result = await call<UnlockResult>("unlock_database", {
+        profileId: selectedProfileId,
+        passphrase
+      });
       setPassphrase("");
       onUnlocked(result);
     } catch (e) {
@@ -81,8 +133,8 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
           <span className="brand-mark">MiDoc</span>
           <h1>Abre tu expediente</h1>
           <p>
-            Tu informacion clinica vive cifrada en esta computadora. Introduce tu frase de
-            seguridad para abrirla.
+            Cada medico tiene su propia base cifrada en esta computadora. Elige el perfil e
+            introduce su frase de seguridad.
           </p>
         </header>
         <form
@@ -92,6 +144,35 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
             void unlock();
           }}
         >
+          <label className="field">
+            <span>Medico</span>
+            <select
+              value={selectedProfileId}
+              onChange={(e) => setSelectedProfileId(e.currentTarget.value)}
+            >
+              {profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.display_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="profile-create-row">
+            <input
+              type="text"
+              value={newProfileName}
+              onChange={(e) => setNewProfileName(e.currentTarget.value)}
+              placeholder="Nuevo medico"
+            />
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={creatingProfile || newProfileName.trim().length === 0}
+              onClick={() => void createProfile()}
+            >
+              {creatingProfile ? "Creando..." : "Crear"}
+            </button>
+          </div>
           <label className="field">
             <span>Frase de seguridad</span>
             <input
@@ -110,7 +191,7 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
             <button
               className="action-button"
               type="submit"
-              disabled={busy || passphrase.length === 0}
+              disabled={busy || selectedProfileId.length === 0 || passphrase.length === 0}
             >
               {busy ? "Abriendo…" : "Desbloquear"}
             </button>
@@ -208,6 +289,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Badge del boton "Sincronizar": hay cambios pendientes por bajar/subir.
+  const [pendingSync, setPendingSync] = useState(false);
+  const autoSyncedRef = useRef(false);
   const [activeEncounter, setActiveEncounter] = useState<string | null>(null);
   const [activePatient, setActivePatient] = useState<string | null>(null);
   const [resolution, setResolution] = useState<{
@@ -244,6 +328,34 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     void refresh();
   }, [refresh]);
 
+  // Peek de cambios pendientes para el badge (no aplica nada).
+  const refreshPending = useCallback(async () => {
+    try {
+      const pending = await call<{ pending_download: boolean; pending_upload: boolean }>("sync_pending");
+      setPendingSync(pending.pending_download || pending.pending_upload);
+    } catch {
+      // Sin red o sin vincular: no alarmar con el badge.
+      setPendingSync(false);
+    }
+  }, []);
+
+  // Sincronizacion automatica al abrir/desbloquear (una vez) cuando esta
+  // vinculada, y consulta periodica de pendientes para el badge.
+  useEffect(() => {
+    if (!status?.linked) {
+      return;
+    }
+    if (!autoSyncedRef.current) {
+      autoSyncedRef.current = true;
+      void syncNow();
+    }
+    void refreshPending();
+    const interval = setInterval(() => void refreshPending(), 60_000);
+    return () => clearInterval(interval);
+    // syncNow es estable dentro del componente; solo re-evaluamos al cambiar el vinculo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.linked, refreshPending]);
+
   async function syncNow() {
     setBusy(true);
     setMessage("");
@@ -263,6 +375,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       }
       setMessage(parts.length > 0 ? `${parts.join(" · ")}.` : "Sin novedades en el portal.");
       await refresh();
+      await refreshPending();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -369,12 +482,15 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       <header className="app-topbar">
         <span className="brand-mark">MiDoc</span>
         <span className="topbar-context">
-          Expediente cifrado · esquema v{unlocked.schema_version}
+          {unlocked.profile.display_name} · expediente cifrado · esquema v{unlocked.schema_version}
         </span>
         <div className="button-row">
           {status?.linked ? (
-            <button className="action-button" onClick={() => void syncNow()} disabled={busy}>
+            <button className="action-button sync-button" onClick={() => void syncNow()} disabled={busy}>
               {busy ? "Sincronizando…" : "Sincronizar"}
+              {pendingSync && !busy ? (
+                <span className="sync-badge" role="status" aria-label="Cambios pendientes por sincronizar" />
+              ) : null}
             </button>
           ) : null}
           <button className="ghost-button" onClick={() => void lock()}>
@@ -461,7 +577,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
             ) : view === "arco" ? (
               <Arco />
             ) : (
-          <section className="panel">
+          <section className="panel agenda-panel">
             <div className="panel-header">
               <h2>Agenda</h2>
               <p>

@@ -84,6 +84,8 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
 | 18 | Agendado con responsable/tutor | `superpowers:test-driven-development` | El sistema distingue paciente con tutor de paciente sin tutor. | ✅ DONE |
 | 19 | Pulido del flujo publico, preconsulta y sincronizacion | `impeccable` | Perfil/agenda fieles, preconsulta diferida (antecedentes o guiada por IA), recordatorio con cancelacion y sync con aviso. | 🔜 PLANEADO |
+| 20 | App del medico: multi-perfil y agenda dia/semana | `impeccable` | Varios medicos comparten una computadora con bases cifradas independientes y agenda dia/semana. | ✅ DONE |
+| 21 | Plantillas clinicas asistidas por conversacion | `superpowers:writing-plans` | Consulta grabada/transcrita se acomoda en segmentos revisables de la plantilla activa. | 🔜 PLANEADO |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -703,6 +705,40 @@ Checklist de salida:
 - Respaldo en nube (AssemblyAI/Deepgram) con consentimiento y seudonimizacion.
 - Pruebas: descarga interrumpida y checksum invalido, provider real contra fakes del contrato, audio no persistido.
 
+Estado: ✅ DONE (compuerta de push cubierta) — rebanadas 1 (gestor de descarga del modelo), 2 (`WhisperLocalProvider` + decode de audio + cableado, binding real verificado de extremo a extremo) y 3 (respaldo en nube gobernado) entregadas (2026-06-15). Construido sobre el paso 11 (rebanadas 6 y 7). Decisiones de arranque (2026-06-15): la grabacion de audio es en la app de escritorio (WAV/PCM amigable a Whisper, sin decodificador pesado); binding `whisper-rs` 0.16 (MIT). El endpoint en nube real se cablea en staging con BAA (paso 16).
+
+Entregado (rebanada 1 — gestor de descarga del modelo, 2026-06-15):
+
+- **Catalogo de descarga (`transcription_model.rs`).** Para cada modelo soportado (`small`/`medium`/`large-v3`, reusando `WhisperModel` del paso 11) define el asset descargable: nombre de archivo GGML, URL (por defecto el repositorio publico de pesos de whisper.cpp; configurable por build con `MIDOC_WHISPER_*_URL`), checksum SHA-256 fijable por build (`MIDOC_WHISPER_*_SHA256`) y tamano aproximado. Nucleo puro y testeable: resolucion de asset, rutas bajo `models/`, holgura de disco, offset de reanudacion, verificacion de checksum en streaming y construccion del estado.
+- **Residencia.** Los pesos son REFERENCIA publica (no PHI) y se comparten entre perfiles: viven en `app_data_dir/models/` (no por perfil). La descarga no envia ningun dato del paciente; el contrato real con la fuente se verifica en staging (regla 5).
+- **Comandos (`lib.rs`).** `transcription_model_status` (presencia, verificacion por checksum, progreso por sondeo) y `download_transcription_model` (descarga/reanuda a `.part` con `Range`, valida espacio en disco con `sysinfo`, informa progreso en memoria, verifica el checksum si esta fijado y renombra al archivo final; si no coincide, descarta). Frontera de red fina con `reqwest` por trozos.
+- **UI (`TranscriptionSetup.tsx`).** Bajo la recomendacion del modelo, boton "Descargar modelo (~X GB)", barra de progreso por sondeo mientras descarga y estado "Modelo descargado y listo" al terminar (con marca de verificado si hay checksum fijado). El mock de navegador simula el avance de la descarga.
+
+Verificacion (rebanada 1): 124 pruebas de Rust en verde (+8: assets reconocen modelos y rechazan ids invalidos, URL por defecto apunta a whisper.cpp, rutas bajo `models/`, holgura de disco, reanudacion/reinicio del `.part`, `matches_sha256` exige hash fijado, `verify_file` en streaming, estados presente/parcial/no-verificado), `cargo clippy --lib` sin advertencias nuevas (persisten las 2 preexistentes de `clinical.rs` y el enum de comandos), `tsc + vite build` ok, y verificacion en navegador con el mock (recomendacion del modelo → descargar → progreso 1.22/1.46 GB que avanza por sondeo → "descargado y listo", sin errores de consola).
+
+Entregado (rebanada 2 — `WhisperLocalProvider` + decode de audio + cableado, 2026-06-15):
+
+- **Decode de audio (`audio.rs`).** `decode_wav_pcm16_to_whisper` convierte un WAV PCM de 16 bits a muestras f32 mono a 16 kHz **en memoria** (sin escribir el audio a disco; el audio es transitorio): recorre los chunks `fmt `/`data`, valida formato PCM16, mezcla a mono promediando canales y exige 16 kHz (el resampleo queda fuera de alcance: la app captura ya a 16 kHz). Logica pura y testeable.
+- **Contrato del proveedor extendido (`ai.rs`).** `TranscriptionProvider::transcribe` ahora recibe tambien el audio en bruto (`&AudioInput`); el proveedor real decodifica las muestras y el fake lo ignora. El flujo gobernado `transcribe_audio` no cambia su contrato de residencia (sigue guardando solo metadata, descarta el audio, salida BORRADOR con revision humana).
+- **`WhisperLocalProvider` (`whisper_provider.rs`, feature `whisper-local`).** Implementa el trait corriendo whisper.cpp via `whisper-rs` con el modelo GGML descargado (rebanada 1): decodifica el WAV, carga el modelo, transcribe en español sin red ni costo por uso, y devuelve el texto unido de los segmentos como borrador. El audio nunca se persiste.
+- **Cableado (`lib.rs`).** `ai_transcribe_audio` ya no usa el fake: `resolve_transcription_provider` elige el modelo recomendado descargado y construye el `WhisperLocalProvider`; si el modelo no se ha descargado, guia al medico a la pestana Transcripcion. El input de audio en la consulta acepta WAV (mono 16 kHz) con la nota correspondiente.
+- **Cadena nativa tras un feature (decision de toolchain).** `whisper-rs` (fijado en **0.16**) es dependencia **opcional** tras el feature `whisper-local`: compilarlo exige CMake + LLVM/libclang. El build por defecto y las pruebas no necesitan esa cadena (igual que los SDKs opcionales del paso 11 r8). Se fija 0.16 porque las versiones previas fallaban con el clang actual (`whisper-rs-sys` 0.13.1 daba un desajuste de layout de `whisper_full_params`; 0.11.1 generaba bindings opacos). El fake de transcripcion queda solo bajo `cfg(test)`.
+- **Residencia.** Transcripcion 100% local (sin audio ni texto a la nube); el audio se decodifica en memoria y se descarta; el borrador queda en la base cifrada con revision humana.
+
+Verificacion (rebanada 2): 127 pruebas de Rust en verde por defecto (+3: decode de WAV mono 16k, downmix de estereo a mono, rechazo de no-WAV / 44.1 kHz / 8 bits), `cargo clippy --lib` sin advertencias nuevas (persisten las 2 preexistentes), `tsc + vite build` ok. **Binding real verificado de extremo a extremo** en Windows MSVC tras instalar LLVM: `cargo build --features whisper-local` compila y enlaza whisper.cpp + bindings + provider; `cargo clippy --features whisper-local` sin advertencias nuevas; y un test de integracion (`transcribes_real_audio_without_error`, ignorado por defecto) corre **inferencia real** con el modelo `ggml-tiny` descargado (whisper.cpp carga el modelo, decodifica el WAV y emite segmentos), pasando en verde. La cadena nativa (CMake + LLVM) solo se requiere para la build de distribucion con el feature.
+
+Entregado (rebanada 3 — respaldo de transcripcion en nube gobernado, 2026-06-15):
+
+- **Proveedor en nube (`cloud_transcription.rs`).** `CloudTranscriptionProvider` implementa el trait con un POST sincrono del audio (estilo Deepgram: un request que devuelve el texto), usando `reqwest::blocking` (el comando `ai_transcribe_audio` es sincrono, corre en un hilo de Tauri). `parse_transcript` extrae el texto de la respuesta (`results.channels[].alternatives[].transcript`) — funcion pura y testeable. `estimate_cost_cents` estima el costo por duracion.
+- **Gobernanza y seudonimizacion del envio.** Es la unica via en la que el audio sale del equipo, asi que: exige consentimiento de voz vigente (lo aplica `transcribe_audio`); **solo se envian los bytes del audio y el tipo de medio, nunca el nombre de archivo ni identificadores del paciente**; el audio no se persiste; la traza local guarda solo metadata.
+- **Configuracion diferida a staging (regla 5).** `CloudConfig::from_env` lee `MIDOC_CLOUD_STT_{PROVIDER,API_KEY,ENDPOINT}`; sin configuracion la via en nube se rechaza con una guia (el proveedor real se cablea en staging con BAA, paso 16). El parser se prueba contra respuestas fake.
+- **Seleccion y UI.** `ai_transcribe_audio` acepta `use_cloud`; `resolve_transcription_provider` enruta a nube o a Whisper local. En la consulta, una casilla "Usar respaldo en nube" (deshabilitada sin consentimiento de voz) cambia la via; la nota del panel indica local vs nube (bajo BAA). El mock de navegador espeja ambas vias.
+- **Residencia.** Local por defecto (sin salir del equipo); la nube es opt-in, gobernada, transitoria y bajo BAA; el resultado queda como borrador en la base cifrada con revision humana.
+
+Verificacion (rebanada 3): 130 pruebas de Rust en verde (+3: parseo de transcripcion estilo Deepgram, rechazo de respuestas vacias/malformadas, costo por duracion con piso), `cargo clippy --lib` sin advertencias nuevas, `tsc + vite build` ok, y verificacion en navegador (panel "Asistencia de IA": la casilla de nube aparece deshabilitada sin consentimiento de voz, con la nota "transcripcion local"; sin errores de consola). El envio real a un proveedor en nube se valida en staging con BAA.
+
+Con esto la compuerta de push del paso 15 queda cubierta: descarga de modelo verificada, transcripcion local real (binding compilado y con inferencia real verificada) y respaldo en nube gobernado, todo con pruebas y residencia local por defecto.
+
 ## Paso 16 - Proveedores de IA reales en staging (BAA)
 
 | Campo | Definicion |
@@ -827,9 +863,164 @@ Rebanadas:
 - **Rebanada 9 (portal) — Recordatorio 24 h con cancelacion.** Job que envia SMS/correo 24 h antes de la cita (sobre el paso 7), con enlace corto de cancelacion (expiracion y un solo uso) que reusa el flujo de cancelacion existente.
 - **Rebanada 10 (app del medico) — Sync automatica al abrir + aviso de cambios.** Sincronizar la agenda en automatico al abrir/desbloquear la app; mostrar un badge (circulito rojo) en la esquina del boton "Sincronizar" cuando haya cambios pendientes por bajar/subir, y limpiarlo tras sincronizar.
 
-Estado: 🔜 PLANEADO. Construido sobre los pasos 2, 3, 6, 7 y 11.
+Estado: ✅ COMPLETADO (rebanadas 1-10 entregadas y verificadas). Construido sobre los pasos 2, 3, 6, 7 y 11.
+
+Entregado (rebanada 1 — perfil publico: foto y ubicacion, 2026-06-15):
+
+- **Foto sin recorte por el banner (`globals.css`).** La portada `.dp-cover` es `position: relative` y, por orden de pintado, se dibujaba encima del avatar que sube con `margin-top: -52px`, recortandolo. Se da `position: relative; z-index: 1` a `.dp-hero-body` para que el avatar (y la identidad) queden sobre la portada. Verificado: el avatar solapa la portada 52px y `elementFromPoint` en esa zona devuelve el propio `.dp-avatar`.
+- **Mapa con API key gobernada y fallback (`perfil/[slug]/page.tsx`, `lib/env.ts`, `.env.example`).** Se elimina la API key de Google Maps hardcodeada en el codigo; ahora se lee de `GOOGLE_MAPS_EMBED_API_KEY` (opcional en `env.ts`). Si la llave falta o es invalida, en vez del error crudo del iframe se muestra un fallback legible: la direccion y un enlace "Ver en Google Maps" (`maps/search`) que abre la ubicacion. Nuevo estilo `.dp-map-fallback`.
+- **Residencia.** Perfil/foto/mapa son OPERATIVO/publico; sin PHI.
+
+Verificacion (rebanada 1): 80 pruebas del portal en verde (sin nuevas: correccion de UI/configuracion sin logica de dominio nueva), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (avatar pintado sobre el banner; sin la llave configurada el mapa cae al fallback con direccion y enlace a Google Maps; sin errores de consola).
+
+Entregado (rebanada 2 — calendario fiel a la disponibilidad, 2026-06-14):
+
+- **Dias con cupo real (`public-booking-service.ts`).** Nueva `listAvailableDays(slug, serviceId, dateFrom, days)` que reusa el computo real de slots (reglas semanales, excepciones `DATE_OVERRIDE`, bloqueos, citas, holds y limites de anticipacion) y devuelve las **fechas locales del medico** (YYYY-MM-DD) con al menos un horario. `listPublicAvailability` ahora expone `timeZone` y el tope de ventana sube a 31 dias para cubrir meses completos.
+- **Endpoint (`/api/public/doctors/[slug]/available-days`).** Espeja la ruta de disponibilidad; valida `serviceId` y `dateFrom`.
+- **Calendario fiel (`calendar.tsx`, `booking-client.tsx`).** El selector recibe `availableDays` y deshabilita los dias sin cupo (clase `unavailable`, tachado y no clickeable), ademas de los pasados; ya no se muestran como disponibles vacios. El cliente consulta los dias del **mes visible** al cambiar de mes o servicio, con estado de carga y leyenda. (El boton "Buscar horarios" y la carga automatica de horarios quedan para la rebanada 3.)
+- **Residencia.** Fechas/disponibilidad son OPERATIVO/publico; sin PHI.
+
+Verificacion (rebanada 2): 73 pruebas del portal en verde (+1: `listAvailableDays` incluye el dia con regla y excluye el dia siguiente sin regla; cada dia devuelto tiene >= 1 slot), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (junio: solo lun-vie activos, fines de semana y dias pasados deshabilitados; al navegar a julio se recalculan los dias).
+
+Entregado (rebanada 3 — carga automatica de horarios + hold por sesion, 2026-06-14):
+
+- **Carga automatica de horarios (`booking-client.tsx`).** Se elimina el boton "Buscar horarios": al elegir dia o servicio, los horarios se cargan solos (efecto sobre `[serviceId, dateFrom]`), con estado de carga propio y mensaje claro cuando el dia no tiene cupo.
+- **Hold por sesion sin auto-bloqueo (`public-booking-service.ts`).** `createAppointmentHold` acepta `previousHoldToken`: dentro de la transaccion serializable libera el hold previo de la misma sesion (estado `RELEASED`) antes de tomar el nuevo, asi cambiar de horario no se bloquea a si mismo ni deja el horario anterior ocupado. `listPublicAvailability` acepta `ignoreHoldToken` para que el horario que el paciente ya aparto siga visible en su propia vista; la ruta de disponibilidad y la de holds exponen ambos parametros.
+- **UI.** El cliente pasa su hold actual como `ignoreHoldToken` al recargar horarios y como `previousHoldToken` al apartar uno nuevo. La proteccion de doble reserva entre pacientes distintos se mantiene intacta (el conflicto sigue mirando holds ACTIVE de otros).
+- **Residencia.** Sin PHI; solo horarios y tokens opacos de hold.
+
+Verificacion (rebanada 3): 74 pruebas del portal en verde (+1: la misma sesion cambia de hold sin auto-bloquearse — su hold previo queda `RELEASED`, el horario anterior se libera y reapartar el mismo con su token funciona; `ignoreHoldToken` revela su propio horario), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (horarios auto-cargados sin boton; apartar 08:00 y cambiar a 08:30 libera el 08:00 y ambos siguen disponibles para el mismo paciente; sin errores de consola).
+
+Entregado (rebanada 4 — validacion de telefono internacional, 2026-06-14):
+
+- **Helper compartido (`lib/phone.ts`).** Lista curada de paises con clave de marcacion, `detectCountry(locale)` (region del locale; Mexico por defecto), `isValidNationalNumber` (exactamente 10 digitos), `onlyDigits` y `formatFullPhone` (p. ej. "+52 5512345678").
+- **Componente (`phone-field.tsx`).** Selector de clave de pais + input de 10 digitos (filtra no-numericos, `maxLength` 10, `inputMode` numerico), con error inline al perder foco si el numero es invalido o falta cuando es obligatorio.
+- **Formulario (`booking-client.tsx`).** El telefono del paciente y el del responsable usan `PhoneField`; la clave de pais se autodetecta tras montar (sin desajuste de hidratacion) y es editable. El submit valida 10 digitos antes de enviar y manda el telefono ya normalizado con su clave. El servidor permanece lenient (`min(7)`), sin romper el contrato existente.
+- **Residencia.** El telefono es CONTACTO; sin PHI.
+
+Verificacion (rebanada 4): 78 pruebas del portal en verde (+4 unitarias de `phone.ts`: validacion de 10 digitos, deteccion de pais por locale, formato con clave), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (selector MX +52 por defecto con paises; se filtran no-numericos; un numero corto marca error inline y `aria-invalid`; 10 digitos lo limpia; el toggle "para otra persona" muestra el campo del responsable).
+
+Entregado (rebanada 5 — reagendado con el mismo calendario, 2026-06-14):
+
+- **Mismo selector que el agendado inicial (`cita/[token]/appointment-client.tsx`).** El cambio de horario de una cita existente reemplaza el `input type="date"` nativo por el componente `Calendar` (con fidelidad de dias disponibles: solo dias con cupo real habilitados, reusando `/available-days`) y la grilla de horarios. Al abrir "Cambiar horario" se carga un dia por defecto con sus horarios, igual que el agendado inicial; elegir un dia recarga los horarios.
+- **Sin cambios de backend.** Reusa los endpoints existentes (`/available-days`, `/availability`, `/reschedule`); es un cambio de presentacion.
+- **Residencia.** Fechas/horarios OPERATIVO/publico; sin PHI.
+
+Verificacion (rebanada 5): 78 pruebas del portal en verde (sin nuevas: cambio de UI que reusa componentes/endpoints ya cubiertos; el reagendado ya esta probado en `public-booking`), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (la cita muestra el `Calendar` en vez del input nativo; dias sin cupo deshabilitados; elegir dia 17 -> 08:00 y confirmar cambia el horario de la cita; sin errores de consola).
+
+Fix de zona horaria (2026-06-14): el calendario usaba `toISOString().slice(0,10)` (UTC) para formatear y `new Date("YYYY-MM-DD")` (UTC) para parsear, corriendo el dia uno hacia atras en husos negativos por la noche. Nuevo `lib/local-date.ts` (`toLocalDateString`/`parseLocalDate`); `Calendar`, `nextDateString` y `tomorrowString` usan componentes locales. 80 pruebas en verde (+2), verificado en navegador (hoy 14 a las 17h selecciona el 15; clic en 18 queda en 18).
+
+Entregado (rebanada 6 — preconsulta diferida con bifurcacion, 2026-06-14):
+
+- **Aviso diferido (`cita/[token]/appointment-client.tsx`).** Tras confirmar la cita ya no se muestra el formulario de inicio: aparece el aviso "Para agilizar la consulta con su medico, ayudenos contestando este formulario pre-consulta" con boton "Contestar".
+- **Bifurcacion.** Al contestar, la primera pregunta es "¿Es su primera visita con este medico o ya contesto antes el formulario de antecedentes?" con dos opciones; "Es mi primera visita" enruta al formulario de antecedentes (rebanada 7) y "Ya contesto antes" a la preconsulta guiada por IA (rebanada 8). Se puede cancelar o cambiar de ruta. Si ya hay respuestas previas se entra directo al formulario.
+- **Estado actual.** En esta rebanada ambas ramas muestran el formulario de preconsulta existente (motivo/antecedentes/sintomas); las rebanadas 7 y 8 especializan cada rama y mueven el contenido al buzon cifrado E2E.
+
+Verificacion (rebanada 6): cambio de UI sin backend; `eslint`/`tsc` limpios, `next build` ok, 80 pruebas en verde, y verificacion en navegador (aviso -> Contestar -> bifurcacion con las dos opciones y cancelar -> formulario con nota de ruta; el formulario no se muestra antes de contestar).
+
+Nota tecnica (rebanadas 7-8): cerrada. Antecedentes (rebanada 7) y el resultado de la IA (rebanada 8) ya viajan como sealed box (X25519, patron del paso 6 para documentos) que la nube no puede leer, con descarga y purga desde la app del medico. Solo la preconsulta GENERICA (placeholder de la rebanada 6) seguiria en texto plano, pero ambas ramas de la bifurcacion (antecedentes / IA) ya estan especializadas y selladas, asi que el placeholder ya no se usa en el flujo del paciente.
+
+Entregado (rebanada 7 — formulario de antecedentes con paridad y buzon E2E, 2026-06-15):
+
+- **Contrato compartido (`lib/medical-history.ts`).** Fuente de verdad de los campos de antecedentes (identificacion, heredofamiliares, no patologicos, patologicos, gineco/andrologicos condicionales por sexo, alergias y medicamentos), con esquema Zod y grupos para construir el formulario. Recortado de `ClinicalHistoryForm` de V1 a lo que el paciente puede contestar; todo opcional.
+- **Formulario sellado en el cliente (`medical-history-form.tsx`, `lib/seal-envelope.ts`).** La rama "primera visita" de la bifurcacion (rebanada 6) muestra el formulario; al enviar, las respuestas se validan con Zod, se serializan y se **sellan en el navegador** (sealed box X25519 con la llave publica del dispositivo del medico) reusando el patron de documentos del paso 6 (helper `sealEnvelope` extraido y compartido con la carga de documentos). Gineco/andrologicos se muestran segun el sexo biologico capturado.
+- **La nube nunca ve el contenido (`public-booking-service.ts`, `schema.prisma`).** `PrecheckinSubmission` gana `kind`, `ciphertext`, `sizeBytes`, `deliveredAt`, `purgedAt`. `submitMedicalHistory` guarda SOLO el `ciphertext` (`responses` queda nulo) y emite `PRECHECKIN_SUBMITTED` con `sealed:true` y sin respuestas. La purga en `ackSyncEvents` borra el `ciphertext` y marca `purgedAt` tras el ACK (frontera legal).
+- **Sin dispositivo no aparece (requisito del medico).** Si el medico no tiene llave publica de dispositivo, `getPublicAppointmentByToken` devuelve `documentPublicKey:null` y el portal **no muestra la preconsulta**; ademas `submitMedicalHistory` rechaza con 409 (defensa del API ante envio directo).
+- **Entrega y recepcion E2E (`/api/sync/precheckins/[id]`, desktop `sync.rs`/`lib.rs`/`db.rs`).** Nuevo endpoint que entrega el sealed box al dispositivo (mismo contrato que documentos: dueño unico, 410 tras purga, 404 a intrusos). La app del medico descarga el ciphertext antes de avanzar el cursor, lo descifra con `crypto::unseal_document` y guarda los antecedentes en `precheckins` (columna `kind='medical-history'`); `apply_batch` no pisa el contenido sellado. La vista del medico (`Atencion.tsx`) aplana los antecedentes anidados a pares legibles por grupo.
+- **Residencia.** Antecedentes = CLINICO en transito; la nube solo guarda `ciphertext` que no puede abrir, y lo purga tras el ACK. Residencia definitiva en la app local.
+
+Verificacion (rebanada 7): portal 82 pruebas en verde (+2 de integracion: la nube guarda solo `ciphertext` —sin texto plano—, el evento va `sealed` sin respuestas, el dispositivo descifra el sobre y recupera el payload exacto, y tras el ACK el `ciphertext`/payload quedan purgados con re-descarga 410; rechazo 409 sin llave de dispositivo), `eslint`/`tsc` limpios, `next build` ok; desktop 113 pruebas de Rust en verde (+1: antecedentes sellados se guardan como `medical-history` e idempotentes), `cargo clippy` sin advertencias nuevas, `tsc + vite build` del escritorio ok. Verificacion en navegador con libsodium real: con llave de dispositivo el formulario aparece, gineco/andrologicos se muestran segun el sexo, y al enviar la fila queda con `responses=null`, `ciphertext` presente y sin fuga de texto plano; el evento lleva `sealed:true` sin respuestas; sin errores de consola.
+
+Entregado (rebanada 8 — preconsulta guiada por IA, gobernada y sellada E2E, 2026-06-15):
+
+- **Adaptador de IA agnostico (`services/ai/preconsulta-ai.ts`, `lib/env.ts`).** Contrato unico `PreconsultaAiProvider` con tres implementaciones seleccionables por `AI_PROVIDER`: `fake` (determinista, sin red, default para dev/pruebas), `openai` (SDK oficial `openai`, `OPENAI_API_KEY`) y `anthropic` (SDK oficial `@anthropic-ai/sdk`, modelo por defecto `claude-opus-4-8`). Los SDKs son dependencias opcionales (import dinamico con `turbopackIgnore`): el build por defecto no las necesita. Gobernanza (paso 11): el contenido entra seudonimizado, sin PII, y NO se persiste en nube/logs (regla 4); proveedor real solo en staging con BAA (paso 16).
+- **Chat guiado (`cita/[token]/preconsulta-ai/route.ts`, `ai-preconsulta-chat.tsx`).** Tras la bifurcacion (rama "ya contesto antes"), consentimiento explicito y luego un chat: arranca del motivo, maximo 5 preguntas adaptativas, sin repetir, en lenguaje de paciente. El endpoint NO guarda nada: calcula y devuelve la siguiente pregunta.
+- **Resultado sellado E2E (`public-booking-service.ts`, `preconsulta-ai/submit/route.ts`, `schema.prisma`).** Nuevo `PrecheckinKind.AI_PRECONSULTA`. El resultado (motivo + Q&A) se sella en el navegador (sealed box X25519) y se guarda como `ciphertext` (`responses` nulo), reusando el `submitSealedPrecheckin` compartido con los antecedentes (rebanada 7). El evento de sync va `sealed:true` sin respuestas; la entrega al dispositivo (`getMailboxPrecheckinForDevice`) y la purga tras ACK cubren ambos tipos.
+- **Recepcion y vista (desktop `sync.rs`, `Atencion.tsx`).** `store_mailbox_precheckin` lee el `kind` del meta del sobre (antecedentes vs preconsulta IA) y lo guarda en `precheckins.kind`. La vista del medico aplana el resultado IA a Motivo + pares pregunta/respuesta.
+- **Sin dispositivo no aparece.** Igual que la rebanada 7: sin llave de dispositivo el portal oculta la preconsulta y el API rechaza con 409.
+- **Residencia.** La preconsulta IA es el unico punto donde contenido clinico transita la nube (transitorio, seudonimizado, sin persistir); el resultado final vive sellado y se purga tras el ACK. Residencia definitiva en la app local.
+
+Verificacion (rebanada 8): portal 86 pruebas en verde (+3 fake provider unitarias: arranca por sintoma sin motivo, no repite, termina al maximo; +1 integracion IA: la nube guarda solo `ciphertext` —sin texto plano—, evento `sealed`, el dispositivo descifra el payload exacto via el filtro ampliado a `AI_PRECONSULTA`, y purga tras ACK), `eslint`/`tsc` limpios, `next build` ok; desktop 114 pruebas de Rust en verde (+1: el `kind` se lee del meta del sobre, `ai-preconsulta`), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok. Verificacion en navegador: con el proveedor real `openai` el adaptador llama a OpenAI de verdad (el flujo se valido contra la API; la cuenta de prueba devolvio 429 por cuota, confirmando la llamada real); con el proveedor `fake` el camino feliz completo (consentimiento -> 5 preguntas sin repetir -> sellado -> envio) deja la fila `AI_PRECONSULTA` con `responses=null`, `ciphertext` presente y sin fuga de texto plano, evento `sealed:true` sin respuestas; sin errores de consola.
+
+Entregado (rebanada 9 — recordatorio 24 h con cancelacion, 2026-06-14):
+
+- **El recordatorio ya existia** (se encola al agendar con `scheduledFor` 24 h antes) y el job de despacho `/api/internal/notifications/dispatch` (cron autorizado) procesa la cola por tiempo. Esta rebanada agrega el **enlace de cancelacion**.
+- **Enlace de cancelacion (`public-booking-service.ts`).** El recordatorio apunta a `cita/<token>?accion=cancelar` con enlace corto que **expira al inicio de la cita**; la cancelacion es de un solo efecto (el servicio rechaza cancelar dos veces). La plantilla del recordatorio menciona la cancelacion y el vencimiento.
+- **Deep-link (`cita/[token]/page.tsx` + `appointment-client.tsx`).** La pagina lee `?accion=cancelar` y muestra un aviso destacado "¿Quieres cancelar esta cita del <fecha>?" con "Si, cancelar"/"No, conservar", reusando el flujo de cancelacion existente. El aviso ya confirma, asi que omite el `window.confirm` redundante (el boton general "Cancelar cita" si lo conserva).
+- **Residencia.** El recordatorio solo lleva nombre, contacto y datos de cita; sin contenido clinico.
+
+Verificacion (rebanada 9): 80 pruebas del portal en verde (la prueba de notificaciones ahora comprueba que el recordatorio lleva `accion=cancelar` y que el de SMS usa enlace corto con expiracion), `eslint`/`tsc` limpios, `next build` ok, y verificacion en navegador (abrir la cita con `?accion=cancelar` muestra el aviso con la fecha; "Si, cancelar" deja la cita en estado Cancelada sin dialogo bloqueante).
+
+Entregado (rebanada 10 — sync automatica al abrir + badge de cambios pendientes, app del medico, 2026-06-14):
+
+- **Sync automatica al abrir/desbloquear (`App.tsx`).** Con la app desbloqueada y vinculada, sincroniza la agenda una sola vez automaticamente (ref para no repetir), ademas del boton manual.
+- **Badge de cambios pendientes (`lib.rs` + `App.tsx` + `App.css`).** Nuevo comando `sync_pending` que hace un peek sin aplicar: `pending_download` (eventos en el buzon del portal, GET sin ACK) y `pending_upload` (reportes de uso de IA locales por subir). Best-effort: sin red no marca pendiente. La UI consulta al abrir y cada 60 s, muestra un circulito rojo en la esquina del boton "Sincronizar" cuando hay pendientes y lo limpia tras sincronizar.
+- **Residencia.** El peek no descarga ni descifra contenido; solo cuenta eventos.
+
+Verificacion (rebanada 10): 112 pruebas de Rust en verde (las piezas base `fetch_inbox`/`pending_usage_reports` ya estaban cubiertas), `cargo clippy` sin advertencias nuevas, `tsc + vite build` del escritorio ok. La ejecucion visual completa de la app Tauri no se corrio aqui (sin runtime de escritorio); la verificacion es compilacion + pruebas, como en rebanadas previas del escritorio.
 
 > Nota de residencia (rebanada 8): la preconsulta guiada por IA es el unico punto donde contenido clinico transita la nube para generar la siguiente pregunta. Debe tratarse como transitorio: consentimiento del paciente, seudonimizacion, prohibido persistir respuestas o prompts en logs/telemetria, y el resultado final sellado en el buzon cifrado (sealed box con la llave publica del medico) para que solo la app del medico lo lea. El adaptador real de IA se cablea en staging con BAA (paso 16); hasta entonces se usa un proveedor determinista para construir y probar el contrato.
+
+## Paso 20 - App del medico: multi-perfil y agenda dia/semana
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Pulir la app del medico tras el piloto: permitir que **varios medicos** compartan una misma computadora, cada uno con su propia base cifrada e independiente; y dar a la agenda una **vista de dia** ademas de la semanal, con opcion de mostrar/ocultar las citas canceladas. Extiende los pasos 1 (base cifrada) y 13 (agenda semanal). |
+| Requisitos relacionados | RNF03, RNF04, RNF05 (aislamiento y cifrado por medico), RF04/RF05 (visualizacion de agenda). Extiende pasos 1 y 13. |
+| Entrada necesaria | App del medico con base cifrada por frase de seguridad (paso 1) y agenda semanal por bloques (paso 13) funcionando. |
+| Se construye | App del medico: registro local de perfiles de medico (`doctor_profiles.json` en el directorio de datos), creacion de perfil desde la pantalla de desbloqueo, base/respaldos por perfil (`profiles/<id>/midoc.db`), seleccion de perfil al abrir; agenda con conmutador Dia/Semana, navegacion coherente (avanza 1 dia o 7 segun la vista) y casilla "Mostrar canceladas" que por defecto las oculta; refinamiento visual (paneles y tarjeta de acceso sin borde/redondeo). |
+| Se valida con | Dos medicos en la misma maquina abren bases distintas con sus propias frases sin verse entre si; crear un perfil nuevo no toca las bases existentes; un `profile_id` con `..`/`/` se rechaza (sin path traversal); en la agenda el medico cambia entre Dia y Semana, navega coherentemente y oculta/muestra canceladas. |
+| Compuerta de avance | El aislamiento por perfil no rompe el cifrado ni la residencia local: cada base sigue cifrada con su propia frase y vive en disco del medico; el registro de perfiles solo guarda id/nombre/fechas (sin PHI, sin frases). La agenda es presentacion (sin nuevo contenido clinico). |
+| Push recomendado | Por rebanada cerrada y verificada; multi-perfil y agenda son independientes. |
+
+Clasificacion de datos: el registro de perfiles (id, nombre del medico, fechas de uso) es OPERATIVO local; no contiene PHI ni frases de seguridad. La agenda dia/semana es presentacion sobre datos ya residentes; sin nuevo contenido clinico.
+
+Rebanadas:
+
+- **Rebanada 1 (app del medico) — Multi-perfil de medico.** Registro local de perfiles, creacion desde el desbloqueo, base y respaldos aislados por perfil, validacion de `profile_id` contra path traversal. El `default` conserva la ruta historica (`midoc.db`) para no romper instalaciones existentes.
+- **Rebanada 2 (app del medico) — Agenda dia/semana + mostrar canceladas.** Conmutador Dia/Semana, navegacion por dia o semana segun la vista, casilla "Mostrar canceladas" (ocultas por defecto), con la logica pura extraida a un modulo testeable; refinamiento visual de paneles/tarjeta de acceso.
+
+Estado: ✅ COMPLETADO (rebanadas 1-2 entregadas y verificadas, 2026-06-15). Construido sobre los pasos 1 y 13.
+
+Entregado (rebanada 1 — multi-perfil de medico, 2026-06-15):
+
+- **Registro local de perfiles (`lib.rs`).** Comandos `list_doctor_profiles` y `create_doctor_profile`; el registro vive en `doctor_profiles.json` en el directorio de datos de la app y solo guarda `id`, `display_name`, `created_at` y `last_used_at` (sin PHI ni frases). El perfil `default` se inyecta siempre y conserva la ruta historica (`midoc.db`); los demas usan `profiles/<id>/midoc.db` y sus respaldos en `profiles/<id>/backups/`.
+- **Aislamiento y anti path-traversal.** `validate_profile_id` exige `[A-Za-z0-9_-]` (<=64) y rechaza vacios, `..` y `/`; `unlock_database` ahora recibe `profile_id`, marca `last_used_at` y abre la base del perfil seleccionado. El id se deriva del nombre del medico de forma estable y con sufijo ante colisiones.
+- **UI de desbloqueo (`App.tsx`, `ipc.ts`).** Selector de medico (preselecciona el ultimo usado), fila "Nuevo medico" + "Crear", y la barra superior del workspace muestra el nombre del medico activo. El mock espeja el comportamiento.
+- **Residencia.** Cada base sigue cifrada con su propia frase y vive en disco del medico; el registro de perfiles es OPERATIVO local sin PHI.
+
+Verificacion (rebanada 1): desktop 116 pruebas de Rust en verde (+2: `profile_database_path` separa medicos y respeta `default`; `validate_profile_id` rechaza path traversal), `cargo clippy` sin advertencias nuevas, `tsc + vite build` ok.
+
+Entregado (rebanada 2 — agenda dia/semana + mostrar canceladas, 2026-06-15):
+
+- **Logica pura testeable (`weekAgendaFilters.ts`).** `filterAgendaAppointments` (oculta canceladas salvo opt-in), `getAgendaVisibleDays` (1 dia o la semana lunes-domingo segun la vista) y `moveAgendaAnchorDate` (avanza 1 dia o 7 segun la vista), con test node (`scripts/week-agenda-filter.test.mjs`).
+- **UI de agenda (`WeekAgenda.tsx`, `App.css`).** Conmutador Dia/Semana (`aria-pressed`), navegacion `‹ Hoy ›` coherente con la vista, casilla "Mostrar canceladas" (ocultas por defecto), grilla parametrizada por `--week-day-count` (1 o 7 columnas) y encabezado de dia derivado del dia real. Refinamiento visual: paneles y tarjeta de acceso sin borde/redondeo.
+- **Residencia.** Presentacion sobre datos ya residentes; sin nuevo contenido clinico.
+
+Verificacion (rebanada 2): test node de filtros en verde (oculta/ muestra canceladas, semana lunes-domingo, navegacion dia vs semana), `tsc + vite build` del escritorio ok.
+
+## Paso 21 - Plantillas clinicas asistidas por conversacion
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Convertir la conversacion real de consulta en segmentos clinicos revisables, usando la plantilla activa del medico, sin guardar automaticamente la nota ni quitar control clinico al medico. |
+| Requisitos relacionados | RF40, RNF01, RNF06, RNF07, RNF12, RNF14, RNF15. Extiende pasos 5, 8, 11, 15 y 16. |
+| Entrada necesaria | App del medico con nota SOAP/plantillas existentes, consentimiento y trazas de IA, Whisper local real, respaldo nube gobernado y proveedores LLM listos para staging. |
+| Skills IA recomendadas | `superpowers:writing-plans`, `superpowers:test-driven-development`, `codex-security:security-scan`, `ui-ux-pro-max`, `superpowers:verification-before-completion` |
+| Se construye | Flujo de escriba clinico: consentimiento especifico, transcripcion de consulta, propuesta revisable de dialogo Medico/Paciente, seudonimizacion local, envio de transcript + plantilla a Gemini directo desde la app del medico, respuesta JSON validada por segmentos, vista de revision con confianza/fuentes y aplicacion manual a la nota. |
+| Se valida con | El medico graba o carga audio, corrige el dialogo si hace falta, genera segmentos para la plantilla activa, ve fuentes/advertencias, aplica solo los segmentos aprobados y guarda la nota manualmente. La salida de IA queda trazada como BORRADOR. |
+| Compuerta de avance | La IA no firma ni guarda notas automaticamente; el audio se descarta tras transcribir; el texto enviado a Gemini va seudonimizado; la nube de MiDoc no persiste contenido clinico; todo segmento aplicado requiere revision humana. |
+| Push recomendado | Hacer push por rebanada cerrada y verificada; no mezclar editor de plantillas personalizadas con el primer MVP de acomodo. |
+
+Clasificacion de datos: audio, transcript, dialogo y segmentos son CLINICO y viven en la base local cifrada o como bytes transitorios. Las trazas de proveedor/costo son OPERATIVO local y solo se reportan al portal por referencia, sin input/output clinico.
+
+Rebanadas:
+
+- **Rebanada 1 — Contrato de plantilla y salida segmentada.** Definir el contrato local de segmentos para la plantilla activa: `segment_id`, etiqueta, instrucciones, contenido, confianza, turnos fuente, faltantes y advertencias. Validar la salida de IA antes de mostrarla.
+- **Rebanada 2 — Dialogo Medico/Paciente revisable.** Convertir la transcripcion en turnos semi-automaticos, permitir correccion de hablante/texto y usar ese dialogo como entrada del acomodo. Si la separacion automatica falla, el medico puede corregir antes de llamar al LLM.
+- **Rebanada 3 — Acomodo IA gobernado.** Nuevo uso de IA `CONSULTATION_STRUCTURING` bajo consentimiento `CONSULTATION_SCRIBE`; prompt versionado; fake determinista para pruebas; Gemini directo desde desktop en staging/produccion con seudonimizacion local y fallback configurado.
+- **Rebanada 4 — Vista de revision y aplicacion manual.** Mostrar segmentos, confianza, fuentes y advertencias; permitir aplicar por segmento o descartar; nunca guardar ni firmar automaticamente. Al aprobar, cerrar la traza de IA como `APPROVED`; al descartar, `DISCARDED`.
+- **Rebanada 5 — Editor de plantillas personalizadas.** Permitir que cada medico cree/edite plantillas locales con segmentos ordenados, obligatorios/opcionales e instrucciones para IA. Guardar localmente cifrado; no sincronizar contenido clinico ni estructura personalizada a la nube salvo decision futura explicita.
 
 ## MVP recomendado
 

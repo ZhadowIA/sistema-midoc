@@ -182,6 +182,11 @@ pub fn apply_event(conn: &Connection, event: &InboxEvent) -> Result<(), SyncErro
                 ],
             )?;
         }
+        // Antecedentes sellados (sealed box): el contenido NO viaja en el
+        // payload; se descarga y descifra aparte (store_mailbox_precheckin), por
+        // lo que este evento no hace nada aqui (no pisarlo con "{}").
+        "PRECHECKIN_SUBMITTED"
+            if payload.get("sealed").and_then(|v| v.as_bool()) == Some(true) => {}
         "PRECHECKIN_SUBMITTED" => {
             let responses = payload
                 .get("responses")
@@ -466,6 +471,34 @@ pub async fn fetch_document(
         .ok_or_else(|| SyncError::Server("respuesta sin ciphertext".into()))
 }
 
+/// Descarga el ciphertext (sealed box, base64) de los antecedentes de un
+/// paciente. Se descifra localmente con la llave del medico, igual que un
+/// documento del buzon.
+pub async fn fetch_precheckin(
+    server_url: &str,
+    device_token: &str,
+    precheckin_id: &str,
+) -> Result<String, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+
+    let response = client
+        .get(format!("{base}/api/sync/precheckins/{precheckin_id}"))
+        .bearer_auth(device_token)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+
+    let body: serde_json::Value = response.json().await?;
+    body.get("ciphertext")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| SyncError::Server("respuesta sin ciphertext".into()))
+}
+
 /// Publica un resumen autorizado cifrado al portal (app -> nube). El payload es
 /// `nonce||mac||ciphertext`; la nube lo guarda sin poder abrirlo. Devuelve la
 /// URL de descarga (sin la llave, que el llamador agrega en el fragmento).
@@ -576,6 +609,48 @@ pub fn store_mailbox_document(
         ],
     )?;
     Ok(())
+}
+
+/// Guarda los antecedentes (historia clinica) ya descifrados en la base local.
+/// El sobre lleva en el meta `{kind:"medical-history"}` (antecedentes) o
+/// `{kind:"ai-preconsulta"}` (resultado de la IA), y el JSON de respuestas como
+/// contenido. Idempotente por appointment_id (re-entrega no duplica; reenvio del
+/// paciente actualiza). CLINICO: vive solo aqui.
+pub fn store_mailbox_precheckin(
+    conn: &Connection,
+    appointment_id: &str,
+    plaintext: &[u8],
+) -> Result<(), SyncError> {
+    let (kind, content) = parse_precheckin_envelope(plaintext)?;
+    let responses_json = String::from_utf8(content)
+        .map_err(|e| SyncError::Server(format!("preconsulta no es UTF-8: {e}")))?;
+    conn.execute(
+        "INSERT INTO precheckins (appointment_id, responses_json, kind, received_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(appointment_id) DO UPDATE SET
+            responses_json = excluded.responses_json,
+            kind = excluded.kind,
+            received_at = excluded.received_at",
+        params![appointment_id, responses_json, kind, chrono_now()],
+    )?;
+    Ok(())
+}
+
+/// Lee `kind` del meta del sobre y el contenido. Default `medical-history` por
+/// compatibilidad con sobres sin `kind`.
+fn parse_precheckin_envelope(bytes: &[u8]) -> Result<(String, Vec<u8>), SyncError> {
+    if bytes.len() < 4 {
+        return Err(SyncError::Server("preconsulta corrupta".into()));
+    }
+    let meta_len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    if bytes.len() < 4 + meta_len {
+        return Err(SyncError::Server("preconsulta corrupta".into()));
+    }
+    let meta: serde_json::Value = serde_json::from_slice(&bytes[4..4 + meta_len])
+        .map_err(|e| SyncError::Server(format!("metadatos invalidos: {e}")))?;
+    let kind = text(&meta, "kind").unwrap_or_else(|| "medical-history".into());
+    let content = bytes[4 + meta_len..].to_vec();
+    Ok((kind, content))
 }
 
 #[cfg(test)]
@@ -812,6 +887,64 @@ mod tests {
         // metaLen mayor que el buffer disponible.
         let bad = vec![0u8, 0, 1, 0, 1, 2];
         assert!(store_mailbox_document(&conn, "doc-x", None, None, &bad).is_err());
+    }
+
+    fn precheckin_envelope(content: &[u8]) -> Vec<u8> {
+        precheckin_envelope_kind("medical-history", content)
+    }
+
+    fn precheckin_envelope_kind(kind: &str, content: &[u8]) -> Vec<u8> {
+        let meta = serde_json::json!({ "kind": kind }).to_string();
+        let meta_bytes = meta.as_bytes();
+        let mut out = Vec::new();
+        out.extend_from_slice(&(meta_bytes.len() as u32).to_be_bytes());
+        out.extend_from_slice(meta_bytes);
+        out.extend_from_slice(content);
+        out
+    }
+
+    #[test]
+    fn stores_sealed_precheckin_as_medical_history_and_is_idempotent() {
+        let conn = test_conn("precheckin-mh");
+        let json = r#"{"sex":"F","allergies":"penicilina"}"#;
+        let plaintext = precheckin_envelope(json.as_bytes());
+
+        store_mailbox_precheckin(&conn, "appt-1", &plaintext).unwrap();
+        // Reenvio del paciente: actualiza, no duplica (PK por appointment_id).
+        let json2 = r#"{"sex":"F","allergies":"ninguna"}"#;
+        store_mailbox_precheckin(&conn, "appt-1", &precheckin_envelope(json2.as_bytes())).unwrap();
+
+        let (count, responses, kind): (i64, String, String) = conn
+            .query_row(
+                "SELECT count(*), max(responses_json), max(kind)
+                 FROM precheckins WHERE appointment_id = 'appt-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(kind, "medical-history");
+        // El contenido clinico se guarda tal cual (el JSON descifrado), no "{}".
+        assert_eq!(responses, json2);
+    }
+
+    #[test]
+    fn stores_sealed_ai_preconsulta_with_kind_from_envelope() {
+        let conn = test_conn("precheckin-ai");
+        let json = r#"{"motivo":"tos","conversation":[{"question":"q","answer":"a"}]}"#;
+        let plaintext = precheckin_envelope_kind("ai-preconsulta", json.as_bytes());
+
+        store_mailbox_precheckin(&conn, "appt-ai", &plaintext).unwrap();
+
+        let (responses, kind): (String, String) = conn
+            .query_row(
+                "SELECT responses_json, kind FROM precheckins WHERE appointment_id = 'appt-ai'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "ai-preconsulta");
+        assert_eq!(responses, json);
     }
 
     #[test]

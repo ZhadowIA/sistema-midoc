@@ -402,6 +402,9 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE patients ADD COLUMN guardian_relationship TEXT;
     ALTER TABLE patients ADD COLUMN guardian_phone TEXT;
     ALTER TABLE patients ADD COLUMN guardian_email TEXT;",
+    // Antecedentes (paso 19, rebanada 7): distingue la preconsulta generica del
+    // formulario de antecedentes (historia clinica), que llega sellado E2E.
+    "ALTER TABLE precheckins ADD COLUMN kind TEXT NOT NULL DEFAULT 'generic';",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

@@ -18,7 +18,18 @@ const envSchema = z.object({
   PAYMENTS_PROVIDER: z.enum(["MOCK", "STRIPE", "CONEKTA", "OPENPAY"]),
   PAYMENTS_WEBHOOK_SECRET: z.string().min(1),
   // Llave para cifrar en reposo el secreto TOTP del 2FA. Se deriva a 32 bytes.
-  TWO_FACTOR_ENCRYPTION_KEY: z.string().min(16)
+  TWO_FACTOR_ENCRYPTION_KEY: z.string().min(16),
+  // Llave de Google Maps Embed API para el mapa del perfil publico. Opcional:
+  // si falta o es invalida, el perfil muestra un fallback (direccion + enlace).
+  GOOGLE_MAPS_EMBED_API_KEY: z.string().min(1).optional(),
+  // Proveedor de la preconsulta guiada por IA (paso 19, rebanada 8). `fake` es
+  // un proveedor determinista sin red, default para dev/pruebas. `openai` y
+  // `anthropic` se cablean en staging con BAA (paso 16); las llaves abajo son
+  // opcionales y solo se usan con su proveedor seleccionado.
+  AI_PROVIDER: z.enum(["fake", "openai", "anthropic"]).default("fake"),
+  AI_MODEL: z.string().min(1).optional(),
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_API_KEY: z.string().min(1).optional()
 });
 
 export const env = envSchema.parse(process.env);

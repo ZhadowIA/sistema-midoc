@@ -1,4 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
+import {
+  filterAgendaAppointments,
+  getAgendaVisibleDays,
+  moveAgendaAnchorDate,
+  type AgendaViewMode
+} from "./weekAgendaFilters";
 
 /**
  * Agenda semanal por bloques (7 columnas = dias). El bloque es la duracion de
@@ -46,23 +52,15 @@ const dayHeaderFormatter = new Intl.DateTimeFormat("es-MX", {
   day: "numeric",
   month: "short"
 });
+const dayRangeFormatter = new Intl.DateTimeFormat("es-MX", {
+  weekday: "long",
+  day: "numeric",
+  month: "long"
+});
 const weekRangeFormatter = new Intl.DateTimeFormat("es-MX", {
   day: "numeric",
   month: "long"
 });
-
-function startOfWeek(date: Date): Date {
-  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const mondayOffset = (d.getDay() + 6) % 7; // 0 = lunes
-  d.setDate(d.getDate() - mondayOffset);
-  return d;
-}
-
-function addDays(date: Date, days: number): Date {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d;
-}
 
 function sameDay(a: Date, b: Date): boolean {
   return (
@@ -98,38 +96,34 @@ export function WeekAgenda({
   workEndMinutes: number | null;
   onAttend: (appointmentId: string) => void;
 }) {
-  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  const [anchorDate, setAnchorDate] = useState(() => new Date());
+  const [viewMode, setViewMode] = useState<AgendaViewMode>("week");
+  const [showCancelled, setShowCancelled] = useState(false);
 
   const slot = slotMinutes > 0 ? slotMinutes : 30;
   const workStart = workStartMinutes ?? DEFAULT_WORK_START;
   const workEnd = Math.max(workEndMinutes ?? DEFAULT_WORK_END, workStart + slot);
+  const visibleAppointments = useMemo(
+    () => filterAgendaAppointments(appointments, showCancelled),
+    [appointments, showCancelled]
+  );
 
   const today = new Date();
+  const days = useMemo(() => getAgendaVisibleDays(anchorDate, viewMode), [anchorDate, viewMode]);
   const todayIndex = useMemo(() => {
-    const diff = Math.round(
-      (new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime() -
-        weekStart.getTime()) /
-        86_400_000
-    );
-    return diff >= 0 && diff < 7 ? diff : -1;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekStart]);
-
-  const days = useMemo(
-    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
-    [weekStart]
-  );
+    return days.findIndex((day) => sameDay(day, today));
+  }, [days, today]);
 
   // Agrupa las citas de la semana visible por bloque (slot horario) y dia.
   const byBlockDay = useMemo(() => {
     const map = new Map<number, AgendaAppointment[][]>();
-    for (const appt of appointments) {
+    for (const appt of visibleAppointments) {
       const start = new Date(appt.scheduled_start);
       const dayIndex = days.findIndex((d) => sameDay(d, start));
       if (dayIndex === -1) continue;
       const block = Math.floor(minutesSinceMidnight(start) / slot);
       if (!map.has(block)) {
-        map.set(block, Array.from({ length: 7 }, () => [] as AgendaAppointment[]));
+        map.set(block, Array.from({ length: days.length }, () => [] as AgendaAppointment[]));
       }
       map.get(block)![dayIndex].push(appt);
     }
@@ -139,7 +133,7 @@ export function WeekAgenda({
       }
     }
     return map;
-  }, [appointments, days, slot]);
+  }, [visibleAppointments, days, slot]);
 
   // Rango de bloques a mostrar: el horario laboral, extendido para no ocultar
   // citas que caigan antes o despues de el.
@@ -153,45 +147,80 @@ export function WeekAgenda({
     return Array.from({ length: last - first + 1 }, (_, i) => first + i);
   }, [byBlockDay, workStart, workEnd, slot]);
 
-  const rangeLabel = `${weekRangeFormatter.format(weekStart)} – ${weekRangeFormatter.format(
-    addDays(weekStart, 6)
-  )}`;
+  const rangeLabel =
+    viewMode === "day"
+      ? dayRangeFormatter.format(days[0])
+      : `${weekRangeFormatter.format(days[0])} – ${weekRangeFormatter.format(days[days.length - 1])}`;
+  const gridStyle = { "--week-day-count": days.length } as CSSProperties;
 
   return (
     <div className="week-agenda">
       <div className="week-nav">
         <button
           className="ghost-button"
-          aria-label="Semana anterior"
-          onClick={() => setWeekStart((w) => addDays(w, -7))}
+          aria-label={viewMode === "day" ? "Dia anterior" : "Semana anterior"}
+          onClick={() => setAnchorDate((date) => moveAgendaAnchorDate(date, viewMode, -1))}
         >
           ‹
         </button>
-        <button className="ghost-button" onClick={() => setWeekStart(startOfWeek(new Date()))}>
+        <button className="ghost-button" onClick={() => setAnchorDate(new Date())}>
           Hoy
         </button>
         <button
           className="ghost-button"
-          aria-label="Semana siguiente"
-          onClick={() => setWeekStart((w) => addDays(w, 7))}
+          aria-label={viewMode === "day" ? "Dia siguiente" : "Semana siguiente"}
+          onClick={() => setAnchorDate((date) => moveAgendaAnchorDate(date, viewMode, 1))}
         >
           ›
         </button>
+        <div className="week-view-toggle" role="group" aria-label="Vista de agenda">
+          <button
+            type="button"
+            className={
+              viewMode === "day" ? "week-view-option week-view-option-active" : "week-view-option"
+            }
+            aria-pressed={viewMode === "day"}
+            onClick={() => setViewMode("day")}
+          >
+            Dia
+          </button>
+          <button
+            type="button"
+            className={
+              viewMode === "week" ? "week-view-option week-view-option-active" : "week-view-option"
+            }
+            aria-pressed={viewMode === "week"}
+            onClick={() => setViewMode("week")}
+          >
+            Semana
+          </button>
+        </div>
         <span className="meta week-range">{rangeLabel}</span>
+        <label className="week-cancelled-toggle">
+          <input
+            type="checkbox"
+            checked={showCancelled}
+            onChange={(event) => setShowCancelled(event.currentTarget.checked)}
+          />
+          <span>Mostrar canceladas</span>
+        </label>
       </div>
 
-      <div className="week-grid">
+      <div className="week-grid" style={gridStyle}>
         <div className="week-head">
           <div className="week-head-corner" />
-          {days.map((day, i) => (
-            <div
-              key={day.toISOString()}
-              className={i === todayIndex ? "week-col-head week-col-today" : "week-col-head"}
-            >
-              <span className="week-col-day">{DAY_NAMES[i]}</span>
-              <span className="week-col-date">{dayHeaderFormatter.format(day)}</span>
-            </div>
-          ))}
+          {days.map((day, i) => {
+            const dayNameIndex = (day.getDay() + 6) % 7;
+            return (
+              <div
+                key={day.toISOString()}
+                className={i === todayIndex ? "week-col-head week-col-today" : "week-col-head"}
+              >
+                <span className="week-col-day">{DAY_NAMES[dayNameIndex]}</span>
+                <span className="week-col-date">{dayHeaderFormatter.format(day)}</span>
+              </div>
+            );
+          })}
         </div>
 
         <div className="week-rows">

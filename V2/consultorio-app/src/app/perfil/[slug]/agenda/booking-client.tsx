@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Calendar } from "./calendar";
+import { PhoneField } from "./phone-field";
+import { DEFAULT_COUNTRY, detectCountry, formatFullPhone, isValidNationalNumber } from "../../../../lib/phone";
 import { IconCalendar } from "../icons";
 
 type PublicProfile = {
@@ -42,7 +44,10 @@ function currency(priceCents: number, code: string) {
 export function BookingClient({ profile, initialDate }: BookingClientProps) {
   const [serviceId, setServiceId] = useState(profile.services[0]?.id ?? "");
   const [dateFrom, setDateFrom] = useState(initialDate);
+  const [availableDays, setAvailableDays] = useState<string[]>([]);
+  const [loadingDays, setLoadingDays] = useState(true);
   const [slots, setSlots] = useState<AvailabilityResponse["slots"]>([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<string>("");
   const [holdToken, setHoldToken] = useState<string>("");
   const [message, setMessage] = useState<string>("");
@@ -63,36 +68,103 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
     phone: "",
     email: ""
   });
+  // Clave de pais del telefono: Mexico por defecto, autodetectada del locale tras
+  // montar (evita desajuste de hidratacion) y editable por el usuario.
+  const [patientCountry, setPatientCountry] = useState(DEFAULT_COUNTRY);
+  const [guardianCountry, setGuardianCountry] = useState(DEFAULT_COUNTRY);
 
-  async function loadSlots() {
+  useEffect(() => {
+    const detected = detectCountry();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPatientCountry(detected);
+    setGuardianCountry(detected);
+  }, []);
+
+  // Mes visible del calendario (YYYY-MM): al cambiar de servicio o de mes se
+  // consultan los dias con cupo real para deshabilitar el resto.
+  const visibleMonth = dateFrom.slice(0, 7);
+  const slug = profile.doctor.publicSlug;
+
+  useEffect(() => {
+    if (!serviceId || !visibleMonth) {
+      return;
+    }
+
+    let cancelled = false;
+    // Efecto de carga de datos: marcar "cargando" al cambiar mes/servicio dispara
+    // el fetch, no un re-render en cascada.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoadingDays(true);
+
+    fetch(
+      `/api/public/doctors/${slug}/available-days?serviceId=${serviceId}&dateFrom=${visibleMonth}-01&days=31`
+    )
+      .then(async (response) => ({ ok: response.ok, data: await response.json() }))
+      .then(({ ok, data }) => {
+        if (cancelled) {
+          return;
+        }
+        setAvailableDays(ok && Array.isArray(data.days) ? data.days : []);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAvailableDays([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingDays(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [serviceId, visibleMonth, slug]);
+
+  // Carga automatica de horarios al elegir dia o servicio (sin boton "Buscar").
+  // Pasa el hold propio como ignoreHoldToken para que el horario que el paciente
+  // ya aparto siga visible al volver a ese dia.
+  useEffect(() => {
     if (!serviceId || !dateFrom) {
       return;
     }
 
-    setBusy(true);
-    setSearchError("");
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoadingSlots(true);
 
-    try {
-      const response = await fetch(
-        `/api/public/doctors/${profile.doctor.publicSlug}/availability?serviceId=${serviceId}&dateFrom=${dateFrom}&days=1`
-      );
-      const data = await response.json();
+    const ignore = holdToken ? `&ignoreHoldToken=${holdToken}` : "";
+    fetch(`/api/public/doctors/${slug}/availability?serviceId=${serviceId}&dateFrom=${dateFrom}&days=1${ignore}`)
+      .then(async (response) => ({ ok: response.ok, data: await response.json() }))
+      .then(({ ok, data }) => {
+        if (cancelled) {
+          return;
+        }
+        if (!ok) {
+          setSearchError(data.error || "No fue posible consultar horarios.");
+          setSlots([]);
+          return;
+        }
+        setSearchError("");
+        setSlots(Array.isArray(data.slots) ? data.slots : []);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSearchError("No fue posible consultar horarios.");
+          setSlots([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingSlots(false);
+        }
+      });
 
-      if (!response.ok) {
-        throw new Error(data.error || "No fue posible consultar horarios.");
-      }
-
-      setSlots(data.slots);
-      setSelectedSlot("");
-      setHoldToken("");
-      setSearchError("");
-    } catch (error) {
-      setSearchError(error instanceof Error ? error.message : "No fue posible consultar horarios.");
-      setSlots([]);
-    } finally {
-      setBusy(false);
-    }
-  }
+    return () => {
+      cancelled = true;
+    };
+  }, [serviceId, dateFrom, holdToken, slug]);
 
   async function reserveSlot(slotStart: string) {
     setBusy(true);
@@ -106,7 +178,9 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
         },
         body: JSON.stringify({
           serviceId,
-          slotStart
+          slotStart,
+          // Libera el hold previo de esta sesion al cambiar de horario.
+          previousHoldToken: holdToken || undefined
         })
       });
       const data = await response.json();
@@ -133,6 +207,22 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
       return;
     }
 
+    // El telefono del paciente es obligatorio cuando agenda para si mismo; el del
+    // responsable lo es cuando agenda para otra persona. Si hay numero, debe ser
+    // de 10 digitos.
+    const patientPhoneRequired = bookingFor === "self";
+    if (
+      (patientPhoneRequired && !patient.phone) ||
+      (patient.phone && !isValidNationalNumber(patient.phone))
+    ) {
+      setMessage("Revisa el teléfono del paciente: deben ser 10 dígitos.");
+      return;
+    }
+    if (bookingFor === "other" && (!guardian.phone || !isValidNationalNumber(guardian.phone))) {
+      setMessage("Revisa el teléfono del responsable: deben ser 10 dígitos.");
+      return;
+    }
+
     setBusy(true);
     setMessage("");
 
@@ -147,7 +237,7 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
           patient: {
             firstName: patient.firstName,
             lastName: patient.lastName,
-            phone: patient.phone || undefined,
+            phone: patient.phone ? formatFullPhone(patientCountry, patient.phone) : undefined,
             email: patient.email || undefined,
             birthDate: patient.birthDate || undefined
           },
@@ -159,7 +249,7 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
               ? {
                   fullName: guardian.fullName,
                   relationship: guardian.relationship || undefined,
-                  phone: guardian.phone || undefined,
+                  phone: guardian.phone ? formatFullPhone(guardianCountry, guardian.phone) : undefined,
                   email: guardian.email || undefined
                 }
               : undefined,
@@ -206,15 +296,16 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
 
           <div className="field calendar-field">
             <span>Fecha</span>
-            <Calendar selectedDate={dateFrom} onDateSelect={(date) => {
-              setDateFrom(date);
-              setSearchError("");
-            }} />
+            <Calendar
+              selectedDate={dateFrom}
+              availableDays={availableDays}
+              loading={loadingDays}
+              onDateSelect={(date) => {
+                setDateFrom(date);
+                setSearchError("");
+              }}
+            />
           </div>
-
-          <button className="action-button" onClick={loadSlots} disabled={busy}>
-            {busy ? "Buscando..." : "Buscar horarios"}
-          </button>
         </div>
 
         {searchError ? (
@@ -224,7 +315,13 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
           </div>
         ) : null}
 
-        {slots.length > 0 ? (
+        {loadingSlots ? (
+          <div className="no-slots">
+            <p>
+              <IconCalendar className="dp-inline-icon" /> Cargando horarios…
+            </p>
+          </div>
+        ) : slots.length > 0 ? (
           <div className="slots-available">
             <p className="slots-info">Horarios disponibles ({slots.length})</p>
             <div className="slot-grid">
@@ -233,6 +330,7 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
                   className={selectedSlot === slot.slotStart ? "slot-button active" : "slot-button"}
                   key={slot.slotStart}
                   onClick={() => reserveSlot(slot.slotStart)}
+                  disabled={busy}
                   type="button"
                 >
                   {new Intl.DateTimeFormat("es-MX", {
@@ -243,11 +341,11 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
               ))}
             </div>
           </div>
-        ) : !busy ? (
+        ) : !searchError ? (
           <div className="no-slots">
             <p>
-              <IconCalendar className="dp-inline-icon" /> Selecciona una fecha para ver horarios
-              disponibles
+              <IconCalendar className="dp-inline-icon" /> No hay horarios disponibles para este día.
+              Elige otro en el calendario.
             </p>
           </div>
         ) : null}
@@ -306,16 +404,15 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
             />
           </label>
 
-          <label className="field">
-            <span>{bookingFor === "other" ? "Teléfono del paciente" : "Teléfono*"}</span>
-            <input
-              required={bookingFor === "self"}
-              type="tel"
-              placeholder={bookingFor === "other" ? "Opcional" : "Tu teléfono"}
-              value={patient.phone}
-              onChange={(event) => setPatient((current) => ({ ...current, phone: event.target.value }))}
-            />
-          </label>
+          <PhoneField
+            label={bookingFor === "other" ? "Teléfono del paciente" : "Teléfono*"}
+            countryCode={patientCountry}
+            national={patient.phone}
+            required={bookingFor === "self"}
+            placeholder={bookingFor === "other" ? "Opcional (10 dígitos)" : "10 dígitos"}
+            onCountryChange={setPatientCountry}
+            onNationalChange={(digits) => setPatient((current) => ({ ...current, phone: digits }))}
+          />
 
           <label className="field">
             <span>Correo electrónico</span>
@@ -351,16 +448,15 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
                 />
               </label>
 
-              <label className="field">
-                <span>Teléfono del responsable*</span>
-                <input
-                  required
-                  type="tel"
-                  placeholder="Teléfono de contacto"
-                  value={guardian.phone}
-                  onChange={(event) => setGuardian((current) => ({ ...current, phone: event.target.value }))}
-                />
-              </label>
+              <PhoneField
+                label="Teléfono del responsable*"
+                countryCode={guardianCountry}
+                national={guardian.phone}
+                required
+                placeholder="10 dígitos"
+                onCountryChange={setGuardianCountry}
+                onNationalChange={(digits) => setGuardian((current) => ({ ...current, phone: digits }))}
+              />
 
               <label className="field">
                 <span>Correo del responsable</span>

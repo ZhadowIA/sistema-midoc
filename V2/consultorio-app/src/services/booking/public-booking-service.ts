@@ -5,6 +5,7 @@ import {
   LegalDocumentType,
   NotificationKind,
   PatientStatus,
+  PrecheckinKind,
   PrecheckinStatus
 } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -23,7 +24,7 @@ import {
   parseLocalDate,
   type LocalDate
 } from "../../lib/timezone";
-import { emitSyncEvent } from "../sync/sync-service";
+import { emitSyncEvent, getActiveDeviceDocumentKey } from "../sync/sync-service";
 import { queueNotification } from "../notifications/notification-service";
 
 const HOLD_TTL_MS = 1000 * 60 * 10;
@@ -216,6 +217,12 @@ export async function listPublicAvailability(input: {
   serviceId: string;
   dateFrom: string;
   days?: number;
+  /**
+   * Token de un hold propio del paciente a ignorar al calcular cupo: su propia
+   * reserva temporal no debe bloquearle su vista al cambiar de horario dentro de
+   * la misma sesion.
+   */
+  ignoreHoldToken?: string;
 }) {
   const profile = await getPublicDoctorOrThrow(input.slug);
   const service = profile.services.find((item) => item.id === input.serviceId);
@@ -231,7 +238,7 @@ export async function listPublicAvailability(input: {
     throw new PublicBookingServiceError("Invalid start date.");
   }
 
-  const days = Math.min(Math.max(input.days ?? 7, 1), 30);
+  const days = Math.min(Math.max(input.days ?? 7, 1), 31);
   // La ventana [dateFrom, until) se ancla a medianoche local del medico, no UTC.
   const dateFrom = localDateTimeToUtc(fromLocalDate, "00:00", timeZone);
   const until = localDateTimeToUtc(addDaysToLocalDate(fromLocalDate, days), "00:00", timeZone);
@@ -263,7 +270,9 @@ export async function listPublicAvailability(input: {
         slotStart: {
           gte: dateFrom,
           lt: until
-        }
+        },
+        // El propio hold del paciente no bloquea su vista (cambio de horario).
+        ...(input.ignoreHoldToken ? { token: { not: input.ignoreHoldToken } } : {})
       },
       select: {
         slotStart: true,
@@ -326,7 +335,8 @@ export async function listPublicAvailability(input: {
     doctor: {
       id: profile.userId,
       slug: profile.publicSlug,
-      professionalName: profile.professionalName
+      professionalName: profile.professionalName,
+      timeZone
     },
     service: {
       id: service.id,
@@ -337,10 +347,49 @@ export async function listPublicAvailability(input: {
   };
 }
 
+/**
+ * Fechas locales del medico (YYYY-MM-DD) con al menos un horario disponible en
+ * la ventana [dateFrom, dateFrom+days). Reusa el computo real de slots (reglas,
+ * excepciones, citas, holds y limites de anticipacion) y agrupa por la fecha
+ * local del medico, no por UTC. Alimenta el calendario publico para deshabilitar
+ * los dias sin cupo en vez de mostrarlos como disponibles vacios.
+ */
+export async function listAvailableDays(input: {
+  slug: string;
+  serviceId: string;
+  dateFrom: string;
+  days?: number;
+}) {
+  const availability = await listPublicAvailability({
+    slug: input.slug,
+    serviceId: input.serviceId,
+    dateFrom: input.dateFrom,
+    days: input.days ?? 31
+  });
+
+  const timeZone = availability.doctor.timeZone;
+  const availableDates = new Set<string>();
+
+  for (const slot of availability.slots) {
+    availableDates.add(formatLocalDate(getLocalDate(new Date(slot.slotStart), timeZone)));
+  }
+
+  return {
+    doctor: availability.doctor,
+    service: availability.service,
+    days: [...availableDates].sort()
+  };
+}
+
 export async function createAppointmentHold(input: {
   slug: string;
   serviceId: string;
   slotStart: string;
+  /**
+   * Hold previo del paciente en la misma sesion: se libera antes de tomar el
+   * nuevo para que cambiar de horario no se bloquee a si mismo.
+   */
+  previousHoldToken?: string;
 }) {
   const profile = await getPublicDoctorOrThrow(input.slug);
   const service = profile.services.find((item) => item.id === input.serviceId);
@@ -356,12 +405,14 @@ export async function createAppointmentHold(input: {
     throw new PublicBookingServiceError("Invalid slot start.");
   }
 
-  // La fecha de busqueda es la fecha local del medico para ese instante.
+  // La fecha de busqueda es la fecha local del medico para ese instante. El
+  // hold previo de la sesion no debe contar como ocupado al validar el nuevo.
   const availability = await listPublicAvailability({
     slug: input.slug,
     serviceId: input.serviceId,
     dateFrom: formatLocalDate(getLocalDate(slotStart, profile.timeZone)),
-    days: 1
+    days: 1,
+    ignoreHoldToken: input.previousHoldToken
   });
 
   const slotIsAvailable = availability.slots.some((slot) => slot.slotStart === slotStart.toISOString());
@@ -375,6 +426,22 @@ export async function createAppointmentHold(input: {
   // Transaccion serializable: dos pacientes pidiendo el mismo horario a la
   // vez no pueden crear dos holds activos.
   const hold = await runSerializable(async (tx) => {
+    // Liberar el hold previo de la sesion primero: deja libre su horario y evita
+    // que aparezca como conflicto al tomar el nuevo.
+    if (input.previousHoldToken) {
+      await tx.appointmentHold.updateMany({
+        where: {
+          doctorId: profile.userId,
+          token: input.previousHoldToken,
+          status: HoldStatus.ACTIVE
+        },
+        data: {
+          status: HoldStatus.RELEASED,
+          releasedAt: new Date()
+        }
+      });
+    }
+
     const conflictingHold = await tx.appointmentHold.findFirst({
           where: {
             doctorId: profile.userId,
@@ -711,6 +778,11 @@ export async function bookPublicAppointment(input: {
     select: { publicSlug: true }
   });
   const appointmentUrl = `${env.APP_BASE_URL}/perfil/${doctorProfile?.publicSlug}/cita/${confirmationToken}`;
+  // El recordatorio lleva un enlace que abre la cita con intencion de cancelar,
+  // reusando el flujo de cancelacion existente. El enlace corto expira al inicio
+  // de la cita; la cancelacion es de un solo efecto (no se puede cancelar dos
+  // veces) en el servicio.
+  const cancelUrl = `${appointmentUrl}?accion=cancelar`;
   const reminderAt = subtractHours(appointment.scheduledStart, 24);
   const reminderShouldQueue = reminderAt > new Date();
   const appointmentLabel = appointment.scheduledStart.toISOString();
@@ -778,14 +850,19 @@ export async function bookPublicAppointment(input: {
         kind: NotificationKind.APPOINTMENT_REMINDER,
         destination: contact.destination,
         scheduledFor: reminderAt,
-        actionUrl: appointmentUrl,
+        actionUrl: cancelUrl,
+        shortLink: {
+          expiresAt: appointment.scheduledStart
+        },
         template: {
           patientFirstName: patient.firstName,
-          appointmentLabel
+          appointmentLabel,
+          expiresAt: appointment.scheduledStart
         },
         metadata: {
           confirmationToken,
-          appointmentUrl
+          appointmentUrl,
+          cancelUrl
         }
       });
     }
@@ -865,11 +942,17 @@ export async function getPublicAppointmentByToken(confirmationToken: string) {
     return null;
   }
 
+  // Llave publica del dispositivo del medico: el formulario de antecedentes la
+  // usa para sellar (sealed box). Si no hay dispositivo vinculado, el portal NO
+  // muestra el formulario (no se puede entregar de forma segura).
+  const documentPublicKey = await getActiveDeviceDocumentKey(appointment.doctorId);
+
   return {
     appointment,
     patient: appointment.patient,
     service: appointment.service,
-    precheckin: appointment.precheckins[0] ?? null
+    precheckin: appointment.precheckins[0] ?? null,
+    documentPublicKey
   };
 }
 
@@ -1134,6 +1217,106 @@ export async function submitPrecheckin(input: {
   });
 
   return submission;
+}
+
+/** Tope del sealed box clinico (~1.4x el JSON en claro tras base64). */
+const SEALED_PRECHECKIN_CIPHERTEXT_MAX_BYTES = 64 * 1024;
+
+/**
+ * Guarda contenido clinico del paciente como sealed box (X25519) y emite el
+ * evento de sync SIN contenido en claro. La nube nunca ve las respuestas: solo
+ * el `ciphertext`, que la app del medico descarga, descifra y purga (paso 19,
+ * rebanadas 7 y 8). Mismo patron que los documentos del buzon (paso 6).
+ */
+async function submitSealedPrecheckin(input: {
+  confirmationToken: string;
+  ciphertext: string;
+  kind: typeof PrecheckinKind.MEDICAL_HISTORY | typeof PrecheckinKind.AI_PRECONSULTA;
+  invalidMessage: string;
+  noDeviceMessage: string;
+}) {
+  const sealed = Buffer.from(input.ciphertext, "base64");
+  if (sealed.length === 0 || sealed.length > SEALED_PRECHECKIN_CIPHERTEXT_MAX_BYTES) {
+    throw new PublicBookingServiceError(input.invalidMessage, 400);
+  }
+
+  const appointment = await prisma.appointment.findUnique({
+    where: { confirmationToken: input.confirmationToken }
+  });
+
+  if (!appointment) {
+    throw new PublicBookingServiceError("Appointment not found.", 404);
+  }
+
+  // Sin dispositivo vinculado no se puede entregar de forma segura: rechazar
+  // (el portal ya oculta el formulario, esto cubre el envio directo a la API).
+  const deviceKey = await getActiveDeviceDocumentKey(appointment.doctorId);
+  if (!deviceKey) {
+    throw new PublicBookingServiceError(input.noDeviceMessage, 409);
+  }
+
+  const existing = await prisma.precheckinSubmission.findFirst({
+    where: {
+      appointmentId: appointment.id,
+      patientId: appointment.patientId,
+      kind: input.kind
+    },
+    orderBy: { createdAt: "desc" }
+  });
+
+  // CLINICO: `responses` queda nulo; el contenido vive solo en `ciphertext`.
+  const data = {
+    status: PrecheckinStatus.SUBMITTED,
+    kind: input.kind,
+    responses: Prisma.DbNull,
+    ciphertext: sealed,
+    sizeBytes: sealed.length,
+    deliveredAt: null,
+    purgedAt: null,
+    submittedAt: new Date()
+  };
+
+  const submission = existing
+    ? await prisma.precheckinSubmission.update({ where: { id: existing.id }, data })
+    : await prisma.precheckinSubmission.create({
+        data: {
+          appointmentId: appointment.id,
+          patientId: appointment.patientId,
+          ...data
+        }
+      });
+
+  // El evento NO lleva respuestas: solo el id para que la app descargue el
+  // sealed box. La nube no puede leer el contenido.
+  await emitSyncEvent(appointment.doctorId, "PRECHECKIN_SUBMITTED", {
+    appointmentId: appointment.id,
+    precheckinId: submission.id,
+    sealed: true
+  });
+
+  return { id: submission.id };
+}
+
+/** Antecedentes (historia clinica) sellados E2E (paso 19, rebanada 7). */
+export async function submitMedicalHistory(input: { confirmationToken: string; ciphertext: string }) {
+  return submitSealedPrecheckin({
+    confirmationToken: input.confirmationToken,
+    ciphertext: input.ciphertext,
+    kind: PrecheckinKind.MEDICAL_HISTORY,
+    invalidMessage: "Contenido de antecedentes invalido.",
+    noDeviceMessage: "El consultorio aun no puede recibir antecedentes de forma segura."
+  });
+}
+
+/** Resultado de la preconsulta guiada por IA, sellado E2E (paso 19, rebanada 8). */
+export async function submitAiPreconsulta(input: { confirmationToken: string; ciphertext: string }) {
+  return submitSealedPrecheckin({
+    confirmationToken: input.confirmationToken,
+    ciphertext: input.ciphertext,
+    kind: PrecheckinKind.AI_PRECONSULTA,
+    invalidMessage: "Contenido de preconsulta invalido.",
+    noDeviceMessage: "El consultorio aun no puede recibir la preconsulta de forma segura."
+  });
 }
 
 export async function listDoctorAppointments(doctorUserId: string) {
