@@ -11,6 +11,14 @@ import {
   type DentalPayload,
   type GeneralMedicinePayload
 } from "./clinicalProfiles";
+import {
+  appendSegmentToNote,
+  buildTemplateSegments,
+  transcriptToTurns,
+  type ConsultationTurn,
+  type SegmentDraft,
+  type ScribeSpeaker
+} from "./consultationScribe";
 import { MedicationSafety } from "./MedicationSafety";
 import { call } from "./ipc";
 
@@ -90,6 +98,18 @@ interface TranscriptionDraft {
   latency_ms: number;
   transcript_text: string;
   audio_retention_policy: string;
+}
+
+interface ConsultationStructuringDraft {
+  run_id: string;
+  usage_type: "CONSULTATION_STRUCTURING";
+  provider: string;
+  model_version: string;
+  estimated_cost_cents: number;
+  latency_ms: number;
+  segments: SegmentDraft[];
+  missing: string[];
+  warnings: string[];
 }
 
 interface UsageSummary {
@@ -265,9 +285,13 @@ export function Atencion({
   const [signatureValid, setSignatureValid] = useState<boolean | null>(null);
   const [aiConsent, setAiConsent] = useState(false);
   const [aiVoiceConsent, setAiVoiceConsent] = useState(false);
+  const [aiScribeConsent, setAiScribeConsent] = useState(false);
   const [aiDraft, setAiDraft] = useState<SoapDraft | null>(null);
   const [aiText, setAiText] = useState<TextDraft | null>(null);
   const [aiTranscription, setAiTranscription] = useState<TranscriptionDraft | null>(null);
+  const [scribeTurns, setScribeTurns] = useState<ConsultationTurn[]>([]);
+  const [scribeDraft, setScribeDraft] = useState<ConsultationStructuringDraft | null>(null);
+  const [appliedScribeSegments, setAppliedScribeSegments] = useState<string[]>([]);
   const [useCloudTranscription, setUseCloudTranscription] = useState(false);
   const [aiUsage, setAiUsage] = useState<UsageSummary | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
@@ -305,6 +329,9 @@ export function Atencion({
         call<boolean>("ai_voice_consent_status", { patientId: data.patient.id })
           .then(setAiVoiceConsent)
           .catch(() => setAiVoiceConsent(false));
+        call<boolean>("ai_scribe_consent_status", { patientId: data.patient.id })
+          .then(setAiScribeConsent)
+          .catch(() => setAiScribeConsent(false));
         call<UsageSummary>("ai_usage_summary")
           .then(setAiUsage)
           .catch(() => setAiUsage(null));
@@ -346,6 +373,8 @@ export function Atencion({
 
   const moduleLabel =
     resolvedProfile === "ODONTOLOGY" ? "Modulo odontologico" : "Medicina general / familiar";
+  const activeTemplate = buildTemplateSegments(resolvedProfile);
+  const segmentLabels = new Map(activeTemplate.segments.map((segment) => [segment.id, segment.label]));
 
   const navItems: Array<{ id: SectionId; label: string }> = [];
   if (detail.precheckin) navItems.push({ id: "preconsulta", label: "Preconsulta" });
@@ -415,6 +444,16 @@ export function Atencion({
       aiVoiceConsent
         ? "Consentimiento de transcripcion revocado."
         : "Consentimiento de transcripcion registrado.",
+      () => call(command, { patientId })
+    );
+  }
+
+  async function toggleScribeConsent() {
+    const command = aiScribeConsent ? "ai_revoke_scribe_consent" : "ai_grant_scribe_consent";
+    await run(
+      aiScribeConsent
+        ? "Consentimiento de escriba revocado."
+        : "Consentimiento de escriba registrado.",
       () => call(command, { patientId })
     );
   }
@@ -509,6 +548,8 @@ export function Atencion({
     setMessage("");
     setError("");
     setAiTranscription(null);
+    setScribeDraft(null);
+    setAppliedScribeSegments([]);
     fileToBase64(file)
       .then((audioBase64) =>
         call<TranscriptionDraft>("ai_transcribe_audio", {
@@ -524,6 +565,7 @@ export function Atencion({
       )
       .then((draft) => {
         setAiTranscription(draft);
+        setScribeTurns(transcriptToTurns(draft.transcript_text));
         setMessage("Transcripcion generada. Revisala antes de usarla.");
         refreshUsage();
       })
@@ -550,9 +592,68 @@ export function Atencion({
     if (!aiTranscription) return;
     const runId = aiTranscription.run_id;
     setAiTranscription(null);
+    setScribeTurns([]);
+    setScribeDraft(null);
+    setAppliedScribeSegments([]);
     void run("Transcripcion descartada.", () =>
       call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
     );
+  }
+
+  function updateScribeTurn(id: string, patch: Partial<Pick<ConsultationTurn, "speaker" | "text">>) {
+    setScribeTurns((current) =>
+      current.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn))
+    );
+  }
+
+  function structureConsultation() {
+    const turns = scribeTurns.filter((turn) => turn.text.trim());
+    if (turns.length === 0) return;
+    setBusy(true);
+    setMessage("");
+    setError("");
+    setScribeDraft(null);
+    setAppliedScribeSegments([]);
+    call<ConsultationStructuringDraft>("ai_structure_consultation", {
+      encounterId,
+      turns,
+      template: activeTemplate
+    })
+      .then((draft) => {
+        setScribeDraft(draft);
+        setMessage("Acomodo por plantilla generado. Revisa cada segmento antes de aplicarlo.");
+        refreshUsage();
+      })
+      .catch((e: unknown) => setError(String(e)))
+      .finally(() => setBusy(false));
+  }
+
+  function applyScribeSegment(segment: SegmentDraft) {
+    setNote((current) => appendSegmentToNote(current, segment));
+    setAppliedScribeSegments((current) =>
+      current.includes(segment.segment_id) ? current : [...current, segment.segment_id]
+    );
+    setMessage("Segmento aplicado al editor. Revisa, ajusta y guarda la nota manualmente.");
+  }
+
+  function approveScribeDraft() {
+    if (!scribeDraft) return;
+    const runId = scribeDraft.run_id;
+    setScribeDraft(null);
+    setAppliedScribeSegments([]);
+    call("ai_review_run", { runId, status: "APPROVED", feedback: null })
+      .then(() => setMessage("Acomodo marcado como revisado. Guarda la nota cuando termines."))
+      .catch((e: unknown) => setError(String(e)));
+  }
+
+  function discardScribeDraft() {
+    if (!scribeDraft) return;
+    const runId = scribeDraft.run_id;
+    setScribeDraft(null);
+    setAppliedScribeSegments([]);
+    call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
+      .then(() => setMessage("Acomodo por plantilla descartado."))
+      .catch((e: unknown) => setError(String(e)));
   }
 
   function saveBudget() {
@@ -771,6 +872,12 @@ export function Atencion({
               <button className="ghost-button" onClick={() => void toggleVoiceConsent()} disabled={busy}>
                 {aiVoiceConsent ? "Revocar voz" : "Autorizar voz"}
               </button>
+              <span className={aiScribeConsent ? "pill pill-success" : "pill pill-muted"}>
+                {aiScribeConsent ? "Escriba autorizado" : "Escriba sin consentimiento"}
+              </span>
+              <button className="ghost-button" onClick={() => void toggleScribeConsent()} disabled={busy}>
+                {aiScribeConsent ? "Revocar escriba" : "Autorizar escriba"}
+              </button>
             </div>
 
             {aiUsage ? (
@@ -873,6 +980,129 @@ export function Atencion({
                   </button>
                   <button className="ghost-button" onClick={discardAiTranscription} disabled={busy}>
                     Descartar
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {scribeTurns.length > 0 ? (
+              <div className="ai-draft">
+                <div className="panel-header">
+                  <h4>Dialogo revisable</h4>
+                  <p>Corrige hablante y texto antes de acomodar la consulta en la plantilla.</p>
+                </div>
+                <div className="scribe-turn-list">
+                  {scribeTurns.map((turn) => (
+                    <div className="scribe-turn" key={turn.id}>
+                      <label className="field compact-field">
+                        <span>Hablante</span>
+                        <select
+                          value={turn.speaker}
+                          disabled={busy}
+                          onChange={(event) =>
+                            updateScribeTurn(turn.id, {
+                              speaker: event.currentTarget.value as ScribeSpeaker
+                            })
+                          }
+                        >
+                          <option value="MEDICO">Medico</option>
+                          <option value="PACIENTE">Paciente</option>
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>{turn.id}</span>
+                        <textarea
+                          rows={2}
+                          value={turn.text}
+                          disabled={busy}
+                          onChange={(event) =>
+                            updateScribeTurn(turn.id, { text: event.currentTarget.value })
+                          }
+                        />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                <div className="button-row">
+                  <button
+                    className="action-button"
+                    onClick={structureConsultation}
+                    disabled={busy || !aiScribeConsent || scribeTurns.every((turn) => !turn.text.trim())}
+                  >
+                    Acomodar en plantilla
+                  </button>
+                  <span className="meta">
+                    Usa {activeTemplate.id === "soap-odontology" ? "plantilla odontologica" : "plantilla general"} · no guarda la nota automaticamente.
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
+            {scribeDraft ? (
+              <div className="ai-draft">
+                <p className="meta">
+                  Acomodo de plantilla · proveedor {scribeDraft.provider} · modelo{" "}
+                  {scribeDraft.model_version} · costo estimado{" "}
+                  {centsFormatter.format(scribeDraft.estimated_cost_cents / 100)} ·{" "}
+                  {scribeDraft.latency_ms} ms
+                </p>
+                {scribeDraft.warnings.length > 0 ? (
+                  <ul className="scribe-warning-list">
+                    {scribeDraft.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {scribeDraft.missing.length > 0 ? (
+                  <div className="field">
+                    <span>Faltantes detectados</span>
+                    <ul className="scribe-warning-list">
+                      {scribeDraft.missing.map((missing) => (
+                        <li key={missing}>{missing}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                <div className="stack">
+                  {scribeDraft.segments.map((segment) => (
+                    <article className="scribe-segment" key={segment.segment_id}>
+                      <div>
+                        <strong>{segmentLabels.get(segment.segment_id) ?? segment.segment_id}</strong>
+                        <span className="meta">
+                          Confianza {segment.confidence} · fuentes{" "}
+                          {segment.source_turns.length > 0 ? segment.source_turns.join(", ") : "sin fuente"}
+                        </span>
+                      </div>
+                      <p className="ai-draft-text">{segment.content}</p>
+                      {segment.warnings.length > 0 ? (
+                        <ul className="scribe-warning-list">
+                          {segment.warnings.map((warning) => (
+                            <li key={warning}>{warning}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      <button
+                        className="ghost-button"
+                        onClick={() => applyScribeSegment(segment)}
+                        disabled={busy || appliedScribeSegments.includes(segment.segment_id)}
+                      >
+                        {appliedScribeSegments.includes(segment.segment_id)
+                          ? "Aplicado"
+                          : "Aplicar segmento"}
+                      </button>
+                    </article>
+                  ))}
+                </div>
+                <div className="button-row">
+                  <button
+                    className="action-button"
+                    onClick={approveScribeDraft}
+                    disabled={busy || appliedScribeSegments.length === 0}
+                  >
+                    Marcar revision aplicada
+                  </button>
+                  <button className="ghost-button" onClick={discardScribeDraft} disabled={busy}>
+                    Descartar acomodo
                   </button>
                 </div>
               </div>

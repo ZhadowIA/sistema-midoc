@@ -948,6 +948,39 @@ textarea:disabled {
   font-size: 0.92rem;
 }
 
+.scribe-turn-list {
+  display: grid;
+  gap: 10px;
+}
+
+.scribe-turn {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.scribe-segment {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.scribe-segment > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.scribe-warning-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 /* Agenda semanal por bloques (paso 13, rebanada 4). 7 columnas = dias; el
    bloque es la duracion de cita del medico. Solo se listan los bloques (slots)
    con citas, en filas; cada cita cae en la celda de su dia. Color = estado. */

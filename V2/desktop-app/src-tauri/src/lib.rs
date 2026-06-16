@@ -1178,6 +1178,36 @@ fn ai_revoke_voice_consent(
     })
 }
 
+#[tauri::command]
+fn ai_scribe_consent_status(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<bool, String> {
+    with_ai(&state, |conn| {
+        Ok(ai::active_consent(conn, &patient_id, ai::SCOPE_CONSULTATION_SCRIBE)?.is_some())
+    })
+}
+
+#[tauri::command]
+fn ai_grant_scribe_consent(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<(), String> {
+    with_ai(&state, |conn| {
+        ai::grant_consent(conn, &patient_id, ai::SCOPE_CONSULTATION_SCRIBE).map(|_| ())
+    })
+}
+
+#[tauri::command]
+fn ai_revoke_scribe_consent(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<(), String> {
+    with_ai(&state, |conn| {
+        ai::revoke_consent(conn, &patient_id, ai::SCOPE_CONSULTATION_SCRIBE)
+    })
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AudioTranscriptionPayload {
@@ -1185,6 +1215,13 @@ struct AudioTranscriptionPayload {
     media_type: String,
     audio_base64: String,
     duration_seconds: Option<i64>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ConsultationTemplatePayload {
+    #[allow(dead_code)]
+    id: String,
+    segments: Vec<ai::TemplateSegment>,
 }
 
 #[tauri::command]
@@ -1285,6 +1322,19 @@ fn ai_transcribe_audio(
             },
             provider.as_ref(),
         )
+    })
+}
+
+#[tauri::command]
+fn ai_structure_consultation(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    turns: Vec<ai::ConsultationTurn>,
+    template: ConsultationTemplatePayload,
+) -> Result<ai::ConsultationStructuringDraft, String> {
+    let registry = ai::ProviderRegistry::default_local();
+    with_ai(&state, |conn| {
+        ai::structure_consultation(conn, &encounter_id, turns, template.segments, &registry)
     })
 }
 
@@ -1822,9 +1872,13 @@ pub fn run() {
             ai_voice_consent_status,
             ai_grant_voice_consent,
             ai_revoke_voice_consent,
+            ai_scribe_consent_status,
+            ai_grant_scribe_consent,
+            ai_revoke_scribe_consent,
             ai_assist_soap,
             ai_assist_text,
             ai_transcribe_audio,
+            ai_structure_consultation,
             ai_review_run,
             ai_list_runs,
             ai_usage_summary,

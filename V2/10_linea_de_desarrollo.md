@@ -84,6 +84,8 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
 | 18 | Agendado con responsable/tutor | `superpowers:test-driven-development` | El sistema distingue paciente con tutor de paciente sin tutor. | ✅ DONE |
 | 19 | Pulido del flujo publico, preconsulta y sincronizacion | `impeccable` | Perfil/agenda fieles, preconsulta diferida (antecedentes o guiada por IA), recordatorio con cancelacion y sync con aviso. | 🔜 PLANEADO |
+| 20 | App del medico: multi-perfil y agenda dia/semana | `impeccable` | Varios medicos comparten una computadora con bases cifradas independientes y agenda dia/semana. | ✅ DONE |
+| 21 | Plantillas clinicas asistidas por conversacion | `superpowers:writing-plans` | Consulta grabada/transcrita se acomoda en segmentos revisables de la plantilla activa. | 🔜 PLANEADO |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -996,6 +998,29 @@ Entregado (rebanada 2 — agenda dia/semana + mostrar canceladas, 2026-06-15):
 - **Residencia.** Presentacion sobre datos ya residentes; sin nuevo contenido clinico.
 
 Verificacion (rebanada 2): test node de filtros en verde (oculta/ muestra canceladas, semana lunes-domingo, navegacion dia vs semana), `tsc + vite build` del escritorio ok.
+
+## Paso 21 - Plantillas clinicas asistidas por conversacion
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Convertir la conversacion real de consulta en segmentos clinicos revisables, usando la plantilla activa del medico, sin guardar automaticamente la nota ni quitar control clinico al medico. |
+| Requisitos relacionados | RF40, RNF01, RNF06, RNF07, RNF12, RNF14, RNF15. Extiende pasos 5, 8, 11, 15 y 16. |
+| Entrada necesaria | App del medico con nota SOAP/plantillas existentes, consentimiento y trazas de IA, Whisper local real, respaldo nube gobernado y proveedores LLM listos para staging. |
+| Skills IA recomendadas | `superpowers:writing-plans`, `superpowers:test-driven-development`, `codex-security:security-scan`, `ui-ux-pro-max`, `superpowers:verification-before-completion` |
+| Se construye | Flujo de escriba clinico: consentimiento especifico, transcripcion de consulta, propuesta revisable de dialogo Medico/Paciente, seudonimizacion local, envio de transcript + plantilla a Gemini directo desde la app del medico, respuesta JSON validada por segmentos, vista de revision con confianza/fuentes y aplicacion manual a la nota. |
+| Se valida con | El medico graba o carga audio, corrige el dialogo si hace falta, genera segmentos para la plantilla activa, ve fuentes/advertencias, aplica solo los segmentos aprobados y guarda la nota manualmente. La salida de IA queda trazada como BORRADOR. |
+| Compuerta de avance | La IA no firma ni guarda notas automaticamente; el audio se descarta tras transcribir; el texto enviado a Gemini va seudonimizado; la nube de MiDoc no persiste contenido clinico; todo segmento aplicado requiere revision humana. |
+| Push recomendado | Hacer push por rebanada cerrada y verificada; no mezclar editor de plantillas personalizadas con el primer MVP de acomodo. |
+
+Clasificacion de datos: audio, transcript, dialogo y segmentos son CLINICO y viven en la base local cifrada o como bytes transitorios. Las trazas de proveedor/costo son OPERATIVO local y solo se reportan al portal por referencia, sin input/output clinico.
+
+Rebanadas:
+
+- **Rebanada 1 — Contrato de plantilla y salida segmentada.** Definir el contrato local de segmentos para la plantilla activa: `segment_id`, etiqueta, instrucciones, contenido, confianza, turnos fuente, faltantes y advertencias. Validar la salida de IA antes de mostrarla.
+- **Rebanada 2 — Dialogo Medico/Paciente revisable.** Convertir la transcripcion en turnos semi-automaticos, permitir correccion de hablante/texto y usar ese dialogo como entrada del acomodo. Si la separacion automatica falla, el medico puede corregir antes de llamar al LLM.
+- **Rebanada 3 — Acomodo IA gobernado.** Nuevo uso de IA `CONSULTATION_STRUCTURING` bajo consentimiento `CONSULTATION_SCRIBE`; prompt versionado; fake determinista para pruebas; Gemini directo desde desktop en staging/produccion con seudonimizacion local y fallback configurado.
+- **Rebanada 4 — Vista de revision y aplicacion manual.** Mostrar segmentos, confianza, fuentes y advertencias; permitir aplicar por segmento o descartar; nunca guardar ni firmar automaticamente. Al aprobar, cerrar la traza de IA como `APPROVED`; al descartar, `DISCARDED`.
+- **Rebanada 5 — Editor de plantillas personalizadas.** Permitir que cada medico cree/edite plantillas locales con segmentos ordenados, obligatorios/opcionales e instrucciones para IA. Guardar localmente cifrado; no sincronizar contenido clinico ni estructura personalizada a la nube salvo decision futura explicita.
 
 ## MVP recomendado
 

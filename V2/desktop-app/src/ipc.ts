@@ -75,6 +75,7 @@ const mockState = {
   slotMinutes: 30,
   aiConsent: false,
   aiVoiceConsent: false,
+  aiScribeConsent: false,
   aiRunSeq: 0,
   aiBudgetCents: 0,
   aiRuns: [] as Array<{ id: string; usage_type: string; cost_cents: number; status: string; reported: boolean }>,
@@ -825,6 +826,14 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     case "ai_revoke_voice_consent":
       mockState.aiVoiceConsent = false;
       return undefined as T;
+    case "ai_scribe_consent_status":
+      return mockState.aiScribeConsent as T;
+    case "ai_grant_scribe_consent":
+      mockState.aiScribeConsent = true;
+      return undefined as T;
+    case "ai_revoke_scribe_consent":
+      mockState.aiScribeConsent = false;
+      return undefined as T;
     case "ai_assist_soap": {
       if (!mockState.aiConsent) throw "falta el consentimiento del paciente para asistencia de IA";
       const spent = mockState.aiRuns.reduce((s, r) => s + r.cost_cents, 0);
@@ -919,6 +928,47 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         latency_ms: 2,
         transcript_text: `Transcripcion (borrador, ${viaCloud ? "nube" : "local"}): audio ${audio?.mediaType ?? "audio/wav"}. Revise terminos clinicos, medicamentos, dosis y hablantes antes de usarla.`,
         audio_retention_policy: "discarded_after_transcription"
+      } as T;
+    }
+    case "ai_structure_consultation": {
+      if (!mockState.aiScribeConsent) {
+        throw "falta el consentimiento del paciente para asistencia de IA";
+      }
+      const spentScribe = mockState.aiRuns.reduce((s, r) => s + r.cost_cents, 0);
+      if (mockState.aiBudgetCents > 0 && spentScribe >= mockState.aiBudgetCents) {
+        throw "se alcanzo el presupuesto mensual de IA; ajustalo para continuar";
+      }
+      mockState.aiRunSeq += 1;
+      const scribeRunId = `ai-run-${mockState.aiRunSeq}`;
+      mockState.aiRuns.push({
+        id: scribeRunId,
+        usage_type: "CONSULTATION_STRUCTURING",
+        cost_cents: 1,
+        status: "DRAFT",
+        reported: false
+      });
+      const template = args?.template as
+        | { segments?: Array<{ id: string; label: string }> }
+        | undefined;
+      const turns = args?.turns as Array<{ id: string; text: string }> | undefined;
+      const sourceTurn = turns?.[0]?.id ?? "turn-1";
+      const text = turns?.map((turn) => turn.text).join(" ") || "Sin transcripcion.";
+      return {
+        run_id: scribeRunId,
+        usage_type: "CONSULTATION_STRUCTURING",
+        provider: "fake-clinico",
+        model_version: "fake-1",
+        estimated_cost_cents: 1,
+        latency_ms: 2,
+        segments: (template?.segments ?? []).slice(0, 4).map((segment) => ({
+          segment_id: segment.id,
+          content: `${segment.label} (borrador): ${text}`,
+          confidence: "medium",
+          source_turns: [sourceTurn],
+          warnings: ["Revisar antes de guardar."]
+        })),
+        missing: [],
+        warnings: ["Acomodo simulado en navegador."]
       } as T;
     }
     case "ai_review_run": {

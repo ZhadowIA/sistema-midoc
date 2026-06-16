@@ -13,7 +13,7 @@
 
 use crate::clinical::{self, NoteContent};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AiError {
@@ -36,6 +36,7 @@ pub enum AiError {
 /// exige su propio consentimiento explicito.
 pub const SCOPE_TEXT_ASSIST: &str = "TEXT_ASSIST";
 pub const SCOPE_VOICE_TRANSCRIPTION: &str = "VOICE_TRANSCRIPTION";
+pub const SCOPE_CONSULTATION_SCRIBE: &str = "CONSULTATION_SCRIBE";
 
 /// Tipos de uso de IA de texto. El proveedor adapta su salida a cada uno.
 pub const USAGE_SOAP_ASSIST: &str = "SOAP_ASSIST";
@@ -43,6 +44,7 @@ pub const USAGE_SUMMARY: &str = "LONGITUDINAL_SUMMARY";
 pub const USAGE_INSTRUCTIONS: &str = "PATIENT_INSTRUCTIONS";
 pub const USAGE_GAPS: &str = "CLINICAL_GAPS";
 pub const USAGE_TRANSCRIPTION: &str = "TRANSCRIPTION";
+pub const USAGE_CONSULTATION_STRUCTURING: &str = "CONSULTATION_STRUCTURING";
 pub const AUDIO_RETENTION_DISCARD: &str = "discarded_after_transcription";
 
 const TEXT_USAGES: &[&str] = &[USAGE_SUMMARY, USAGE_INSTRUCTIONS, USAGE_GAPS];
@@ -52,6 +54,7 @@ const PROMPT_VERSION_SUMMARY: &str = "summary/v1";
 const PROMPT_VERSION_INSTRUCTIONS: &str = "instructions/v1";
 const PROMPT_VERSION_GAPS: &str = "gaps/v1";
 const PROMPT_VERSION_TRANSCRIPTION: &str = "transcription/v1";
+pub const PROMPT_VERSION_CONSULTATION_STRUCTURING: &str = "consultation-structuring/v1";
 const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
 
 fn prompt_version_for(usage_type: &str) -> &'static str {
@@ -59,6 +62,7 @@ fn prompt_version_for(usage_type: &str) -> &'static str {
         USAGE_SUMMARY => PROMPT_VERSION_SUMMARY,
         USAGE_INSTRUCTIONS => PROMPT_VERSION_INSTRUCTIONS,
         USAGE_GAPS => PROMPT_VERSION_GAPS,
+        USAGE_CONSULTATION_STRUCTURING => PROMPT_VERSION_CONSULTATION_STRUCTURING,
         _ => PROMPT_VERSION_SOAP,
     }
 }
@@ -81,6 +85,63 @@ pub struct AiResponse {
     pub model_version: String,
     pub estimated_cost_cents: i64,
     pub latency_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsultationTurn {
+    pub id: String,
+    pub speaker: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateSegment {
+    pub id: String,
+    pub label: String,
+    pub target: String,
+    pub instructions: String,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SegmentDraft {
+    pub segment_id: String,
+    pub content: String,
+    pub confidence: String,
+    pub source_turns: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ConsultationStructuringOutput {
+    segments: Vec<SegmentDraft>,
+    #[serde(default)]
+    missing: Vec<String>,
+    #[serde(default)]
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConsultationStructuringDraft {
+    pub run_id: String,
+    pub usage_type: String,
+    pub provider: String,
+    pub model_version: String,
+    pub estimated_cost_cents: i64,
+    pub latency_ms: i64,
+    pub segments: Vec<SegmentDraft>,
+    pub missing: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ConsultationStructuringInput<'a> {
+    task: &'a str,
+    patient_name: &'a str,
+    rules: &'a [&'a str],
+    template_segments: &'a [TemplateSegment],
+    turns: &'a [ConsultationTurn],
+    encounter_context: String,
 }
 
 /// Adaptador de proveedor de IA. Implementaciones reales (OpenAI, MedLM, …) se
@@ -106,7 +167,21 @@ impl ProviderRegistry {
     /// proveedor real entra en staging (requiere BAA); no se cablea aqui para
     /// no enviar PHI sin acuerdo contractual.
     pub fn default_local() -> Self {
-        Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))])
+        #[cfg(test)]
+        {
+            Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))])
+        }
+        #[cfg(not(test))]
+        {
+            if let Some(gemini) = GeminiProvider::from_env() {
+                Self::new(vec![
+                    Box::new(gemini),
+                    Box::new(FakeProvider::new("fake-clinico")),
+                ])
+            } else {
+                Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))])
+            }
+        }
     }
 
     fn generate(&self, request: &AiRequest) -> Result<(String, AiResponse), AiError> {
@@ -179,6 +254,7 @@ impl AiProvider for FakeProvider {
             USAGE_GAPS => format!(
                 "Posibles brechas clinicas a revisar (borrador):\n- Verifica antecedentes y alergias.\n- Confirma seguimiento de diagnosticos previos.\n- Contexto considerado:\n{context}\n\n(Estas son sugerencias; el criterio es del medico.)"
             ),
+            USAGE_CONSULTATION_STRUCTURING => fake_structuring_output(context)?,
             _ => return Err(AiError::Invalid("tipo de uso no soportado por el proveedor".into())),
         };
 
@@ -193,6 +269,191 @@ impl AiProvider for FakeProvider {
             latency_ms: start.elapsed().as_millis() as i64,
         })
     }
+}
+
+fn fake_structuring_output(context: &str) -> Result<String, AiError> {
+    let parsed: serde_json::Value = serde_json::from_str(context).unwrap_or_default();
+    let segments = parsed
+        .get("template_segments")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let first_turn = parsed
+        .get("turns")
+        .and_then(|value| value.as_array())
+        .and_then(|turns| turns.first())
+        .and_then(|turn| turn.get("id"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("turn-1")
+        .to_string();
+    let transcript = parsed
+        .get("turns")
+        .and_then(|value| value.as_array())
+        .map(|turns| {
+            turns
+                .iter()
+                .filter_map(|turn| turn.get("text").and_then(|text| text.as_str()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or_else(|| "No se encontro texto de conversacion.".into());
+
+    let output_segments: Vec<SegmentDraft> = segments
+        .iter()
+        .take(4)
+        .filter_map(|segment| {
+            let id = segment.get("id")?.as_str()?.to_string();
+            let label = segment
+                .get("label")
+                .and_then(|value| value.as_str())
+                .unwrap_or("Segmento");
+            Some(SegmentDraft {
+                segment_id: id,
+                content: format!("{label} (borrador IA): {transcript}"),
+                confidence: "medium".into(),
+                source_turns: vec![first_turn.clone()],
+                warnings: vec!["Borrador determinista: revisar antes de usar.".into()],
+            })
+        })
+        .collect();
+
+    serde_json::to_string(&ConsultationStructuringOutput {
+        segments: output_segments,
+        missing: Vec::new(),
+        warnings: vec!["Salida generada por proveedor fake local.".into()],
+    })
+    .map_err(|e| AiError::Invalid(format!("no se pudo serializar el borrador: {e}")))
+}
+
+#[cfg_attr(test, allow(dead_code))]
+pub struct GeminiProvider {
+    api_key: String,
+    model: String,
+}
+
+#[cfg_attr(test, allow(dead_code))]
+impl GeminiProvider {
+    pub fn from_env() -> Option<Self> {
+        let api_key = std::env::var("MIDOC_GEMINI_API_KEY").ok()?;
+        let api_key = api_key.trim().to_string();
+        if api_key.is_empty() {
+            return None;
+        }
+        let model = std::env::var("MIDOC_GEMINI_MODEL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "gemini-3-flash".into());
+        Some(Self { api_key, model })
+    }
+
+    fn model_path(&self) -> String {
+        if self.model.starts_with("models/") {
+            self.model.clone()
+        } else {
+            format!("models/{}", self.model)
+        }
+    }
+}
+
+impl AiProvider for GeminiProvider {
+    fn name(&self) -> &str {
+        "gemini-direct"
+    }
+
+    fn generate(&self, request: &AiRequest) -> Result<AiResponse, AiError> {
+        let start = std::time::Instant::now();
+        let endpoint = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}:generateContent",
+            self.model_path()
+        );
+
+        let generation_config = if request.usage_type == USAGE_CONSULTATION_STRUCTURING {
+            serde_json::json!({
+                "temperature": 0.1,
+                "responseMimeType": "application/json",
+                "responseJsonSchema": consultation_structuring_schema()
+            })
+        } else {
+            serde_json::json!({ "temperature": 0.2 })
+        };
+
+        let body = serde_json::json!({
+            "systemInstruction": {
+                "parts": [{
+                    "text": "Eres apoyo documental clinico. No inventes informacion. Devuelve solo contenido derivado de la entrada y marca faltantes o ambiguedades."
+                }]
+            },
+            "contents": [{
+                "role": "user",
+                "parts": [{ "text": request.redacted_input }]
+            }],
+            "generationConfig": generation_config
+        });
+
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .post(endpoint)
+            .header("x-goog-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .map_err(|e| AiError::Invalid(format!("Gemini no respondio: {e}")))?;
+        if !response.status().is_success() {
+            return Err(AiError::Invalid(format!(
+                "Gemini rechazo la solicitud: {}",
+                response.status()
+            )));
+        }
+        let payload: serde_json::Value = response
+            .json()
+            .map_err(|e| AiError::Invalid(format!("respuesta Gemini invalida: {e}")))?;
+        let output = payload
+            .get("candidates")
+            .and_then(|value| value.as_array())
+            .and_then(|candidates| candidates.first())
+            .and_then(|candidate| candidate.get("content"))
+            .and_then(|content| content.get("parts"))
+            .and_then(|value| value.as_array())
+            .and_then(|parts| parts.first())
+            .and_then(|part| part.get("text"))
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| AiError::Invalid("Gemini no devolvio texto utilizable".into()))?
+            .to_string();
+
+        Ok(AiResponse {
+            output,
+            model_version: self.model.clone(),
+            estimated_cost_cents: 1 + (request.redacted_input.len() as i64 / 4000),
+            latency_ms: start.elapsed().as_millis() as i64,
+        })
+    }
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn consultation_structuring_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["segments", "missing", "warnings"],
+        "properties": {
+            "segments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["segment_id", "content", "confidence", "source_turns", "warnings"],
+                    "properties": {
+                        "segment_id": { "type": "string" },
+                        "content": { "type": "string" },
+                        "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+                        "source_turns": { "type": "array", "items": { "type": "string" } },
+                        "warnings": { "type": "array", "items": { "type": "string" } }
+                    }
+                }
+            },
+            "missing": { "type": "array", "items": { "type": "string" } },
+            "warnings": { "type": "array", "items": { "type": "string" } }
+        }
+    })
 }
 
 /// Transcriptor fake determinista. Doble de pruebas del contrato: el flujo
@@ -807,6 +1068,203 @@ pub fn assist_text(
     })
 }
 
+fn validate_consultation_turns(turns: &[ConsultationTurn]) -> Result<Vec<ConsultationTurn>, AiError> {
+    let cleaned: Vec<ConsultationTurn> = turns
+        .iter()
+        .filter_map(|turn| {
+            let text = turn.text.trim();
+            if text.is_empty() {
+                return None;
+            }
+            let speaker = turn.speaker.trim().to_uppercase();
+            if speaker != "MEDICO" && speaker != "PACIENTE" {
+                return None;
+            }
+            Some(ConsultationTurn {
+                id: turn.id.trim().to_string(),
+                speaker,
+                text: text.to_string(),
+            })
+        })
+        .collect();
+    if cleaned.is_empty() {
+        return Err(AiError::Invalid(
+            "la conversacion debe incluir turnos validos".into(),
+        ));
+    }
+    if cleaned.iter().any(|turn| turn.id.is_empty()) {
+        return Err(AiError::Invalid("cada turno debe tener identificador".into()));
+    }
+    Ok(cleaned)
+}
+
+fn validate_template_segments(
+    segments: &[TemplateSegment],
+) -> Result<Vec<TemplateSegment>, AiError> {
+    use std::collections::HashSet;
+
+    let cleaned: Vec<TemplateSegment> = segments
+        .iter()
+        .filter_map(|segment| {
+            let id = segment.id.trim();
+            let label = segment.label.trim();
+            let target = segment.target.trim();
+            if id.is_empty() || label.is_empty() || target.is_empty() {
+                return None;
+            }
+            Some(TemplateSegment {
+                id: id.to_string(),
+                label: label.to_string(),
+                target: target.to_string(),
+                instructions: segment.instructions.trim().to_string(),
+                required: segment.required,
+            })
+        })
+        .collect();
+    if cleaned.is_empty() {
+        return Err(AiError::Invalid(
+            "la plantilla debe incluir segmentos validos".into(),
+        ));
+    }
+
+    let mut ids = HashSet::new();
+    for segment in &cleaned {
+        if !ids.insert(segment.id.clone()) {
+            return Err(AiError::Invalid(format!(
+                "segmento duplicado en plantilla: {}",
+                segment.id
+            )));
+        }
+    }
+    Ok(cleaned)
+}
+
+fn parse_structuring_output(
+    raw: &str,
+    template_segments: &[TemplateSegment],
+) -> Result<ConsultationStructuringOutput, AiError> {
+    use std::collections::HashSet;
+
+    let output: ConsultationStructuringOutput = serde_json::from_str(raw)
+        .map_err(|e| AiError::Invalid(format!("respuesta de acomodo invalida: {e}")))?;
+    let allowed: HashSet<&str> = template_segments
+        .iter()
+        .map(|segment| segment.id.as_str())
+        .collect();
+    for segment in &output.segments {
+        if !allowed.contains(segment.segment_id.as_str()) {
+            return Err(AiError::Invalid(format!(
+                "segmento desconocido devuelto por IA: {}",
+                segment.segment_id
+            )));
+        }
+        if !matches!(segment.confidence.as_str(), "high" | "medium" | "low") {
+            return Err(AiError::Invalid(format!(
+                "confianza invalida en segmento: {}",
+                segment.segment_id
+            )));
+        }
+    }
+    Ok(output)
+}
+
+/// Acomoda una conversacion Medico/Paciente dentro de la plantilla activa. La
+/// salida es un borrador segmentado: no guarda nota ni firma el encuentro.
+pub fn structure_consultation(
+    conn: &Connection,
+    encounter_id: &str,
+    turns: Vec<ConsultationTurn>,
+    template_segments: Vec<TemplateSegment>,
+    registry: &ProviderRegistry,
+) -> Result<ConsultationStructuringDraft, AiError> {
+    let detail =
+        clinical::get_encounter_detail(conn, encounter_id).map_err(|_| AiError::NotFound)?;
+    if detail.encounter.status == "SIGNED" {
+        return Err(AiError::Invalid("el encuentro ya fue firmado".into()));
+    }
+
+    let patient_id = detail.encounter.patient_id.clone();
+    let consent_id = active_consent(conn, &patient_id, SCOPE_CONSULTATION_SCRIBE)?
+        .ok_or(AiError::ConsentMissing)?;
+    ensure_within_budget(conn)?;
+
+    let turns = validate_consultation_turns(&turns)?;
+    let template_segments = validate_template_segments(&template_segments)?;
+    let patient_name = format!("{} {}", detail.patient.first_name, detail.patient.last_name);
+    let rules = [
+        "Devuelve JSON valido siguiendo el schema.",
+        "No inventes datos; si falta informacion, agregala en missing.",
+        "Usa solo segment_id presentes en template_segments.",
+        "Incluye source_turns con ids de turnos que sustentan cada segmento.",
+    ];
+    let input = ConsultationStructuringInput {
+        task: "Acomoda la conversacion en los segmentos de la plantilla clinica activa.",
+        patient_name: &patient_name,
+        rules: &rules,
+        template_segments: &template_segments,
+        turns: &turns,
+        encounter_context: build_context(&detail),
+    };
+    let raw_input = serde_json::to_string(&input)
+        .map_err(|e| AiError::Invalid(format!("entrada de acomodo invalida: {e}")))?;
+    let redacted = redact(
+        &raw_input,
+        &detail.patient.first_name,
+        &detail.patient.last_name,
+    );
+
+    let request = AiRequest {
+        usage_type: USAGE_CONSULTATION_STRUCTURING.into(),
+        prompt_version: PROMPT_VERSION_CONSULTATION_STRUCTURING.into(),
+        redacted_input: redacted.clone(),
+    };
+    let (provider, response) = registry.generate(&request)?;
+    let output = parse_structuring_output(&response.output, &template_segments)?;
+
+    let run_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO ai_runs
+            (id, encounter_id, patient_id, usage_type, provider, model_version,
+             prompt_version, status, input_redacted, output, estimated_cost_cents,
+             latency_ms, consent_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'DRAFT', ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            run_id,
+            encounter_id,
+            patient_id,
+            USAGE_CONSULTATION_STRUCTURING,
+            provider,
+            response.model_version,
+            PROMPT_VERSION_CONSULTATION_STRUCTURING,
+            redacted,
+            response.output,
+            response.estimated_cost_cents,
+            response.latency_ms,
+            consent_id,
+            now()
+        ],
+    )?;
+    audit(
+        conn,
+        "ai_run",
+        &run_id,
+        "consultation-structuring-draft-generated",
+        Some(USAGE_CONSULTATION_STRUCTURING),
+    )?;
+
+    Ok(ConsultationStructuringDraft {
+        run_id,
+        usage_type: USAGE_CONSULTATION_STRUCTURING.into(),
+        provider,
+        model_version: response.model_version,
+        estimated_cost_cents: response.estimated_cost_cents,
+        latency_ms: response.latency_ms,
+        segments: output.segments,
+        missing: output.missing,
+        warnings: output.warnings,
+    })
+}
+
 fn validate_audio_input(audio: &AudioInput) -> Result<(), AiError> {
     if audio.bytes.is_empty() {
         return Err(AiError::Invalid("el audio no puede estar vacio".into()));
@@ -1237,6 +1695,67 @@ mod tests {
         }
     }
 
+    struct RawProvider {
+        output: String,
+    }
+
+    impl RawProvider {
+        fn new(output: &str) -> Self {
+            Self {
+                output: output.to_string(),
+            }
+        }
+    }
+
+    impl AiProvider for RawProvider {
+        fn name(&self) -> &str {
+            "raw-scribe"
+        }
+
+        fn generate(&self, _request: &AiRequest) -> Result<AiResponse, AiError> {
+            Ok(AiResponse {
+                output: self.output.clone(),
+                model_version: "raw-1".into(),
+                estimated_cost_cents: 3,
+                latency_ms: 4,
+            })
+        }
+    }
+
+    fn scribe_turns() -> Vec<ConsultationTurn> {
+        vec![
+            ConsultationTurn {
+                id: "turn-1".into(),
+                speaker: "MEDICO".into(),
+                text: "¿Desde cuando tiene tos?".into(),
+            },
+            ConsultationTurn {
+                id: "turn-2".into(),
+                speaker: "PACIENTE".into(),
+                text: "Desde hace tres dias, sin fiebre.".into(),
+            },
+        ]
+    }
+
+    fn scribe_segments() -> Vec<TemplateSegment> {
+        vec![
+            TemplateSegment {
+                id: "subjective".into(),
+                label: "S - Subjetivo".into(),
+                target: "subjective".into(),
+                instructions: "Resume lo referido por el paciente.".into(),
+                required: true,
+            },
+            TemplateSegment {
+                id: "plan".into(),
+                label: "P - Plan".into(),
+                target: "plan".into(),
+                instructions: "Extrae el plan mencionado.".into(),
+                required: false,
+            },
+        ]
+    }
+
     #[test]
     fn redaction_removes_patient_name() {
         let redacted = redact("Hugo Paz refiere tos. Hugo no tiene fiebre.", "Hugo", "Paz");
@@ -1256,6 +1775,151 @@ mod tests {
             assist_soap(&conn, &encounter_id, &registry),
             Err(AiError::ConsentMissing)
         ));
+    }
+
+    #[test]
+    fn consultation_scribe_requires_specific_consent() {
+        let conn = test_conn("scribe-consent");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let registry = ProviderRegistry::default_local();
+
+        assert!(matches!(
+            structure_consultation(
+                &conn,
+                &encounter_id,
+                scribe_turns(),
+                scribe_segments(),
+                &registry
+            ),
+            Err(AiError::ConsentMissing)
+        ));
+    }
+
+    #[test]
+    fn consultation_scribe_rejects_signed_encounters() {
+        let conn = test_conn("scribe-signed");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
+        clinical::save_note(&conn, &encounter_id, &NoteContent::default()).unwrap();
+        clinical::sign_encounter(&conn, &encounter_id).unwrap();
+        let registry = ProviderRegistry::default_local();
+
+        assert!(matches!(
+            structure_consultation(
+                &conn,
+                &encounter_id,
+                scribe_turns(),
+                scribe_segments(),
+                &registry
+            ),
+            Err(AiError::Invalid(message)) if message.contains("firmado")
+        ));
+    }
+
+    #[test]
+    fn consultation_scribe_rejects_empty_inputs() {
+        let conn = test_conn("scribe-empty");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
+        let registry = ProviderRegistry::default_local();
+
+        assert!(matches!(
+            structure_consultation(&conn, &encounter_id, Vec::new(), scribe_segments(), &registry),
+            Err(AiError::Invalid(message)) if message.contains("turnos")
+        ));
+        assert!(matches!(
+            structure_consultation(&conn, &encounter_id, scribe_turns(), Vec::new(), &registry),
+            Err(AiError::Invalid(message)) if message.contains("plantilla")
+        ));
+    }
+
+    #[test]
+    fn consultation_scribe_rejects_unknown_segment_ids() {
+        let conn = test_conn("scribe-unknown-segment");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
+        let registry = ProviderRegistry::new(vec![Box::new(RawProvider::new(
+            r#"{"segments":[{"segment_id":"unknown","content":"texto","confidence":"high","source_turns":["turn-1"],"warnings":[]}],"missing":[],"warnings":[]}"#,
+        ))]);
+
+        assert!(matches!(
+            structure_consultation(
+                &conn,
+                &encounter_id,
+                scribe_turns(),
+                scribe_segments(),
+                &registry
+            ),
+            Err(AiError::Invalid(message)) if message.contains("segmento desconocido")
+        ));
+    }
+
+    #[test]
+    fn consultation_scribe_generates_segment_draft_trace() {
+        let conn = test_conn("scribe-draft");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
+        let registry = ProviderRegistry::default_local();
+
+        let draft = structure_consultation(
+            &conn,
+            &encounter_id,
+            scribe_turns(),
+            scribe_segments(),
+            &registry,
+        )
+        .unwrap();
+
+        assert_eq!(draft.usage_type, USAGE_CONSULTATION_STRUCTURING);
+        assert_eq!(draft.provider, "fake-clinico");
+        assert!(draft.segments.iter().any(|segment| segment.segment_id == "subjective"));
+
+        let run = read_run(&conn, &draft.run_id).unwrap();
+        assert_eq!(run.status, "DRAFT");
+        assert_eq!(run.usage_type, USAGE_CONSULTATION_STRUCTURING);
+        assert_eq!(run.prompt_version, PROMPT_VERSION_CONSULTATION_STRUCTURING);
+
+        let stored_input: String = conn
+            .query_row(
+                "SELECT input_redacted FROM ai_runs WHERE id = ?1",
+                params![draft.run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!stored_input.contains("Hugo"));
+        assert!(stored_input.contains("[PACIENTE]"));
+    }
+
+    #[test]
+    fn consultation_scribe_usage_report_is_reference_only() {
+        let conn = test_conn("scribe-report");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
+        let registry = ProviderRegistry::default_local();
+
+        let draft = structure_consultation(
+            &conn,
+            &encounter_id,
+            scribe_turns(),
+            scribe_segments(),
+            &registry,
+        )
+        .unwrap();
+        review_run(&conn, &draft.run_id, "APPROVED", None).unwrap();
+
+        let report = pending_usage_reports(&conn, 10)
+            .unwrap()
+            .into_iter()
+            .find(|report| report.external_run_id == draft.run_id)
+            .unwrap();
+        assert_eq!(report.usage_type, USAGE_CONSULTATION_STRUCTURING);
+        assert_eq!(report.provider_type, "LLM");
+        assert_eq!(report.input_reference["kind"], "LOCAL_AI_RUN_INPUT");
+        assert_eq!(report.output_reference["kind"], "LOCAL_AI_RUN_OUTPUT");
+        assert!(report.input_reference.get("content").is_none());
+        assert!(report.output_reference.get("segments").is_none());
     }
 
     #[test]
