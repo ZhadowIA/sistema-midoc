@@ -1014,6 +1014,8 @@ Verificacion (rebanada 2): test node de filtros en verde (oculta/ muestra cancel
 
 Clasificacion de datos: audio, transcript, dialogo y segmentos son CLINICO y viven en la base local cifrada o como bytes transitorios. Las trazas de proveedor/costo son OPERATIVO local y solo se reportan al portal por referencia, sin input/output clinico.
 
+Avance (2026-06-15): MVP de escriba implementado en `desktop-app` con consentimiento `CONSULTATION_SCRIBE`, estructuracion `CONSULTATION_STRUCTURING`, turnos revisables, aplicacion manual por segmento y editor local de plantillas personalizadas en base cifrada (`app_meta`), sin migracion nueva ni persistencia clinica en nube.
+
 Rebanadas:
 
 - **Rebanada 1 — Contrato de plantilla y salida segmentada.** Definir el contrato local de segmentos para la plantilla activa: `segment_id`, etiqueta, instrucciones, contenido, confianza, turnos fuente, faltantes y advertencias. Validar la salida de IA antes de mostrarla.

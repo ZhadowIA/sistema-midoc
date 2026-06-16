@@ -3,6 +3,7 @@ mod arco;
 mod audio;
 mod clinical;
 mod cloud_transcription;
+mod consultation_templates;
 mod crypto;
 mod db;
 mod medication;
@@ -1338,6 +1339,42 @@ fn ai_structure_consultation(
     })
 }
 
+fn with_consultation_templates<T>(
+    state: &tauri::State<'_, AppDb>,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, consultation_templates::TemplateError>,
+) -> Result<T, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    f(conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_consultation_templates(
+    state: tauri::State<'_, AppDb>,
+) -> Result<Vec<consultation_templates::StoredTemplate>, String> {
+    with_consultation_templates(&state, consultation_templates::list_templates)
+}
+
+#[tauri::command]
+fn save_consultation_template(
+    state: tauri::State<'_, AppDb>,
+    template: consultation_templates::StoredTemplate,
+) -> Result<consultation_templates::StoredTemplate, String> {
+    with_consultation_templates(&state, |conn| {
+        consultation_templates::save_template(conn, template)
+    })
+}
+
+#[tauri::command]
+fn delete_consultation_template(
+    state: tauri::State<'_, AppDb>,
+    id: String,
+) -> Result<(), String> {
+    with_consultation_templates(&state, |conn| {
+        consultation_templates::delete_template(conn, &id)
+    })
+}
+
 #[tauri::command]
 fn ai_review_run(
     state: tauri::State<'_, AppDb>,
@@ -1879,6 +1916,9 @@ pub fn run() {
             ai_assist_text,
             ai_transcribe_audio,
             ai_structure_consultation,
+            list_consultation_templates,
+            save_consultation_template,
+            delete_consultation_template,
             ai_review_run,
             ai_list_runs,
             ai_usage_summary,

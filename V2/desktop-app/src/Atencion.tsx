@@ -14,10 +14,13 @@ import {
 import {
   appendSegmentToNote,
   buildTemplateSegments,
+  normalizeTemplateDefinition,
   transcriptToTurns,
   type ConsultationTurn,
   type SegmentDraft,
-  type ScribeSpeaker
+  type ScribeSpeaker,
+  type TemplateDefinition,
+  type TemplateSegment
 } from "./consultationScribe";
 import { MedicationSafety } from "./MedicationSafety";
 import { call } from "./ipc";
@@ -110,6 +113,13 @@ interface ConsultationStructuringDraft {
   segments: SegmentDraft[];
   missing: string[];
   warnings: string[];
+}
+
+interface StoredConsultationTemplate extends TemplateDefinition {
+  name: string;
+  clinical_profile: ClinicalProfile;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 interface UsageSummary {
@@ -218,6 +228,16 @@ function humanizeKey(key: string): string {
 
 type AiConversationTurn = { question?: string; answer?: string };
 
+function createTemplateDraft(profile: ClinicalProfile): StoredConsultationTemplate {
+  const base = buildTemplateSegments(profile);
+  return {
+    id: `custom-${profile.toLowerCase().replace(/_/g, "-")}-${Date.now()}`,
+    name: profile === "ODONTOLOGY" ? "Plantilla odontologica personalizada" : "Plantilla general personalizada",
+    clinical_profile: profile,
+    segments: base.segments.map((segment) => ({ ...segment }))
+  };
+}
+
 /**
  * Aplana la preconsulta a pares legibles. Soporta el formato plano (placeholder
  * de la rebanada 6), el de antecedentes anidado (rebanada 7) y el resultado de
@@ -292,6 +312,9 @@ export function Atencion({
   const [scribeTurns, setScribeTurns] = useState<ConsultationTurn[]>([]);
   const [scribeDraft, setScribeDraft] = useState<ConsultationStructuringDraft | null>(null);
   const [appliedScribeSegments, setAppliedScribeSegments] = useState<string[]>([]);
+  const [consultationTemplates, setConsultationTemplates] = useState<StoredConsultationTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("default");
+  const [templateEditor, setTemplateEditor] = useState<StoredConsultationTemplate | null>(null);
   const [useCloudTranscription, setUseCloudTranscription] = useState(false);
   const [aiUsage, setAiUsage] = useState<UsageSummary | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
@@ -335,6 +358,17 @@ export function Atencion({
         call<UsageSummary>("ai_usage_summary")
           .then(setAiUsage)
           .catch(() => setAiUsage(null));
+        call<StoredConsultationTemplate[]>("list_consultation_templates")
+          .then((templates) =>
+            setConsultationTemplates(
+              templates.map((template) => ({
+                ...template,
+                clinical_profile: coerceClinicalProfile(template.clinical_profile),
+                ...normalizeTemplateDefinition(template, coerceClinicalProfile(template.clinical_profile))
+              }))
+            )
+          )
+          .catch(() => setConsultationTemplates([]));
       })
       .catch((e: unknown) => setError(String(e)));
   }, [encounterId, resolvedProfile]);
@@ -352,6 +386,8 @@ export function Atencion({
       ...current,
       specialty: coerceSpecialtyPayload(resolvedProfile, current.specialty)
     }));
+    setSelectedTemplateId("default");
+    setTemplateEditor(null);
   }, [resolvedProfile]);
 
   if (!detail) {
@@ -373,7 +409,21 @@ export function Atencion({
 
   const moduleLabel =
     resolvedProfile === "ODONTOLOGY" ? "Modulo odontologico" : "Medicina general / familiar";
-  const activeTemplate = buildTemplateSegments(resolvedProfile);
+  const defaultTemplate = buildTemplateSegments(resolvedProfile);
+  const profileTemplates = consultationTemplates
+    .filter((template) => template.clinical_profile === resolvedProfile)
+    .map((template) => ({
+      ...template,
+      ...normalizeTemplateDefinition(template, resolvedProfile)
+    }));
+  const selectedCustomTemplate = profileTemplates.find((template) => template.id === selectedTemplateId);
+  const activeTemplate = selectedCustomTemplate ?? defaultTemplate;
+  const activeTemplateName =
+    selectedCustomTemplate?.name ?? (resolvedProfile === "ODONTOLOGY" ? "SOAP odontologia" : "SOAP general");
+  const targetOptions = defaultTemplate.segments.map((segment) => ({
+    target: segment.target,
+    label: segment.label
+  }));
   const segmentLabels = new Map(activeTemplate.segments.map((segment) => [segment.id, segment.label]));
 
   const navItems: Array<{ id: SectionId; label: string }> = [];
@@ -606,6 +656,106 @@ export function Atencion({
     );
   }
 
+  function startNewTemplate() {
+    setTemplateEditor(createTemplateDraft(resolvedProfile));
+  }
+
+  function editSelectedTemplate() {
+    const selected = profileTemplates.find((template) => template.id === selectedTemplateId);
+    if (selected) {
+      setTemplateEditor({
+        ...selected,
+        segments: selected.segments.map((segment) => ({ ...segment }))
+      });
+    }
+  }
+
+  function updateTemplateSegment(index: number, patch: Partial<TemplateSegment>) {
+    setTemplateEditor((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        segments: current.segments.map((segment, position) =>
+          position === index ? { ...segment, ...patch } : segment
+        )
+      };
+    });
+  }
+
+  function addTemplateSegment() {
+    const target = targetOptions[0]?.target ?? "subjective";
+    setTemplateEditor((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        segments: [
+          ...current.segments,
+          {
+            id: `segment_${current.segments.length + 1}`,
+            label: "Nuevo segmento",
+            target,
+            instructions: "",
+            required: false
+          }
+        ]
+      };
+    });
+  }
+
+  function removeTemplateSegment(index: number) {
+    setTemplateEditor((current) =>
+      current
+        ? {
+            ...current,
+            segments: current.segments.filter((_, position) => position !== index)
+          }
+        : current
+    );
+  }
+
+  function saveTemplateEditor() {
+    if (!templateEditor) return;
+    const normalized = normalizeTemplateDefinition(templateEditor, resolvedProfile);
+    const payload: StoredConsultationTemplate = {
+      ...templateEditor,
+      id: normalized.id,
+      name: templateEditor.name.trim(),
+      clinical_profile: resolvedProfile,
+      segments: normalized.segments
+    };
+    if (!payload.name) {
+      setError("La plantilla necesita nombre.");
+      return;
+    }
+    void run("Plantilla guardada localmente.", async () => {
+      const saved = await call<StoredConsultationTemplate>("save_consultation_template", {
+        template: payload
+      });
+      const normalizedSaved: StoredConsultationTemplate = {
+        ...saved,
+        clinical_profile: coerceClinicalProfile(saved.clinical_profile),
+        ...normalizeTemplateDefinition(saved, coerceClinicalProfile(saved.clinical_profile))
+      };
+      setConsultationTemplates((current) => [
+        ...current.filter((template) => template.id !== normalizedSaved.id),
+        normalizedSaved
+      ]);
+      setSelectedTemplateId(normalizedSaved.id);
+      setTemplateEditor(null);
+    });
+  }
+
+  function deleteSelectedTemplate() {
+    const selected = profileTemplates.find((template) => template.id === selectedTemplateId);
+    if (!selected) return;
+    void run("Plantilla eliminada localmente.", async () => {
+      await call("delete_consultation_template", { id: selected.id });
+      setConsultationTemplates((current) => current.filter((template) => template.id !== selected.id));
+      setSelectedTemplateId("default");
+      setTemplateEditor(null);
+    });
+  }
+
   function structureConsultation() {
     const turns = scribeTurns.filter((turn) => turn.text.trim());
     if (turns.length === 0) return;
@@ -629,7 +779,7 @@ export function Atencion({
   }
 
   function applyScribeSegment(segment: SegmentDraft) {
-    setNote((current) => appendSegmentToNote(current, segment));
+    setNote((current) => appendSegmentToNote(current, segment, activeTemplate));
     setAppliedScribeSegments((current) =>
       current.includes(segment.segment_id) ? current : [...current, segment.segment_id]
     );
@@ -937,6 +1087,159 @@ export function Atencion({
               </button>
             </div>
 
+            <div className="ai-draft template-editor">
+              <div className="panel-header">
+                <h4>Plantilla de acomodo</h4>
+              </div>
+              <div className="button-row">
+                <label className="field">
+                  <span>Plantilla activa</span>
+                  <select
+                    value={selectedTemplateId}
+                    disabled={busy}
+                    onChange={(event) => {
+                      setSelectedTemplateId(event.currentTarget.value);
+                      setTemplateEditor(null);
+                    }}
+                  >
+                    <option value="default">
+                      {resolvedProfile === "ODONTOLOGY" ? "SOAP odontologia" : "SOAP general"}
+                    </option>
+                    {profileTemplates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="ghost-button" type="button" onClick={startNewTemplate} disabled={busy}>
+                  Nueva plantilla
+                </button>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={editSelectedTemplate}
+                  disabled={busy || selectedTemplateId === "default"}
+                >
+                  Editar
+                </button>
+                <button
+                  className="ghost-button danger-link"
+                  type="button"
+                  onClick={deleteSelectedTemplate}
+                  disabled={busy || selectedTemplateId === "default"}
+                >
+                  Eliminar
+                </button>
+              </div>
+              <p className="meta">
+                {activeTemplateName} · {activeTemplate.segments.length} segmento(s) textuales locales.
+              </p>
+
+              {templateEditor ? (
+                <div className="template-editor-form">
+                  <label className="field">
+                    <span>Nombre</span>
+                    <input
+                      value={templateEditor.name}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setTemplateEditor((current) =>
+                          current ? { ...current, name: event.currentTarget.value } : current
+                        )
+                      }
+                    />
+                  </label>
+                  <div className="template-segment-list">
+                    {templateEditor.segments.map((segment, index) => (
+                      <div className="template-segment" key={`${segment.id}-${index}`}>
+                        <label className="field compact-field">
+                          <span>Clave</span>
+                          <input
+                            value={segment.id}
+                            disabled={busy}
+                            onChange={(event) => updateTemplateSegment(index, { id: event.currentTarget.value })}
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Etiqueta</span>
+                          <input
+                            value={segment.label}
+                            disabled={busy}
+                            onChange={(event) =>
+                              updateTemplateSegment(index, { label: event.currentTarget.value })
+                            }
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Destino</span>
+                          <select
+                            value={segment.target}
+                            disabled={busy}
+                            onChange={(event) =>
+                              updateTemplateSegment(index, { target: event.currentTarget.value })
+                            }
+                          >
+                            {targetOptions.map((option) => (
+                              <option key={option.target} value={option.target}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="week-cancelled-toggle">
+                          <input
+                            type="checkbox"
+                            checked={segment.required}
+                            disabled={busy}
+                            onChange={(event) =>
+                              updateTemplateSegment(index, { required: event.currentTarget.checked })
+                            }
+                          />
+                          <span>Obligatorio</span>
+                        </label>
+                        <label className="field template-instructions">
+                          <span>Instrucciones para IA</span>
+                          <textarea
+                            rows={2}
+                            value={segment.instructions}
+                            disabled={busy}
+                            onChange={(event) =>
+                              updateTemplateSegment(index, { instructions: event.currentTarget.value })
+                            }
+                          />
+                        </label>
+                        <button
+                          className="ghost-button danger-link"
+                          type="button"
+                          onClick={() => removeTemplateSegment(index)}
+                          disabled={busy || templateEditor.segments.length <= 1}
+                        >
+                          Quitar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="button-row">
+                    <button className="ghost-button" type="button" onClick={addTemplateSegment} disabled={busy}>
+                      Agregar segmento
+                    </button>
+                    <button className="action-button" type="button" onClick={saveTemplateEditor} disabled={busy}>
+                      Guardar plantilla
+                    </button>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => setTemplateEditor(null)}
+                      disabled={busy}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <div className="button-row">
               <label className="field">
                 <span>Audio de consulta</span>
@@ -1032,7 +1335,7 @@ export function Atencion({
                     Acomodar en plantilla
                   </button>
                   <span className="meta">
-                    Usa {activeTemplate.id === "soap-odontology" ? "plantilla odontologica" : "plantilla general"} · no guarda la nota automaticamente.
+                    Usa {activeTemplateName} · no guarda la nota automaticamente.
                   </span>
                 </div>
               </div>

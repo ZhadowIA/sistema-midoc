@@ -981,6 +981,52 @@ textarea:disabled {
   font-size: 0.9rem;
 }
 
+.template-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.template-editor-form {
+  display: grid;
+  gap: 12px;
+}
+
+.template-segment-list {
+  display: grid;
+  gap: 10px;
+}
+
+.template-segment {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.45fr) minmax(150px, 0.8fr) minmax(170px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.template-instructions {
+  grid-column: 1 / -2;
+}
+
+.danger-link {
+  color: var(--danger);
+  border-color: color-mix(in oklch, var(--danger) 35%, var(--line));
+}
+
+@media (max-width: 760px) {
+  .scribe-turn,
+  .template-segment {
+    grid-template-columns: 1fr;
+  }
+
+  .template-instructions {
+    grid-column: auto;
+  }
+}
+
 /* Agenda semanal por bloques (paso 13, rebanada 4). 7 columnas = dias; el
    bloque es la duracion de cita del medico. Solo se listan los bloques (slots)
    con citas, en filas; cada cita cae en la celda de su dia. Color = estado. */

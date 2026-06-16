@@ -79,6 +79,7 @@ const mockState = {
   aiRunSeq: 0,
   aiBudgetCents: 0,
   aiRuns: [] as Array<{ id: string; usage_type: string; cost_cents: number; status: string; reported: boolean }>,
+  consultationTemplates: [] as Array<Record<string, unknown>>,
   medicationRef: { version: "seed-v1", medications: 27, interactions: 15, labels: 0 },
   benchmarks: [] as Array<Record<string, unknown>>,
   arcoRequests: [] as Array<Record<string, unknown>>,
@@ -971,6 +972,31 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         warnings: ["Acomodo simulado en navegador."]
       } as T;
     }
+    case "list_consultation_templates":
+      return mockState.consultationTemplates as T;
+    case "save_consultation_template": {
+      const template = args?.template as Record<string, unknown> | undefined;
+      if (!template?.id) {
+        throw "plantilla invalida";
+      }
+      const now = new Date().toISOString();
+      const stored: Record<string, unknown> & { id: string } = {
+        ...template,
+        id: String(template.id),
+        created_at: template.created_at ?? now,
+        updated_at: now
+      };
+      mockState.consultationTemplates = [
+        ...mockState.consultationTemplates.filter((item) => item.id !== stored.id),
+        stored
+      ];
+      return stored as T;
+    }
+    case "delete_consultation_template":
+      mockState.consultationTemplates = mockState.consultationTemplates.filter(
+        (template) => template.id !== args?.id
+      );
+      return undefined as T;
     case "ai_review_run": {
       const run = mockState.aiRuns.find((item) => item.id === args?.runId);
       if (run) {

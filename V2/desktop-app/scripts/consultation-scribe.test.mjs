@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   appendSegmentToNote,
   buildTemplateSegments,
+  normalizeTemplateDefinition,
   transcriptToTurns
 } from "../src/consultationScribe.ts";
 
@@ -45,6 +46,43 @@ assert.equal(
   "no expone odontograma al acomodo automatico del MVP"
 );
 
+const customTemplate = normalizeTemplateDefinition(
+  {
+    id: "custom-general-control",
+    segments: [
+      {
+        id: "control_reason",
+        label: "Motivo de control",
+        target: "subjective",
+        instructions: "Extrae el motivo principal de seguimiento.",
+        required: true
+      },
+      {
+        id: "unsafe_chart",
+        label: "Odontograma",
+        target: "specialty.odontogram",
+        instructions: "No debe entrar al MVP.",
+        required: false
+      },
+      {
+        id: "follow_up",
+        label: "Seguimiento",
+        target: "specialty.followUp",
+        instructions: "Extrae el siguiente control.",
+        required: false
+      }
+    ]
+  },
+  "GENERAL_MEDICINE"
+);
+
+assert.equal(customTemplate.id, "custom-general-control", "conserva el id local de plantilla");
+assert.deepEqual(
+  customTemplate.segments.map((segment) => segment.id),
+  ["control_reason", "follow_up"],
+  "filtra segmentos personalizados hacia campos textuales seguros"
+);
+
 const note = {
   subjective: "Texto previo.",
   objective: "",
@@ -77,3 +115,21 @@ assert.equal(
   "agrega el segmento al final sin reemplazar el contenido previo"
 );
 assert.equal(note.subjective, "Texto previo.", "no muta la nota original");
+
+const customApplied = appendSegmentToNote(
+  note,
+  {
+    segment_id: "follow_up",
+    content: "Control en dos semanas.",
+    confidence: "medium",
+    source_turns: ["turn-2"],
+    warnings: []
+  },
+  customTemplate
+);
+
+assert.equal(
+  customApplied.specialty.followUp,
+  "Control en dos semanas.",
+  "aplica segmentos personalizados usando el target definido por la plantilla activa"
+);

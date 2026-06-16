@@ -24,7 +24,7 @@ export interface TemplateSegment {
 }
 
 export interface TemplateDefinition {
-  id: "soap-general" | "soap-odontology";
+  id: string;
   segments: TemplateSegment[];
 }
 
@@ -209,6 +209,55 @@ export function buildTemplateSegments(profile: ClinicalProfile): TemplateDefinit
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cleanText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function safeTargetSet(profile: ClinicalProfile): Set<string> {
+  return new Set(buildTemplateSegments(profile).segments.map((segment) => segment.target));
+}
+
+export function normalizeTemplateDefinition(
+  value: unknown,
+  profile: ClinicalProfile
+): TemplateDefinition {
+  const fallback = buildTemplateSegments(profile);
+  if (!isRecord(value)) return fallback;
+
+  const id = cleanText(value.id) || fallback.id;
+  const rawSegments = Array.isArray(value.segments) ? value.segments : [];
+  const allowedTargets = safeTargetSet(profile);
+  const seen = new Set<string>();
+  const segments: TemplateSegment[] = [];
+
+  for (const rawSegment of rawSegments) {
+    if (!isRecord(rawSegment)) continue;
+
+    const segment: TemplateSegment = {
+      id: cleanText(rawSegment.id),
+      label: cleanText(rawSegment.label),
+      target: cleanText(rawSegment.target),
+      instructions: cleanText(rawSegment.instructions),
+      required: rawSegment.required === true
+    };
+
+    if (!segment.id || !segment.label || !segment.target) continue;
+    if (seen.has(segment.id) || !allowedTargets.has(segment.target)) continue;
+
+    seen.add(segment.id);
+    segments.push(segment);
+  }
+
+  return {
+    id,
+    segments: segments.length > 0 ? segments : fallback.segments
+  };
+}
+
 function appendText(current: string, next: string): string {
   const text = next.trim();
   if (!text) return current;
@@ -216,8 +265,12 @@ function appendText(current: string, next: string): string {
   return previous ? `${previous}\n\n${text}` : text;
 }
 
-export function appendSegmentToNote<T extends ScribeNoteContent>(note: T, segment: SegmentDraft): T {
-  const target = buildTargetIndex(note).get(segment.segment_id);
+export function appendSegmentToNote<T extends ScribeNoteContent>(
+  note: T,
+  segment: SegmentDraft,
+  template?: TemplateDefinition
+): T {
+  const target = buildTargetIndex(note, template).get(segment.segment_id);
   if (!target) return note;
 
   if (!target.startsWith("specialty.")) {
@@ -242,7 +295,10 @@ export function appendSegmentToNote<T extends ScribeNoteContent>(note: T, segmen
   };
 }
 
-function buildTargetIndex(note: ScribeNoteContent): Map<string, string> {
+function buildTargetIndex(note: ScribeNoteContent, template?: TemplateDefinition): Map<string, string> {
   const profile: ClinicalProfile = "odontogram" in note.specialty ? "ODONTOLOGY" : "GENERAL_MEDICINE";
-  return new Map(buildTemplateSegments(profile).segments.map((segment) => [segment.id, segment.target]));
+  const definition = template ?? buildTemplateSegments(profile);
+  return new Map(
+    normalizeTemplateDefinition(definition, profile).segments.map((segment) => [segment.id, segment.target])
+  );
 }
