@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DentalNoteEditor } from "./DentalNoteEditor";
 import {
   coerceClinicalProfile,
@@ -11,6 +11,7 @@ import {
   type DentalPayload,
   type GeneralMedicinePayload
 } from "./clinicalProfiles";
+import { createRecordedWavFile } from "./consultationRecorder";
 import {
   appendSegmentToNote,
   buildTemplateSegments,
@@ -27,6 +28,7 @@ import { MedicationSafety } from "./MedicationSafety";
 import { call } from "./ipc";
 
 type SpecialtyPayload = GeneralMedicinePayload | DentalPayload;
+type RecordingState = "idle" | "recording" | "stopping";
 
 interface NoteContent {
   subjective: string;
@@ -227,6 +229,12 @@ function humanizeKey(key: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
+function formatRecordingDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remaining = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remaining).padStart(2, "0")}`;
+}
+
 type AiConversationTurn = { question?: string; answer?: string };
 
 function createTemplateDraft(profile: ClinicalProfile): StoredConsultationTemplate {
@@ -316,10 +324,20 @@ export function Atencion({
   const [consultationTemplates, setConsultationTemplates] = useState<StoredConsultationTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("default");
   const [templateEditor, setTemplateEditor] = useState<StoredConsultationTemplate | null>(null);
+  const [recordingState, setRecordingState] = useState<RecordingState>("idle");
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordingError, setRecordingError] = useState("");
   const [useCloudTranscription, setUseCloudTranscription] = useState(false);
   const [aiUsage, setAiUsage] = useState<UsageSummary | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
   const [activeSection, setActiveSection] = useState<SectionId>("nota");
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const recorderNodeRef = useRef<ScriptProcessorNode | null>(null);
+  const recorderChunksRef = useRef<Float32Array[]>([]);
+  const recordingStartedAtRef = useRef<number>(0);
+  const recordingTimerRef = useRef<number | null>(null);
 
   const load = useCallback(() => {
     call<EncounterDetail>("get_encounter", { encounterId })
@@ -390,6 +408,8 @@ export function Atencion({
     setSelectedTemplateId("default");
     setTemplateEditor(null);
   }, [resolvedProfile]);
+
+  useEffect(() => () => cleanupRecording(), []);
 
   if (!detail) {
     return (
@@ -777,6 +797,95 @@ export function Atencion({
       })
       .catch((e: unknown) => setError(String(e)))
       .finally(() => setBusy(false));
+  }
+
+  function cleanupRecording() {
+    if (recordingTimerRef.current !== null) {
+      window.clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    recorderNodeRef.current?.disconnect();
+    audioSourceRef.current?.disconnect();
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    void audioContextRef.current?.close().catch(() => {});
+    recorderNodeRef.current = null;
+    audioSourceRef.current = null;
+    mediaStreamRef.current = null;
+    audioContextRef.current = null;
+    recordingStartedAtRef.current = 0;
+  }
+
+  async function startConsultationRecording() {
+    if (recordingState !== "idle" || busy || !aiVoiceConsent) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setRecordingError("Este equipo no expone acceso al microfono en la app.");
+      return;
+    }
+
+    const AudioContextCtor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextCtor) {
+      setRecordingError("Este equipo no permite capturar audio desde la app.");
+      return;
+    }
+
+    try {
+      setRecordingError("");
+      setRecordingSeconds(0);
+      recorderChunksRef.current = [];
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true
+        }
+      });
+      const context = new AudioContextCtor();
+      const source = context.createMediaStreamSource(stream);
+      const processor = context.createScriptProcessor(4096, 1, 1);
+
+      processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        recorderChunksRef.current.push(new Float32Array(input));
+        const output = event.outputBuffer.getChannelData(0);
+        output.fill(0);
+      };
+
+      source.connect(processor);
+      processor.connect(context.destination);
+      mediaStreamRef.current = stream;
+      audioContextRef.current = context;
+      audioSourceRef.current = source;
+      recorderNodeRef.current = processor;
+      recordingStartedAtRef.current = Date.now();
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds(Math.floor((Date.now() - recordingStartedAtRef.current) / 1000));
+      }, 500);
+      setRecordingState("recording");
+    } catch (e) {
+      cleanupRecording();
+      setRecordingState("idle");
+      setRecordingError(String(e));
+    }
+  }
+
+  function stopConsultationRecording() {
+    if (recordingState !== "recording") return;
+    setRecordingState("stopping");
+    const inputSampleRate = audioContextRef.current?.sampleRate ?? 48_000;
+    const chunks = recorderChunksRef.current.slice();
+    cleanupRecording();
+    setRecordingSeconds(0);
+    try {
+      const file = createRecordedWavFile(chunks, inputSampleRate);
+      setMessage("Grabacion capturada. Transcribiendo audio temporal.");
+      transcribeAudioFile(file);
+    } catch (e) {
+      setRecordingError(String(e));
+    } finally {
+      setRecordingState("idle");
+    }
   }
 
   function applyScribeSegment(segment: SegmentDraft) {
@@ -1254,10 +1363,40 @@ export function Atencion({
                   }}
                 />
               </label>
+              <div className="recording-controls">
+                <button
+                  className={recordingState === "recording" ? "ghost-button recording-button" : "ghost-button"}
+                  type="button"
+                  onClick={() => void startConsultationRecording()}
+                  disabled={busy || !aiVoiceConsent || recordingState !== "idle"}
+                >
+                  Iniciar grabacion
+                </button>
+                <button
+                  className="action-button"
+                  type="button"
+                  onClick={stopConsultationRecording}
+                  disabled={recordingState !== "recording"}
+                >
+                  Detener y transcribir
+                </button>
+                <span className={recordingState === "recording" ? "pill pill-success" : "pill pill-muted"}>
+                  {recordingState === "recording"
+                    ? `Grabando ${formatRecordingDuration(recordingSeconds)}`
+                    : recordingState === "stopping"
+                      ? "Preparando audio"
+                      : "Grabadora lista"}
+                </span>
+              </div>
               <span className="meta">
                 WAV mono 16 kHz · {useCloudTranscription ? "respaldo en nube (bajo BAA)" : "transcripcion local"} · descarte inmediato del audio.
               </span>
             </div>
+            {recordingError ? (
+              <p className="form-error" role="alert">
+                {recordingError}
+              </p>
+            ) : null}
 
             <label className="week-cancelled-toggle">
               <input

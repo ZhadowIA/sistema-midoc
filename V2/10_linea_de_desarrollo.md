@@ -1018,7 +1018,9 @@ Avance (2026-06-15): MVP de escriba implementado en `desktop-app` con consentimi
 
 Avance (2026-06-16): rebanada de evidencia de revision agregada; cada segmento muestra fuentes legibles del dialogo y el backend rechaza salidas de proveedor con `source_turns` inexistentes o segmentos sin fuentes ni advertencia explicita.
 
-Estado (2026-06-16): implementacion tecnica del MVP completa en PR #18. Pendiente antes de merge: aceptacion manual con WAV real en desktop, validacion de Gemini con `MIDOC_GEMINI_API_KEY` en staging y decision de mantener el PR como draft o pasarlo a ready-for-review.
+Avance (2026-06-16): grabacion directa desde la consulta agregada; la app captura microfono, codifica un WAV mono 16 kHz en memoria y reutiliza el mismo flujo de transcripcion, sin persistir el audio.
+
+Estado (2026-06-16): implementacion tecnica del MVP completa en PR #18. Pendiente antes de merge: aceptacion manual con grabacion real/WAV real en desktop, validacion de Gemini con `MIDOC_GEMINI_API_KEY` en staging y decision de mantener el PR como draft o pasarlo a ready-for-review.
 
 Rebanadas:
 

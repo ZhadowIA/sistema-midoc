@@ -1010,6 +1010,18 @@ textarea:disabled {
   border-left-color: var(--danger);
 }
 
+.recording-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+.recording-button {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 .template-editor {
   display: grid;
   gap: 10px;
