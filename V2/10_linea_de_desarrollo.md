@@ -85,7 +85,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 18 | Agendado con responsable/tutor | `superpowers:test-driven-development` | El sistema distingue paciente con tutor de paciente sin tutor. | ✅ DONE |
 | 19 | Pulido del flujo publico, preconsulta y sincronizacion | `impeccable` | Perfil/agenda fieles, preconsulta diferida (antecedentes o guiada por IA), recordatorio con cancelacion y sync con aviso. | 🔜 PLANEADO |
 | 20 | App del medico: multi-perfil y agenda dia/semana | `impeccable` | Varios medicos comparten una computadora con bases cifradas independientes y agenda dia/semana. | ✅ DONE |
-| 21 | Plantillas clinicas asistidas por conversacion | `superpowers:writing-plans` | Consulta grabada/transcrita se acomoda en segmentos revisables de la plantilla activa. | 🔜 PLANEADO |
+| 21 | Plantillas clinicas asistidas por conversacion | `superpowers:writing-plans` | Consulta grabada/transcrita se acomoda en segmentos revisables de la plantilla activa. | 🧪 EN REVISION (PR #18) |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -1017,6 +1017,8 @@ Clasificacion de datos: audio, transcript, dialogo y segmentos son CLINICO y viv
 Avance (2026-06-15): MVP de escriba implementado en `desktop-app` con consentimiento `CONSULTATION_SCRIBE`, estructuracion `CONSULTATION_STRUCTURING`, turnos revisables, aplicacion manual por segmento y editor local de plantillas personalizadas en base cifrada (`app_meta`), sin migracion nueva ni persistencia clinica en nube.
 
 Avance (2026-06-16): rebanada de evidencia de revision agregada; cada segmento muestra fuentes legibles del dialogo y el backend rechaza salidas de proveedor con `source_turns` inexistentes o segmentos sin fuentes ni advertencia explicita.
+
+Estado (2026-06-16): implementacion tecnica del MVP completa en PR #18. Pendiente antes de merge: aceptacion manual con WAV real en desktop, validacion de Gemini con `MIDOC_GEMINI_API_KEY` en staging y decision de mantener el PR como draft o pasarlo a ready-for-review.
 
 Rebanadas:
 
