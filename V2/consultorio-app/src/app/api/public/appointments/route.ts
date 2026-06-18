@@ -25,7 +25,14 @@ const appointmentSchema = z.object({
     .optional(),
   legal: z.object({
     acceptedTerms: z.boolean(),
-    acceptedPrivacy: z.boolean()
+    acceptedPrivacy: z.boolean(),
+    notificationConsent: z
+      .object({
+        sms: z.boolean().optional(),
+        whatsapp: z.boolean().optional(),
+        preferredPhoneChannel: z.enum(["SMS", "WHATSAPP"]).optional()
+      })
+      .optional()
   })
 });
 

@@ -61,7 +61,27 @@ async function main() {
     }
   });
 
-  console.log("✓ Usuario de prueba creado: admin@consultorio.com");
+  await prisma.user.upsert({
+    where: { email: "platform-admin@consultorio.com" },
+    update: {
+      firstName: "Admin",
+      lastName: "MiDoc",
+      role: UserRole.ADMIN,
+      status: UserStatus.ACTIVE,
+      passwordHash: hashedPassword
+    },
+    create: {
+      email: "platform-admin@consultorio.com",
+      passwordHash: hashedPassword,
+      firstName: "Admin",
+      lastName: "MiDoc",
+      role: UserRole.ADMIN,
+      status: UserStatus.ACTIVE
+    }
+  });
+
+  console.log("✓ Usuario medico de prueba creado: admin@consultorio.com");
+  console.log("✓ Usuario administrador creado: platform-admin@consultorio.com");
 }
 
 main()

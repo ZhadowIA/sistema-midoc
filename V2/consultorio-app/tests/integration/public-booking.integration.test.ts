@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ClinicalProfile, HoldStatus, PrismaClient } from "@prisma/client";
+import { approveDoctorAccountForTesting } from "../helpers/doctor-accounts";
 
 import { createDoctorAccount, createDoctorSubscription } from "../../src/services/auth/auth-service";
 import {
@@ -10,6 +11,7 @@ import {
   confirmPublicAppointment,
   createAppointmentHold,
   getPublicAppointmentByToken,
+  listAvailableDays,
   listPublicAvailability,
   reschedulePublicAppointment,
   submitPrecheckin
@@ -97,6 +99,160 @@ afterAll(async () => {
 });
 
 describe("public booking flow", () => {
+  it("lists only the days with real availability (calendar fidelity, paso 19)", async () => {
+    const email = uniqueEmail("doctor-days");
+    const slug = uniqueSlug("dra-days");
+    const ruleDate = nextWeekdayDate(3);
+    const dateFrom = ruleDate.toISOString().slice(0, 10);
+    const nextDay = new Date(ruleDate);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    const nextDayString = nextDay.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Paula",
+        lastName: "Reyes",
+        professionalName: "Dra. Paula Reyes",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        professionalName: "Dra. Paula Reyes",
+        specialty: ClinicalProfile.GENERAL_MEDICINE,
+        isPublic: true
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta general",
+        priceCents: 90000,
+        durationMinutes: 30
+      });
+
+      // Una sola regla semanal, en el dia de la semana de ruleDate.
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: ruleDate.getUTCDay(),
+        startTime: "09:00",
+        endTime: "11:00",
+        slotInterval: 30
+      });
+
+      const result = await listAvailableDays({ slug, serviceId: service.id, dateFrom, days: 8 });
+
+      // El dia con regla aparece; el dia siguiente (sin regla) no.
+      expect(result.days).toContain(dateFrom);
+      expect(result.days).not.toContain(nextDayString);
+      // Todos los dias devueltos tienen cupo real (>= 1 slot via listPublicAvailability).
+      for (const day of result.days) {
+        const availability = await listPublicAvailability({
+          slug,
+          serviceId: service.id,
+          dateFrom: day,
+          days: 1
+        });
+        expect(availability.slots.length).toBeGreaterThan(0);
+      }
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("lets the same session change its hold without self-blocking (paso 19, rebanada 3)", async () => {
+    const email = uniqueEmail("doctor-session-hold");
+    const slug = uniqueSlug("dra-session");
+    const slotDate = nextWeekdayDate(2);
+    const dateFrom = slotDate.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Sara",
+        lastName: "Lopez",
+        professionalName: "Dra. Sara Lopez",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        professionalName: "Dra. Sara Lopez",
+        specialty: ClinicalProfile.GENERAL_MEDICINE,
+        isPublic: true
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta general",
+        priceCents: 90000,
+        durationMinutes: 30
+      });
+
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: slotDate.getUTCDay(),
+        startTime: "09:00",
+        endTime: "11:00",
+        slotInterval: 30
+      });
+
+      const availability = await listPublicAvailability({ slug, serviceId: service.id, dateFrom, days: 1 });
+      const slotA = availability.slots[0]!.slotStart;
+      const slotB = availability.slots[1]!.slotStart;
+
+      const holdA = await createAppointmentHold({ slug, serviceId: service.id, slotStart: slotA });
+
+      // Su propio hold bloquea slotA en la vista general, pero no si se ignora su token.
+      const afterA = await listPublicAvailability({ slug, serviceId: service.id, dateFrom, days: 1 });
+      expect(afterA.slots.some((slot) => slot.slotStart === slotA)).toBe(false);
+      const afterAignore = await listPublicAvailability({
+        slug,
+        serviceId: service.id,
+        dateFrom,
+        days: 1,
+        ignoreHoldToken: holdA.token
+      });
+      expect(afterAignore.slots.some((slot) => slot.slotStart === slotA)).toBe(true);
+
+      // Cambia de horario liberando el hold previo de la misma sesion.
+      const holdB = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: slotB,
+        previousHoldToken: holdA.token
+      });
+      expect(holdB.token).not.toBe(holdA.token);
+
+      const releasedA = await prisma.appointmentHold.findUnique({ where: { id: holdA.id } });
+      expect(releasedA?.status).toBe(HoldStatus.RELEASED);
+
+      // slotA vuelve a estar libre y slotB queda ocupado.
+      const afterB = await listPublicAvailability({ slug, serviceId: service.id, dateFrom, days: 1 });
+      expect(afterB.slots.some((slot) => slot.slotStart === slotA)).toBe(true);
+      expect(afterB.slots.some((slot) => slot.slotStart === slotB)).toBe(false);
+
+      // Reapartar el mismo slotB con su propio token no se bloquea a si mismo.
+      const holdB2 = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: slotB,
+        previousHoldToken: holdB.token
+      });
+      expect(holdB2.token).toBeTruthy();
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
   it("lists slots, creates a hold, books, confirms, and stores precheckin", async () => {
     const email = uniqueEmail("doctor-booking");
     const slug = uniqueSlug("dra-booking");
@@ -111,6 +267,7 @@ describe("public booking flow", () => {
         lastName: "Campos",
         phone: "6140000300",
         professionalName: "Dra. Lucia Campos",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -120,6 +277,8 @@ describe("public booking flow", () => {
         doctorUserId: account.user.id,
         planCode: "ESSENTIAL"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -216,6 +375,7 @@ describe("public booking flow", () => {
         lastName: "Castro",
         phone: "6140000301",
         professionalName: "Dra. Nora Castro",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -225,6 +385,8 @@ describe("public booking flow", () => {
         doctorUserId: account.user.id,
         planCode: "ESSENTIAL"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -331,12 +493,15 @@ describe("public booking flow", () => {
         lastName: "Reyes",
         phone: "6140000401",
         professionalName: "Dra. Olivia Reyes",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
 
       await createDoctorSubscription({ doctorUserId: account.user.id, planCode: "ESSENTIAL" });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -414,12 +579,15 @@ describe("public booking flow", () => {
         lastName: "Mena",
         phone: "6140000501",
         professionalName: "Dra. Paula Mena",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
 
       await createDoctorSubscription({ doctorUserId: account.user.id, planCode: "ESSENTIAL" });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -532,10 +700,13 @@ describe("public booking flow", () => {
         firstName: "Carmen",
         lastName: "Rios",
         professionalName: "Dra. Carmen Rios",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -591,10 +762,13 @@ describe("public booking flow", () => {
         firstName: "Pedro",
         lastName: "Galvan",
         professionalName: "Dr. Pedro Galvan",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -711,12 +885,14 @@ describe("public booking flow", () => {
         firstName: "Elena",
         lastName: "Mora",
         professionalName: "Dra. Elena Mora",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
 
       // Ciudad de Mexico es UTC-6 fijo (sin horario de verano desde 2022).
+      await approveDoctorAccountForTesting(prisma, account.user.id);
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
         isPublic: true,
@@ -778,12 +954,14 @@ describe("public booking flow", () => {
         firstName: "Paula",
         lastName: "Reyes",
         professionalName: "Dra. Paula Reyes",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
 
       // Tijuana si observa horario de verano: PDT (UTC-7) verano, PST (UTC-8) invierno.
+      await approveDoctorAccountForTesting(prisma, account.user.id);
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
         isPublic: true,

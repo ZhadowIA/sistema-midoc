@@ -3,6 +3,7 @@ import {
   AiUsageStatus,
   AiUsageType,
   MailboxDocumentStatus,
+  PrecheckinKind,
   Prisma,
   SyncDeviceStatus,
   SyncEventType,
@@ -15,6 +16,7 @@ import { writeAuditLog } from "../../lib/audit";
 import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { generateOpaqueToken, hashOpaqueToken } from "../../lib/security/token";
+import { getAiCreditCost, getDoctorAiCreditSummary } from "../ai/ai-credits";
 
 const INBOX_BATCH_SIZE = 100;
 const AI_USAGE_BATCH_SIZE = 100;
@@ -23,7 +25,12 @@ class SyncServiceError extends ServiceError {}
 
 const aiUsageReferenceSchema = z
   .object({
-    kind: z.enum(["LOCAL_AI_RUN_INPUT", "LOCAL_AI_RUN_OUTPUT"]),
+    kind: z.enum([
+      "LOCAL_AI_RUN_INPUT",
+      "LOCAL_AI_RUN_OUTPUT",
+      "LOCAL_AI_AUDIO_INPUT",
+      "LOCAL_AI_TRANSCRIPT_OUTPUT"
+    ]),
     localRunId: z.string().min(1).max(100),
     patientId: z.string().min(1).max(100).optional(),
     encounterId: z.string().min(1).max(100).optional()
@@ -39,6 +46,7 @@ const aiUsageReportSchema = z
       "PATIENT_INSTRUCTIONS",
       "CLINICAL_GAPS",
       "TRANSCRIPTION",
+      "CONSULTATION_STRUCTURING",
       "VALIDATION",
       "OTHER"
     ]),
@@ -49,7 +57,10 @@ const aiUsageReportSchema = z
     promptVersion: z.string().min(1).max(120).optional(),
     estimatedCostCents: z.number().int().min(0).optional(),
     latencyMs: z.number().int().min(0).optional(),
-    occurredAt: z.string().datetime(),
+    // La app reporta la fecha con offset de zona (RFC3339, p. ej. `+00:00` que
+    // produce chrono::to_rfc3339), no solo el sufijo `Z`. `datetime()` sin
+    // `offset` rechazaria `+00:00` -> "Datos invalidos.". Aceptamos ambos.
+    occurredAt: z.string().datetime({ offset: true }),
     inputReference: aiUsageReferenceSchema,
     outputReference: aiUsageReferenceSchema
   })
@@ -302,10 +313,11 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
       },
       data: { payload: Prisma.DbNull, purgedAt: now }
     }),
-    // ...y del buzon (las respuestas de preconsulta se vacian en nube)...
+    // ...y del buzon (las respuestas de preconsulta se vacian en nube; el
+    // ciphertext de los antecedentes sellados se elimina, frontera legal)...
     prisma.precheckinSubmission.updateMany({
       where: { id: { in: precheckinIds } },
-      data: { responses: {} }
+      data: { responses: {}, ciphertext: null, deliveredAt: now, purgedAt: now }
     }),
     // ...y el ciphertext de los documentos se elimina (frontera legal: tras el
     // ACK el documento solo existe en el equipo del medico).
@@ -372,6 +384,37 @@ export async function getMailboxDocumentForDevice(device: SyncDevice, documentId
   };
 }
 
+/**
+ * Devuelve el ciphertext (sealed box) de los antecedentes de un paciente para el
+ * dispositivo del medico. Mismo contrato que los documentos: solo el dueño puede
+ * descargarlo, solo mientras no se haya purgado, y la nube no puede descifrarlo.
+ */
+export async function getMailboxPrecheckinForDevice(device: SyncDevice, precheckinId: string) {
+  const submission = await prisma.precheckinSubmission.findFirst({
+    where: {
+      id: precheckinId,
+      kind: { in: [PrecheckinKind.MEDICAL_HISTORY, PrecheckinKind.AI_PRECONSULTA] },
+      appointment: { doctorId: device.doctorId }
+    },
+    select: { id: true, ciphertext: true, sizeBytes: true, purgedAt: true }
+  });
+
+  if (!submission) {
+    throw new SyncServiceError("Antecedentes no encontrados.", 404);
+  }
+
+  if (!submission.ciphertext || submission.purgedAt) {
+    // Ya entregado y purgado: el dispositivo lo re-pide tras un ACK perdido.
+    throw new SyncServiceError("Antecedentes ya entregados.", 410);
+  }
+
+  return {
+    id: submission.id,
+    sizeBytes: submission.sizeBytes ?? submission.ciphertext.length,
+    ciphertext: Buffer.from(submission.ciphertext).toString("base64")
+  };
+}
+
 function mapAiUsageType(usageType: AiUsageReport["usageType"]): AiUsageType {
   const mapping: Record<AiUsageReport["usageType"], AiUsageType> = {
     SOAP_ASSIST: AiUsageType.SOAP_SUMMARY,
@@ -379,6 +422,7 @@ function mapAiUsageType(usageType: AiUsageReport["usageType"]): AiUsageType {
     PATIENT_INSTRUCTIONS: AiUsageType.PATIENT_INSTRUCTIONS,
     CLINICAL_GAPS: AiUsageType.CLINICAL_GAP,
     TRANSCRIPTION: AiUsageType.TRANSCRIPTION,
+    CONSULTATION_STRUCTURING: AiUsageType.OTHER,
     VALIDATION: AiUsageType.VALIDATION,
     OTHER: AiUsageType.OTHER
   };
@@ -434,6 +478,8 @@ export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
   for (const report of parsed.runs) {
     const provider = await getOrCreateAiProvider(report);
     const status = mapAiUsageStatus(report.status);
+    const usageType = mapAiUsageType(report.usageType);
+    const creditCost = getAiCreditCost(report.usageType);
     const reviewedAt = status === AiUsageStatus.REVIEWED || status === AiUsageStatus.REJECTED
       ? now
       : null;
@@ -449,12 +495,13 @@ export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
         doctorId: device.doctorId,
         externalRunId: report.externalRunId,
         providerId: provider.id,
-        usageType: mapAiUsageType(report.usageType),
+        usageType,
         status,
         inputReference: report.inputReference,
         outputReference: report.outputReference,
         promptVersion: report.promptVersion,
         modelVersion: report.modelVersion,
+        creditCost,
         estimatedCostCents: report.estimatedCostCents,
         latencyMs: report.latencyMs,
         reviewedAt,
@@ -463,12 +510,13 @@ export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
       },
       update: {
         providerId: provider.id,
-        usageType: mapAiUsageType(report.usageType),
+        usageType,
         status,
         inputReference: report.inputReference,
         outputReference: report.outputReference,
         promptVersion: report.promptVersion,
         modelVersion: report.modelVersion,
+        creditCost,
         estimatedCostCents: report.estimatedCostCents,
         latencyMs: report.latencyMs,
         reviewedAt,
@@ -477,14 +525,22 @@ export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
     });
   }
 
+  const creditSummary = await getDoctorAiCreditSummary(device.doctorId, now);
+
   await writeAuditLog({
     actorUserId: device.doctorId,
     entityType: "AiUsageLog",
     entityId: device.id,
     action: "sync.ai-usage-reported",
     source: "sync-service",
-    metadata: { runCount: parsed.runs.length }
+    metadata: {
+      runCount: parsed.runs.length,
+      consumedCredits: creditSummary.consumedCredits,
+      remainingCredits: creditSummary.remainingCredits,
+      overageCredits: creditSummary.overageCredits,
+      periodKey: creditSummary.periodKey
+    }
   });
 
-  return { reported: parsed.runs.length };
+  return { reported: parsed.runs.length, creditSummary };
 }

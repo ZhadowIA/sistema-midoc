@@ -58,6 +58,8 @@ const testDefaults: Record<string, string> = {
   SMS_PROVIDER: "mock",
   SMS_BASE_URL: "https://sms.example.com",
   SMS_API_KEY: "mock-sms-key",
+  WHATSAPP_PROVIDER: "mock",
+  PHONE_NOTIFICATION_CHANNEL: "SMS",
   // Placeholder no secreto para 2FA (paso 12): los tests cifran/descifran contra esta llave.
   TWO_FACTOR_ENCRYPTION_KEY: "test-two-factor-encryption-key-please-change"
 };

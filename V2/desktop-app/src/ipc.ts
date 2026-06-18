@@ -50,15 +50,36 @@ interface MockNote {
   specialty: unknown;
 }
 
+const MOCK_MODEL_SIZES: Record<string, number> = {
+  small: 500 * 1024 * 1024,
+  medium: 1500 * 1024 * 1024,
+  "large-v3": 3000 * 1024 * 1024
+};
+
 const mockState = {
+  profiles: [
+    {
+      id: "default",
+      display_name: "Medico principal",
+      created_at: new Date().toISOString(),
+      last_used_at: null as string | null
+    }
+  ],
+  // Descarga de modelos Whisper simulada: el estado avanza en cada sondeo.
+  transcriptionModels: {} as Record<
+    string,
+    { downloaded: number; total: number; present: boolean; downloading: boolean; error: string | null }
+  >,
   linked: true,
   clinicalProfile: "ODONTOLOGY",
   slotMinutes: 30,
   aiConsent: false,
   aiVoiceConsent: false,
+  aiScribeConsent: false,
   aiRunSeq: 0,
   aiBudgetCents: 0,
   aiRuns: [] as Array<{ id: string; usage_type: string; cost_cents: number; status: string; reported: boolean }>,
+  consultationTemplates: [] as Array<Record<string, unknown>>,
   medicationRef: { version: "seed-v1", medications: 27, interactions: 15, labels: 0 },
   benchmarks: [] as Array<Record<string, unknown>>,
   arcoRequests: [] as Array<Record<string, unknown>>,
@@ -470,10 +491,43 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
   }
 
   switch (command) {
-    case "unlock_database":
+    case "list_doctor_profiles":
+      return [...mockState.profiles] as T;
+    case "create_doctor_profile": {
+      const displayName = String(args?.displayName ?? "").trim();
+      if (!displayName) {
+        throw "escribe el nombre del medico";
+      }
+      const baseId =
+        displayName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "") || "medico";
+      let id = baseId;
+      let suffix = 2;
+      while (mockState.profiles.some((profile) => profile.id === id)) {
+        id = `${baseId}-${suffix}`;
+        suffix += 1;
+      }
+      const profile = {
+        id,
+        display_name: displayName,
+        created_at: new Date().toISOString(),
+        last_used_at: null as string | null
+      };
+      mockState.profiles.push(profile);
+      return profile as T;
+    }
+    case "unlock_database": {
       if (String(args?.passphrase ?? "").length < 8) {
         throw "la frase de seguridad debe tener al menos 8 caracteres";
       }
+      const profileId = String(args?.profileId ?? "default");
+      const profile = mockState.profiles.find((item) => item.id === profileId);
+      if (!profile) {
+        throw "perfil medico no encontrado";
+      }
+      profile.last_used_at = new Date().toISOString();
       // Primer arranque: el backend instala el catalogo real empaquetado si la
       // base sigue sembrada. El mock espeja ese comportamiento.
       if (mockState.medicationRef.version === "seed-v1") {
@@ -486,9 +540,11 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       }
       return {
         schema_version: 3,
-        db_path: "C:\\…\\midoc.db (demo)",
-        backup_path: "C:\\…\\backups\\midoc-demo.db"
+        db_path: `C:\\...\\${profile.id}\\midoc.db (demo)`,
+        backup_path: `C:\\...\\${profile.id}\\backups\\midoc-demo.db`,
+        profile
       } as T;
+    }
     case "lock_database":
       return undefined as T;
     case "sync_status":
@@ -555,18 +611,15 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       }
       const candidates = matchPatientsMock(appt?.patient_name, appt?.patient_phone);
       if (candidates.length === 0) {
-        const created = {
-          id: `pat-${mockState.patients.length + 1}`,
-          ...splitNameMock(appt?.patient_name ?? "Paciente"),
-          phone: appt?.patient_phone ?? null,
-          email: null as string | null,
-          birth_date: null as string | null,
-          allergies: null as string | null,
-          medical_background: null as string | null,
-          family_background: null as string | null
-        };
-        mockState.patients.push(created);
-        return { kind: "patient", patient_id: created.id } as T;
+        return {
+          kind: "needs_resolution",
+          appointment_patient: {
+            ...splitNameMock(appt?.patient_name ?? "Paciente"),
+            phone: appt?.patient_phone ?? null,
+            email: null
+          },
+          candidates: []
+        } as T;
       }
       return {
         kind: "needs_resolution",
@@ -771,6 +824,14 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     case "ai_revoke_voice_consent":
       mockState.aiVoiceConsent = false;
       return undefined as T;
+    case "ai_scribe_consent_status":
+      return mockState.aiScribeConsent as T;
+    case "ai_grant_scribe_consent":
+      mockState.aiScribeConsent = true;
+      return undefined as T;
+    case "ai_revoke_scribe_consent":
+      mockState.aiScribeConsent = false;
+      return undefined as T;
     case "ai_assist_soap": {
       if (!mockState.aiConsent) throw "falta el consentimiento del paciente para asistencia de IA";
       const spent = mockState.aiRuns.reduce((s, r) => s + r.cost_cents, 0);
@@ -855,17 +916,84 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         reported: false
       });
       const audio = args?.audio as { mediaType?: string; fileName?: string } | undefined;
+      const viaCloud = args?.useCloud === true;
       return {
         run_id: voiceRunId,
         usage_type: "TRANSCRIPTION",
-        provider: "fake-transcriptor",
-        model_version: "fake-transcription-1",
+        provider: viaCloud ? "cloud-demo" : "whisper-local-medium",
+        model_version: viaCloud ? "cloud-demo" : "whisper-local-medium",
         estimated_cost_cents: 1,
         latency_ms: 2,
-        transcript_text: `Transcripcion (borrador): audio ${audio?.mediaType ?? "audio/webm"}${audio?.fileName ? ` · ${audio.fileName}` : ""}. Revise terminos clinicos, medicamentos, dosis y hablantes antes de usarla.`,
+        transcript_text: `Transcripcion (borrador, ${viaCloud ? "nube" : "local"}): audio ${audio?.mediaType ?? "audio/wav"}. Revise terminos clinicos, medicamentos, dosis y hablantes antes de usarla.`,
         audio_retention_policy: "discarded_after_transcription"
       } as T;
     }
+    case "ai_structure_consultation": {
+      if (!mockState.aiScribeConsent) {
+        throw "falta el consentimiento del paciente para asistencia de IA";
+      }
+      const spentScribe = mockState.aiRuns.reduce((s, r) => s + r.cost_cents, 0);
+      if (mockState.aiBudgetCents > 0 && spentScribe >= mockState.aiBudgetCents) {
+        throw "se alcanzo el presupuesto mensual de IA; ajustalo para continuar";
+      }
+      mockState.aiRunSeq += 1;
+      const scribeRunId = `ai-run-${mockState.aiRunSeq}`;
+      mockState.aiRuns.push({
+        id: scribeRunId,
+        usage_type: "CONSULTATION_STRUCTURING",
+        cost_cents: 1,
+        status: "DRAFT",
+        reported: false
+      });
+      const template = args?.template as
+        | { segments?: Array<{ id: string; label: string }> }
+        | undefined;
+      const turns = args?.turns as Array<{ id: string; text: string }> | undefined;
+      const sourceTurn = turns?.[0]?.id ?? "turn-1";
+      const text = turns?.map((turn) => turn.text).join(" ") || "Sin transcripcion.";
+      return {
+        run_id: scribeRunId,
+        usage_type: "CONSULTATION_STRUCTURING",
+        provider: "fake-clinico",
+        model_version: "fake-1",
+        estimated_cost_cents: 1,
+        latency_ms: 2,
+        segments: (template?.segments ?? []).slice(0, 4).map((segment) => ({
+          segment_id: segment.id,
+          content: `${segment.label} (borrador): ${text}`,
+          confidence: "medium",
+          source_turns: [sourceTurn],
+          warnings: ["Revisar antes de guardar."]
+        })),
+        missing: [],
+        warnings: ["Acomodo simulado en navegador."]
+      } as T;
+    }
+    case "list_consultation_templates":
+      return mockState.consultationTemplates as T;
+    case "save_consultation_template": {
+      const template = args?.template as Record<string, unknown> | undefined;
+      if (!template?.id) {
+        throw "plantilla invalida";
+      }
+      const now = new Date().toISOString();
+      const stored: Record<string, unknown> & { id: string } = {
+        ...template,
+        id: String(template.id),
+        created_at: template.created_at ?? now,
+        updated_at: now
+      };
+      mockState.consultationTemplates = [
+        ...mockState.consultationTemplates.filter((item) => item.id !== stored.id),
+        stored
+      ];
+      return stored as T;
+    }
+    case "delete_consultation_template":
+      mockState.consultationTemplates = mockState.consultationTemplates.filter(
+        (template) => template.id !== args?.id
+      );
+      return undefined as T;
     case "ai_review_run": {
       const run = mockState.aiRuns.find((item) => item.id === args?.runId);
       if (run) {
@@ -1062,6 +1190,45 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         reason:
           "Equipo con 16 GB o mas y CPU de 8+ nucleos: el modelo mediano ofrece buena precision clinica con transcripcion agil."
       } as T;
+    case "transcription_model_status": {
+      const ids = ["small", "medium", "large-v3"];
+      return ids.map((modelId) => {
+        const total = MOCK_MODEL_SIZES[modelId];
+        const m = mockState.transcriptionModels[modelId];
+        if (m && m.downloading && !m.present) {
+          // Simula avance de la descarga en cada sondeo (~6 pasos).
+          m.downloaded = Math.min(m.total, m.downloaded + Math.ceil(m.total / 6));
+          if (m.downloaded >= m.total) {
+            m.present = true;
+            m.downloading = false;
+          }
+        }
+        return {
+          modelId,
+          fileName: `ggml-${modelId}.bin`,
+          expectedSizeBytes: total,
+          downloadedBytes: m ? m.downloaded : 0,
+          present: m ? m.present : false,
+          verified: false, // sin checksum fijado en el mock
+          downloading: m ? m.downloading : false,
+          error: m ? m.error : null
+        };
+      }) as T;
+    }
+    case "download_transcription_model": {
+      const modelId = String(args?.modelId ?? "");
+      if (!(modelId in MOCK_MODEL_SIZES)) {
+        throw `modelo no reconocido: ${modelId}`;
+      }
+      mockState.transcriptionModels[modelId] = {
+        downloaded: 0,
+        total: MOCK_MODEL_SIZES[modelId],
+        present: false,
+        downloading: true,
+        error: null
+      };
+      return undefined as T;
+    }
     case "ai_usage_summary": {
       const byMap = new Map<string, { run_count: number; cost_cents: number }>();
       for (const r of mockState.aiRuns) {

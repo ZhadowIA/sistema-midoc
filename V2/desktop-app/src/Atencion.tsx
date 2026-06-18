@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DentalNoteEditor } from "./DentalNoteEditor";
 import {
   coerceClinicalProfile,
@@ -11,10 +11,30 @@ import {
   type DentalPayload,
   type GeneralMedicinePayload
 } from "./clinicalProfiles";
+import { createRecordedWavFile } from "./consultationRecorder";
+import {
+  appendSegmentToNote,
+  buildTemplateSegments,
+  formatSourceTurnReferences,
+  normalizeTemplateDefinition,
+  transcriptToTurns,
+  type ConsultationTurn,
+  type SegmentDraft,
+  type ScribeSpeaker,
+  type TemplateDefinition,
+  type TemplateSegment
+} from "./consultationScribe";
 import { MedicationSafety } from "./MedicationSafety";
 import { call } from "./ipc";
+import { buildBackgroundReview } from "./precheckinBackground";
+import {
+  flattenMedicalHistoryDisplayRows,
+  formatMedicalHistoryForDisplay,
+  type MedicalHistoryGroup
+} from "./medicalHistoryFormat";
 
 type SpecialtyPayload = GeneralMedicinePayload | DentalPayload;
+type RecordingState = "idle" | "recording" | "stopping";
 
 interface NoteContent {
   subjective: string;
@@ -90,6 +110,25 @@ interface TranscriptionDraft {
   latency_ms: number;
   transcript_text: string;
   audio_retention_policy: string;
+}
+
+interface ConsultationStructuringDraft {
+  run_id: string;
+  usage_type: "CONSULTATION_STRUCTURING";
+  provider: string;
+  model_version: string;
+  estimated_cost_cents: number;
+  latency_ms: number;
+  segments: SegmentDraft[];
+  missing: string[];
+  warnings: string[];
+}
+
+interface StoredConsultationTemplate extends TemplateDefinition {
+  name: string;
+  clinical_profile: ClinicalProfile;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 interface UsageSummary {
@@ -175,15 +214,70 @@ type SectionId =
   | "modulo"
   | "receta";
 
+function formatRecordingDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remaining = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remaining).padStart(2, "0")}`;
+}
+
+type AiConversationTurn = { question?: string; answer?: string };
+
+function createTemplateDraft(profile: ClinicalProfile): StoredConsultationTemplate {
+  const base = buildTemplateSegments(profile);
+  return {
+    id: `custom-${profile.toLowerCase().replace(/_/g, "-")}-${Date.now()}`,
+    name: profile === "ODONTOLOGY" ? "Plantilla odontologica personalizada" : "Plantilla general personalizada",
+    clinical_profile: profile,
+    segments: base.segments.map((segment) => ({ ...segment }))
+  };
+}
+
+/**
+ * Aplana la preconsulta a pares legibles. Soporta el formato plano (placeholder
+ * de la rebanada 6), el de antecedentes anidado (rebanada 7) y el resultado de
+ * la preconsulta guiada por IA (rebanada 8: motivo + conversacion Q&A).
+ */
 function formatPrecheckin(raw: string): Array<[string, string]> {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return Object.entries(parsed)
-      .filter(([, value]) => value !== null && String(value).trim() !== "")
-      .map(([key, value]) => [key, String(value)]);
+
+    // Resultado de la IA: motivo + lista de preguntas/respuestas.
+    if (Array.isArray(parsed.conversation)) {
+      const rows: Array<[string, string]> = [];
+      const motivo = String(parsed.motivo ?? "").trim();
+      if (motivo) rows.push(["Motivo", motivo]);
+      (parsed.conversation as AiConversationTurn[]).forEach((turn, index) => {
+        const question = String(turn.question ?? "").trim();
+        const answer = String(turn.answer ?? "").trim();
+        if (question || answer) rows.push([question || `Pregunta ${index + 1}`, answer]);
+      });
+      return rows;
+    }
+
+    return flattenMedicalHistoryDisplayRows(raw);
   } catch {
     return [["respuestas", raw]];
   }
+}
+
+function MedicalHistoryGroups({ groups }: { groups: MedicalHistoryGroup[] }) {
+  return (
+    <div className="medical-history-groups">
+      {groups.map((group) => (
+        <section key={group.key} className="medical-history-group">
+          <h4>{group.title}</h4>
+          <dl className="precheckin-list">
+            {group.rows.map((row) => (
+              <div key={`${group.key}-${row.label}`}>
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ))}
+    </div>
+  );
 }
 
 export function Atencion({
@@ -211,12 +305,32 @@ export function Atencion({
   const [signatureValid, setSignatureValid] = useState<boolean | null>(null);
   const [aiConsent, setAiConsent] = useState(false);
   const [aiVoiceConsent, setAiVoiceConsent] = useState(false);
+  const [aiScribeConsent, setAiScribeConsent] = useState(false);
   const [aiDraft, setAiDraft] = useState<SoapDraft | null>(null);
   const [aiText, setAiText] = useState<TextDraft | null>(null);
   const [aiTranscription, setAiTranscription] = useState<TranscriptionDraft | null>(null);
+  const [scribeTurns, setScribeTurns] = useState<ConsultationTurn[]>([]);
+  const [scribeDraft, setScribeDraft] = useState<ConsultationStructuringDraft | null>(null);
+  const [appliedScribeSegments, setAppliedScribeSegments] = useState<string[]>([]);
+  const [consultationTemplates, setConsultationTemplates] = useState<StoredConsultationTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("default");
+  const [templateEditor, setTemplateEditor] = useState<StoredConsultationTemplate | null>(null);
+  const [recordingState, setRecordingState] = useState<RecordingState>("idle");
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordingError, setRecordingError] = useState("");
+  const [useCloudTranscription, setUseCloudTranscription] = useState(false);
   const [aiUsage, setAiUsage] = useState<UsageSummary | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
   const [activeSection, setActiveSection] = useState<SectionId>("nota");
+  const [backgroundReviewDismissed, setBackgroundReviewDismissed] = useState(false);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const recorderNodeRef = useRef<ScriptProcessorNode | null>(null);
+  const recorderChunksRef = useRef<Float32Array[]>([]);
+  const recordingStartedAtRef = useRef<number>(0);
+  const recordingTimerRef = useRef<number | null>(null);
+  const initialSectionSetRef = useRef(false);
 
   const load = useCallback(() => {
     call<EncounterDetail>("get_encounter", { encounterId })
@@ -237,6 +351,10 @@ export function Atencion({
           family_background: data.patient.family_background ?? "",
           birth_date: data.patient.birth_date ?? ""
         });
+        if (data.precheckin && !initialSectionSetRef.current) {
+          initialSectionSetRef.current = true;
+          setActiveSection("preconsulta");
+        }
         if (data.encounter.status === "SIGNED") {
           call<boolean>("verify_signature", { encounterId })
             .then(setSignatureValid)
@@ -250,9 +368,23 @@ export function Atencion({
         call<boolean>("ai_voice_consent_status", { patientId: data.patient.id })
           .then(setAiVoiceConsent)
           .catch(() => setAiVoiceConsent(false));
+        call<boolean>("ai_scribe_consent_status", { patientId: data.patient.id })
+          .then(setAiScribeConsent)
+          .catch(() => setAiScribeConsent(false));
         call<UsageSummary>("ai_usage_summary")
           .then(setAiUsage)
           .catch(() => setAiUsage(null));
+        call<StoredConsultationTemplate[]>("list_consultation_templates")
+          .then((templates) =>
+            setConsultationTemplates(
+              templates.map((template) => ({
+                ...template,
+                clinical_profile: coerceClinicalProfile(template.clinical_profile),
+                ...normalizeTemplateDefinition(template, coerceClinicalProfile(template.clinical_profile))
+              }))
+            )
+          )
+          .catch(() => setConsultationTemplates([]));
       })
       .catch((e: unknown) => setError(String(e)));
   }, [encounterId, resolvedProfile]);
@@ -270,7 +402,11 @@ export function Atencion({
       ...current,
       specialty: coerceSpecialtyPayload(resolvedProfile, current.specialty)
     }));
+    setSelectedTemplateId("default");
+    setTemplateEditor(null);
   }, [resolvedProfile]);
+
+  useEffect(() => () => cleanupRecording(), []);
 
   if (!detail) {
     return (
@@ -288,9 +424,29 @@ export function Atencion({
 
   const signed = detail.encounter.status === "SIGNED";
   const patientId = detail.patient.id;
+  const backgroundReview = buildBackgroundReview(background, detail.precheckin);
+  const medicalHistoryGroups = formatMedicalHistoryForDisplay(detail.precheckin);
+  const showBackgroundReview =
+    Boolean(backgroundReview?.hasImportableChanges) && !backgroundReviewDismissed && !signed;
 
   const moduleLabel =
     resolvedProfile === "ODONTOLOGY" ? "Modulo odontologico" : "Medicina general / familiar";
+  const defaultTemplate = buildTemplateSegments(resolvedProfile);
+  const profileTemplates = consultationTemplates
+    .filter((template) => template.clinical_profile === resolvedProfile)
+    .map((template) => ({
+      ...template,
+      ...normalizeTemplateDefinition(template, resolvedProfile)
+    }));
+  const selectedCustomTemplate = profileTemplates.find((template) => template.id === selectedTemplateId);
+  const activeTemplate = selectedCustomTemplate ?? defaultTemplate;
+  const activeTemplateName =
+    selectedCustomTemplate?.name ?? (resolvedProfile === "ODONTOLOGY" ? "SOAP odontologia" : "SOAP general");
+  const targetOptions = defaultTemplate.segments.map((segment) => ({
+    target: segment.target,
+    label: segment.label
+  }));
+  const segmentLabels = new Map(activeTemplate.segments.map((segment) => [segment.id, segment.label]));
 
   const navItems: Array<{ id: SectionId; label: string }> = [];
   if (detail.precheckin) navItems.push({ id: "preconsulta", label: "Preconsulta" });
@@ -346,6 +502,31 @@ export function Atencion({
     );
   }
 
+  function importPrecheckinBackground() {
+    if (!backgroundReview) return;
+    const nextBackground = {
+      ...background,
+      allergies: backgroundReview.incoming.allergies || background.allergies,
+      medical_background:
+        backgroundReview.incoming.medical_background || background.medical_background,
+      family_background:
+        backgroundReview.incoming.family_background || background.family_background
+    };
+    setBackground(nextBackground);
+    setBackgroundReviewDismissed(true);
+    void run("Antecedentes importados desde el cuestionario.", () =>
+      call("update_patient_background", {
+        patientId,
+        background: {
+          allergies: nextBackground.allergies || null,
+          medical_background: nextBackground.medical_background || null,
+          family_background: nextBackground.family_background || null,
+          birth_date: nextBackground.birth_date || null
+        }
+      })
+    );
+  }
+
   async function toggleConsent() {
     const command = aiConsent ? "ai_revoke_consent" : "ai_grant_consent";
     await run(
@@ -360,6 +541,16 @@ export function Atencion({
       aiVoiceConsent
         ? "Consentimiento de transcripcion revocado."
         : "Consentimiento de transcripcion registrado.",
+      () => call(command, { patientId })
+    );
+  }
+
+  async function toggleScribeConsent() {
+    const command = aiScribeConsent ? "ai_revoke_scribe_consent" : "ai_grant_scribe_consent";
+    await run(
+      aiScribeConsent
+        ? "Consentimiento de escriba revocado."
+        : "Consentimiento de escriba registrado.",
       () => call(command, { patientId })
     );
   }
@@ -454,20 +645,24 @@ export function Atencion({
     setMessage("");
     setError("");
     setAiTranscription(null);
+    setScribeDraft(null);
+    setAppliedScribeSegments([]);
     fileToBase64(file)
       .then((audioBase64) =>
         call<TranscriptionDraft>("ai_transcribe_audio", {
           encounterId,
           audio: {
             fileName: file.name,
-            mediaType: file.type || "audio/webm",
+            mediaType: file.type || "audio/wav",
             audioBase64,
             durationSeconds: null
-          }
+          },
+          useCloud: useCloudTranscription
         })
       )
       .then((draft) => {
         setAiTranscription(draft);
+        setScribeTurns(transcriptToTurns(draft.transcript_text));
         setMessage("Transcripcion generada. Revisala antes de usarla.");
         refreshUsage();
       })
@@ -494,9 +689,257 @@ export function Atencion({
     if (!aiTranscription) return;
     const runId = aiTranscription.run_id;
     setAiTranscription(null);
+    setScribeTurns([]);
+    setScribeDraft(null);
+    setAppliedScribeSegments([]);
     void run("Transcripcion descartada.", () =>
       call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
     );
+  }
+
+  function updateScribeTurn(id: string, patch: Partial<Pick<ConsultationTurn, "speaker" | "text">>) {
+    setScribeTurns((current) =>
+      current.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn))
+    );
+  }
+
+  function startNewTemplate() {
+    setTemplateEditor(createTemplateDraft(resolvedProfile));
+  }
+
+  function editSelectedTemplate() {
+    const selected = profileTemplates.find((template) => template.id === selectedTemplateId);
+    if (selected) {
+      setTemplateEditor({
+        ...selected,
+        segments: selected.segments.map((segment) => ({ ...segment }))
+      });
+    }
+  }
+
+  function updateTemplateSegment(index: number, patch: Partial<TemplateSegment>) {
+    setTemplateEditor((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        segments: current.segments.map((segment, position) =>
+          position === index ? { ...segment, ...patch } : segment
+        )
+      };
+    });
+  }
+
+  function addTemplateSegment() {
+    const target = targetOptions[0]?.target ?? "subjective";
+    setTemplateEditor((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        segments: [
+          ...current.segments,
+          {
+            id: `segment_${current.segments.length + 1}`,
+            label: "Nuevo segmento",
+            target,
+            instructions: "",
+            required: false
+          }
+        ]
+      };
+    });
+  }
+
+  function removeTemplateSegment(index: number) {
+    setTemplateEditor((current) =>
+      current
+        ? {
+            ...current,
+            segments: current.segments.filter((_, position) => position !== index)
+          }
+        : current
+    );
+  }
+
+  function saveTemplateEditor() {
+    if (!templateEditor) return;
+    const normalized = normalizeTemplateDefinition(templateEditor, resolvedProfile);
+    const payload: StoredConsultationTemplate = {
+      ...templateEditor,
+      id: normalized.id,
+      name: templateEditor.name.trim(),
+      clinical_profile: resolvedProfile,
+      segments: normalized.segments
+    };
+    if (!payload.name) {
+      setError("La plantilla necesita nombre.");
+      return;
+    }
+    void run("Plantilla guardada localmente.", async () => {
+      const saved = await call<StoredConsultationTemplate>("save_consultation_template", {
+        template: payload
+      });
+      const normalizedSaved: StoredConsultationTemplate = {
+        ...saved,
+        clinical_profile: coerceClinicalProfile(saved.clinical_profile),
+        ...normalizeTemplateDefinition(saved, coerceClinicalProfile(saved.clinical_profile))
+      };
+      setConsultationTemplates((current) => [
+        ...current.filter((template) => template.id !== normalizedSaved.id),
+        normalizedSaved
+      ]);
+      setSelectedTemplateId(normalizedSaved.id);
+      setTemplateEditor(null);
+    });
+  }
+
+  function deleteSelectedTemplate() {
+    const selected = profileTemplates.find((template) => template.id === selectedTemplateId);
+    if (!selected) return;
+    void run("Plantilla eliminada localmente.", async () => {
+      await call("delete_consultation_template", { id: selected.id });
+      setConsultationTemplates((current) => current.filter((template) => template.id !== selected.id));
+      setSelectedTemplateId("default");
+      setTemplateEditor(null);
+    });
+  }
+
+  function structureConsultation() {
+    const turns = scribeTurns.filter((turn) => turn.text.trim());
+    if (turns.length === 0) return;
+    setBusy(true);
+    setMessage("");
+    setError("");
+    setScribeDraft(null);
+    setAppliedScribeSegments([]);
+    call<ConsultationStructuringDraft>("ai_structure_consultation", {
+      encounterId,
+      turns,
+      template: activeTemplate
+    })
+      .then((draft) => {
+        setScribeDraft(draft);
+        setMessage("Acomodo por plantilla generado. Revisa cada segmento antes de aplicarlo.");
+        refreshUsage();
+      })
+      .catch((e: unknown) => setError(String(e)))
+      .finally(() => setBusy(false));
+  }
+
+  function cleanupRecording() {
+    if (recordingTimerRef.current !== null) {
+      window.clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    recorderNodeRef.current?.disconnect();
+    audioSourceRef.current?.disconnect();
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    void audioContextRef.current?.close().catch(() => {});
+    recorderNodeRef.current = null;
+    audioSourceRef.current = null;
+    mediaStreamRef.current = null;
+    audioContextRef.current = null;
+    recordingStartedAtRef.current = 0;
+  }
+
+  async function startConsultationRecording() {
+    if (recordingState !== "idle" || busy || !aiVoiceConsent) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setRecordingError("Este equipo no expone acceso al microfono en la app.");
+      return;
+    }
+
+    const AudioContextCtor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextCtor) {
+      setRecordingError("Este equipo no permite capturar audio desde la app.");
+      return;
+    }
+
+    try {
+      setRecordingError("");
+      setRecordingSeconds(0);
+      recorderChunksRef.current = [];
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true
+        }
+      });
+      const context = new AudioContextCtor();
+      const source = context.createMediaStreamSource(stream);
+      const processor = context.createScriptProcessor(4096, 1, 1);
+
+      processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        recorderChunksRef.current.push(new Float32Array(input));
+        const output = event.outputBuffer.getChannelData(0);
+        output.fill(0);
+      };
+
+      source.connect(processor);
+      processor.connect(context.destination);
+      mediaStreamRef.current = stream;
+      audioContextRef.current = context;
+      audioSourceRef.current = source;
+      recorderNodeRef.current = processor;
+      recordingStartedAtRef.current = Date.now();
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds(Math.floor((Date.now() - recordingStartedAtRef.current) / 1000));
+      }, 500);
+      setRecordingState("recording");
+    } catch (e) {
+      cleanupRecording();
+      setRecordingState("idle");
+      setRecordingError(String(e));
+    }
+  }
+
+  function stopConsultationRecording() {
+    if (recordingState !== "recording") return;
+    setRecordingState("stopping");
+    const inputSampleRate = audioContextRef.current?.sampleRate ?? 48_000;
+    const chunks = recorderChunksRef.current.slice();
+    cleanupRecording();
+    setRecordingSeconds(0);
+    try {
+      const file = createRecordedWavFile(chunks, inputSampleRate);
+      setMessage("Grabacion capturada. Transcribiendo audio temporal.");
+      transcribeAudioFile(file);
+    } catch (e) {
+      setRecordingError(String(e));
+    } finally {
+      setRecordingState("idle");
+    }
+  }
+
+  function applyScribeSegment(segment: SegmentDraft) {
+    setNote((current) => appendSegmentToNote(current, segment, activeTemplate));
+    setAppliedScribeSegments((current) =>
+      current.includes(segment.segment_id) ? current : [...current, segment.segment_id]
+    );
+    setMessage("Segmento aplicado al editor. Revisa, ajusta y guarda la nota manualmente.");
+  }
+
+  function approveScribeDraft() {
+    if (!scribeDraft) return;
+    const runId = scribeDraft.run_id;
+    setScribeDraft(null);
+    setAppliedScribeSegments([]);
+    call("ai_review_run", { runId, status: "APPROVED", feedback: null })
+      .then(() => setMessage("Acomodo marcado como revisado. Guarda la nota cuando termines."))
+      .catch((e: unknown) => setError(String(e)));
+  }
+
+  function discardScribeDraft() {
+    if (!scribeDraft) return;
+    const runId = scribeDraft.run_id;
+    setScribeDraft(null);
+    setAppliedScribeSegments([]);
+    call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
+      .then(() => setMessage("Acomodo por plantilla descartado."))
+      .catch((e: unknown) => setError(String(e)));
   }
 
   function saveBudget() {
@@ -605,14 +1048,18 @@ export function Atencion({
             {resolvedSection === "preconsulta" && detail.precheckin ? (
               <section className="panel">
                 <h3>Preconsulta del paciente</h3>
-                <dl className="precheckin-list">
-                  {formatPrecheckin(detail.precheckin).map(([key, value]) => (
-                    <div key={key}>
-                      <dt>{key}</dt>
-                      <dd>{value}</dd>
-                    </div>
-                  ))}
-                </dl>
+                {medicalHistoryGroups.length > 0 ? (
+                  <MedicalHistoryGroups groups={medicalHistoryGroups} />
+                ) : (
+                  <dl className="precheckin-list">
+                    {formatPrecheckin(detail.precheckin).map(([key, value]) => (
+                      <div key={key}>
+                        <dt>{key}</dt>
+                        <dd>{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
               </section>
             ) : null}
 
@@ -637,6 +1084,80 @@ export function Atencion({
             {resolvedSection === "antecedentes" ? (
               <section className="panel">
                 <h3>Antecedentes</h3>
+                {medicalHistoryGroups.length > 0 ? (
+                  <div className="questionnaire-history">
+                    <div className="panel-header">
+                      <strong>Cuestionario de antecedentes</strong>
+                      <p>Respuestas recibidas con el mismo formato que vio el paciente.</p>
+                    </div>
+                    <MedicalHistoryGroups groups={medicalHistoryGroups} />
+                  </div>
+                ) : null}
+                {showBackgroundReview && backgroundReview ? (
+                  <div className="background-review" role="status">
+                    <div className="panel-header">
+                      <strong>
+                        {backgroundReview.hasDiscrepancies
+                          ? "El paciente envio antecedentes distintos"
+                          : "El paciente envio antecedentes nuevos"}
+                      </strong>
+                      <p>
+                        Compara el expediente actual contra el cuestionario de preconsulta antes
+                        de decidir si importas la version nueva.
+                      </p>
+                    </div>
+                    <div className="background-review-grid">
+                      {backgroundReview.fields.map((field) => (
+                        <div
+                          key={field.key}
+                          className={
+                            field.hasDifference
+                              ? "background-review-row background-review-row-different"
+                              : "background-review-row"
+                          }
+                        >
+                          <strong>{field.label}</strong>
+                          <div>
+                            <span className="meta">Expediente actual</span>
+                            <p>{field.current || "Sin dato registrado"}</p>
+                          </div>
+                          <div>
+                            <span className="meta">Cuestionario nuevo</span>
+                            <p>{field.incoming || "Sin dato enviado"}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="button-row">
+                      <button
+                        className="ghost-button"
+                        disabled={busy}
+                        onClick={() => {
+                          setBackgroundReviewDismissed(true);
+                          setMessage("Se mantuvieron los antecedentes anteriores.");
+                        }}
+                      >
+                        Mantener anteriores
+                      </button>
+                      <button
+                        className="action-button"
+                        disabled={busy}
+                        onClick={importPrecheckinBackground}
+                      >
+                        Importar nuevos
+                      </button>
+                      {detail.precheckin ? (
+                        <button
+                          className="ghost-button"
+                          disabled={busy}
+                          onClick={() => setActiveSection("preconsulta")}
+                        >
+                          Ver preconsulta
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
           <div className="stack">
             <label className="field">
               <span>Alergias</span>
@@ -715,6 +1236,12 @@ export function Atencion({
               <button className="ghost-button" onClick={() => void toggleVoiceConsent()} disabled={busy}>
                 {aiVoiceConsent ? "Revocar voz" : "Autorizar voz"}
               </button>
+              <span className={aiScribeConsent ? "pill pill-success" : "pill pill-muted"}>
+                {aiScribeConsent ? "Escriba autorizado" : "Escriba sin consentimiento"}
+              </span>
+              <button className="ghost-button" onClick={() => void toggleScribeConsent()} disabled={busy}>
+                {aiScribeConsent ? "Revocar escriba" : "Autorizar escriba"}
+              </button>
             </div>
 
             {aiUsage ? (
@@ -774,12 +1301,165 @@ export function Atencion({
               </button>
             </div>
 
+            <div className="ai-draft template-editor">
+              <div className="panel-header">
+                <h4>Plantilla de acomodo</h4>
+              </div>
+              <div className="button-row">
+                <label className="field">
+                  <span>Plantilla activa</span>
+                  <select
+                    value={selectedTemplateId}
+                    disabled={busy}
+                    onChange={(event) => {
+                      setSelectedTemplateId(event.currentTarget.value);
+                      setTemplateEditor(null);
+                    }}
+                  >
+                    <option value="default">
+                      {resolvedProfile === "ODONTOLOGY" ? "SOAP odontologia" : "SOAP general"}
+                    </option>
+                    {profileTemplates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="ghost-button" type="button" onClick={startNewTemplate} disabled={busy}>
+                  Nueva plantilla
+                </button>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={editSelectedTemplate}
+                  disabled={busy || selectedTemplateId === "default"}
+                >
+                  Editar
+                </button>
+                <button
+                  className="ghost-button danger-link"
+                  type="button"
+                  onClick={deleteSelectedTemplate}
+                  disabled={busy || selectedTemplateId === "default"}
+                >
+                  Eliminar
+                </button>
+              </div>
+              <p className="meta">
+                {activeTemplateName} · {activeTemplate.segments.length} segmento(s) textuales locales.
+              </p>
+
+              {templateEditor ? (
+                <div className="template-editor-form">
+                  <label className="field">
+                    <span>Nombre</span>
+                    <input
+                      value={templateEditor.name}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setTemplateEditor((current) =>
+                          current ? { ...current, name: event.currentTarget.value } : current
+                        )
+                      }
+                    />
+                  </label>
+                  <div className="template-segment-list">
+                    {templateEditor.segments.map((segment, index) => (
+                      <div className="template-segment" key={`${segment.id}-${index}`}>
+                        <label className="field compact-field">
+                          <span>Clave</span>
+                          <input
+                            value={segment.id}
+                            disabled={busy}
+                            onChange={(event) => updateTemplateSegment(index, { id: event.currentTarget.value })}
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Etiqueta</span>
+                          <input
+                            value={segment.label}
+                            disabled={busy}
+                            onChange={(event) =>
+                              updateTemplateSegment(index, { label: event.currentTarget.value })
+                            }
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Destino</span>
+                          <select
+                            value={segment.target}
+                            disabled={busy}
+                            onChange={(event) =>
+                              updateTemplateSegment(index, { target: event.currentTarget.value })
+                            }
+                          >
+                            {targetOptions.map((option) => (
+                              <option key={option.target} value={option.target}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="week-cancelled-toggle">
+                          <input
+                            type="checkbox"
+                            checked={segment.required}
+                            disabled={busy}
+                            onChange={(event) =>
+                              updateTemplateSegment(index, { required: event.currentTarget.checked })
+                            }
+                          />
+                          <span>Obligatorio</span>
+                        </label>
+                        <label className="field template-instructions">
+                          <span>Instrucciones para IA</span>
+                          <textarea
+                            rows={2}
+                            value={segment.instructions}
+                            disabled={busy}
+                            onChange={(event) =>
+                              updateTemplateSegment(index, { instructions: event.currentTarget.value })
+                            }
+                          />
+                        </label>
+                        <button
+                          className="ghost-button danger-link"
+                          type="button"
+                          onClick={() => removeTemplateSegment(index)}
+                          disabled={busy || templateEditor.segments.length <= 1}
+                        >
+                          Quitar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="button-row">
+                    <button className="ghost-button" type="button" onClick={addTemplateSegment} disabled={busy}>
+                      Agregar segmento
+                    </button>
+                    <button className="action-button" type="button" onClick={saveTemplateEditor} disabled={busy}>
+                      Guardar plantilla
+                    </button>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => setTemplateEditor(null)}
+                      disabled={busy}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <div className="button-row">
               <label className="field">
                 <span>Audio de consulta</span>
                 <input
                   type="file"
-                  accept="audio/*"
+                  accept=".wav,audio/wav,audio/x-wav"
                   disabled={busy || !aiVoiceConsent}
                   onChange={(e) => {
                     transcribeAudioFile(e.currentTarget.files?.[0] ?? null);
@@ -787,8 +1467,50 @@ export function Atencion({
                   }}
                 />
               </label>
-              <span className="meta">Retencion: descarte inmediato del audio.</span>
+              <div className="recording-controls">
+                <button
+                  className={recordingState === "recording" ? "ghost-button recording-button" : "ghost-button"}
+                  type="button"
+                  onClick={() => void startConsultationRecording()}
+                  disabled={busy || !aiVoiceConsent || recordingState !== "idle"}
+                >
+                  Iniciar grabacion
+                </button>
+                <button
+                  className="action-button"
+                  type="button"
+                  onClick={stopConsultationRecording}
+                  disabled={recordingState !== "recording"}
+                >
+                  Detener y transcribir
+                </button>
+                <span className={recordingState === "recording" ? "pill pill-success" : "pill pill-muted"}>
+                  {recordingState === "recording"
+                    ? `Grabando ${formatRecordingDuration(recordingSeconds)}`
+                    : recordingState === "stopping"
+                      ? "Preparando audio"
+                      : "Grabadora lista"}
+                </span>
+              </div>
+              <span className="meta">
+                WAV mono 16 kHz · {useCloudTranscription ? "respaldo en nube (bajo BAA)" : "transcripcion local"} · descarte inmediato del audio.
+              </span>
             </div>
+            {recordingError ? (
+              <p className="form-error" role="alert">
+                {recordingError}
+              </p>
+            ) : null}
+
+            <label className="week-cancelled-toggle">
+              <input
+                type="checkbox"
+                checked={useCloudTranscription}
+                disabled={busy || !aiVoiceConsent}
+                onChange={(e) => setUseCloudTranscription(e.currentTarget.checked)}
+              />
+              <span>Usar respaldo en nube (equipo lento; el audio sale del equipo)</span>
+            </label>
 
             {aiTranscription ? (
               <div className="ai-draft">
@@ -805,6 +1527,142 @@ export function Atencion({
                   </button>
                   <button className="ghost-button" onClick={discardAiTranscription} disabled={busy}>
                     Descartar
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {scribeTurns.length > 0 ? (
+              <div className="ai-draft">
+                <div className="panel-header">
+                  <h4>Dialogo revisable</h4>
+                  <p>Corrige hablante y texto antes de acomodar la consulta en la plantilla.</p>
+                </div>
+                <div className="scribe-turn-list">
+                  {scribeTurns.map((turn) => (
+                    <div className="scribe-turn" key={turn.id}>
+                      <label className="field compact-field">
+                        <span>Hablante</span>
+                        <select
+                          value={turn.speaker}
+                          disabled={busy}
+                          onChange={(event) =>
+                            updateScribeTurn(turn.id, {
+                              speaker: event.currentTarget.value as ScribeSpeaker
+                            })
+                          }
+                        >
+                          <option value="MEDICO">Medico</option>
+                          <option value="PACIENTE">Paciente</option>
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>{turn.id}</span>
+                        <textarea
+                          rows={2}
+                          value={turn.text}
+                          disabled={busy}
+                          onChange={(event) =>
+                            updateScribeTurn(turn.id, { text: event.currentTarget.value })
+                          }
+                        />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                <div className="button-row">
+                  <button
+                    className="action-button"
+                    onClick={structureConsultation}
+                    disabled={busy || !aiScribeConsent || scribeTurns.every((turn) => !turn.text.trim())}
+                  >
+                    Acomodar en plantilla
+                  </button>
+                  <span className="meta">
+                    Usa {activeTemplateName} · no guarda la nota automaticamente.
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
+            {scribeDraft ? (
+              <div className="ai-draft">
+                <p className="meta">
+                  Acomodo de plantilla · proveedor {scribeDraft.provider} · modelo{" "}
+                  {scribeDraft.model_version} · costo estimado{" "}
+                  {centsFormatter.format(scribeDraft.estimated_cost_cents / 100)} ·{" "}
+                  {scribeDraft.latency_ms} ms
+                </p>
+                {scribeDraft.warnings.length > 0 ? (
+                  <ul className="scribe-warning-list">
+                    {scribeDraft.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {scribeDraft.missing.length > 0 ? (
+                  <div className="field">
+                    <span>Faltantes detectados</span>
+                    <ul className="scribe-warning-list">
+                      {scribeDraft.missing.map((missing) => (
+                        <li key={missing}>{missing}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                <div className="stack">
+                  {scribeDraft.segments.map((segment) => (
+                    <article className="scribe-segment" key={segment.segment_id}>
+                      <div>
+                        <strong>{segmentLabels.get(segment.segment_id) ?? segment.segment_id}</strong>
+                        <span className="meta">
+                          Confianza {segment.confidence} · fuentes{" "}
+                          {segment.source_turns.length > 0 ? segment.source_turns.join(", ") : "sin fuente"}
+                        </span>
+                      </div>
+                      <p className="ai-draft-text">{segment.content}</p>
+                      {segment.source_turns.length > 0 ? (
+                        <div className="scribe-source-list">
+                          {formatSourceTurnReferences(scribeTurns, segment.source_turns).map((source) => (
+                            <blockquote
+                              className={source.missing ? "scribe-source missing-source" : "scribe-source"}
+                              key={source.id}
+                            >
+                              <strong>{source.label}</strong>
+                              {source.text ? <span>{source.text}</span> : null}
+                            </blockquote>
+                          ))}
+                        </div>
+                      ) : null}
+                      {segment.warnings.length > 0 ? (
+                        <ul className="scribe-warning-list">
+                          {segment.warnings.map((warning) => (
+                            <li key={warning}>{warning}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      <button
+                        className="ghost-button"
+                        onClick={() => applyScribeSegment(segment)}
+                        disabled={busy || appliedScribeSegments.includes(segment.segment_id)}
+                      >
+                        {appliedScribeSegments.includes(segment.segment_id)
+                          ? "Aplicado"
+                          : "Aplicar segmento"}
+                      </button>
+                    </article>
+                  ))}
+                </div>
+                <div className="button-row">
+                  <button
+                    className="action-button"
+                    onClick={approveScribeDraft}
+                    disabled={busy || appliedScribeSegments.length === 0}
+                  >
+                    Marcar revision aplicada
+                  </button>
+                  <button className="ghost-button" onClick={discardScribeDraft} disabled={busy}>
+                    Descartar acomodo
                   </button>
                 </div>
               </div>

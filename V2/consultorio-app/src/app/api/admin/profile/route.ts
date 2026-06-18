@@ -7,12 +7,12 @@ import { requireDoctorUser } from "../../../../lib/auth/session-user";
 import { getDoctorWorkspace, updateDoctorProfile } from "../../../../services/doctor/doctor-profile-service";
 
 const profileSchema = z.object({
-  professionalName: z.string().min(1).optional(),
+  professionalName: z.string().min(5).max(120).optional(),
   publicSlug: z.string().min(3).optional(),
   specialty: z.nativeEnum(ClinicalProfile).optional(),
   description: z.string().max(2000).nullable().optional(),
-  licenseNumber: z.string().max(100).nullable().optional(),
-  phone: z.string().max(40).nullable().optional(),
+  licenseNumber: z.string().max(30).nullable().optional(),
+  phone: z.string().max(20).nullable().optional(),
   addressLine1: z.string().max(200).nullable().optional(),
   addressLine2: z.string().max(200).nullable().optional(),
   city: z.string().max(100).nullable().optional(),

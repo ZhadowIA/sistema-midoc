@@ -4,11 +4,14 @@ import { getPublicAppointmentByToken } from "../../../../../services/booking/pub
 import { AppointmentClient } from "./appointment-client";
 
 export default async function PublicAppointmentPage({
-  params
+  params,
+  searchParams
 }: {
   params: Promise<{ slug: string; token: string }>;
+  searchParams: Promise<{ accion?: string }>;
 }) {
   const { slug, token } = await params;
+  const { accion } = await searchParams;
   const details = await getPublicAppointmentByToken(token);
 
   if (!details) {
@@ -21,6 +24,8 @@ export default async function PublicAppointmentPage({
       slug={slug}
       serviceId={details.appointment.serviceId}
       details={details}
+      documentPublicKey={details.documentPublicKey}
+      cancelIntent={accion === "cancelar"}
     />
   );
 }

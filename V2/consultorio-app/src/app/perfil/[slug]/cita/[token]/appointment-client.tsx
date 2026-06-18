@@ -1,6 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+import { Calendar } from "../../agenda/calendar";
+import { addDaysLocalDateString } from "../../../../../lib/local-date";
+import { MedicalHistoryForm } from "./medical-history-form";
+import { AiPreconsultaChat } from "./ai-preconsulta-chat";
 
 type AppointmentDetails = {
   appointment: {
@@ -22,6 +27,10 @@ type AppointmentDetails = {
     status: string;
     responses: unknown;
   } | null;
+  precheckinState?: {
+    medicalHistorySubmitted: boolean;
+    aiPreconsultaSubmitted: boolean;
+  };
 };
 
 type AppointmentClientProps = {
@@ -29,6 +38,13 @@ type AppointmentClientProps = {
   slug: string;
   serviceId: string | null;
   details: AppointmentDetails;
+  /**
+   * Llave publica del dispositivo del medico. Si es null, no hay dispositivo
+   * vinculado: la preconsulta NO se muestra (no se puede entregar segura).
+   */
+  documentPublicKey: string | null;
+  /** Llega desde el enlace de cancelacion del recordatorio (`?accion=cancelar`). */
+  cancelIntent?: boolean;
 };
 
 type SlotOption = {
@@ -52,7 +68,18 @@ const timeFormatter = new Intl.DateTimeFormat("es-MX", {
   timeStyle: "short"
 });
 
-export function AppointmentClient({ token, slug, serviceId, details }: AppointmentClientProps) {
+function tomorrowString() {
+  return addDaysLocalDateString(1);
+}
+
+export function AppointmentClient({
+  token,
+  slug,
+  serviceId,
+  details,
+  documentPublicKey,
+  cancelIntent
+}: AppointmentClientProps) {
   const precheckinResponses =
     details.precheckin?.responses && typeof details.precheckin.responses === "object"
       ? (details.precheckin.responses as Record<string, unknown>)
@@ -64,19 +91,88 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [responses, setResponses] = useState({
-    motivo: String(precheckinResponses.motivo ?? ""),
-    antecedentes: String(precheckinResponses.antecedentes ?? ""),
-    sintomas: String(precheckinResponses.sintomas ?? "")
-  });
+  // Preconsulta diferida: no se muestra el formulario de inicio. Primero un aviso
+  // con "Contestar", luego la bifurcacion (primera visita -> antecedentes;
+  // ya contesto -> preconsulta guiada). Si ya hay respuestas previas, se entra
+  // directo al formulario.
+  const hasPreviousResponses = Boolean(
+    precheckinResponses.motivo ||
+      precheckinResponses.antecedentes ||
+      precheckinResponses.sintomas ||
+      details.precheckinState?.medicalHistorySubmitted ||
+      details.precheckinState?.aiPreconsultaSubmitted
+  );
+  const [precheckinStarted, setPrecheckinStarted] = useState(hasPreviousResponses);
+  const [firstVisit, setFirstVisit] = useState<boolean | null>(
+    details.precheckinState?.aiPreconsultaSubmitted ? false : null
+  );
+  const [medicalHistorySaved, setMedicalHistorySaved] = useState(
+    Boolean(details.precheckinState?.medicalHistorySubmitted)
+  );
+  const [aiPreconsultaSaved, setAiPreconsultaSaved] = useState(
+    Boolean(details.precheckinState?.aiPreconsultaSubmitted)
+  );
+  // El enlace de cancelacion del recordatorio abre la cita con este aviso al frente.
+  const [showCancelPrompt, setShowCancelPrompt] = useState(Boolean(cancelIntent));
 
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [slots, setSlots] = useState<SlotOption[]>([]);
   const [slotsLoaded, setSlotsLoaded] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState("");
+  const [availableDays, setAvailableDays] = useState<string[]>([]);
+  const [loadingDays, setLoadingDays] = useState(false);
 
   const isFinal = status === "CANCELLED" || status === "COMPLETED";
+
+  // Dias con cupo real del medico para el mes visible del calendario de
+  // reagendado (mismo criterio que el agendado inicial).
+  const visibleMonth = rescheduleDate.slice(0, 7);
+
+  useEffect(() => {
+    if (!rescheduleOpen || !serviceId || !visibleMonth) {
+      return;
+    }
+
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoadingDays(true);
+
+    fetch(`/api/public/doctors/${slug}/available-days?serviceId=${serviceId}&dateFrom=${visibleMonth}-01&days=31`)
+      .then(async (response) => ({ ok: response.ok, data: await response.json() }))
+      .then(({ ok, data }) => {
+        if (cancelled) {
+          return;
+        }
+        setAvailableDays(ok && Array.isArray(data.days) ? data.days : []);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAvailableDays([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingDays(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rescheduleOpen, serviceId, visibleMonth, slug]);
+
+  function toggleReschedule() {
+    setRescheduleOpen((open) => {
+      const next = !open;
+      if (next && !rescheduleDate) {
+        // Abrir con un dia por defecto carga el calendario y sus horarios, igual
+        // que el agendado inicial.
+        void loadSlots(tomorrowString());
+      }
+      return next;
+    });
+  }
 
   async function callAction(path: string, init?: RequestInit) {
     const response = await fetch(path, init);
@@ -106,15 +202,17 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
     }
   }
 
-  async function cancelAppointment() {
-    const confirmed = window.confirm("¿Seguro que quieres cancelar esta cita?");
-    if (!confirmed) {
+  async function cancelAppointment(options?: { skipConfirm?: boolean }) {
+    // El aviso de cancelacion del recordatorio ya confirma la intencion; evita el
+    // doble dialogo. El boton "Cancelar cita" general si pide confirmacion.
+    if (!options?.skipConfirm && !window.confirm("¿Seguro que quieres cancelar esta cita?")) {
       return;
     }
 
     setBusy(true);
     setMessage("");
     setError("");
+    setShowCancelPrompt(false);
     try {
       const data = await callAction(`/api/public/appointments/${token}/cancel`, {
         method: "POST",
@@ -184,24 +282,9 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
     }
   }
 
-  async function submitPrecheckin(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setMessage("");
-    setError("");
-
-    try {
-      await callAction(`/api/public/appointments/${token}/precheckin`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ responses })
-      });
-      setMessage("Preconsulta guardada. Tu medico la vera antes de la cita.");
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "No fue posible guardar la preconsulta.");
-    } finally {
-      setBusy(false);
-    }
+  function handleMedicalHistorySaved() {
+    setMedicalHistorySaved(true);
+    setFirstVisit(false);
   }
 
   return (
@@ -213,6 +296,24 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
             {details.patient.firstName} {details.patient.lastName}
           </h2>
         </div>
+
+        {showCancelPrompt && !isFinal ? (
+          <div className="cancel-prompt" role="alert">
+            <p>¿Quieres cancelar esta cita del {dateTimeFormatter.format(scheduledStart)}?</p>
+            <div className="button-row">
+              <button
+                className="danger-button"
+                disabled={busy}
+                onClick={() => void cancelAppointment({ skipConfirm: true })}
+              >
+                {busy ? "Cancelando…" : "Sí, cancelar"}
+              </button>
+              <button className="ghost-button" disabled={busy} onClick={() => setShowCancelPrompt(false)}>
+                No, conservar
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="appointment-summary">
           <p>
@@ -252,7 +353,7 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
             <button
               className="ghost-button"
               disabled={busy || !serviceId}
-              onClick={() => setRescheduleOpen((open) => !open)}
+              onClick={toggleReschedule}
             >
               {rescheduleOpen ? "Cerrar cambio de horario" : "Cambiar horario"}
             </button>
@@ -264,14 +365,13 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
 
         {rescheduleOpen && !isFinal ? (
           <div className="inline-form">
-            <div className="field">
-              <label htmlFor="reschedule-date">Elige una fecha nueva</label>
-              <input
-                id="reschedule-date"
-                type="date"
-                min={new Date().toISOString().slice(0, 10)}
-                value={rescheduleDate}
-                onChange={(event) => void loadSlots(event.currentTarget.value)}
+            <div className="field calendar-field">
+              <span>Elige una fecha nueva</span>
+              <Calendar
+                selectedDate={rescheduleDate || tomorrowString()}
+                availableDays={availableDays}
+                loading={loadingDays}
+                onDateSelect={(date) => void loadSlots(date)}
               />
             </div>
 
@@ -307,45 +407,96 @@ export function AppointmentClient({ token, slug, serviceId, details }: Appointme
         ) : null}
       </article>
 
-      {!isFinal ? (
+      {!isFinal && documentPublicKey ? (
         <article className="panel">
           <div className="panel-header">
             <span className="section-kicker">Preconsulta</span>
             <h2>Comparte contexto clinico basico</h2>
           </div>
 
-          <form className="booking-form" onSubmit={submitPrecheckin}>
-            <label className="field field-full">
-              <span>Motivo principal</span>
-              <textarea
-                rows={3}
-                value={responses.motivo}
-                onChange={(event) => setResponses((current) => ({ ...current, motivo: event.target.value }))}
-              />
-            </label>
-            <label className="field field-full">
-              <span>Antecedentes relevantes</span>
-              <textarea
-                rows={3}
-                value={responses.antecedentes}
-                onChange={(event) =>
-                  setResponses((current) => ({ ...current, antecedentes: event.target.value }))
-                }
-              />
-            </label>
-            <label className="field field-full">
-              <span>Sintomas actuales</span>
-              <textarea
-                rows={3}
-                value={responses.sintomas}
-                onChange={(event) => setResponses((current) => ({ ...current, sintomas: event.target.value }))}
-              />
-            </label>
-
-            <button className="action-button" disabled={busy} type="submit">
-              {busy ? "Guardando…" : "Guardar preconsulta"}
-            </button>
-          </form>
+          {!precheckinStarted ? (
+            <div className="precheckin-intro">
+              <p>
+                Para agilizar la consulta con su médico, ayúdenos contestando este formulario
+                pre-consulta. Es opcional y solo lo verá su médico.
+              </p>
+              <button className="action-button" type="button" onClick={() => setPrecheckinStarted(true)}>
+                Contestar
+              </button>
+            </div>
+          ) : firstVisit === null ? (
+            <div className="precheckin-branch">
+              <p className="precheckin-question">
+                ¿Es su primera visita con este médico o ya contestó antes el formulario de
+                antecedentes?
+              </p>
+              <div className="button-row">
+                <button className="action-button" type="button" onClick={() => setFirstVisit(true)}>
+                  Es mi primera visita
+                </button>
+                <button className="ghost-button" type="button" onClick={() => setFirstVisit(false)}>
+                  Ya contesté antes
+                </button>
+              </div>
+              <button
+                className="link-button"
+                type="button"
+                onClick={() => setPrecheckinStarted(false)}
+              >
+                Cancelar
+              </button>
+            </div>
+          ) : firstVisit ? (
+            <>
+              <p className="precheckin-path-note">
+                Primera visita: cuéntenos sus antecedentes.{" "}
+                {!medicalHistorySaved ? (
+                  <button className="link-button" type="button" onClick={() => setFirstVisit(null)}>
+                    Cambiar
+                  </button>
+                ) : null}
+              </p>
+              {medicalHistorySaved ? (
+                <p className="form-success" role="status">
+                  Antecedentes enviados de forma cifrada. Tu médico los recibirá al sincronizar.
+                </p>
+              ) : (
+                <MedicalHistoryForm
+                  token={token}
+                  publicKey={documentPublicKey}
+                  onSaved={handleMedicalHistorySaved}
+                />
+              )}
+            </>
+          ) : (
+            <>
+              {medicalHistorySaved ? (
+                <p className="form-success" role="status">
+                  Antecedentes enviados de forma cifrada. Ahora puede contestar su preconsulta.
+                </p>
+              ) : null}
+              <p className="precheckin-path-note">
+                Ya nos visitó antes: preconsulta guiada.{" "}
+                {!aiPreconsultaSaved ? (
+                  <button className="link-button" type="button" onClick={() => setFirstVisit(null)}>
+                    Cambiar
+                  </button>
+                ) : null}
+              </p>
+              {aiPreconsultaSaved ? (
+                <p className="form-success" role="status">
+                  Preconsulta enviada de forma cifrada. Tu médico la recibirá al sincronizar.
+                </p>
+              ) : (
+                <AiPreconsultaChat
+                  token={token}
+                  publicKey={documentPublicKey}
+                  initialMotivo={details.appointment.reason ?? ""}
+                  onSaved={() => setAiPreconsultaSaved(true)}
+                />
+              )}
+            </>
+          )}
         </article>
       ) : null}
     </section>

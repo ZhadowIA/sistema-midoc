@@ -2,8 +2,9 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ClinicalProfile, PrismaClient } from "@prisma/client";
+import { approveDoctorAccountForTesting } from "../helpers/doctor-accounts";
 
-import { createDoctorAccount } from "../../src/services/auth/auth-service";
+import { createDoctorAccount, createDoctorSubscription } from "../../src/services/auth/auth-service";
 import {
   bookPublicAppointment,
   createAppointmentHold,
@@ -55,10 +56,19 @@ function bearerRequest(token: string) {
 }
 
 async function cleanupUserByEmail(email: string) {
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({
+    where: { email },
+    include: { doctorProfile: true }
+  });
 
   if (!user) {
     return;
+  }
+
+  if (user.doctorProfile) {
+    await prisma.doctorSubscription.deleteMany({
+      where: { doctorProfileId: user.doctorProfile.id }
+    });
   }
 
   await prisma.appointment.deleteMany({ where: { doctorId: user.id } });
@@ -88,10 +98,13 @@ describe("desktop sync (fase A)", () => {
         firstName: "Silvia",
         lastName: "Marin",
         professionalName: "Dra. Silvia Marin",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -200,10 +213,13 @@ describe("device profile metadata (paso 13, rebanada 4)", () => {
         firstName: "Eva",
         lastName: "Soto",
         professionalName: "Dra. Eva Soto",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -255,6 +271,7 @@ describe("device document public key (paso 6, fase B)", () => {
         firstName: "Nora",
         lastName: "Vela",
         professionalName: "Dra. Nora Vela",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -285,6 +302,7 @@ describe("device document public key (paso 6, fase B)", () => {
         firstName: "Iris",
         lastName: "Lara",
         professionalName: "Dra. Iris Lara",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -314,6 +332,7 @@ describe("AI usage metadata sync (paso 11)", () => {
         firstName: "Ada",
         lastName: "Rivas",
         professionalName: "Dra. Ada Rivas",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -373,6 +392,131 @@ describe("AI usage metadata sync (paso 11)", () => {
       expect(logs[0]?.encounterId).toBeNull();
       expect(JSON.stringify(logs[0]?.inputReference)).not.toContain("Dolor lumbar");
       expect(JSON.stringify(logs[0]?.outputReference)).not.toContain("Dolor lumbar");
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("accepts a local transcription report with RFC3339 offset and omitted optionals", async () => {
+    // Reproduce lo que envia la app de escritorio para un run local de
+    // transcripcion: fecha con offset de zona (`+00:00` de chrono::to_rfc3339,
+    // no solo `Z`) y opcionales omitidos (sin costo/latencia/version de modelo).
+    // Antes esto fallaba con "Datos invalidos." (400).
+    const email = uniqueEmail("doctor-ai-transcription");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Noa",
+        lastName: "Vidal",
+        professionalName: "Dra. Noa Vidal",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+      const { deviceToken } = await linkSyncDevice(account.user.id, "PC transcripcion");
+      const device = await authenticateSyncDevice(bearerRequest(deviceToken));
+
+      const report = {
+        externalRunId: randomUUID(),
+        usageType: "TRANSCRIPTION",
+        status: "APPROVED",
+        providerName: "whisper-local",
+        providerType: "TRANSCRIPTION",
+        // Sin modelVersion / estimatedCostCents / latencyMs: claves omitidas.
+        promptVersion: "transcription/v1",
+        occurredAt: "2026-06-16T12:00:00.123456+00:00",
+        inputReference: { kind: "LOCAL_AI_AUDIO_INPUT", localRunId: "local-run-tx" },
+        outputReference: { kind: "LOCAL_AI_TRANSCRIPT_OUTPUT", localRunId: "local-run-tx" }
+      };
+
+      const result = await recordAiUsageBatch(device, { runs: [report] });
+      expect(result.reported).toBe(1);
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("charges plan credits for reported AI usage without double counting retries", async () => {
+    const email = uniqueEmail("doctor-ai-credits");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Lina",
+        lastName: "Campos",
+        professionalName: "Dra. Lina Campos",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+      await createDoctorSubscription({ doctorUserId: account.user.id, planCode: "CLINICO" });
+
+      const { deviceToken } = await linkSyncDevice(account.user.id, "PC IA creditos");
+      const device = await authenticateSyncDevice(bearerRequest(deviceToken));
+      const occurredAt = "2026-06-17T12:00:00.000Z";
+      const runs = [
+        {
+          externalRunId: randomUUID(),
+          usageType: "SOAP_ASSIST",
+          status: "APPROVED",
+          providerName: "fake-clinico",
+          providerType: "LLM",
+          modelVersion: "fake-1",
+          promptVersion: "soap-assist/v1",
+          estimatedCostCents: 7,
+          latencyMs: 12,
+          occurredAt,
+          inputReference: {
+            kind: "LOCAL_AI_RUN_INPUT",
+            localRunId: "local-run-credits-1"
+          },
+          outputReference: {
+            kind: "LOCAL_AI_RUN_OUTPUT",
+            localRunId: "local-run-credits-1"
+          }
+        },
+        {
+          externalRunId: randomUUID(),
+          usageType: "LONGITUDINAL_SUMMARY",
+          status: "APPROVED",
+          providerName: "fake-clinico",
+          providerType: "LLM",
+          modelVersion: "fake-1",
+          promptVersion: "summary/v1",
+          estimatedCostCents: 11,
+          latencyMs: 18,
+          occurredAt,
+          inputReference: {
+            kind: "LOCAL_AI_RUN_INPUT",
+            localRunId: "local-run-credits-2"
+          },
+          outputReference: {
+            kind: "LOCAL_AI_RUN_OUTPUT",
+            localRunId: "local-run-credits-2"
+          }
+        }
+      ];
+
+      const first = await recordAiUsageBatch(device, { runs });
+      expect(first.reported).toBe(2);
+      expect(first.creditSummary.monthlyCredits).toBe(120);
+      expect(first.creditSummary.consumedCredits).toBe(3);
+      expect(first.creditSummary.remainingCredits).toBe(117);
+
+      const retry = await recordAiUsageBatch(device, { runs });
+      expect(retry.creditSummary.consumedCredits).toBe(3);
+
+      const logs = await prisma.aiUsageLog.findMany({
+        where: { doctorId: account.user.id },
+        orderBy: { creditCost: "asc" },
+        select: { externalRunId: true, creditCost: true }
+      });
+      expect(logs.map((log) => log.creditCost)).toEqual([1, 2]);
     } finally {
       await cleanupUserByEmail(email);
     }

@@ -9,6 +9,13 @@
     "privacyVersion": { "value": "${PRIVACY_VERSION=2026-05}" },
     "smsProvider": { "value": "${SMS_PROVIDER=mock}" },
     "smsBaseUrl": { "value": "${SMS_BASE_URL=https://sms.example.com}" },
+    "whatsappProvider": { "value": "${WHATSAPP_PROVIDER=mock}" },
+    "phoneNotificationChannel": { "value": "${PHONE_NOTIFICATION_CHANNEL=SMS}" },
+    "twilioAccountSid": { "value": "${TWILIO_ACCOUNT_SID=}" },
+    "twilioMessagingServiceSid": { "value": "${TWILIO_MESSAGING_SERVICE_SID=}" },
+    "twilioFromPhoneNumber": { "value": "${TWILIO_FROM_PHONE_NUMBER=}" },
+    "twilioWhatsAppMessagingServiceSid": { "value": "${TWILIO_WHATSAPP_MESSAGING_SERVICE_SID=}" },
+    "twilioWhatsAppFromPhoneNumber": { "value": "${TWILIO_WHATSAPP_FROM_PHONE_NUMBER=}" },
     "emailProvider": { "value": "${EMAIL_PROVIDER=mock}" },
     "emailBaseUrl": { "value": "${EMAIL_BASE_URL=https://email.example.com}" },
     "emailFrom": { "value": "${EMAIL_FROM=no-responder@midoc.example.com}" },
@@ -20,6 +27,7 @@
     "notificationCronSecret": { "value": "${NOTIFICATION_CRON_SECRET}" },
     "paymentsWebhookSecret": { "value": "${PAYMENTS_WEBHOOK_SECRET}" },
     "smsApiKey": { "value": "${SMS_API_KEY}" },
+    "twilioAuthToken": { "value": "${TWILIO_AUTH_TOKEN=}" },
     "emailApiKey": { "value": "${EMAIL_API_KEY}" },
     "postgresAdminPassword": { "value": "${POSTGRES_ADMIN_PASSWORD}" }
   }

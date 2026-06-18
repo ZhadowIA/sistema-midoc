@@ -15,6 +15,7 @@ enum UserRole {
 
 enum UserStatus {
   ACTIVE
+  PENDING_APPROVAL
   INVITED
   SUSPENDED
   ARCHIVED
@@ -120,6 +121,12 @@ enum PrecheckinStatus {
   ARCHIVED
 }
 
+enum PrecheckinKind {
+  GENERIC
+  MEDICAL_HISTORY
+  AI_PRECONSULTA
+}
+
 enum DocumentCategory {
   LAB_RESULT
   IMAGING
@@ -148,6 +155,12 @@ enum UploadLinkStatus {
 enum NotificationChannel {
   SMS
   EMAIL
+  WHATSAPP
+}
+
+enum PhoneNotificationChannel {
+  SMS
+  WHATSAPP
 }
 
 enum NotificationKind {
@@ -158,6 +171,7 @@ enum NotificationKind {
   PRECHECKIN
   DOCUMENT_UPLOAD
   PASSWORD_RESET
+  EMAIL_VERIFICATION
   CLINICAL_SUMMARY
   GENERAL
 }
@@ -178,6 +192,8 @@ enum LegalDocumentType {
 enum ConsentType {
   TREATMENT
   PRIVACY
+  SMS_NOTIFICATIONS
+  WHATSAPP_NOTIFICATIONS
   AI_TRANSCRIPTION
   DOCUMENT_UPLOAD
   CLINICAL_SUMMARY
@@ -185,6 +201,13 @@ enum ConsentType {
 }
 
 enum PasswordResetStatus {
+  ACTIVE
+  USED
+  EXPIRED
+  REVOKED
+}
+
+enum EmailVerificationTokenStatus {
   ACTIVE
   USED
   EXPIRED
@@ -295,6 +318,7 @@ enum AiUsageStatus {
 model User {
   id                     String               @id @default(cuid())
   email                  String               @unique
+  emailVerifiedAt        DateTime?
   passwordHash           String?
   role                   UserRole
   status                 UserStatus           @default(ACTIVE)
@@ -325,6 +349,7 @@ model User {
   createdShortLinks      ShortLink[]          @relation("ShortLinkCreator")
   legalAcceptances       LegalAcceptance[]
   passwordResetTokens    PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
   authSessions           AuthSession[]
   twoFactor              TwoFactorCredential?
   consentsAsDoctor       Consent[]            @relation("DoctorConsents")
@@ -337,6 +362,8 @@ model User {
   cashDrawerSessionsClosed CashDrawerSession[] @relation("CashDrawerCloser")
   aiBenchmarkRuns        AiBenchmarkRun[]     @relation("AiBenchmarkRunner")
   aiUsageLogsAsDoctor    AiUsageLog[]         @relation("DoctorAiUsageLogs")
+
+  @@index([role, phone])
 }
 
 model DoctorProfile {
@@ -458,6 +485,7 @@ model Patient {
   birthDate             DateTime?
   sex                   BiologicalSex         @default(UNKNOWN)
   status                PatientStatus         @default(ACTIVE)
+  preferredPhoneChannel PhoneNotificationChannel?
   notes                 String?
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
@@ -687,7 +715,16 @@ model PrecheckinSubmission {
   encounterId  String?
   patientId    String
   status       PrecheckinStatus @default(DRAFT)
+  kind         PrecheckinKind  @default(GENERIC)
+  // GENERIC (rebanada 6, placeholder) sigue en claro hasta que la rama IA se
+  // selle (rebanada 8). MEDICAL_HISTORY (antecedentes) viaja SIEMPRE sellado:
+  // `responses` queda nulo y el contenido vive en `ciphertext` (sealed box
+  // X25519). La nube no puede abrirlo; se entrega por sync y se purga tras ACK.
   responses    Json?
+  ciphertext   Bytes?
+  sizeBytes    Int?
+  deliveredAt  DateTime?
+  purgedAt     DateTime?
   submittedAt  DateTime?
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
@@ -837,6 +874,9 @@ model PasswordResetToken {
   id             String              @id @default(cuid())
   userId         String
   tokenHash      String              @unique
+  codeHash       String?
+  deliveryChannel NotificationChannel @default(EMAIL)
+  destination    String?
   status         PasswordResetStatus @default(ACTIVE)
   expiresAt      DateTime
   usedAt         DateTime?
@@ -844,6 +884,23 @@ model PasswordResetToken {
   requestedAgent String?
   createdAt      DateTime            @default(now())
   user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, expiresAt])
+  @@index([userId, codeHash, status, expiresAt])
+}
+
+model EmailVerificationToken {
+  id             String                       @id @default(cuid())
+  userId         String
+  tokenHash      String                       @unique
+  destination    String
+  status         EmailVerificationTokenStatus @default(ACTIVE)
+  expiresAt      DateTime
+  usedAt         DateTime?
+  requestedIp    String?
+  requestedAgent String?
+  createdAt      DateTime                     @default(now())
+  user           User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, status, expiresAt])
 }
@@ -1066,6 +1123,7 @@ model AiUsageLog {
   outputReference    Json?
   promptVersion      String?
   modelVersion       String?
+  creditCost         Int           @default(0)
   estimatedCostCents Int?
   latencyMs          Int?
   reviewedAt         DateTime?

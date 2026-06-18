@@ -27,7 +27,7 @@ jobs:
       - name: Invoke notifications processor
         run: |
           response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-            "${{ secrets.APP_BASE_URL }}/api/internal/notifications/process" \
+            "${{ vars.APP_BASE_URL }}/api/internal/notifications/process" \
             -H "x-notification-secret: ${{ secrets.NOTIFICATION_CRON_SECRET }}")
           echo "HTTP status: $response"
           if [ "$response" != "200" ]; then
@@ -45,7 +45,7 @@ jobs:
       - name: Invoke short-link cleanup
         run: |
           response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-            "${{ secrets.APP_BASE_URL }}/api/internal/ops/cleanup-short-links" \
+            "${{ vars.APP_BASE_URL }}/api/internal/ops/cleanup-short-links" \
             -H "x-cron-secret: ${{ secrets.NOTIFICATION_CRON_SECRET }}")
           echo "HTTP status: $response"
           if [ "$response" != "200" ]; then

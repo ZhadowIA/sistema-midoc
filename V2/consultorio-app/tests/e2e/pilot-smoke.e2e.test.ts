@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ClinicalProfile, PrismaClient } from "@prisma/client";
+import { approveDoctorAccountForTesting } from "../helpers/doctor-accounts";
 
 import { createDoctorAccount, createDoctorSubscription } from "../../src/services/auth/auth-service";
 import {
@@ -37,6 +38,7 @@ async function seedPublicDoctor() {
     lastName: "Nava",
     phone: "6140009000",
     professionalName,
+    licenseNumber: "1234567",
     specialty: "GENERAL_MEDICINE",
     termsVersion: "2026-05",
     privacyVersion: "2026-05"
@@ -46,6 +48,8 @@ async function seedPublicDoctor() {
     doctorUserId: account.user.id,
     planCode: "ESSENTIAL"
   });
+
+  await approveDoctorAccountForTesting(prisma, account.user.id);
 
   await updateDoctorProfile(account.user.id, {
     publicSlug: slug,

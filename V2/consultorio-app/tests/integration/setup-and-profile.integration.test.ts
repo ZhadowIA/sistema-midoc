@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ClinicalProfile, PrismaClient } from "@prisma/client";
+import { approveDoctorAccountForTesting } from "../helpers/doctor-accounts";
 
 import {
   createDoctorAccount,
@@ -74,13 +75,17 @@ describe("doctor setup and public profile", () => {
         lastName: "Vega",
         phone: "6140000100",
         professionalName: "Dra. Elena Vega",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
 
       expect(await getDoctorSetupStatus(account.user.id)).toMatchObject({
-        nextStep: "SUBSCRIPTION"
+        nextStep: "SUBSCRIPTION",
+        emailVerified: false,
+        approvalStatus: "PENDING_APPROVAL",
+        canPublishProfile: false
       });
 
       await createDoctorSubscription({
@@ -91,6 +96,8 @@ describe("doctor setup and public profile", () => {
       expect(await getDoctorSetupStatus(account.user.id)).toMatchObject({
         nextStep: "ONBOARDING"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: uniqueSlug("dra-elena-vega"),
@@ -144,6 +151,7 @@ describe("doctor setup and public profile", () => {
         lastName: "Ortega",
         phone: "6140000101",
         professionalName: "Dr. Luis Ortega",
+        licenseNumber: "1234567",
         specialty: "ODONTOLOGY",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -153,6 +161,8 @@ describe("doctor setup and public profile", () => {
         doctorUserId: account.user.id,
         planCode: "ESSENTIAL"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -227,6 +237,7 @@ describe("doctor setup and public profile", () => {
         firstName: "Marta",
         lastName: "Lopez",
         professionalName: "Dra. Marta Lopez",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -237,6 +248,7 @@ describe("doctor setup and public profile", () => {
         firstName: "Hugo",
         lastName: "Reyes",
         professionalName: "Dr. Hugo Reyes",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -253,6 +265,42 @@ describe("doctor setup and public profile", () => {
     }
   });
 
+  it("blocks public profile publication until email is verified and account is active", async () => {
+    const email = uniqueEmail("doctor-publication-gate");
+    const slug = uniqueSlug("dra-gate");
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Laura",
+        lastName: "Nieves",
+        professionalName: "Dra. Laura Nieves",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await expect(
+        updateDoctorProfile(account.user.id, {
+          publicSlug: slug,
+          isPublic: true
+        })
+      ).rejects.toMatchObject({ status: 403 });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
+      const profile = await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        isPublic: true
+      });
+
+      expect(profile.isPublic).toBe(true);
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
   it("rejects overlapping availability rules on the same day", async () => {
     const email = uniqueEmail("doctor-overlap");
 
@@ -263,6 +311,7 @@ describe("doctor setup and public profile", () => {
         firstName: "Nora",
         lastName: "Campos",
         professionalName: "Dra. Nora Campos",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -304,10 +353,13 @@ describe("doctor setup and public profile", () => {
         firstName: "Iris",
         lastName: "Duarte",
         professionalName: "Dra. Iris Duarte",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,

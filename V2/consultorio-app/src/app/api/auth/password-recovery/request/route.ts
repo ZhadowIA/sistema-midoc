@@ -5,7 +5,8 @@ import { requestIpFrom, toErrorResponse } from "../../../../../lib/api-error";
 import { requestPasswordReset } from "../../../../../services/auth/auth-service";
 
 const requestSchema = z.object({
-  email: z.string().email()
+  email: z.string().email(),
+  channel: z.enum(["EMAIL", "SMS"]).optional()
 });
 
 export async function POST(request: Request) {
@@ -15,6 +16,7 @@ export async function POST(request: Request) {
 
     const result = await requestPasswordReset({
       email: payload.email,
+      channel: payload.channel,
       requestIp: requestIpFrom(request),
       requestUserAgent: userAgent
     });

@@ -8,6 +8,8 @@ export async function writeAuditLog(input: {
   entityId: string;
   action: string;
   source?: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
   metadata?: Prisma.InputJsonValue;
 }) {
   await prisma.auditLog.create({
@@ -17,6 +19,8 @@ export async function writeAuditLog(input: {
       entityId: input.entityId,
       action: input.action,
       source: input.source,
+      ipAddress: input.ipAddress ?? null,
+      userAgent: input.userAgent ?? null,
       metadata: input.metadata
     }
   });

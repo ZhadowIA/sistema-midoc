@@ -133,8 +133,8 @@ p {
 
 .panel {
   background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
+  border: none;
+  border-radius: 0;
   padding: 20px;
   display: grid;
   gap: 12px;
@@ -144,6 +144,12 @@ p {
 .panel-header {
   display: grid;
   gap: 4px;
+}
+
+.agenda-panel {
+  border: none;
+  border-radius: 0;
+  padding: 0;
 }
 
 .panel-header p,
@@ -183,6 +189,26 @@ button {
 
 .action-button:hover:not(:disabled) {
   background: var(--primary-hover);
+}
+
+.model-download {
+  display: grid;
+  gap: 8px;
+}
+
+.model-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  overflow: hidden;
+}
+
+.model-progress-bar {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  border-radius: 999px;
+  transition: width var(--speed) var(--ease);
 }
 
 .ghost-button {
@@ -315,6 +341,39 @@ textarea:disabled {
   width: fit-content;
 }
 
+/* ---------- Modal ---------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: oklch(0.24 0.022 250 / 0.32);
+}
+
+.modal-shell {
+  width: min(760px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: auto;
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+  box-shadow: 0 18px 48px oklch(0.24 0.022 250 / 0.18);
+}
+
+.patient-resolution-panel {
+  padding: 20px;
+}
+
+.patient-resolution-panel .list-row {
+  align-items: flex-start;
+}
+
+.patient-resolution-panel .row-actions {
+  align-self: center;
+}
+
 /* ---------- Auth (desbloqueo) ---------- */
 
 .auth-shell {
@@ -327,12 +386,20 @@ textarea:disabled {
 .auth-card {
   width: min(400px, 100%);
   background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
+  border: none;
+  border-radius: 0;
   padding: 32px;
   display: grid;
   gap: 16px;
   text-align: left;
+}
+
+.auth-card-wide {
+  width: min(640px, 100%);
+}
+
+.auth-card-narrow {
+  width: min(430px, 100%);
 }
 
 .auth-card header {
@@ -343,6 +410,156 @@ textarea:disabled {
 .auth-card header p {
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.profile-create-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.profile-create-row .ghost-button {
+  white-space: nowrap;
+}
+
+.profile-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.profile-card,
+.profile-add-card,
+.selected-profile-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+}
+
+.profile-card {
+  appearance: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "photo name"
+    "photo meta";
+  align-items: center;
+  gap: 2px 12px;
+  min-height: 86px;
+  padding: 14px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--speed) var(--ease),
+    background var(--speed) var(--ease),
+    transform var(--speed) var(--ease);
+}
+
+.profile-card:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  transform: translateY(-1px);
+}
+
+.profile-card:active {
+  transform: translateY(0);
+}
+
+.profile-photo {
+  grid-area: photo;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background:
+    linear-gradient(
+      135deg,
+      oklch(0.96 0.025 var(--profile-hue, 220)),
+      oklch(0.9 0.05 var(--profile-hue, 220))
+    );
+  color: oklch(0.42 0.12 var(--profile-hue, 220));
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.profile-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-card-name {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+
+.profile-card-meta,
+.selected-profile-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 550;
+}
+
+.profile-card-meta {
+  grid-area: meta;
+}
+
+.profile-add-card {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+}
+
+.profile-add-icon {
+  align-self: center;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 1.2rem;
+  font-weight: 650;
+}
+
+.profile-add-card .compact-field,
+.profile-add-card .ghost-button {
+  grid-column: 2;
+}
+
+.profile-add-card .ghost-button {
+  justify-self: start;
+}
+
+.selected-profile-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.selected-profile-card > div:last-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.selected-profile-card strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- Agenda ---------- */
@@ -830,6 +1047,19 @@ textarea:disabled {
     padding: 16px;
   }
 
+  .modal-backdrop {
+    padding: 12px;
+  }
+
+  .modal-shell {
+    max-height: calc(100vh - 24px);
+  }
+
+  .patient-resolution-panel .list-row,
+  .patient-resolution-panel .row-actions {
+    align-items: stretch;
+  }
+
   .tooth-grid {
     grid-template-columns: 1fr;
   }
@@ -912,6 +1142,126 @@ textarea:disabled {
   font-size: 0.92rem;
 }
 
+.scribe-turn-list {
+  display: grid;
+  gap: 10px;
+}
+
+.scribe-turn {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.scribe-segment {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.scribe-segment > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.scribe-warning-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.scribe-source-list {
+  display: grid;
+  gap: 6px;
+}
+
+.scribe-source {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--primary);
+  background: color-mix(in oklch, var(--surface) 86%, var(--primary-soft));
+  color: var(--ink);
+}
+
+.scribe-source strong {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.scribe-source span {
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.missing-source {
+  border-left-color: var(--danger);
+}
+
+.recording-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+.recording-button {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.template-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.template-editor-form {
+  display: grid;
+  gap: 12px;
+}
+
+.template-segment-list {
+  display: grid;
+  gap: 10px;
+}
+
+.template-segment {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.45fr) minmax(150px, 0.8fr) minmax(170px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.template-instructions {
+  grid-column: 1 / -2;
+}
+
+.danger-link {
+  color: var(--danger);
+  border-color: color-mix(in oklch, var(--danger) 35%, var(--line));
+}
+
+@media (max-width: 760px) {
+  .scribe-turn,
+  .template-segment {
+    grid-template-columns: 1fr;
+  }
+
+  .template-instructions {
+    grid-column: auto;
+  }
+}
+
 /* Agenda semanal por bloques (paso 13, rebanada 4). 7 columnas = dias; el
    bloque es la duracion de cita del medico. Solo se listan los bloques (slots)
    con citas, en filas; cada cita cae en la celda de su dia. Color = estado. */
@@ -925,6 +1275,7 @@ textarea:disabled {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .week-nav .ghost-button {
@@ -935,10 +1286,62 @@ textarea:disabled {
   margin-left: 6px;
 }
 
+.week-view-toggle {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(72px, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.week-view-option {
+  min-height: 32px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--speed) var(--ease),
+    color var(--speed) var(--ease);
+}
+
+.week-view-option + .week-view-option {
+  border-left: 1px solid var(--line);
+}
+
+.week-view-option-active {
+  background: var(--bg);
+  color: var(--primary);
+}
+
+.week-cancelled-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.week-cancelled-toggle input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
 .week-head,
 .week-row {
   display: grid;
-  grid-template-columns: var(--week-time-w) repeat(7, minmax(0, 1fr));
+  grid-template-columns: var(--week-time-w) repeat(var(--week-day-count, 7), minmax(0, 1fr));
 }
 
 .week-head {
@@ -1188,4 +1591,20 @@ textarea:disabled {
 
 .med-label {
   border-left-color: #2563eb;
+}
+
+/* Badge de cambios pendientes en el boton Sincronizar (paso 19, rebanada 10). */
+.sync-button {
+  position: relative;
+}
+
+.sync-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--bg, #fff);
 }

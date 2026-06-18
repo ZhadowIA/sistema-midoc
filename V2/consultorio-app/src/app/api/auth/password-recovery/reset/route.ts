@@ -2,17 +2,30 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { toErrorResponse } from "../../../../../lib/api-error";
-import { resetPassword } from "../../../../../services/auth/auth-service";
+import { resetPassword, resetPasswordWithCode } from "../../../../../services/auth/auth-service";
 
-const resetSchema = z.object({
-  token: z.string().min(1),
-  newPassword: z.string().min(12)
-});
+const resetSchema = z.union([
+  z.object({
+    method: z.literal("TOKEN").optional(),
+    token: z.string().min(1),
+    newPassword: z.string().min(12)
+  }),
+  z.object({
+    method: z.literal("CODE"),
+    email: z.string().email(),
+    code: z.string().regex(/^\d{6}$/),
+    newPassword: z.string().min(12)
+  })
+]);
 
 export async function POST(request: Request) {
   try {
     const payload = resetSchema.parse(await request.json());
-    await resetPassword(payload);
+    if (payload.method === "CODE") {
+      await resetPasswordWithCode(payload);
+    } else {
+      await resetPassword(payload);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {

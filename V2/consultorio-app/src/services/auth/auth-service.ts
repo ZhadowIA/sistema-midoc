@@ -1,8 +1,14 @@
 import {
+  randomInt
+} from "node:crypto";
+
+import {
   PlanStatus,
   AuthSessionStatus,
   ClinicalProfile,
+  EmailVerificationTokenStatus,
   LegalDocumentType,
+  NotificationChannel,
   NotificationKind,
   PasswordResetStatus,
   SubscriptionStatus,
@@ -14,6 +20,13 @@ import {
 import { writeAuditLog } from "../../lib/audit";
 import { env } from "../../lib/env";
 import { ServiceError } from "../../lib/errors";
+import {
+  assertPasswordConfirmation,
+  normalizeLicenseNumber,
+  normalizeMexicanE164Phone,
+  normalizePersonName,
+  normalizeProfessionalName
+} from "../../lib/identity-validation";
 import { prisma } from "../../lib/prisma";
 import { assertRateLimit } from "../../lib/rate-limit";
 import { hashPassword, verifyPassword } from "../../lib/security/password";
@@ -28,6 +41,8 @@ import {
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const PASSWORD_RESET_TTL_MS = 1000 * 60 * 15;
+const PASSWORD_RESET_CODE_LENGTH = 6;
+const EMAIL_VERIFICATION_TTL_MS = 1000 * 60 * 60 * 24;
 const SUBSCRIPTION_READY_STATUSES = [
   SubscriptionStatus.TRIAL,
   SubscriptionStatus.ACTIVE,
@@ -38,6 +53,65 @@ const SUBSCRIPTION_READY_STATUSES = [
 type DoctorSpecialtyInput = "GENERAL_MEDICINE" | "ODONTOLOGY";
 
 class AuthServiceError extends ServiceError {}
+
+const PASSWORD_RESET_GENERIC_MESSAGE =
+  "Si existe una cuenta activa con ese correo, enviaremos instrucciones para restablecer la contrasena.";
+
+const DOCTOR_LOGIN_STATUSES = [UserStatus.ACTIVE, UserStatus.PENDING_APPROVAL] as const;
+
+function defaultPlanConfiguration(planCode: string) {
+  const normalized = planCode.trim().toUpperCase();
+  const fullClinicalCapabilities = {
+    agenda: true,
+    documents: true,
+    notifications: true,
+    ai: true,
+    presential: true
+  };
+
+  switch (normalized) {
+    case "AGENDA":
+    case "AGENDA_ONLY":
+      return {
+        name: "Agenda",
+        priceCents: 54900,
+        capabilities: {
+          agenda: true,
+          documents: false,
+          notifications: true,
+          ai: false,
+          presential: false,
+          aiCreditsMonthly: 0
+        }
+      };
+    case "CLINICO":
+    case "CLINICAL":
+    case "ESSENTIAL":
+      return {
+        name: normalized === "ESSENTIAL" ? "Plan Essential" : "Clinico",
+        priceCents: normalized === "ESSENTIAL" ? 0 : 99900,
+        capabilities: { ...fullClinicalCapabilities, aiCreditsMonthly: 120 }
+      };
+    case "INTELIGENTE":
+      return {
+        name: "Inteligente",
+        priceCents: 149900,
+        capabilities: { ...fullClinicalCapabilities, aiCreditsMonthly: 900 }
+      };
+    case "INTELIGENTE_PLUS":
+      return {
+        name: "Inteligente Plus",
+        priceCents: 229000,
+        capabilities: { ...fullClinicalCapabilities, aiCreditsMonthly: 1800 }
+      };
+    default:
+      return {
+        name: planCode,
+        priceCents: 0,
+        capabilities: { ...fullClinicalCapabilities, aiCreditsMonthly: 120 }
+      };
+  }
+}
 
 function mapSpecialty(specialty: DoctorSpecialtyInput): ClinicalProfile {
   return specialty === "ODONTOLOGY"
@@ -60,14 +134,17 @@ export function ensureStrongPassword(password: string) {
 export async function createDoctorAccount(input: {
   email: string;
   password: string;
+  passwordConfirmation?: string;
   firstName: string;
   lastName: string;
   phone?: string;
   professionalName: string;
+  licenseNumber: string;
   specialty: DoctorSpecialtyInput;
   termsVersion: string;
   privacyVersion: string;
   requestIp?: string;
+  requestUserAgent?: string;
 }) {
   assertRateLimit({
     key: `register:${input.email.toLowerCase()}`,
@@ -83,14 +160,34 @@ export async function createDoctorAccount(input: {
   }
 
   ensureStrongPassword(input.password);
+  assertPasswordConfirmation(input.password, input.passwordConfirmation);
 
   const email = input.email.trim().toLowerCase();
+  const firstName = normalizePersonName(input.firstName, "firstName");
+  const lastName = normalizePersonName(input.lastName, "lastName");
+  const professionalName = normalizeProfessionalName(input.professionalName);
+  const licenseNumber = normalizeLicenseNumber(input.licenseNumber);
+  const phone = normalizeMexicanE164Phone(input.phone);
   const existingUser = await prisma.user.findUnique({
     where: { email }
   });
 
   if (existingUser) {
     throw new AuthServiceError("An account with this email already exists.", 409);
+  }
+
+  if (phone) {
+    const phoneTaken = await prisma.user.findFirst({
+      where: {
+        role: UserRole.DOCTOR,
+        phone
+      },
+      select: { id: true }
+    });
+
+    if (phoneTaken) {
+      throw new AuthServiceError("Ese telefono ya esta asociado a una cuenta medica.", 409);
+    }
   }
 
   const passwordHash = await hashPassword(input.password);
@@ -100,14 +197,15 @@ export async function createDoctorAccount(input: {
       email,
       passwordHash,
       role: UserRole.DOCTOR,
-      status: UserStatus.ACTIVE,
-      firstName: input.firstName.trim(),
-      lastName: input.lastName.trim(),
-      phone: input.phone?.trim(),
+      status: UserStatus.PENDING_APPROVAL,
+      firstName,
+      lastName,
+      phone,
       doctorProfile: {
         create: {
-          professionalName: input.professionalName.trim(),
+          professionalName,
           publicSlug: `doctor-${generateOpaqueToken(8)}`,
+          licenseNumber,
           specialty: mapSpecialty(input.specialty),
           isPublic: false
         }
@@ -136,13 +234,35 @@ export async function createDoctorAccount(input: {
     entityId: user.id,
     action: "doctor.registered",
     source: "auth-service",
+    ipAddress: input.requestIp,
+    userAgent: input.requestUserAgent,
     metadata: {
       role: user.role,
-      specialty: user.doctorProfile?.specialty
+      status: user.status,
+      specialty: user.doctorProfile?.specialty,
+      emailDomain: email.split("@")[1] ?? null,
+      hasPhone: Boolean(phone),
+      phoneCountry: phone ? "MX" : null,
+      termsVersion: input.termsVersion,
+      privacyVersion: input.privacyVersion
     }
   });
 
-  return { user };
+  const emailVerification = await requestDoctorEmailVerification({
+    userId: user.id,
+    requestIp: input.requestIp,
+    requestUserAgent: input.requestUserAgent
+  });
+
+  return { user, emailVerificationToken: emailVerification.verificationToken };
+}
+
+function doctorCanLogin(status: UserStatus) {
+  return DOCTOR_LOGIN_STATUSES.includes(status as (typeof DOCTOR_LOGIN_STATUSES)[number]);
+}
+
+function userCanRecoverPassword(user: Pick<User, "role" | "status">) {
+  return user.status === UserStatus.ACTIVE || (user.role === UserRole.DOCTOR && doctorCanLogin(user.status));
 }
 
 export async function signInDoctor(input: {
@@ -168,14 +288,14 @@ export async function signInDoctor(input: {
     where: { email }
   });
 
-  if (!user || user.role !== UserRole.DOCTOR || user.status !== UserStatus.ACTIVE || !user.passwordHash) {
-    throw new AuthServiceError("Invalid credentials.", 401);
+  if (!user || user.role !== UserRole.DOCTOR || !doctorCanLogin(user.status) || !user.passwordHash) {
+    throw new AuthServiceError("Credenciales invalidas.", 401);
   }
 
   const isValid = await verifyPassword(input.password, user.passwordHash);
 
   if (!isValid) {
-    throw new AuthServiceError("Invalid credentials.", 401);
+    throw new AuthServiceError("Credenciales invalidas.", 401);
   }
 
   // Si el 2FA esta activo, no se crea sesion: se emite un desafio de segundo factor.
@@ -186,11 +306,11 @@ export async function signInDoctor(input: {
     };
   }
 
-  const session = await createSessionForUser(user);
+  const session = await createSessionForUser(user, "doctor.login");
   return { requiresTwoFactor: false as const, user, ...session };
 }
 
-async function createSessionForUser(user: User) {
+export async function createSessionForUser(user: User, auditAction: string) {
   const sessionToken = generateOpaqueToken();
   const tokenHash = hashOpaqueToken(sessionToken);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
@@ -215,7 +335,7 @@ async function createSessionForUser(user: User) {
     actorUserId: user.id,
     entityType: "AuthSession",
     entityId: tokenHash,
-    action: "doctor.login",
+    action: auditAction,
     source: "auth-service"
   });
 
@@ -230,8 +350,8 @@ export async function completeTwoFactorLogin(input: { twoFactorToken: string; co
   const userId = consumeTwoFactorChallenge(input.twoFactorToken);
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user || user.role !== UserRole.DOCTOR || user.status !== UserStatus.ACTIVE) {
-    throw new AuthServiceError("Invalid credentials.", 401);
+  if (!user || user.role !== UserRole.DOCTOR || !doctorCanLogin(user.status)) {
+    throw new AuthServiceError("Credenciales invalidas.", 401);
   }
 
   const valid = await verifyTwoFactorCode(userId, input.code);
@@ -239,8 +359,131 @@ export async function completeTwoFactorLogin(input: { twoFactorToken: string; co
     throw new AuthServiceError("Codigo invalido.", 401);
   }
 
-  const session = await createSessionForUser(user);
+  const session = await createSessionForUser(user, "doctor.login");
   return { user, ...session };
+}
+
+export async function requestDoctorEmailVerification(input: {
+  userId: string;
+  requestIp?: string;
+  requestUserAgent?: string;
+}) {
+  const user = await prisma.user.findUnique({
+    where: { id: input.userId }
+  });
+
+  if (!user || user.role !== UserRole.DOCTOR || !doctorCanLogin(user.status)) {
+    throw new AuthServiceError("Doctor account not found.", 404);
+  }
+
+  if (user.emailVerifiedAt) {
+    return { alreadyVerified: true as const, verificationToken: undefined };
+  }
+
+  await prisma.emailVerificationToken.updateMany({
+    where: {
+      userId: user.id,
+      status: EmailVerificationTokenStatus.ACTIVE
+    },
+    data: {
+      status: EmailVerificationTokenStatus.REVOKED
+    }
+  });
+
+  const verificationToken = generateOpaqueToken();
+  const tokenHash = hashOpaqueToken(verificationToken);
+  const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
+
+  await prisma.emailVerificationToken.create({
+    data: {
+      userId: user.id,
+      tokenHash,
+      destination: user.email,
+      status: EmailVerificationTokenStatus.ACTIVE,
+      expiresAt,
+      requestedIp: input.requestIp,
+      requestedAgent: input.requestUserAgent
+    }
+  });
+
+  await queueNotification({
+    doctorId: user.id,
+    channel: NotificationChannel.EMAIL,
+    kind: NotificationKind.EMAIL_VERIFICATION,
+    destination: user.email,
+    actionUrl: `${env.APP_BASE_URL}/verificar-correo?token=${verificationToken}`,
+    template: {
+      expiresAt
+    },
+    metadata: {
+      email: user.email
+    }
+  });
+
+  await writeAuditLog({
+    actorUserId: user.id,
+    entityType: "EmailVerificationToken",
+    entityId: tokenHash,
+    action: "email-verification.requested",
+    source: "auth-service",
+    ipAddress: input.requestIp,
+    userAgent: input.requestUserAgent
+  });
+
+  return {
+    alreadyVerified: false as const,
+    verificationToken: process.env.NODE_ENV === "test" ? verificationToken : undefined
+  };
+}
+
+export async function confirmDoctorEmailVerification(input: { token: string }) {
+  const tokenHash = hashOpaqueToken(input.token);
+  const verificationToken = await prisma.emailVerificationToken.findUnique({
+    where: { tokenHash },
+    include: { user: true }
+  });
+
+  if (
+    !verificationToken ||
+    verificationToken.status !== EmailVerificationTokenStatus.ACTIVE
+  ) {
+    throw new AuthServiceError("Token de verificacion invalido o expirado.", 400);
+  }
+
+  if (verificationToken.expiresAt <= new Date()) {
+    await prisma.emailVerificationToken.update({
+      where: { id: verificationToken.id },
+      data: { status: EmailVerificationTokenStatus.EXPIRED }
+    });
+    throw new AuthServiceError("Token de verificacion invalido o expirado.", 400);
+  }
+
+  const verifiedAt = new Date();
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: verificationToken.userId },
+      data: {
+        emailVerifiedAt: verificationToken.user.emailVerifiedAt ?? verifiedAt
+      }
+    }),
+    prisma.emailVerificationToken.update({
+      where: { id: verificationToken.id },
+      data: {
+        status: EmailVerificationTokenStatus.USED,
+        usedAt: verifiedAt
+      }
+    })
+  ]);
+
+  await writeAuditLog({
+    actorUserId: verificationToken.userId,
+    entityType: "User",
+    entityId: verificationToken.userId,
+    action: "email-verification.confirmed",
+    source: "auth-service"
+  });
+
+  return { verified: true as const };
 }
 
 export async function validateAuthSession(sessionToken: string): Promise<User | null> {
@@ -298,6 +541,7 @@ export async function revokeAuthSession(sessionToken: string) {
 
 export async function requestPasswordReset(input: {
   email: string;
+  channel?: "EMAIL" | "SMS";
   requestIp?: string;
   requestUserAgent?: string;
 }) {
@@ -316,14 +560,31 @@ export async function requestPasswordReset(input: {
 
   const email = input.email.trim().toLowerCase();
   const user = await prisma.user.findUnique({
-    where: { email }
+    where: { email },
+    include: {
+      doctorProfile: { select: { phone: true } },
+      patientLinks: {
+        where: { phone: { not: null } },
+        select: { phone: true },
+        take: 1
+      }
+    }
   });
 
-  if (!user || user.status !== UserStatus.ACTIVE) {
+  if (!user || !userCanRecoverPassword(user)) {
     return {
-      message:
-        "Si existe una cuenta activa con ese correo, enviaremos instrucciones para restablecer la contrasena."
+      message: PASSWORD_RESET_GENERIC_MESSAGE
     };
+  }
+
+  const channel = input.channel ? NotificationChannel[input.channel] : null;
+  const destination =
+    channel === NotificationChannel.SMS
+      ? user.phone ?? user.doctorProfile?.phone ?? user.patientLinks[0]?.phone ?? null
+      : user.email;
+
+  if (channel === NotificationChannel.SMS && !destination) {
+    return { message: PASSWORD_RESET_GENERIC_MESSAGE };
   }
 
   await prisma.passwordResetToken.updateMany({
@@ -338,40 +599,63 @@ export async function requestPasswordReset(input: {
 
   const resetToken = generateOpaqueToken();
   const tokenHash = hashOpaqueToken(resetToken);
+  const resetCode = channel ? buildPasswordResetCode() : null;
+  const codeHash = resetCode ? hashOpaqueToken(`${email}:${resetCode}`) : null;
+  const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MS);
 
   await prisma.passwordResetToken.create({
     data: {
       userId: user.id,
       tokenHash,
+      codeHash,
+      deliveryChannel: channel ?? NotificationChannel.EMAIL,
+      destination: destination ?? user.email,
       status: PasswordResetStatus.ACTIVE,
-      expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+      expiresAt,
       requestedIp: input.requestIp,
       requestedAgent: input.requestUserAgent
     }
   });
 
-  // The queued email must carry the link with the raw token; exposure is
-  // bounded by the 15-minute TTL and single use.
-  const resetUrl = `${env.APP_BASE_URL}/recuperar?token=${resetToken}`;
+  if (channel) {
+    await queueNotification({
+      doctorId: user.id,
+      channel,
+      kind: NotificationKind.PASSWORD_RESET,
+      destination: destination ?? user.email,
+      template: {
+        resetCode,
+        expiresAt
+      },
+      metadata: {
+        email: user.email,
+        channel
+      }
+    });
+  } else {
+    // The queued email must carry the link with the raw token; exposure is
+    // bounded by the 15-minute TTL and single use.
+    const resetUrl = `${env.APP_BASE_URL}/recuperar?token=${resetToken}`;
 
-  await queueNotification({
-    doctorId: user.id,
-    channel: "EMAIL",
-    kind: NotificationKind.PASSWORD_RESET,
-    destination: user.email,
-    actionUrl: resetUrl,
-    template: {
-      expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS)
-    },
-    shortLink: {
-      expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
-      maxUses: 1
-    },
-    metadata: {
-      email: user.email,
-      resetUrl
-    }
-  });
+    await queueNotification({
+      doctorId: user.id,
+      channel: "EMAIL",
+      kind: NotificationKind.PASSWORD_RESET,
+      destination: user.email,
+      actionUrl: resetUrl,
+      template: {
+        expiresAt
+      },
+      shortLink: {
+        expiresAt,
+        maxUses: 1
+      },
+      metadata: {
+        email: user.email,
+        resetUrl
+      }
+    });
+  }
 
   await writeAuditLog({
     actorUserId: user.id,
@@ -385,10 +669,58 @@ export async function requestPasswordReset(input: {
   });
 
   return {
-    message:
-      "Si existe una cuenta activa con ese correo, enviaremos instrucciones para restablecer la contrasena.",
-    resetToken: process.env.NODE_ENV === "test" ? resetToken : undefined
+    message: PASSWORD_RESET_GENERIC_MESSAGE,
+    resetToken: process.env.NODE_ENV === "test" && !channel ? resetToken : undefined,
+    resetCode: process.env.NODE_ENV === "test" && resetCode ? resetCode : undefined
   };
+}
+
+function buildPasswordResetCode() {
+  const min = 10 ** (PASSWORD_RESET_CODE_LENGTH - 1);
+  const max = 10 ** PASSWORD_RESET_CODE_LENGTH;
+  return String(randomInt(min, max));
+}
+
+async function consumePasswordReset(input: {
+  userId: string;
+  tokenId: string;
+  newPassword: string;
+}) {
+  const newPasswordHash = await hashPassword(input.newPassword);
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: input.userId },
+      data: {
+        passwordHash: newPasswordHash
+      }
+    }),
+    prisma.passwordResetToken.update({
+      where: { id: input.tokenId },
+      data: {
+        status: PasswordResetStatus.USED,
+        usedAt: new Date()
+      }
+    }),
+    prisma.authSession.updateMany({
+      where: {
+        userId: input.userId,
+        status: AuthSessionStatus.ACTIVE
+      },
+      data: {
+        status: AuthSessionStatus.REVOKED,
+        revokedAt: new Date()
+      }
+    })
+  ]);
+
+  await writeAuditLog({
+    actorUserId: input.userId,
+    entityType: "User",
+    entityId: input.userId,
+    action: "password-reset.completed",
+    source: "auth-service"
+  });
 }
 
 export async function resetPassword(input: { token: string; newPassword: string }) {
@@ -408,40 +740,47 @@ export async function resetPassword(input: { token: string; newPassword: string 
     throw new AuthServiceError("Invalid or expired reset token.", 400);
   }
 
-  const newPasswordHash = await hashPassword(input.newPassword);
+  await consumePasswordReset({
+    userId: passwordResetToken.userId,
+    tokenId: passwordResetToken.id,
+    newPassword: input.newPassword
+  });
+}
 
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: passwordResetToken.userId },
-      data: {
-        passwordHash: newPasswordHash
-      }
-    }),
-    prisma.passwordResetToken.update({
-      where: { id: passwordResetToken.id },
-      data: {
-        status: PasswordResetStatus.USED,
-        usedAt: new Date()
-      }
-    }),
-    prisma.authSession.updateMany({
-      where: {
-        userId: passwordResetToken.userId,
-        status: AuthSessionStatus.ACTIVE
-      },
-      data: {
-        status: AuthSessionStatus.REVOKED,
-        revokedAt: new Date()
-      }
-    })
-  ]);
+export async function resetPasswordWithCode(input: { email: string; code: string; newPassword: string }) {
+  ensureStrongPassword(input.newPassword);
 
-  await writeAuditLog({
-    actorUserId: passwordResetToken.userId,
-    entityType: "User",
-    entityId: passwordResetToken.userId,
-    action: "password-reset.completed",
-    source: "auth-service"
+  const email = input.email.trim().toLowerCase();
+  const code = input.code.trim();
+
+  if (!/^\d{6}$/.test(code)) {
+    throw new AuthServiceError("Codigo invalido o expirado.", 400);
+  }
+
+  const user = await prisma.user.findUnique({ where: { email } });
+
+  if (!user || !userCanRecoverPassword(user)) {
+    throw new AuthServiceError("Codigo invalido o expirado.", 400);
+  }
+
+  const passwordResetToken = await prisma.passwordResetToken.findFirst({
+    where: {
+      userId: user.id,
+      codeHash: hashOpaqueToken(`${email}:${code}`),
+      status: PasswordResetStatus.ACTIVE,
+      expiresAt: { gt: new Date() }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+
+  if (!passwordResetToken) {
+    throw new AuthServiceError("Codigo invalido o expirado.", 400);
+  }
+
+  await consumePasswordReset({
+    userId: passwordResetToken.userId,
+    tokenId: passwordResetToken.id,
+    newPassword: input.newPassword
   });
 }
 
@@ -460,13 +799,7 @@ export async function createDoctorSubscription(input: {
     throw new AuthServiceError("Doctor account not found.", 404);
   }
 
-  const defaultCapabilities = {
-    agenda: true,
-    documents: true,
-    notifications: true,
-    ai: true,
-    presential: true
-  };
+  const planDefaults = defaultPlanConfiguration(input.planCode);
 
   const plan = await prisma.subscriptionPlan.upsert({
     where: {
@@ -474,16 +807,18 @@ export async function createDoctorSubscription(input: {
     },
     update: {
       status: PlanStatus.ACTIVE,
-      capabilities: defaultCapabilities
+      name: planDefaults.name,
+      priceCents: planDefaults.priceCents,
+      capabilities: planDefaults.capabilities
     },
     create: {
       code: input.planCode,
-      name: input.planCode === "ESSENTIAL" ? "Plan Essential" : input.planCode,
+      name: planDefaults.name,
       status: PlanStatus.ACTIVE,
       billingInterval: "monthly",
-      priceCents: 0,
+      priceCents: planDefaults.priceCents,
       currency: "MXN",
-      capabilities: defaultCapabilities
+      capabilities: planDefaults.capabilities
     }
   });
 
@@ -564,11 +899,17 @@ export async function getDoctorSetupStatus(userId: string) {
     throw new AuthServiceError("Doctor account not found.", 404);
   }
 
+  const gateStatus = {
+    emailVerified: Boolean(doctor.emailVerifiedAt),
+    approvalStatus: doctor.status,
+    canPublishProfile: Boolean(doctor.emailVerifiedAt) && doctor.status === UserStatus.ACTIVE
+  };
   const hasSubscription = doctor.doctorProfile.subscriptions.length > 0;
 
   if (!hasSubscription) {
     return {
-      nextStep: "SUBSCRIPTION" as const
+      nextStep: "SUBSCRIPTION" as const,
+      ...gateStatus
     };
   }
 
@@ -583,11 +924,13 @@ export async function getDoctorSetupStatus(userId: string) {
 
   if (!(hasPublicProfile && hasServices && hasAvailability)) {
     return {
-      nextStep: "ONBOARDING" as const
+      nextStep: "ONBOARDING" as const,
+      ...gateStatus
     };
   }
 
   return {
-    nextStep: "DASHBOARD" as const
+    nextStep: "DASHBOARD" as const,
+    ...gateStatus
   };
 }

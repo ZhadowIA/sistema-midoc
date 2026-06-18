@@ -300,14 +300,11 @@ export function Recepcion({
             patient={resolution.patient}
             candidates={resolution.candidates}
             busy={false}
-            onLink={(patientId) => void resolvePending({ linkPatientId: patientId })}
+            onOpenRecord={(patientId) => void resolvePending({ linkPatientId: patientId })}
             onCreateNew={() => void resolvePending({ forceNew: true })}
+            onClose={() => setResolution(null)}
+            closeLabel="Cancelar"
           />
-          <div className="button-row">
-            <button className="ghost-button" onClick={() => setResolution(null)}>
-              Cancelar
-            </button>
-          </div>
         </>
       ) : null}
 
