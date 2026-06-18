@@ -25,8 +25,14 @@ import {
   type TemplateSegment
 } from "./consultationScribe";
 import { MedicationSafety } from "./MedicationSafety";
+import { EncounterAgendaRail } from "./EncounterAgendaRail";
 import { call } from "./ipc";
 import { allergyText, buildContextHistory, isFirstVisit } from "./encounterContext";
+import {
+  hasEncounterDraftChanges,
+  shouldConfirmEncounterSwitch,
+  type EncounterAgendaAppointment
+} from "./encounterAgenda";
 import {
   buildEncounterModes,
   resolveActiveSection,
@@ -55,6 +61,7 @@ interface NoteContent {
 interface EncounterDetail {
   encounter: {
     id: string;
+    appointment_id: string | null;
     status: string;
     opened_at: string;
     signed_at: string | null;
@@ -206,6 +213,23 @@ function coerceSpecialtyPayload(
     : coerceGeneralMedicinePayload(value);
 }
 
+function noteFromStoredDetail(
+  storedNote: EncounterDetail["note"],
+  clinicalProfile: ClinicalProfile
+): NoteContent {
+  return storedNote
+    ? {
+        subjective: storedNote.subjective,
+        objective: storedNote.objective,
+        assessment: storedNote.assessment,
+        plan: storedNote.plan,
+        diagnosis: storedNote.diagnosis,
+        instructions: storedNote.instructions,
+        specialty: coerceSpecialtyPayload(clinicalProfile, storedNote.specialty)
+      }
+    : createEmptyNote(clinicalProfile);
+}
+
 const dateTimeFormatter = new Intl.DateTimeFormat("es-MX", {
   dateStyle: "medium",
   timeStyle: "short"
@@ -280,11 +304,17 @@ function MedicalHistoryGroups({ groups }: { groups: MedicalHistoryGroup[] }) {
 export function Atencion({
   encounterId,
   clinicalProfile,
-  onBack
+  appointments,
+  appointmentSelectionBusy,
+  onBack,
+  onSelectAppointment
 }: {
   encounterId: string;
   clinicalProfile: ClinicalProfile;
+  appointments: EncounterAgendaAppointment[];
+  appointmentSelectionBusy: boolean;
   onBack: () => void;
+  onSelectAppointment: (appointmentId: string) => void;
 }) {
   const resolvedProfile = coerceClinicalProfile(clinicalProfile);
   const [detail, setDetail] = useState<EncounterDetail | null>(null);
@@ -333,14 +363,7 @@ export function Atencion({
     call<EncounterDetail>("get_encounter", { encounterId })
       .then((data) => {
         setDetail(data);
-        setNote(
-          data.note
-            ? {
-                ...data.note,
-                specialty: coerceSpecialtyPayload(resolvedProfile, data.note.specialty)
-              }
-            : createEmptyNote(resolvedProfile)
-        );
+        setNote(noteFromStoredDetail(data.note, resolvedProfile));
         setPrescription(data.prescription ?? "");
         setBackground({
           allergies: data.patient.allergies ?? "",
@@ -421,6 +444,21 @@ export function Atencion({
 
   const signed = detail.encounter.status === "SIGNED";
   const patientId = detail.patient.id;
+  const currentAppointmentId = detail.encounter.appointment_id;
+  const persistedDraft = {
+    note: noteFromStoredDetail(detail.note, resolvedProfile),
+    prescription: detail.prescription ?? "",
+    background: {
+      allergies: detail.patient.allergies ?? "",
+      medical_background: detail.patient.medical_background ?? "",
+      family_background: detail.patient.family_background ?? "",
+      birth_date: detail.patient.birth_date ?? ""
+    }
+  };
+  const hasUnsavedChanges = hasEncounterDraftChanges(
+    { note, prescription, background },
+    persistedDraft
+  );
   const backgroundReview = buildBackgroundReview(background, detail.precheckin);
   const medicalHistoryGroups = formatMedicalHistoryForDisplay(detail.precheckin);
   const showBackgroundReview =
@@ -453,6 +491,26 @@ export function Atencion({
   });
 
   const resolvedSection = resolveActiveSection(navItems, activeSection);
+
+  function selectAgendaAppointment(appointmentId: string) {
+    const needsConfirmation = shouldConfirmEncounterSwitch({
+      currentAppointmentId,
+      targetAppointmentId: appointmentId,
+      signed,
+      hasUnsavedChanges
+    });
+    if (
+      needsConfirmation &&
+      !window.confirm(
+        hasUnsavedChanges
+          ? "Hay cambios sin guardar en esta consulta. Si cambias de paciente se perderán. ¿Continuar?"
+          : "La consulta actual sigue abierta y sin firmar. ¿Cambiar de paciente de todos modos?"
+      )
+    ) {
+      return;
+    }
+    onSelectAppointment(appointmentId);
+  }
 
   async function run(label: string, action: () => Promise<unknown>) {
     setBusy(true);
@@ -1007,6 +1065,14 @@ export function Atencion({
         </section>
 
         <div className="encounter-layout">
+          <EncounterAgendaRail
+            appointments={appointments}
+            currentAppointmentId={currentAppointmentId}
+            appointmentStart={detail.appointment_start}
+            busy={appointmentSelectionBusy}
+            onSelectAppointment={selectAgendaAppointment}
+          />
+
           <div className="encounter-main">
             <nav className="encounter-modes" aria-label="Secciones de la consulta">
               {navItems.map((item) => (

@@ -130,8 +130,8 @@ const mockState = {
     {
       id: "appt-2",
       status: "PENDING",
-      scheduled_start: slotDate(1, 9, 30),
-      scheduled_end: slotDate(1, 10, 0),
+      scheduled_start: slotDate(0, 11, 30),
+      scheduled_end: slotDate(0, 12, 0),
       service_name: "Seguimiento",
       reason: null,
       patient_name: "Maria Elena Duarte",
@@ -141,8 +141,8 @@ const mockState = {
     {
       id: "appt-3",
       status: "CANCELLED",
-      scheduled_start: slotDate(1, 12, 0),
-      scheduled_end: slotDate(1, 12, 30),
+      scheduled_start: slotDate(0, 12, 30),
+      scheduled_end: slotDate(0, 13, 0),
       service_name: "Consulta general",
       reason: "Revision de estudios",
       patient_name: "Jorge Luna",
@@ -176,6 +176,7 @@ const mockState = {
   ],
   encounter: {
     id: "enc-1",
+    appointment_id: "appt-1" as string | null,
     status: "OPEN" as "OPEN" | "SIGNED",
     signed_at: null as string | null,
     signed_hash: null as string | null,
@@ -185,34 +186,38 @@ const mockState = {
       id: "pat-1",
       first_name: "Hugo",
       last_name: "Paz Olivares",
-      phone: "614 000 1111",
-      email: null,
-      birth_date: "1981-03-02",
-      allergies: "Penicilina",
-      medical_background: "Hipertension en tratamiento (losartan).",
-      family_background: "Padre con DM2."
+      phone: "614 000 1111" as string | null,
+      email: null as string | null,
+      birth_date: "1981-03-02" as string | null,
+      allergies: "Penicilina" as string | null,
+      medical_background: "Hipertension en tratamiento (losartan)." as string | null,
+      family_background: "Padre con DM2." as string | null
     }
   }
 };
 
 function mockDetail() {
   const e = mockState.encounter;
+  const appointment = mockState.appointments.find((item) => item.id === e.appointment_id) ?? null;
   return {
     encounter: {
       id: e.id,
+      appointment_id: e.appointment_id,
       status: e.status,
       opened_at: new Date().toISOString(),
       signed_at: e.signed_at,
       signed_hash: e.signed_hash
     },
     patient: e.patient,
-    appointment_reason: "Dolor en molar superior derecho",
-    appointment_start: mockState.appointments[0].scheduled_start,
-    precheckin: JSON.stringify({
-      motivo: "Dolor al masticar y sensibilidad al frio",
-      antecedentes: "Bruxismo nocturno",
-      sintomas: "Molestia 6/10, sin fiebre"
-    }),
+    appointment_reason: appointment?.reason ?? null,
+    appointment_start: appointment?.scheduled_start ?? null,
+    precheckin: appointment?.has_precheckin
+      ? JSON.stringify({
+          motivo: "Dolor al masticar y sensibilidad al frio",
+          antecedentes: "Bruxismo nocturno",
+          sintomas: "Molestia 6/10, sin fiebre"
+        })
+      : null,
     note: e.notes.length > 0 ? e.notes[e.notes.length - 1] : null,
     note_version_count: e.notes.length,
     prescription: e.prescription,
@@ -225,6 +230,19 @@ function mockDetail() {
       }
     ]
   };
+}
+
+function activateMockEncounter(appointmentId: string, patientId: string) {
+  const patient = mockState.patients.find((item) => item.id === patientId);
+  if (!patient) throw "paciente no encontrado";
+  mockState.encounter.id = `enc-${appointmentId}`;
+  mockState.encounter.appointment_id = appointmentId;
+  mockState.encounter.status = "OPEN";
+  mockState.encounter.signed_at = null;
+  mockState.encounter.signed_hash = null;
+  mockState.encounter.notes = [];
+  mockState.encounter.prescription = null;
+  mockState.encounter.patient = { ...patient };
 }
 
 interface MockVisit {
@@ -570,12 +588,42 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     case "open_encounter":
       return { id: e.id } as T;
     case "attend_appointment": {
-      if (args?.linkPatientId || args?.forceNew) {
+      const appointmentId = String(args?.appointmentId);
+      const appt = mockState.appointments.find((a) => a.id === appointmentId);
+      if (!appt) throw "cita no encontrada";
+      if (args?.linkPatientId) {
+        activateMockEncounter(appointmentId, String(args.linkPatientId));
         return { kind: "encounter", encounter_id: e.id } as T;
       }
-      const appt = mockState.appointments.find((a) => a.id === args?.appointmentId);
+      if (args?.forceNew) {
+        const created = {
+          id: `pat-${mockState.patients.length + 1}`,
+          ...splitNameMock(appt.patient_name),
+          phone: appt.patient_phone ?? null,
+          email: null as string | null,
+          birth_date: null as string | null,
+          allergies: null as string | null,
+          medical_background: null as string | null,
+          family_background: null as string | null
+        };
+        mockState.patients.push(created);
+        activateMockEncounter(appointmentId, created.id);
+        return { kind: "encounter", encounter_id: e.id } as T;
+      }
       const candidates = matchPatientsMock(appt?.patient_name, appt?.patient_phone);
       if (candidates.length === 0) {
+        const created = {
+          id: `pat-${mockState.patients.length + 1}`,
+          ...splitNameMock(appt.patient_name),
+          phone: appt.patient_phone ?? null,
+          email: null as string | null,
+          birth_date: null as string | null,
+          allergies: null as string | null,
+          medical_background: null as string | null,
+          family_background: null as string | null
+        };
+        mockState.patients.push(created);
+        activateMockEncounter(appointmentId, created.id);
         return { kind: "encounter", encounter_id: e.id } as T;
       }
       return {

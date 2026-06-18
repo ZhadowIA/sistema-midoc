@@ -781,10 +781,10 @@ textarea:disabled {
 
 /* ---------- Atencion ---------- */
 
-/* La pantalla de consulta es mas ancha: identidad del paciente fija arriba
-   y, debajo, navegacion lateral + el panel de la seccion activa. */
+/* La pantalla de consulta es mas ancha: agenda del dia, nota y contexto
+   permanente forman la Estacion Clinica. */
 .encounter-content {
-  width: min(1320px, calc(100% - 40px));
+  width: min(1540px, calc(100% - 40px));
 }
 
 .patient-banner {
@@ -804,9 +804,104 @@ textarea:disabled {
 
 .encounter-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: 220px minmax(0, 1fr) 300px;
   gap: 20px;
   align-items: start;
+}
+
+.encounter-agenda {
+  position: sticky;
+  top: 178px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  max-height: calc(100vh - 198px);
+  overflow-y: auto;
+  min-width: 0;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+
+.encounter-agenda-header {
+  display: grid;
+  gap: 2px;
+}
+
+.encounter-agenda-header > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.encounter-agenda-header > strong {
+  font-size: 0.9rem;
+  text-transform: capitalize;
+}
+
+.encounter-agenda-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.encounter-agenda-item {
+  appearance: none;
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  transition:
+    border-color var(--speed) var(--ease),
+    background var(--speed) var(--ease);
+}
+
+.encounter-agenda-item:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.encounter-agenda-item-current {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.encounter-agenda-item:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.encounter-agenda-time {
+  color: var(--primary);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.encounter-agenda-patient {
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.encounter-agenda-service,
+.encounter-agenda-status {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Panel de contexto permanente: alergias, preconsulta e historia a la vista
@@ -1094,9 +1189,9 @@ textarea:disabled {
 }
 
 @media (max-width: 1100px) {
-  /* No cabe la columna de contexto al lado: pasa a ancho completo bajo la nota. */
+  /* El contexto pasa debajo; agenda y nota conservan el flujo de estacion. */
   .encounter-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: 220px minmax(0, 1fr);
   }
 
   .encounter-context {
@@ -1107,6 +1202,19 @@ textarea:disabled {
 }
 
 @media (max-width: 900px) {
+  .encounter-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .encounter-agenda {
+    position: static;
+    max-height: none;
+  }
+
+  .encounter-agenda-list {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
   .dental-inline-grid,
   .plan-grid,
   .dental-summary-grid {
