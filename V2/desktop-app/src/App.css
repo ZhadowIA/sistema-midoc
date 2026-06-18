@@ -804,7 +804,7 @@ textarea:disabled {
 
 .encounter-layout {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 20px;
   align-items: start;
 }
@@ -845,6 +845,7 @@ textarea:disabled {
   font-size: 0.92rem;
 }
 
+/* Nav vertical lateral (usada por el Expediente). */
 .encounter-nav {
   position: sticky;
   top: 178px;
@@ -876,6 +877,43 @@ textarea:disabled {
 .nav-item-active {
   color: var(--primary);
   background: var(--primary-soft);
+}
+
+/* Conmutador de modo: control segmentado horizontal arriba de la nota,
+   re-presenta las antiguas secciones laterales (Estación Clínica, Paso 4). */
+.encounter-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+
+.mode-item {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 550;
+  font-size: 0.92rem;
+  padding: 7px 14px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--speed) var(--ease),
+    color var(--speed) var(--ease);
+}
+
+.mode-item:hover {
+  color: var(--ink);
+}
+
+.mode-item-active {
+  color: var(--ink);
+  background: var(--bg);
 }
 
 .encounter-main {
@@ -1056,9 +1094,9 @@ textarea:disabled {
 }
 
 @media (max-width: 1100px) {
-  /* No cabe la tercera columna: el contexto pasa a ancho completo bajo la nota. */
+  /* No cabe la columna de contexto al lado: pasa a ancho completo bajo la nota. */
   .encounter-layout {
-    grid-template-columns: 232px minmax(0, 1fr);
+    grid-template-columns: 1fr;
   }
 
   .encounter-context {
@@ -1117,16 +1155,9 @@ textarea:disabled {
     grid-template-columns: 1fr;
   }
 
-  .encounter-nav {
-    position: static;
-    grid-auto-flow: column;
-    grid-auto-columns: max-content;
+  .encounter-modes {
+    flex-wrap: nowrap;
     overflow-x: auto;
-    padding-bottom: 4px;
-  }
-
-  .nav-item {
-    white-space: nowrap;
   }
 }
 

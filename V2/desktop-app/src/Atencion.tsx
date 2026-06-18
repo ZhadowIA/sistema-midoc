@@ -27,6 +27,11 @@ import {
 import { MedicationSafety } from "./MedicationSafety";
 import { call } from "./ipc";
 import { allergyText, buildContextHistory, isFirstVisit } from "./encounterContext";
+import {
+  buildEncounterModes,
+  resolveActiveSection,
+  type EncounterSectionId as SectionId
+} from "./encounterModes";
 import { buildBackgroundReview } from "./precheckinBackground";
 import {
   flattenMedicalHistoryDisplayRows,
@@ -205,15 +210,6 @@ const dateTimeFormatter = new Intl.DateTimeFormat("es-MX", {
   dateStyle: "medium",
   timeStyle: "short"
 });
-
-type SectionId =
-  | "preconsulta"
-  | "historial"
-  | "antecedentes"
-  | "ia"
-  | "nota"
-  | "modulo"
-  | "receta";
 
 function formatRecordingDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
@@ -449,20 +445,14 @@ export function Atencion({
   }));
   const segmentLabels = new Map(activeTemplate.segments.map((segment) => [segment.id, segment.label]));
 
-  const navItems: Array<{ id: SectionId; label: string }> = [];
-  if (detail.precheckin) navItems.push({ id: "preconsulta", label: "Preconsulta" });
-  if (detail.history.length > 0) navItems.push({ id: "historial", label: "Historial" });
-  navItems.push({ id: "antecedentes", label: "Antecedentes" });
-  if (!signed) navItems.push({ id: "ia", label: "Asistencia de IA" });
-  navItems.push({ id: "nota", label: "Nota clinica (SOAP)" });
-  navItems.push({ id: "modulo", label: moduleLabel });
-  navItems.push({ id: "receta", label: "Receta" });
+  const navItems = buildEncounterModes({
+    hasPrecheckin: Boolean(detail.precheckin),
+    hasHistory: detail.history.length > 0,
+    signed,
+    moduleLabel
+  });
 
-  // Si la seccion activa ya no existe (p. ej. la consulta se firmo y la IA
-  // desaparecio), recae en la nota, que siempre esta presente.
-  const resolvedSection: SectionId = navItems.some((item) => item.id === activeSection)
-    ? activeSection
-    : "nota";
+  const resolvedSection = resolveActiveSection(navItems, activeSection);
 
   async function run(label: string, action: () => Promise<unknown>) {
     setBusy(true);
@@ -1017,21 +1007,21 @@ export function Atencion({
         </section>
 
         <div className="encounter-layout">
-          <nav className="encounter-nav" aria-label="Secciones de la consulta">
-            {navItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={resolvedSection === item.id ? "nav-item nav-item-active" : "nav-item"}
-                aria-current={resolvedSection === item.id ? "page" : undefined}
-                onClick={() => setActiveSection(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </nav>
-
           <div className="encounter-main">
+            <nav className="encounter-modes" aria-label="Secciones de la consulta">
+              {navItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={resolvedSection === item.id ? "mode-item mode-item-active" : "mode-item"}
+                  aria-current={resolvedSection === item.id ? "page" : undefined}
+                  onClick={() => setActiveSection(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+
             {message && (
               <p className="form-success" role="status">
                 {message}
