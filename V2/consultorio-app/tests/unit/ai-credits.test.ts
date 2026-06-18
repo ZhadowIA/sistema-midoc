@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   calculateAiCreditBalance,
   getAiCreditCost,
+  getTranscriptionCreditCost,
   readAiCreditAllowance,
   utcMonthWindow
 } from "../../src/services/ai/ai-credits";
@@ -15,6 +16,33 @@ describe("AI credits", () => {
     expect(getAiCreditCost("LONGITUDINAL_SUMMARY")).toBe(2);
     expect(getAiCreditCost("CLINICAL_GAP")).toBe(2);
     expect(getAiCreditCost("CONSULTATION_STRUCTURING")).toBe(1);
+  });
+
+  it("does not charge credits for Whisper running on the doctor's computer", () => {
+    expect(
+      getAiCreditCost("TRANSCRIPTION", { providerName: "whisper-local-medium" })
+    ).toBe(0);
+  });
+
+  it("charges standard cloud transcription by each started 15-minute block", () => {
+    expect(getTranscriptionCreditCost({ mode: "standard", durationSeconds: 1 })).toBe(1);
+    expect(getTranscriptionCreditCost({ mode: "standard", durationSeconds: 900 })).toBe(1);
+    expect(getTranscriptionCreditCost({ mode: "standard", durationSeconds: 901 })).toBe(2);
+  });
+
+  it("charges diarized cloud transcription by each started 10-minute block", () => {
+    expect(getTranscriptionCreditCost({ mode: "diarized", durationSeconds: 1 })).toBe(1);
+    expect(getTranscriptionCreditCost({ mode: "diarized", durationSeconds: 600 })).toBe(1);
+    expect(getTranscriptionCreditCost({ mode: "diarized", durationSeconds: 601 })).toBe(2);
+  });
+
+  it("rejects invalid cloud transcription durations", () => {
+    expect(() =>
+      getTranscriptionCreditCost({ mode: "standard", durationSeconds: 0 })
+    ).toThrow("Invalid transcription duration");
+    expect(() =>
+      getTranscriptionCreditCost({ mode: "diarized", durationSeconds: Number.NaN })
+    ).toThrow("Invalid transcription duration");
   });
 
   it("reads a monthly allowance only when the AI capability is enabled", () => {

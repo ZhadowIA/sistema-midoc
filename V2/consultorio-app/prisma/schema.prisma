@@ -1124,6 +1124,9 @@ model AiUsageLog {
   promptVersion      String?
   modelVersion       String?
   creditCost         Int           @default(0)
+  // OPERATIVO: duracion validada por MiDoc y modalidad comercial. Nunca audio/texto.
+  durationSeconds    Int?
+  transcriptionMode String?
   estimatedCostCents Int?
   latencyMs          Int?
   reviewedAt         DateTime?

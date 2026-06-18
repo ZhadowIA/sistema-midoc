@@ -42,7 +42,35 @@ export interface AiCreditSummary extends AiCreditBalance {
   aiEnabled: boolean;
 }
 
-export function getAiCreditCost(usageType: string | AiUsageType): number {
+export type TranscriptionMode = "standard" | "diarized";
+
+export interface AiCreditContext {
+  providerName?: string;
+}
+
+export function getTranscriptionCreditCost(input: {
+  mode: TranscriptionMode;
+  durationSeconds: number;
+}): number {
+  if (!Number.isFinite(input.durationSeconds) || input.durationSeconds <= 0) {
+    throw new Error("Invalid transcription duration");
+  }
+
+  const blockSeconds = input.mode === "diarized" ? 600 : 900;
+  return Math.max(1, Math.ceil(input.durationSeconds / blockSeconds));
+}
+
+export function getAiCreditCost(
+  usageType: string | AiUsageType,
+  context: AiCreditContext = {}
+): number {
+  if (
+    usageType === "TRANSCRIPTION" &&
+    context.providerName?.toLowerCase().startsWith("whisper-local")
+  ) {
+    return 0;
+  }
+
   return AI_CREDIT_COSTS[usageType] ?? AI_CREDIT_COSTS.OTHER;
 }
 
