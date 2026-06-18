@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   ClinicalProfile,
+  ConsentType,
   NotificationKind,
   NotificationStatus,
   PatientStatus,
   PrismaClient
 } from "@prisma/client";
+
+import { approveDoctorAccountForTesting } from "../helpers/doctor-accounts";
 
 import { createDoctorAccount, requestPasswordReset } from "../../src/services/auth/auth-service";
 import {
@@ -21,6 +24,7 @@ import {
   updateDoctorProfile
 } from "../../src/services/doctor/doctor-profile-service";
 import { createUploadLink } from "../../src/services/documents/document-service";
+import { env } from "../../src/lib/env";
 import {
   processNotificationQueue,
   resolveShortLink
@@ -41,8 +45,8 @@ function nextWeekdayDate(targetDay: number) {
   const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   let diff = (targetDay - date.getUTCDay() + 7) % 7;
 
-  if (diff === 0) {
-    diff = 7;
+  if (diff < 2) {
+    diff += 7;
   }
 
   date.setUTCDate(date.getUTCDate() + diff);
@@ -98,10 +102,13 @@ describe("notification flow (paso 7)", () => {
         lastName: "Nuñez",
         phone: "6140005000",
         professionalName: "Dra. Luisa Nuñez",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -206,6 +213,7 @@ describe("notification flow (paso 7)", () => {
         lastName: "Mena",
         phone: "6140005001",
         professionalName: "Dra. Dalia Mena",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -242,6 +250,309 @@ describe("notification flow (paso 7)", () => {
     }
   });
 
+  it("queues phone notifications as WhatsApp when the phone channel is configured for WhatsApp", async () => {
+    const email = uniqueEmail("doctor-upload-whatsapp");
+    const originalPhoneNotificationChannel = env.PHONE_NOTIFICATION_CHANNEL;
+
+    try {
+      env.PHONE_NOTIFICATION_CHANNEL = "WHATSAPP";
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Rosa",
+        lastName: "Luna",
+        phone: "6140005002",
+        professionalName: "Dra. Rosa Luna",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      const patient = await prisma.patient.create({
+        data: {
+          ownerDoctorId: account.user.id,
+          firstName: "Elena",
+          lastName: "Paz",
+          phone: "+526140008888",
+          email: uniqueEmail("patient-whatsapp-upload"),
+          preferredPhoneChannel: "WHATSAPP",
+          status: PatientStatus.ACTIVE
+        }
+      });
+      await prisma.consent.create({
+        data: {
+          patientId: patient.id,
+          doctorId: account.user.id,
+          type: ConsentType.WHATSAPP_NOTIFICATIONS,
+          version: "2026-05",
+          granted: true,
+          evidence: { source: "vitest" }
+        }
+      });
+
+      await createUploadLink(account.user.id, { patientId: patient.id, maxUploads: 2 });
+
+      const phoneNotification = await prisma.notification.findFirstOrThrow({
+        where: {
+          doctorId: account.user.id,
+          patientId: patient.id,
+          kind: NotificationKind.DOCUMENT_UPLOAD,
+          destination: patient.phone ?? undefined
+        }
+      });
+
+      expect(phoneNotification.channel).toBe("WHATSAPP");
+      expect(phoneNotification.shortLinkId).toBeTruthy();
+      expect(phoneNotification.body).toContain("/s/");
+    } finally {
+      env.PHONE_NOTIFICATION_CHANNEL = originalPhoneNotificationChannel;
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("records patient messaging consent and honors WhatsApp as the preferred phone channel", async () => {
+    const email = uniqueEmail("doctor-booking-whatsapp-consent");
+    const slug = uniqueSlug("dra-whatsapp-consent");
+    const patientEmail = uniqueEmail("patient-whatsapp-consent");
+    const slotDate = nextWeekdayDate(2);
+    const dateFrom = slotDate.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Laura",
+        lastName: "Mora",
+        phone: "6140005003",
+        professionalName: "Dra. Laura Mora",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        professionalName: "Dra. Laura Mora",
+        specialty: ClinicalProfile.GENERAL_MEDICINE,
+        isPublic: true
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta general",
+        priceCents: 90000,
+        durationMinutes: 30
+      });
+
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: slotDate.getUTCDay(),
+        startTime: "09:00",
+        endTime: "11:00",
+        slotInterval: 30
+      });
+
+      const availability = await listPublicAvailability({ slug, serviceId: service.id, dateFrom, days: 1 });
+      const hold = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: availability.slots[0]!.slotStart
+      });
+
+      const booking = await bookPublicAppointment({
+        holdToken: hold.token,
+        patient: {
+          firstName: "Claudia",
+          lastName: "Rivas",
+          phone: "+526141234567",
+          email: patientEmail
+        },
+        legal: {
+          acceptedTerms: true,
+          acceptedPrivacy: true,
+          ipAddress: "127.0.0.1",
+          userAgent: "vitest",
+          notificationConsent: {
+            sms: true,
+            whatsapp: true,
+            preferredPhoneChannel: "WHATSAPP"
+          }
+        }
+      });
+
+      const patient = await prisma.patient.findUniqueOrThrow({ where: { id: booking.patient.id } });
+      expect(patient.preferredPhoneChannel).toBe("WHATSAPP");
+
+      const consents = await prisma.consent.findMany({
+        where: { patientId: booking.patient.id },
+        orderBy: { type: "asc" }
+      });
+      expect(consents.map((consent) => ({ type: consent.type, granted: consent.granted }))).toEqual([
+        { type: "SMS_NOTIFICATIONS", granted: true },
+        { type: "WHATSAPP_NOTIFICATIONS", granted: true }
+      ]);
+      expect(consents.every((consent) => consent.doctorId === account.user.id)).toBe(true);
+      expect(consents.every((consent) => consent.version === "2026-05")).toBe(true);
+
+      const phoneConfirmation = await prisma.notification.findFirstOrThrow({
+        where: {
+          appointmentId: booking.appointment.id,
+          kind: NotificationKind.APPOINTMENT_CONFIRMATION,
+          destination: "+526141234567"
+        }
+      });
+      expect(phoneConfirmation.channel).toBe("WHATSAPP");
+      expect(phoneConfirmation.shortLinkId).toBeTruthy();
+      expect(phoneConfirmation.body).toContain("/s/");
+
+      const smsNotification = await prisma.notification.findFirst({
+        where: { appointmentId: booking.appointment.id, channel: "SMS" }
+      });
+      expect(smsNotification).toBeNull();
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("does not use WhatsApp from global phone-channel config without patient WhatsApp consent", async () => {
+    const email = uniqueEmail("doctor-upload-no-whatsapp-consent");
+    const originalPhoneNotificationChannel = env.PHONE_NOTIFICATION_CHANNEL;
+
+    try {
+      env.PHONE_NOTIFICATION_CHANNEL = "WHATSAPP";
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Lina",
+        lastName: "Soto",
+        phone: "6140005004",
+        professionalName: "Dra. Lina Soto",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      const patient = await prisma.patient.create({
+        data: {
+          ownerDoctorId: account.user.id,
+          firstName: "Pablo",
+          lastName: "Cano",
+          phone: "+526140008888",
+          email: uniqueEmail("patient-no-whatsapp-consent"),
+          status: PatientStatus.ACTIVE
+        }
+      });
+
+      await createUploadLink(account.user.id, { patientId: patient.id, maxUploads: 2 });
+
+      const phoneNotification = await prisma.notification.findFirstOrThrow({
+        where: {
+          doctorId: account.user.id,
+          patientId: patient.id,
+          kind: NotificationKind.DOCUMENT_UPLOAD,
+          destination: patient.phone ?? undefined
+        }
+      });
+
+      expect(phoneNotification.channel).toBe("SMS");
+    } finally {
+      env.PHONE_NOTIFICATION_CHANNEL = originalPhoneNotificationChannel;
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("does not queue phone notifications when the patient declines phone reminders", async () => {
+    const email = uniqueEmail("doctor-phone-opt-out");
+    const slug = uniqueSlug("dra-phone-opt-out");
+    const patientEmail = uniqueEmail("patient-phone-opt-out");
+    const slotDate = nextWeekdayDate(2);
+    const dateFrom = slotDate.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Miriam",
+        lastName: "Vidal",
+        phone: "6140005005",
+        professionalName: "Dra. Miriam Vidal",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        professionalName: "Dra. Miriam Vidal",
+        specialty: ClinicalProfile.GENERAL_MEDICINE,
+        isPublic: true
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta general",
+        priceCents: 90000,
+        durationMinutes: 30
+      });
+
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: slotDate.getUTCDay(),
+        startTime: "09:00",
+        endTime: "11:00",
+        slotInterval: 30
+      });
+
+      const availability = await listPublicAvailability({ slug, serviceId: service.id, dateFrom, days: 1 });
+      const hold = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: availability.slots[0]!.slotStart
+      });
+
+      const booking = await bookPublicAppointment({
+        holdToken: hold.token,
+        patient: {
+          firstName: "Daniela",
+          lastName: "Nava",
+          phone: "+526141234567",
+          email: patientEmail
+        },
+        legal: {
+          acceptedTerms: true,
+          acceptedPrivacy: true,
+          notificationConsent: {
+            sms: false,
+            whatsapp: false
+          }
+        }
+      });
+
+      const phoneNotification = await prisma.notification.findFirst({
+        where: {
+          appointmentId: booking.appointment.id,
+          destination: "+526141234567"
+        }
+      });
+      const emailConfirmation = await prisma.notification.findFirst({
+        where: {
+          appointmentId: booking.appointment.id,
+          channel: "EMAIL",
+          kind: NotificationKind.APPOINTMENT_CONFIRMATION
+        }
+      });
+
+      expect(phoneNotification).toBeNull();
+      expect(emailConfirmation).not.toBeNull();
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
   it("processes the queue, retries transient failures, and expires single-use short links", async () => {
     const email = uniqueEmail("doctor-processing");
 
@@ -252,6 +563,7 @@ describe("notification flow (paso 7)", () => {
         firstName: "Nadia",
         lastName: "Rico",
         professionalName: "Dra. Nadia Rico",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -329,6 +641,221 @@ describe("notification flow (paso 7)", () => {
         status: 410
       });
     } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("delivers pending SMS through Twilio when the SMS provider is enabled", async () => {
+    const email = uniqueEmail("doctor-twilio");
+    const originalSmsProvider = env.SMS_PROVIDER;
+    const originalSmsBaseUrl = env.SMS_BASE_URL;
+    const originalTwilioAccountSid = env.TWILIO_ACCOUNT_SID;
+    const originalTwilioAuthToken = env.TWILIO_AUTH_TOKEN;
+    const originalTwilioMessagingServiceSid = env.TWILIO_MESSAGING_SERVICE_SID;
+    const originalTwilioFromPhoneNumber = env.TWILIO_FROM_PHONE_NUMBER;
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ sid: "SMintegration123", status: "queued" }), { status: 201 });
+    });
+    const originalFetch = globalThis.fetch;
+
+    try {
+      env.SMS_PROVIDER = "twilio";
+      env.SMS_BASE_URL = "https://api.twilio.com";
+      env.TWILIO_ACCOUNT_SID = "ACintegration";
+      env.TWILIO_AUTH_TOKEN = "integration-token";
+      env.TWILIO_MESSAGING_SERVICE_SID = "MGintegration";
+      env.TWILIO_FROM_PHONE_NUMBER = undefined;
+      globalThis.fetch = fetchMock as typeof fetch;
+
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Teresa",
+        lastName: "Vega",
+        professionalName: "Dra. Teresa Vega",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await prisma.notification.create({
+        data: {
+          doctorId: account.user.id,
+          channel: "SMS",
+          kind: NotificationKind.APPOINTMENT_REMINDER,
+          destination: "+526141234567",
+          body: "Recordatorio: tienes una cita. Ver detalles: https://midoc.example/s/abc",
+          status: NotificationStatus.PENDING
+        }
+      });
+
+      const stats = await processNotificationQueue({ doctorId: account.user.id });
+      const delivered = await prisma.notification.findFirstOrThrow({
+        where: { doctorId: account.user.id, channel: "SMS" }
+      });
+
+      expect(stats.sent).toBe(1);
+      expect(delivered.status).toBe(NotificationStatus.SENT);
+      expect(delivered.provider).toBe("TWILIO");
+      expect(delivered.providerMessageId).toBe("SMintegration123");
+      expect(fetchMock).toHaveBeenCalledOnce();
+    } finally {
+      env.SMS_PROVIDER = originalSmsProvider;
+      env.SMS_BASE_URL = originalSmsBaseUrl;
+      env.TWILIO_ACCOUNT_SID = originalTwilioAccountSid;
+      env.TWILIO_AUTH_TOKEN = originalTwilioAuthToken;
+      env.TWILIO_MESSAGING_SERVICE_SID = originalTwilioMessagingServiceSid;
+      env.TWILIO_FROM_PHONE_NUMBER = originalTwilioFromPhoneNumber;
+      globalThis.fetch = originalFetch;
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("delivers pending email through Resend when the email provider is enabled", async () => {
+    const email = uniqueEmail("doctor-resend");
+    const originalEmailProvider = env.EMAIL_PROVIDER;
+    const originalEmailBaseUrl = env.EMAIL_BASE_URL;
+    const originalEmailApiKey = env.EMAIL_API_KEY;
+    const originalEmailFrom = env.EMAIL_FROM;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return new Response(JSON.stringify({ id: "email_integration_123" }), { status: 200 });
+    });
+    const originalFetch = globalThis.fetch;
+
+    try {
+      env.EMAIL_PROVIDER = "resend";
+      env.EMAIL_BASE_URL = "https://api.resend.com";
+      env.EMAIL_API_KEY = "re_integration";
+      env.EMAIL_FROM = "MiDoc <notificaciones@midoc.test>";
+      globalThis.fetch = fetchMock as typeof fetch;
+
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Renata",
+        lastName: "Diaz",
+        professionalName: "Dra. Renata Diaz",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await prisma.notification.create({
+        data: {
+          doctorId: account.user.id,
+          channel: "EMAIL",
+          kind: NotificationKind.PASSWORD_RESET,
+          destination: "paciente@example.com",
+          subject: "Codigo para recuperar tu cuenta MiDoc",
+          body: "Tu codigo MiDoc para restablecer la contrasena es: 123456",
+          status: NotificationStatus.PENDING
+        }
+      });
+
+      const stats = await processNotificationQueue({ doctorId: account.user.id });
+      const delivered = await prisma.notification.findFirstOrThrow({
+        where: { doctorId: account.user.id, channel: "EMAIL" }
+      });
+
+      expect(stats.sent).toBe(1);
+      expect(delivered.status).toBe(NotificationStatus.SENT);
+      expect(delivered.provider).toBe("RESEND");
+      expect(delivered.providerMessageId).toBe("email_integration_123");
+
+      const [, init] = fetchMock.mock.calls[0]!;
+      if (!init) {
+        throw new Error("Expected Resend fetch options.");
+      }
+      const payload = JSON.parse(init.body as string) as Record<string, unknown>;
+      expect(payload.to).toEqual(["paciente@example.com"]);
+      expect(payload.text).toContain("123456");
+    } finally {
+      env.EMAIL_PROVIDER = originalEmailProvider;
+      env.EMAIL_BASE_URL = originalEmailBaseUrl;
+      env.EMAIL_API_KEY = originalEmailApiKey;
+      env.EMAIL_FROM = originalEmailFrom;
+      globalThis.fetch = originalFetch;
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("delivers pending WhatsApp messages through Twilio official WhatsApp when enabled", async () => {
+    const email = uniqueEmail("doctor-whatsapp");
+    const originalWhatsAppProvider = env.WHATSAPP_PROVIDER;
+    const originalSmsBaseUrl = env.SMS_BASE_URL;
+    const originalTwilioAccountSid = env.TWILIO_ACCOUNT_SID;
+    const originalTwilioAuthToken = env.TWILIO_AUTH_TOKEN;
+    const originalTwilioWhatsAppMessagingServiceSid = env.TWILIO_WHATSAPP_MESSAGING_SERVICE_SID;
+    const originalTwilioWhatsAppFromPhoneNumber = env.TWILIO_WHATSAPP_FROM_PHONE_NUMBER;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return new Response(JSON.stringify({ sid: "SMwhatsappIntegration123", status: "queued" }), { status: 201 });
+    });
+    const originalFetch = globalThis.fetch;
+
+    try {
+      env.WHATSAPP_PROVIDER = "twilio";
+      env.SMS_BASE_URL = "https://api.twilio.com";
+      env.TWILIO_ACCOUNT_SID = "ACintegration";
+      env.TWILIO_AUTH_TOKEN = "integration-token";
+      env.TWILIO_WHATSAPP_MESSAGING_SERVICE_SID = undefined;
+      env.TWILIO_WHATSAPP_FROM_PHONE_NUMBER = "+14155238886";
+      globalThis.fetch = fetchMock as typeof fetch;
+
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Irene",
+        lastName: "Salas",
+        professionalName: "Dra. Irene Salas",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await prisma.notification.create({
+        data: {
+          doctorId: account.user.id,
+          channel: "WHATSAPP",
+          kind: NotificationKind.APPOINTMENT_REMINDER,
+          destination: "+526141234567",
+          body: "Recordatorio: tienes una cita. Ver detalles: https://midoc.example/s/abc",
+          status: NotificationStatus.PENDING,
+          metadata: { consent: "patient-whatsapp-reminders" }
+        }
+      });
+
+      const stats = await processNotificationQueue({ doctorId: account.user.id });
+      const delivered = await prisma.notification.findFirstOrThrow({
+        where: { doctorId: account.user.id, channel: "WHATSAPP" }
+      });
+
+      expect(stats.sent).toBe(1);
+      expect(delivered.status).toBe(NotificationStatus.SENT);
+      expect(delivered.provider).toBe("TWILIO_WHATSAPP");
+      expect(delivered.providerMessageId).toBe("SMwhatsappIntegration123");
+
+      const [, init] = fetchMock.mock.calls[0]!;
+      if (!init) {
+        throw new Error("Expected Twilio fetch options.");
+      }
+      const params = new URLSearchParams(init.body as string);
+      expect(params.get("To")).toBe("whatsapp:+526141234567");
+      expect(params.get("From")).toBe("whatsapp:+14155238886");
+    } finally {
+      env.WHATSAPP_PROVIDER = originalWhatsAppProvider;
+      env.SMS_BASE_URL = originalSmsBaseUrl;
+      env.TWILIO_ACCOUNT_SID = originalTwilioAccountSid;
+      env.TWILIO_AUTH_TOKEN = originalTwilioAuthToken;
+      env.TWILIO_WHATSAPP_MESSAGING_SERVICE_SID = originalTwilioWhatsAppMessagingServiceSid;
+      env.TWILIO_WHATSAPP_FROM_PHONE_NUMBER = originalTwilioWhatsAppFromPhoneNumber;
+      globalThis.fetch = originalFetch;
       await cleanupUserByEmail(email);
     }
   });
