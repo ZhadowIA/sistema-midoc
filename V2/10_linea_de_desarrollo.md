@@ -879,7 +879,7 @@ Entregado (extension historia clinica + separacion de preconsulta, 2026-06-18):
 - **Contrato y vistas (r12-r13).** Contrato `medical-history.ts` reescrito (fuente de verdad) con tipos de campo (texto/numero/fecha/seleccion/si-no), sub-bloques, revelados condicionales (`showWhen`), heredo-familiares por padecimiento (parientes + tipo) y el interrogatorio por aparatos y sistemas como seccion de audiencia "doctor" (omitida en el formulario del paciente). Espejo en el formateo y la extraccion del desktop; formulario publico reescrito sobre el contrato.
 - **Residencia.** Todo el cuestionario es CLINICO transitorio: viaja sellado E2E, vive en la base cifrada local y se purga del buzon tras el ACK. La nube nunca lo ve.
 
-Verificacion (extension): Rust `cargo test` 148 en verde (+1: coexistencia de ambos sobres) y `cargo clippy` sin warnings nuevos; desktop `tsc` + `vite build` ok y pruebas de formato/extraccion reescritas; portal `eslint`/`vitest` (124 + 6 nuevas del contrato) y `next build` ok. Falta verificacion en navegador del formulario con datos de cita sembrados.
+Verificacion (extension): Rust `cargo test` 148 en verde (+1: coexistencia de ambos sobres) y `cargo clippy` sin warnings nuevos; desktop `tsc` + `vite build` ok y pruebas de formato/extraccion reescritas; portal `eslint`/`vitest` (124 + 6 nuevas del contrato) y `next build` ok. Verificacion en navegador del formulario (ruta de prueba temporal, ya eliminada): renderiza sin errores de consola; el interrogatorio por aparatos y sistemas (audiencia medico) no aparece; gineco solo con sexo F; los revelados condicionales (`showWhen`) y el widget heredo-familiar por padecimiento (parientes + tipo de cancer) funcionan.
 
 Entregado (rebanada 1 — perfil publico: foto y ubicacion, 2026-06-15):
 
