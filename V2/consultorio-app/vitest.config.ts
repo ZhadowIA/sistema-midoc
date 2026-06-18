@@ -5,6 +5,11 @@ import { configDefaults, defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     setupFiles: ["./tests/setup-env.ts"],
-    exclude: [...configDefaults.exclude, "tests/e2e/**"]
+    exclude: [...configDefaults.exclude, "tests/e2e/**"],
+    // The integration suite shares one PostgreSQL database and exercises global
+    // maintenance operations (e.g. runPilotCleanup, lazy hold expiry). Running
+    // files in parallel races on that shared state, so they must see one flow at
+    // a time — same rationale as the E2E config.
+    fileParallelism: false
   }
 });
