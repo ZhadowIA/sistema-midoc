@@ -9,6 +9,7 @@ import { Arco } from "./Arco";
 import { Directorio } from "./Directorio";
 import { Expediente } from "./Expediente";
 import { WeekAgenda } from "./WeekAgenda";
+import type { EncounterAgendaAppointment } from "./encounterAgenda";
 import {
   PatientResolution,
   type PatientMatch,
@@ -42,17 +43,7 @@ interface SyncStatus {
   work_end_minutes: number | null;
 }
 
-interface AppointmentRow {
-  id: string;
-  status: string;
-  scheduled_start: string;
-  scheduled_end: string;
-  service_name: string | null;
-  reason: string | null;
-  patient_name: string;
-  patient_phone: string | null;
-  has_precheckin: boolean;
-}
+type AppointmentRow = EncounterAgendaAppointment;
 
 // Desenlace de "Atender" desde la agenda: o se identifico el expediente del
 // paciente (se abre), o hay candidatos a duplicado que el medico debe revisar.
@@ -380,6 +371,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [activePatient, setActivePatient] = useState<string | null>(null);
   const [resolution, setResolution] = useState<{
     appointmentId: string;
+    intent: "record" | "encounter";
     patient: ResolutionPatient;
     candidates: PatientMatch[];
   } | null>(null);
@@ -510,10 +502,12 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       });
       if (outcome.kind === "patient") {
         setResolution(null);
+        setActiveEncounter(null);
         setActivePatient(outcome.patient_id);
       } else {
         setResolution({
           appointmentId,
+          intent: "record",
           patient: outcome.appointment_patient,
           candidates: outcome.candidates
         });
@@ -539,10 +533,12 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       });
       if (outcome.kind === "encounter") {
         setResolution(null);
+        setActivePatient(null);
         setActiveEncounter(outcome.encounter_id);
       } else {
         setResolution({
           appointmentId,
+          intent: "encounter",
           patient: outcome.appointment_patient,
           candidates: outcome.candidates
         });
@@ -554,16 +550,61 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     }
   }
 
+  const resolutionDialog = resolution ? (
+    <div className="modal-backdrop">
+      <div
+        className="modal-shell"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="patient-resolution-title"
+      >
+        <PatientResolution
+          patient={resolution.patient}
+          candidates={resolution.candidates}
+          busy={busy}
+          onOpenRecord={(patientId) =>
+            void openPatientFromAppointment(resolution.appointmentId, {
+              linkPatientId: patientId
+            })
+          }
+          onStartConsultation={(patientId) =>
+            void startConsultationFromAppointment(resolution.appointmentId, {
+              linkPatientId: patientId
+            })
+          }
+          onCreateNew={() =>
+            resolution.intent === "encounter"
+              ? void startConsultationFromAppointment(resolution.appointmentId, {
+                  forceNew: true
+                })
+              : void openPatientFromAppointment(resolution.appointmentId, { forceNew: true })
+          }
+          onClose={() => setResolution(null)}
+          closeLabel={activeEncounter ? "Seguir en la consulta actual" : undefined}
+        />
+      </div>
+    </div>
+  ) : null;
+
   if (activeEncounter) {
     return (
-      <Atencion
-        encounterId={activeEncounter}
-        clinicalProfile={clinicalProfile}
-        onBack={() => {
-          setActiveEncounter(null);
-          void refresh();
-        }}
-      />
+      <>
+        <Atencion
+          key={activeEncounter}
+          encounterId={activeEncounter}
+          clinicalProfile={clinicalProfile}
+          appointments={appointments}
+          appointmentSelectionBusy={busy}
+          onBack={() => {
+            setActiveEncounter(null);
+            void refresh();
+          }}
+          onSelectAppointment={(appointmentId) =>
+            void startConsultationFromAppointment(appointmentId)
+          }
+        />
+        {resolutionDialog}
+      </>
     );
   }
 
@@ -719,36 +760,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
         </p>
       </div>
 
-      {resolution ? (
-        <div className="modal-backdrop">
-          <div
-            className="modal-shell"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="patient-resolution-title"
-          >
-            <PatientResolution
-              patient={resolution.patient}
-              candidates={resolution.candidates}
-              busy={busy}
-              onOpenRecord={(patientId) =>
-                void openPatientFromAppointment(resolution.appointmentId, {
-                  linkPatientId: patientId
-                })
-              }
-              onStartConsultation={(patientId) =>
-                void startConsultationFromAppointment(resolution.appointmentId, {
-                  linkPatientId: patientId
-                })
-              }
-              onCreateNew={() =>
-                void openPatientFromAppointment(resolution.appointmentId, { forceNew: true })
-              }
-              onClose={() => setResolution(null)}
-            />
-          </div>
-        </div>
-      ) : null}
+      {resolutionDialog}
     </>
   );
 }
