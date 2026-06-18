@@ -6,17 +6,13 @@ import {
 
 const medicalHistory = JSON.stringify({
   allergies: "Penicilina",
-  currentMedications: "Losartan 50 mg",
   familyHistory: {
-    diabetes: "Padre con DM2"
-  },
-  nonPathological: {
-    actividadFisica: "Gimnasio y Volleyball",
-    alimentacion: "Regular"
+    diabetes: { relatives: ["padre"] }
   },
   pathological: {
-    enfCronicas: "Hipertension arterial",
-    cirugias: "Apendicectomia"
+    cirugia: "no",
+    diabetico: "si",
+    diabeticoDesde: "2018"
   }
 });
 
@@ -25,16 +21,25 @@ assert.deepEqual(
   {
     allergies: "Penicilina",
     medical_background:
-      "Enfermedades cronicas: Hipertension arterial\nCirugias: Apendicectomia",
-    family_background: "Diabetes: Padre con DM2"
+      "Intervenido quirurgicamente: No\nEs diabetico: Si\nDesde cuando: 2018",
+    family_background: "Diabetes: Padre"
   },
-  "extrae solo los campos equivalentes a los antecedentes editables"
+  "extrae alergias, patologicos y heredo-familiares en texto legible"
+);
+
+// La preconsulta IA (conversation) no es historia clinica: no se extrae.
+assert.equal(
+  extractPrecheckinBackground(
+    JSON.stringify({ motivo: "tos", conversation: [{ question: "q", answer: "a" }] })
+  ),
+  null,
+  "el resultado de la preconsulta IA no alimenta los antecedentes"
 );
 
 const review = buildBackgroundReview(
   {
     allergies: "Sin alergias conocidas",
-    medical_background: "Hipertension en tratamiento (losartan).",
+    medical_background: "Hipertension en tratamiento.",
     family_background: "Padre con DM2.",
     birth_date: ""
   },
@@ -43,20 +48,16 @@ const review = buildBackgroundReview(
 
 assert.equal(review?.hasDiscrepancies, true, "detecta discrepancias contra antecedentes previos");
 assert.equal(review?.incoming.allergies, "Penicilina");
-assert.equal(review?.fields.length, 3, "muestra ambos valores para alergias y antecedentes");
+assert.equal(review?.fields.length, 3, "muestra alergias, antecedentes y familiares");
 
 const emptyReview = buildBackgroundReview(
-  {
-    allergies: "",
-    medical_background: "",
-    family_background: "",
-    birth_date: ""
-  },
+  { allergies: "", medical_background: "", family_background: "", birth_date: "" },
   medicalHistory
 );
-
 assert.equal(
   emptyReview?.hasDiscrepancies,
   false,
   "si no habia antecedentes previos, ofrece importar sin marcar discrepancia"
 );
+
+console.log("precheckin-background.test.mjs OK");

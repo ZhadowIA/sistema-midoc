@@ -5,20 +5,24 @@ import {
 } from "../src/medicalHistoryFormat.ts";
 
 const raw = JSON.stringify({
-  sex: "M",
-  identification: {
-    gender: "Hombre",
-    maritalStatus: "Soltero",
-    occupation: "Estudiante",
-    bloodType: "O+"
+  sex: "F",
+  allergies: "Penicilina",
+  identification: { apellidoPaterno: "Perez", municipio: "Monterrey" },
+  emergencyContact: { nombre: "Ana", relacion: "madre" },
+  familyHistory: {
+    diabetes: { relatives: ["padre", "madre"] },
+    cancer: { relatives: ["abuelaPaterna"], type: "mama" }
   },
   nonPathological: {
-    actividadFisica: "Gimnasio y Volleyball",
-    alimentacion: "Regular",
-    sueno: "Entre 6 a 8 horas diarias"
+    leche: "7",
+    alcohol: "no",
+    tabaco: "si",
+    tabacoCigarrosDia: "5",
+    tenencia: "rentada"
   },
   pathological: {
-    enfCronicas: "Gastritis"
+    diabetico: "si",
+    diabeticoDesde: "2018"
   }
 });
 
@@ -27,32 +31,38 @@ assert.deepEqual(
   groups.map((group) => group.title),
   [
     "Datos generales",
-    "Identificacion",
+    "Ficha de identificacion",
+    "Contacto de emergencia",
+    "Antecedentes heredo-familiares",
     "Antecedentes personales no patologicos",
     "Antecedentes personales patologicos"
   ],
-  "muestra los mismos grupos del formulario del paciente"
+  "muestra los grupos con datos, en orden del contrato"
+);
+
+const familyGroup = groups.find((group) => group.key === "familyHistory");
+assert.deepEqual(
+  familyGroup.rows,
+  [
+    { label: "Diabetes", value: "Padre, Madre" },
+    { label: "Cancer", value: "Abuela paterna (mama)" }
+  ],
+  "heredo-familiares se muestra por padecimiento con sus parientes"
 );
 
 const rows = flattenMedicalHistoryDisplayRows(raw);
-assert.deepEqual(
-  rows.map(([label]) => label),
-  [
-    "Sexo biologico",
-    "Identificacion · Genero",
-    "Identificacion · Estado civil",
-    "Identificacion · Ocupacion",
-    "Identificacion · Grupo sanguineo",
-    "Antecedentes personales no patologicos · Actividad fisica",
-    "Antecedentes personales no patologicos · Alimentacion",
-    "Antecedentes personales no patologicos · Sueno",
-    "Antecedentes personales patologicos · Enfermedades cronicas"
-  ],
-  "no muestra claves tecnicas en ingles"
-);
+const byLabel = new Map(rows);
+assert.equal(byLabel.get("Contacto de emergencia · Relacion con el contacto"), "Madre", "select muestra la etiqueta, no el value");
+assert.equal(byLabel.get("Antecedentes personales no patologicos · Consume alcohol"), "No", "yesno se muestra como Si/No");
+assert.equal(byLabel.get("Antecedentes personales no patologicos · Fuma"), "Si");
+assert.equal(byLabel.get("Antecedentes personales no patologicos · Cigarros al dia"), "5");
+assert.equal(byLabel.get("Antecedentes personales no patologicos · Tipo de vivienda"), "Rentada");
+assert.equal(byLabel.get("Antecedentes personales patologicos · Es diabetico"), "Si");
 
 assert.equal(
-  rows.some(([label]) => label.includes("Gender") || label.includes("Blood Type")),
+  rows.some(([label]) => /[a-z][A-Z]/.test(label)),
   false,
-  "las etiquetas tecnicas no deben saltar a la UI"
+  "las claves tecnicas (camelCase) no deben saltar a la UI"
 );
+
+console.log("medical-history-format.test.mjs OK");
