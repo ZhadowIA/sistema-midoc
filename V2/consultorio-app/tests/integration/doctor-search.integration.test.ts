@@ -7,6 +7,7 @@ import { createDoctorAccount, createDoctorSubscription } from "../../src/service
 import { GET as searchDoctorsRoute } from "../../src/app/api/public/doctors/route";
 import { createDoctorService, updateDoctorProfile } from "../../src/services/doctor/doctor-profile-service";
 import { searchPublicDoctors } from "../../src/services/doctor/doctor-search-service";
+import { approveDoctorAccountForTesting } from "../helpers/doctor-accounts";
 
 const prisma = new PrismaClient();
 
@@ -50,7 +51,7 @@ async function createPublicDoctor(input: {
   const account = await createDoctorAccount({
     email: input.email,
     password: "Str0ngPass!123",
-    firstName: input.professionalName.replace(/^Dr\.?\s*/i, "").split(" ")[0] ?? "Medico",
+    firstName: input.professionalName.replace(/^Dra?\.?\s*/i, "").split(" ")[0] ?? "Medico",
     lastName: "Busqueda",
     professionalName: input.professionalName,
     licenseNumber: "1234567",
@@ -64,6 +65,8 @@ async function createPublicDoctor(input: {
     planCode: "ESSENTIAL"
   });
 
+  await approveDoctorAccountForTesting(prisma, account.user.id);
+
   await updateDoctorProfile(account.user.id, {
     publicSlug: input.slug,
     professionalName: input.professionalName,
@@ -72,7 +75,7 @@ async function createPublicDoctor(input: {
     state: input.state,
     country: "Mexico",
     phone: "6140000400",
-    licenseNumber: "CED-SEARCH",
+    licenseNumber: "CED-1234567",
     isPublic: input.isPublic ?? true
   });
 
