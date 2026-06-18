@@ -871,7 +871,15 @@ Extension — Historia clinica completa (cuestionario ampliado) + separacion de 
 - **Rebanada 12 (app del medico) — Espejo de la historia clinica en el desktop.** Reescritura del formateo del desktop (`medicalHistoryFormat.ts`) para la nueva estructura (ficha de identificacion, contacto de emergencia, heredo-familiares por padecimiento con parientes, no patologicos con sub-bloques, gineco-obstetricos, patologicos con sub-preguntas, e interrogatorio por aparatos y sistemas como seccion del medico) y de la extraccion a los buckets editables (`precheckinBackground.ts`): patologicos -> antecedentes, heredo-familiares -> familiares, alergias. El resultado de la preconsulta IA ya no alimenta los antecedentes.
 - **Rebanada 13 (contrato + portal) — Contrato nuevo + formulario del paciente.** Reescritura desde cero del contrato compartido `medical-history.ts` (fuente de verdad) y del formulario publico: tipos de campo (numero/fecha/seleccion/si-no), revelados condicionales, secciones por sexo y el widget de heredo-familiares por padecimiento; omite las secciones de audiencia "doctor". El esquema nuevo reemplaza al anterior (el blob es transitorio en el buzon, no hay datos persistidos que migrar). Se recomienda enormemente al paciente pero nunca es obligatorio; viaja sellado E2E.
 
-Estado: ✅ COMPLETADO (rebanadas 1-10). 🚧 Extension EN PROGRESO — rebanadas 11-12 entregadas (2026-06-18); 13 pendiente. Construido sobre los pasos 2, 3, 6, 7 y 11.
+Estado: ✅ COMPLETADO (rebanadas 1-10 + extension 11-13). Construido sobre los pasos 2, 3, 6, 7 y 11.
+
+Entregado (extension historia clinica + separacion de preconsulta, 2026-06-18):
+
+- **Separacion (r11).** `precheckins` con PK compuesta `(appointment_id, kind)`; el detalle del encuentro expone `medical_history` y `preconsulta` por separado; el desktop muestra "Preconsulta" (solo IA) y "Antecedentes" (cuestionario) sin cruzarse.
+- **Contrato y vistas (r12-r13).** Contrato `medical-history.ts` reescrito (fuente de verdad) con tipos de campo (texto/numero/fecha/seleccion/si-no), sub-bloques, revelados condicionales (`showWhen`), heredo-familiares por padecimiento (parientes + tipo) y el interrogatorio por aparatos y sistemas como seccion de audiencia "doctor" (omitida en el formulario del paciente). Espejo en el formateo y la extraccion del desktop; formulario publico reescrito sobre el contrato.
+- **Residencia.** Todo el cuestionario es CLINICO transitorio: viaja sellado E2E, vive en la base cifrada local y se purga del buzon tras el ACK. La nube nunca lo ve.
+
+Verificacion (extension): Rust `cargo test` 148 en verde (+1: coexistencia de ambos sobres) y `cargo clippy` sin warnings nuevos; desktop `tsc` + `vite build` ok y pruebas de formato/extraccion reescritas; portal `eslint`/`vitest` (124 + 6 nuevas del contrato) y `next build` ok. Falta verificacion en navegador del formulario con datos de cita sembrados.
 
 Entregado (rebanada 1 — perfil publico: foto y ubicacion, 2026-06-15):
 

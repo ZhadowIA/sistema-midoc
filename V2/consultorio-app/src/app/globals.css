@@ -2002,6 +2002,59 @@ a.service-card:hover {
   grid-column: 1 / -1;
 }
 
+.mh-block + .mh-block {
+  margin-top: 14px;
+}
+
+.mh-block-title {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mh-suffix {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.mh-family-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.mh-family-row:first-of-type {
+  border-top: 0;
+}
+
+.mh-family-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.mh-family-detail {
+  margin: 8px 0 4px 26px;
+}
+
+.mh-family-relatives {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.mh-relative {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
 .ai-preconsulta-consent {
   display: grid;
   gap: 12px;
