@@ -10,6 +10,7 @@ import { Directorio } from "./Directorio";
 import { Expediente } from "./Expediente";
 import { WeekAgenda } from "./WeekAgenda";
 import type { EncounterAgendaAppointment } from "./encounterAgenda";
+import { THEME_STORAGE_KEY, isNightTheme, nextTheme, themeToggleLabel, type Theme } from "./theme";
 import {
   PatientResolution,
   type PatientMatch,
@@ -382,6 +383,24 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [view, setView] = useState<
     "agenda" | "patients" | "reception" | "benchmark" | "transcription" | "medications" | "arco"
   >("agenda");
+  const [theme, setTheme] = useState<Theme>(() => {
+    try {
+      return isNightTheme(localStorage.getItem(THEME_STORAGE_KEY)) ? "night" : "light";
+    } catch {
+      return "light";
+    }
+  });
+
+  // Aplica el tema a la raíz (cascada a toda la app, incluida la consulta) y lo
+  // recuerda. Es preferencia de UI, no dato clínico.
+  useEffect(() => {
+    document.documentElement.classList.toggle("night", theme === "night");
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Sin almacenamiento: el tema vive solo en esta sesión.
+    }
+  }, [theme]);
 
   const refresh = useCallback(async () => {
     try {
@@ -639,6 +658,14 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
               </button>
             </>
           ) : null}
+          <button
+            className="ghost-button"
+            onClick={() => setTheme(nextTheme(theme))}
+            aria-pressed={theme === "night"}
+            title="Cambia entre tema claro y Cobalto nocturno"
+          >
+            {themeToggleLabel(theme)}
+          </button>
           <button className="ghost-button" onClick={() => void lock()}>
             Bloquear
           </button>

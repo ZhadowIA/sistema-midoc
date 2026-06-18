@@ -1,5 +1,18 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { THEME_STORAGE_KEY, isNightTheme } from "./theme";
+
+// Aplica el tema guardado antes del primer render para evitar un parpadeo
+// claro→oscuro al abrir la app.
+function applyStoredTheme() {
+  try {
+    if (isNightTheme(localStorage.getItem(THEME_STORAGE_KEY))) {
+      document.documentElement.classList.add("night");
+    }
+  } catch {
+    // localStorage no disponible: se queda en tema claro por defecto.
+  }
+}
 
 function errorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -57,6 +70,7 @@ window.addEventListener("unhandledrejection", (event) => showStartupError(event.
 
 async function bootstrap() {
   try {
+    applyStoredTheme();
     const { default: App } = await import("./App");
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
