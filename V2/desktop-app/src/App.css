@@ -1267,6 +1267,18 @@ textarea:disabled {
     flex-wrap: nowrap;
     overflow-x: auto;
   }
+
+  .encounter-nav {
+    position: static;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .nav-item {
+    white-space: nowrap;
+  }
 }
 
 /* Operacion presencial (paso 10): pestañas y resumen de caja. */
