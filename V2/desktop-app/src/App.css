@@ -974,6 +974,33 @@ textarea:disabled {
   font-size: 0.92rem;
 }
 
+/* Modo Foco (Paso 4): mientras se dicta (body.dictating), el chrome de
+   navegación se atenúa para concentrar la atención en la nota y la
+   transcripción en vivo. El panel de contexto y las alergias NO se atenúan
+   (seguridad del paciente). Se recupera el chrome al pasar el cursor. */
+body.dictating .app-topbar,
+body.dictating .patient-banner,
+body.dictating .encounter-modes {
+  opacity: 0.4;
+  transition: opacity var(--speed) var(--ease);
+}
+
+body.dictating .app-topbar:hover,
+body.dictating .patient-banner:hover,
+body.dictating .encounter-modes:hover,
+body.dictating .app-topbar:focus-within,
+body.dictating .encounter-modes:focus-within {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.dictating .app-topbar,
+  body.dictating .patient-banner,
+  body.dictating .encounter-modes {
+    transition: none;
+  }
+}
+
 /* Nav vertical lateral (usada por el Expediente). */
 .encounter-nav {
   position: sticky;

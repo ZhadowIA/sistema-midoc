@@ -28,6 +28,7 @@ import { MedicationSafety } from "./MedicationSafety";
 import { EncounterAgendaRail } from "./EncounterAgendaRail";
 import { call } from "./ipc";
 import { allergyText, buildContextHistory, isFirstVisit } from "./encounterContext";
+import { DICTATING_BODY_CLASS, isDictating } from "./focusMode";
 import {
   hasEncounterDraftChanges,
   shouldConfirmEncounterSwitch,
@@ -425,6 +426,14 @@ export function Atencion({
     setSelectedTemplateId("default");
     setTemplateEditor(null);
   }, [resolvedProfile]);
+
+  // Modo Foco: al dictar, atenúa el chrome de navegación (clase en <body>, ver
+  // App.css). Se limpia al salir de la consulta o al dejar de grabar.
+  useEffect(() => {
+    const active = isDictating(recordingState);
+    document.body.classList.toggle(DICTATING_BODY_CLASS, active);
+    return () => document.body.classList.remove(DICTATING_BODY_CLASS);
+  }, [recordingState]);
 
   useEffect(() => () => cleanupRecording(), []);
 
