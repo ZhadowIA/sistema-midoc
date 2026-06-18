@@ -679,6 +679,10 @@ describe("notification flow (paso 7)", () => {
         privacyVersion: "2026-05"
       });
 
+      // El registro encola una notificación de verificación de correo; la quitamos
+      // para que la cola procese únicamente la notificación bajo prueba.
+      await prisma.notification.deleteMany({ where: { doctorId: account.user.id } });
+
       await prisma.notification.create({
         data: {
           doctorId: account.user.id,
@@ -743,6 +747,10 @@ describe("notification flow (paso 7)", () => {
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      // El registro encola una notificación de verificación de correo; la quitamos
+      // para que la cola procese únicamente la notificación bajo prueba.
+      await prisma.notification.deleteMany({ where: { doctorId: account.user.id } });
 
       await prisma.notification.create({
         data: {
@@ -818,6 +826,10 @@ describe("notification flow (paso 7)", () => {
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      // El registro encola una notificación de verificación de correo; la quitamos
+      // para que la cola procese únicamente la notificación bajo prueba.
+      await prisma.notification.deleteMany({ where: { doctorId: account.user.id } });
 
       await prisma.notification.create({
         data: {
