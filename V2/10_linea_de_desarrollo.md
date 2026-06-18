@@ -865,7 +865,13 @@ Rebanadas:
 - **Rebanada 9 (portal) — Recordatorio 24 h con cancelacion.** Job que envia SMS/correo 24 h antes de la cita (sobre el paso 7), con enlace corto de cancelacion (expiracion y un solo uso) que reusa el flujo de cancelacion existente.
 - **Rebanada 10 (app del medico) — Sync automatica al abrir + aviso de cambios.** Sincronizar la agenda en automatico al abrir/desbloquear la app; mostrar un badge (circulito rojo) en la esquina del boton "Sincronizar" cuando haya cambios pendientes por bajar/subir, y limpiarlo tras sincronizar.
 
-Estado: ✅ COMPLETADO (rebanadas 1-10 entregadas y verificadas). Construido sobre los pasos 2, 3, 6, 7 y 11.
+Extension — Historia clinica completa (cuestionario ampliado) + separacion de preconsulta:
+
+- **Rebanada 11 (app del medico) — Separar preconsulta IA de antecedentes.** El sobre de antecedentes (kind `medical-history`/`generic`) y el de la preconsulta guiada por IA (kind `ai-preconsulta`) ya no se pisan: la tabla local `precheckins` pasa a PK compuesta `(appointment_id, kind)` para que coexistan. El detalle del encuentro expone dos campos (`medical_history`, `preconsulta`) y el desktop los muestra en secciones distintas ("Preconsulta" = solo IA; "Antecedentes" = cuestionario). CLINICO: todo sigue en la base cifrada local.
+- **Rebanada 12 (contrato + desktop) — Nuevo contrato de historia clinica.** Reescritura desde cero del contrato compartido `medical-history.ts` (ficha de identificacion, contacto de emergencia, heredo-familiares por padecimiento con parientes, no patologicos con sub-bloques, gineco-obstetricos, patologicos con sub-preguntas condicionales; el interrogatorio por aparatos y sistemas queda como seccion de audiencia "doctor"). Espejo en el formateo del desktop y en la extraccion a los buckets editables. El esquema nuevo reemplaza al anterior (el blob es transitorio en el buzon, no hay datos persistidos que migrar).
+- **Rebanada 13 (portal) — Formulario del paciente.** Reescritura del formulario publico para el nuevo contrato: tipos de campo (numero/fecha/seleccion/si-no), revelados condicionales, secciones por sexo y el widget de heredo-familiares por padecimiento; omite las secciones de audiencia "doctor". Se recomienda enormemente al paciente pero nunca es obligatorio; viaja sellado E2E.
+
+Estado: ✅ COMPLETADO (rebanadas 1-10). 🚧 Extension EN PROGRESO — rebanada 11 entregada (2026-06-18); 12 y 13 pendientes. Construido sobre los pasos 2, 3, 6, 7 y 11.
 
 Entregado (rebanada 1 — perfil publico: foto y ubicacion, 2026-06-15):
 

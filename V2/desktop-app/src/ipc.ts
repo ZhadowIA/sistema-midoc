@@ -211,11 +211,20 @@ function mockDetail() {
     patient: e.patient,
     appointment_reason: appointment?.reason ?? null,
     appointment_start: appointment?.scheduled_start ?? null,
-    precheckin: appointment?.has_precheckin
+    medical_history: appointment?.has_precheckin
+      ? JSON.stringify({
+          sex: "F",
+          allergies: "Penicilina",
+          pathological: { diabetico: "si", diabeticoDesde: "2018" }
+        })
+      : null,
+    preconsulta: appointment?.has_precheckin
       ? JSON.stringify({
           motivo: "Dolor al masticar y sensibilidad al frio",
-          antecedentes: "Bruxismo nocturno",
-          sintomas: "Molestia 6/10, sin fiebre"
+          conversation: [
+            { question: "Desde cuando?", answer: "Hace una semana" },
+            { question: "Tiene fiebre?", answer: "No" }
+          ]
         })
       : null,
     note: e.notes.length > 0 ? e.notes[e.notes.length - 1] : null,

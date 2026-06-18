@@ -405,6 +405,22 @@ const MIGRATIONS: &[&str] = &[
     // Antecedentes (paso 19, rebanada 7): distingue la preconsulta generica del
     // formulario de antecedentes (historia clinica), que llega sellado E2E.
     "ALTER TABLE precheckins ADD COLUMN kind TEXT NOT NULL DEFAULT 'generic';",
+    // Historia clinica completa: la preconsulta guiada por IA y el formulario de
+    // antecedentes son sobres distintos (kind) para la misma cita y ya no deben
+    // pisarse. Se recrea `precheckins` con PK compuesta (appointment_id, kind)
+    // para que ambos coexistan. SQLite no permite ALTER de PK: se recrea la tabla
+    // preservando las filas existentes. Sigue siendo CLINICO (vive solo aqui).
+    "CREATE TABLE precheckins_new (
+        appointment_id TEXT NOT NULL,
+        responses_json TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'generic',
+        received_at TEXT NOT NULL,
+        PRIMARY KEY (appointment_id, kind)
+    );
+    INSERT INTO precheckins_new (appointment_id, responses_json, kind, received_at)
+        SELECT appointment_id, responses_json, kind, received_at FROM precheckins;
+    DROP TABLE precheckins;
+    ALTER TABLE precheckins_new RENAME TO precheckins;",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

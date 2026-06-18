@@ -80,7 +80,10 @@ interface EncounterDetail {
   };
   appointment_reason: string | null;
   appointment_start: string | null;
-  precheckin: string | null;
+  /** Cuestionario de antecedentes / historia clinica del paciente. */
+  medical_history: string | null;
+  /** Resultado de la preconsulta guiada por IA. */
+  preconsulta: string | null;
   note: (Omit<NoteContent, "specialty"> & {
     specialty: unknown;
     version: number;
@@ -372,9 +375,14 @@ export function Atencion({
           family_background: data.patient.family_background ?? "",
           birth_date: data.patient.birth_date ?? ""
         });
-        if (data.precheckin && !initialSectionSetRef.current) {
-          initialSectionSetRef.current = true;
-          setActiveSection("preconsulta");
+        if (!initialSectionSetRef.current) {
+          if (data.preconsulta) {
+            initialSectionSetRef.current = true;
+            setActiveSection("preconsulta");
+          } else if (data.medical_history) {
+            initialSectionSetRef.current = true;
+            setActiveSection("antecedentes");
+          }
         }
         if (data.encounter.status === "SIGNED") {
           call<boolean>("verify_signature", { encounterId })
@@ -468,8 +476,8 @@ export function Atencion({
     { note, prescription, background },
     persistedDraft
   );
-  const backgroundReview = buildBackgroundReview(background, detail.precheckin);
-  const medicalHistoryGroups = formatMedicalHistoryForDisplay(detail.precheckin);
+  const backgroundReview = buildBackgroundReview(background, detail.medical_history);
+  const medicalHistoryGroups = formatMedicalHistoryForDisplay(detail.medical_history);
   const showBackgroundReview =
     Boolean(backgroundReview?.hasImportableChanges) && !backgroundReviewDismissed && !signed;
 
@@ -493,7 +501,7 @@ export function Atencion({
   const segmentLabels = new Map(activeTemplate.segments.map((segment) => [segment.id, segment.label]));
 
   const navItems = buildEncounterModes({
-    hasPrecheckin: Boolean(detail.precheckin),
+    hasPreconsulta: Boolean(detail.preconsulta),
     hasHistory: detail.history.length > 0,
     signed,
     moduleLabel
@@ -1108,21 +1116,18 @@ export function Atencion({
               </p>
             )}
 
-            {resolvedSection === "preconsulta" && detail.precheckin ? (
+            {resolvedSection === "preconsulta" && detail.preconsulta ? (
               <section className="panel">
                 <h3>Preconsulta del paciente</h3>
-                {medicalHistoryGroups.length > 0 ? (
-                  <MedicalHistoryGroups groups={medicalHistoryGroups} />
-                ) : (
-                  <dl className="precheckin-list">
-                    {formatPrecheckin(detail.precheckin).map(([key, value]) => (
-                      <div key={key}>
-                        <dt>{key}</dt>
-                        <dd>{value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                )}
+                <p className="meta">Cuestionario guiado por IA previo a la consulta.</p>
+                <dl className="precheckin-list">
+                  {formatPrecheckin(detail.preconsulta).map(([key, value]) => (
+                    <div key={key}>
+                      <dt>{key}</dt>
+                      <dd>{value}</dd>
+                    </div>
+                  ))}
+                </dl>
               </section>
             ) : null}
 
@@ -1165,7 +1170,7 @@ export function Atencion({
                           : "El paciente envio antecedentes nuevos"}
                       </strong>
                       <p>
-                        Compara el expediente actual contra el cuestionario de preconsulta antes
+                        Compara el expediente actual contra el cuestionario de antecedentes antes
                         de decidir si importas la version nueva.
                       </p>
                     </div>
@@ -1209,7 +1214,7 @@ export function Atencion({
                       >
                         Importar nuevos
                       </button>
-                      {detail.precheckin ? (
+                      {detail.preconsulta ? (
                         <button
                           className="ghost-button"
                           disabled={busy}
@@ -1231,7 +1236,7 @@ export function Atencion({
               />
             </label>
             <label className="field">
-              <span>Antecedentes personales patologicos</span>
+              <span>Antecedentes personales</span>
               <textarea
                 rows={2}
                 value={background.medical_background}
@@ -1896,11 +1901,27 @@ export function Atencion({
               <p className="context-empty">Sin alergias registradas</p>
             )}
 
-            {detail.precheckin ? (
+            {detail.preconsulta ? (
               <div className="context-block">
-                <h4>Preconsulta</h4>
+                <h4>Preconsulta (IA)</h4>
                 <dl className="precheckin-list">
-                  {formatPrecheckin(detail.precheckin)
+                  {formatPrecheckin(detail.preconsulta)
+                    .slice(0, 6)
+                    .map(([key, value]) => (
+                      <div key={key}>
+                        <dt>{key}</dt>
+                        <dd>{value}</dd>
+                      </div>
+                    ))}
+                </dl>
+              </div>
+            ) : null}
+
+            {medicalHistoryGroups.length > 0 ? (
+              <div className="context-block">
+                <h4>Antecedentes</h4>
+                <dl className="precheckin-list">
+                  {flattenMedicalHistoryDisplayRows(detail.medical_history)
                     .slice(0, 6)
                     .map(([key, value]) => (
                       <div key={key}>

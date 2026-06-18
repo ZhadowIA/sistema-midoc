@@ -917,8 +917,11 @@ fn build_context(detail: &clinical::EncounterDetail) -> String {
     if let Some(reason) = &detail.appointment_reason {
         parts.push(format!("Motivo de consulta: {reason}"));
     }
-    if let Some(precheckin) = &detail.precheckin {
-        parts.push(format!("Preconsulta del paciente: {precheckin}"));
+    if let Some(preconsulta) = &detail.preconsulta {
+        parts.push(format!("Preconsulta del paciente: {preconsulta}"));
+    }
+    if let Some(medical_history) = &detail.medical_history {
+        parts.push(format!("Cuestionario de antecedentes del paciente: {medical_history}"));
     }
     if let Some(allergies) = &detail.patient.allergies {
         parts.push(format!("Alergias: {allergies}"));

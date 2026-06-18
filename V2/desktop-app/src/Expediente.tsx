@@ -383,7 +383,7 @@ export function Expediente({
                       />
                     </label>
                     <label className="field">
-                      <span>Antecedentes personales patologicos</span>
+                      <span>Antecedentes personales</span>
                       <textarea
                         rows={2}
                         value={backgroundForm.medical_background}
@@ -442,7 +442,7 @@ export function Expediente({
                     ) : null}
                     {p.medical_background ? (
                       <div>
-                        <dt>Antecedentes personales patologicos</dt>
+                        <dt>Antecedentes personales</dt>
                         <dd>{p.medical_background}</dd>
                       </div>
                     ) : null}

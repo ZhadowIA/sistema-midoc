@@ -180,7 +180,7 @@ export function Directorio({
           <dl className="precheckin-list">
             {p.medical_background ? (
               <div>
-                <dt>Antecedentes personales patologicos</dt>
+                <dt>Antecedentes personales</dt>
                 <dd>{p.medical_background}</dd>
               </div>
             ) : null}

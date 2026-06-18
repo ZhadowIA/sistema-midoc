@@ -197,7 +197,11 @@ pub struct EncounterDetail {
     pub patient: PatientRecord,
     pub appointment_reason: Option<String>,
     pub appointment_start: Option<String>,
-    pub precheckin: Option<String>,
+    /// Formulario de antecedentes / historia clinica que envio el paciente
+    /// (sobre kind medical-history o generic). Distinto de la preconsulta IA.
+    pub medical_history: Option<String>,
+    /// Resultado de la preconsulta guiada por IA (sobre kind ai-preconsulta).
+    pub preconsulta: Option<String>,
     pub note: Option<NoteVersion>,
     pub note_version_count: i64,
     pub prescription: Option<String>,
@@ -723,30 +727,44 @@ pub fn get_encounter_detail(
         .optional()?
         .ok_or(ClinicalError::NotFound)?;
 
-    let (appointment_reason, appointment_start, precheckin) = match &encounter.appointment_id {
-        Some(appointment_id) => {
-            let pair: Option<(Option<String>, String)> = conn
-                .query_row(
-                    "SELECT reason, scheduled_start FROM appointments WHERE id = ?1",
-                    params![appointment_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+    let (appointment_reason, appointment_start, medical_history, preconsulta) =
+        match &encounter.appointment_id {
+            Some(appointment_id) => {
+                let pair: Option<(Option<String>, String)> = conn
+                    .query_row(
+                        "SELECT reason, scheduled_start FROM appointments WHERE id = ?1",
+                        params![appointment_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                // Una cita puede tener dos sobres: el formulario de antecedentes
+                // (kind medical-history/generic) y la preconsulta guiada por IA
+                // (kind ai-preconsulta). Se separan para no mostrarlos cruzados.
+                let mut medical_history: Option<String> = None;
+                let mut preconsulta: Option<String> = None;
+                let mut statement = conn.prepare(
+                    "SELECT responses_json, kind FROM precheckins WHERE appointment_id = ?1",
+                )?;
+                let rows = statement.query_map(params![appointment_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                for row in rows {
+                    let (responses_json, kind) = row?;
+                    if kind == "ai-preconsulta" {
+                        preconsulta = Some(responses_json);
+                    } else {
+                        medical_history = Some(responses_json);
+                    }
+                }
+                (
+                    pair.as_ref().and_then(|(reason, _)| reason.clone()),
+                    pair.map(|(_, start)| start),
+                    medical_history,
+                    preconsulta,
                 )
-                .optional()?;
-            let precheckin: Option<String> = conn
-                .query_row(
-                    "SELECT responses_json FROM precheckins WHERE appointment_id = ?1",
-                    params![appointment_id],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            (
-                pair.as_ref().and_then(|(reason, _)| reason.clone()),
-                pair.map(|(_, start)| start),
-                precheckin,
-            )
-        }
-        None => (None, None, None),
-    };
+            }
+            None => (None, None, None, None),
+        };
 
     let note = conn
         .query_row(
@@ -818,7 +836,8 @@ pub fn get_encounter_detail(
         patient,
         appointment_reason,
         appointment_start,
-        precheckin,
+        medical_history,
+        preconsulta,
         note,
         note_version_count,
         prescription,
