@@ -26,6 +26,7 @@ import {
 } from "./consultationScribe";
 import { MedicationSafety } from "./MedicationSafety";
 import { call } from "./ipc";
+import { allergyText, buildContextHistory, isFirstVisit } from "./encounterContext";
 import { buildBackgroundReview } from "./precheckinBackground";
 import {
   flattenMedicalHistoryDisplayRows,
@@ -1013,9 +1014,6 @@ export function Atencion({
             </span>
             {detail.note ? <span className="meta">Version actual: {detail.note.version}</span> : null}
           </div>
-          {detail.patient.allergies ? (
-            <p className="alert-allergies">Alergias: {detail.patient.allergies}</p>
-          ) : null}
         </section>
 
         <div className="encounter-layout">
@@ -1825,6 +1823,47 @@ export function Atencion({
               </p>
             ) : null}
           </div>
+
+          <aside className="encounter-context" aria-label="Contexto del paciente">
+            {allergyText(detail.patient.allergies) ? (
+              <p className="alert-allergies">Alergias: {allergyText(detail.patient.allergies)}</p>
+            ) : (
+              <p className="context-empty">Sin alergias registradas</p>
+            )}
+
+            {detail.precheckin ? (
+              <div className="context-block">
+                <h4>Preconsulta</h4>
+                <dl className="precheckin-list">
+                  {formatPrecheckin(detail.precheckin)
+                    .slice(0, 6)
+                    .map(([key, value]) => (
+                      <div key={key}>
+                        <dt>{key}</dt>
+                        <dd>{value}</dd>
+                      </div>
+                    ))}
+                </dl>
+              </div>
+            ) : null}
+
+            <div className="context-block">
+              <h4>Consultas previas</h4>
+              {isFirstVisit(detail.history) ? (
+                <p className="context-empty">Primera vez — sin consultas previas</p>
+              ) : (
+                <ul className="history-list">
+                  {buildContextHistory(detail.history, (iso) =>
+                    dateTimeFormatter.format(new Date(iso))
+                  ).map((row) => (
+                    <li key={row.encounterId}>
+                      <span className="meta">{row.when ?? "(sin firmar)"}</span> {row.diagnosis}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </aside>
         </div>
       </div>
     </>
