@@ -50,14 +50,76 @@ Alcance: arreglar + commit local (sin push/PR). Respetando REGLAS_DESARROLLO.md.
 - **Fix:** `fileParallelism: false` en `vitest.config.ts`, con el mismo criterio que ya usaba `vitest.e2e.config.ts`. Suite completa: **124/124 en verde** y determinista.
 - **⚠️ Para tu revisión:** es un cambio de configuración de tests. La suite tarda ~20s (antes corría en paralelo). Si prefieres mantener el paralelismo, la alternativa sería separar unit (paralelo) de integración (secuencial) en configs distintas.
 
+## 🎨 Hallazgos UX/UI — prueba visual de la desktop-app (MiDoc)
+
+Probado vía computer-use simulando al médico. Creé un perfil de prueba ("QA Bot
+Prueba"), exploré crear/desbloquear/bloquear y la pantalla de vinculación. Tus dos
+perfiles reales NO se tocaron. Perfil de prueba y datos eliminados al terminar.
+
+- **UX-1 — Alta de perfil nuevo reutiliza la pantalla de "desbloquear".** Al crear un
+  médico nuevo, la pantalla dice *"Frase de seguridad — Confirma la frase de este perfil
+  para abrir su base cifrada local"* y el botón es **"Desbloquear"**, igual que para un
+  perfil existente. Para un perfil nuevo debería invitar a **crear/establecer** una frase
+  y, idealmente, pedir **confirmación** de la frase. Riesgo: un typo al fijar la frase la
+  primera vez deja la base (vacía) inaccesible con esa frase, sin que el usuario lo note.
+  → Sugerencia de tu decisión; no lo cambié por ser UX de producto.
+- **UX-2 — Mensaje de error de vinculación sin localizar.** Con credenciales inválidas la
+  app muestra **"Error: Invalid credentials."** en inglés, mientras toda la UI está en
+  español. → Localizar la cadena.
+- **UX-3 (menor) — Nombres de perfil truncados sin tooltip.** Las tarjetas muestran
+  "Medico pri…" / "Medico Ad…" sin forma de ver el nombre completo (sin `title`/tooltip).
+
+### Lo que funciona bien (desktop)
+- Crear perfil → base cifrada local generada con respaldo automático (`backups\midoc-…db`).
+- Desbloqueo y **Bloquear** (vuelve al selector) correctos.
+- Validación de formulario de vinculación: campos vacíos bloqueados (HTML5) y credenciales
+  inválidas rechazadas con error visible, sin crash. Conecta bien a `http://localhost:3000`.
+
+## 🧪 Pruebas interactivas — flujo del paciente (portal, vía API contra :3000)
+
+Sembré un médico público de prueba, ejercité el flujo y limpié todo después.
+
+- ✅ **Búsqueda pública** funciona (`/api/public/doctors?q=…`). *(Falsa alarma inicial: usé
+  `query=` en vez de `q=`; descartado.)*
+- ✅ **Disponibilidad** (`/availability`) devuelve slots con timezone `America/Chihuahua`.
+- ✅ **Apartar horario** (`/holds`) → token con expiración.
+- ✅ **Reservar** (`POST /appointments`) → 201, cita `PENDING` con `confirmationToken`.
+- ✅ **Ver cita** por token → 200 con datos completos.
+- ✅ **Dedupe de paciente**: reservar con el mismo email reutiliza el mismo `patientId`.
+- ✅ **Anti doble-reserva**: apartar el mismo slot dos veces → **HTTP 409** con mensaje claro.
+- ✅ Páginas públicas renderizan (200): `/`, `/medico/registro`, `/recuperar`, `/admin/login`,
+  `/perfil/<slug>`, `/perfil/<slug>/agenda`. Sin errores de render (500).
+
 ## 🔁 Redundancias de flujo
 
-(pendiente)
+- No se detectaron redundancias graves en los flujos probados. La única duplicación de
+  comportamiento observada (Bug #3: doble envío al procesar la cola) era artefacto de test,
+  no de la app. La reutilización de la pantalla de desbloqueo para "crear perfil" (UX-1) es
+  una redundancia de **UI/copy**, no de lógica.
 
 ## ⚠️ Requieren tu decisión
 
-(pendiente)
+1. **Vinculación del dispositivo (desktop) no probada end-to-end.** Requiere autenticarse con
+   credenciales reales del portal; por las reglas de seguridad no introduzco contraseñas para
+   autenticar, ni con cuentas de prueba. El área de trabajo del médico (agenda, consultas,
+   transcripción) vive detrás de ese paso. → Cuando vuelvas, tú haces la vinculación y seguimos
+   la prueba visual del workspace.
+2. **`fileParallelism: false` (Bug #4).** Cambio de config de tests. Alternativa si quieres
+   conservar paralelismo: separar unit (paralelo) de integración (secuencial) en dos configs.
+3. **UX-1 / UX-2 / UX-3** arriba: son decisiones de producto/UI; no las apliqué.
+4. **e2e no ejecutable** mientras tu `npm run dev` esté activo (limitación de Next 16, no es bug).
 
-## ✅ Arreglos aplicados (commits)
+## ✅ Arreglos aplicados (commits, rama `qa/autonomous-test-run-20260617`)
 
-(pendiente)
+| Commit | Qué |
+|--------|-----|
+| `627b5fc` | Bug #1 — import faltante en `notifications.integration.test.ts` |
+| `ed9ccd4` | Bug #2 — `doctor-search` actualizado al flujo endurecido de registro |
+| `ef4b106` | Bug #3 — aislar verificación de correo en tests de proveedor |
+| `4e75fa4` | Bug #4 — integración sin paralelismo de archivos (BD compartida) |
+| `dba382d` | docs — este informe |
+| `d6ef5eb` | chore — snapshot de tu WIP previo (para diffs limpios) |
+
+> Todos los cambios son **locales**, sin push ni PR. La rama parte de `codex/paso21…`.
+> Resultado neto: `npm run test` pasó de **rojo (7 fallos + typecheck roto)** a **124/124 verde**
+> y determinista. Backend Rust 147/147, scripts desktop 7/7, lint limpio.
