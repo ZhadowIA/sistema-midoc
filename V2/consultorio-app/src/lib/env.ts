@@ -51,10 +51,32 @@ const envSchema = z
     AI_PROVIDER: z.enum(["fake", "openai", "anthropic", "gemini"]).default("fake"),
     AI_MODEL: z.string().min(1).optional(),
     OPENAI_API_KEY: z.string().min(1).optional(),
+    OPENAI_TRANSCRIPTION_ENABLED: z.stringbool().default(false),
+    OPENAI_TRANSCRIPTION_MODEL: z.string().min(1).default("gpt-4o-mini-transcribe"),
+    OPENAI_DIARIZATION_MODEL: z.string().min(1).default("gpt-4o-transcribe-diarize"),
+    OPENAI_TRANSCRIPTION_ZDR_APPROVED: z.stringbool().default(false),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
     GEMINI_API_KEY: z.string().min(1).optional()
   })
   .superRefine((value, ctx) => {
+    if (value.OPENAI_TRANSCRIPTION_ENABLED) {
+      if (!value.OPENAI_API_KEY) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["OPENAI_API_KEY"],
+          message: "Required when OPENAI_TRANSCRIPTION_ENABLED=true"
+        });
+      }
+
+      if (!value.OPENAI_TRANSCRIPTION_ZDR_APPROVED) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["OPENAI_TRANSCRIPTION_ZDR_APPROVED"],
+          message: "Must be true when OPENAI_TRANSCRIPTION_ENABLED=true"
+        });
+      }
+    }
+
     if (value.SMS_PROVIDER.toLowerCase() !== "twilio") {
       if (value.WHATSAPP_PROVIDER.toLowerCase() !== "twilio") {
         return;
