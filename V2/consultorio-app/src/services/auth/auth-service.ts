@@ -289,13 +289,13 @@ export async function signInDoctor(input: {
   });
 
   if (!user || user.role !== UserRole.DOCTOR || !doctorCanLogin(user.status) || !user.passwordHash) {
-    throw new AuthServiceError("Invalid credentials.", 401);
+    throw new AuthServiceError("Credenciales invalidas.", 401);
   }
 
   const isValid = await verifyPassword(input.password, user.passwordHash);
 
   if (!isValid) {
-    throw new AuthServiceError("Invalid credentials.", 401);
+    throw new AuthServiceError("Credenciales invalidas.", 401);
   }
 
   // Si el 2FA esta activo, no se crea sesion: se emite un desafio de segundo factor.
@@ -351,7 +351,7 @@ export async function completeTwoFactorLogin(input: { twoFactorToken: string; co
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user || user.role !== UserRole.DOCTOR || !doctorCanLogin(user.status)) {
-    throw new AuthServiceError("Invalid credentials.", 401);
+    throw new AuthServiceError("Credenciales invalidas.", 401);
   }
 
   const valid = await verifyTwoFactorCode(userId, input.code);
