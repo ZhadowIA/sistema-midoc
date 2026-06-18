@@ -63,9 +63,11 @@ perfiles reales NO se tocaron. Perfil de prueba y datos eliminados al terminar.
   y, idealmente, pedir **confirmación** de la frase. Riesgo: un typo al fijar la frase la
   primera vez deja la base (vacía) inaccesible con esa frase, sin que el usuario lo note.
   → Sugerencia de tu decisión; no lo cambié por ser UX de producto.
-- **UX-2 — Mensaje de error de vinculación sin localizar.** Con credenciales inválidas la
-  app muestra **"Error: Invalid credentials."** en inglés, mientras toda la UI está en
-  español. → Localizar la cadena.
+- **UX-2 — Mensaje de error de vinculación sin localizar. ✅ ARREGLADO.** Con credenciales
+  inválidas la app mostraba **"Error: Invalid credentials."** en inglés. Origen:
+  `auth-service.ts` (3 sitios) en el portal, inconsistente con sus vecinas en español
+  (p. ej. *"Codigo invalido."*). Localizado a **"Credenciales invalidas."** Ningún test
+  dependía de la cadena; typecheck y tests de auth/2FA en verde.
 - **UX-3 (menor) — Nombres de perfil truncados sin tooltip.** Las tarjetas muestran
   "Medico pri…" / "Medico Ad…" sin forma de ver el nombre completo (sin `title`/tooltip).
 
