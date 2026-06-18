@@ -8,10 +8,12 @@ import { createDoctorAccount } from "../../../../services/auth/auth-service";
 const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(12),
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  phone: z.string().min(7).optional(),
-  professionalName: z.string().min(1),
+  passwordConfirmation: z.string().min(1).optional(),
+  firstName: z.string().min(1).max(80),
+  lastName: z.string().min(1).max(120),
+  phone: z.string().min(7).max(20).optional(),
+  professionalName: z.string().min(5).max(120),
+  licenseNumber: z.string().min(5).max(30),
   specialty: z.enum(["GENERAL_MEDICINE", "ODONTOLOGY"])
 });
 
@@ -23,7 +25,8 @@ export async function POST(request: Request) {
       ...payload,
       termsVersion: env.TERMS_VERSION,
       privacyVersion: env.PRIVACY_VERSION,
-      requestIp: requestIpFrom(request)
+      requestIp: requestIpFrom(request),
+      requestUserAgent: request.headers.get("user-agent") ?? undefined
     });
 
     return NextResponse.json(

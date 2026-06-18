@@ -626,22 +626,13 @@ pub fn attend_appointment(
 /// 2. Si el medico eligio vincular (`link_patient_id`), se vincula y se devuelve.
 /// 3. Si eligio crear uno nuevo (`force_new`), se importa de la cita.
 /// 4. En automatico: vinculo de portal recordado o expediente ya existente se
-///    reusa; sin candidatos se importa; con candidatos se pide decidir.
+///    reusa; sin candidatos o con candidatos se pide decidir antes de crear.
 pub fn resolve_appointment_patient(
     conn: &Connection,
     appointment_id: &str,
     link_patient_id: Option<&str>,
     force_new: bool,
 ) -> Result<ResolveOutcome, ClinicalError> {
-    if let Some(encounter_id) = encounter_id_for_appointment(conn, appointment_id)? {
-        let patient_id = conn.query_row(
-            "SELECT patient_id FROM encounters WHERE id = ?1",
-            params![encounter_id],
-            |row| row.get::<_, String>(0),
-        )?;
-        return Ok(ResolveOutcome::Patient { patient_id });
-    }
-
     let (portal_id, appt) = read_appointment_patient(conn, appointment_id)?;
 
     // El medico eligio vincular a un expediente existente.
@@ -665,34 +656,50 @@ pub fn resolve_appointment_patient(
         return Ok(ResolveOutcome::Patient { patient_id });
     }
 
-    // Resolucion automatica por id del portal (cuenta de paciente o vinculo ya
-    // recordado): no vuelve a preguntar por la misma persona.
+    // Si la cita ya tenia encuentro, el primer click en agenda sigue mostrando
+    // la ventanita en vez de mandar directo a la linea del tiempo.
+    if let Some(encounter_id) = encounter_id_for_appointment(conn, appointment_id)? {
+        let patient_id = conn.query_row(
+            "SELECT patient_id FROM encounters WHERE id = ?1",
+            params![encounter_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        let mut candidates = Vec::new();
+        push_resolution_candidate(conn, &mut candidates, &patient_id, &appt)?;
+        return Ok(ResolveOutcome::NeedsResolution {
+            appointment_patient: appt,
+            candidates,
+        });
+    }
+
+    // Resolucion por id del portal (cuenta de paciente o vinculo ya recordado):
+    // se muestra como candidato, pero no navega automaticamente.
+    let mut candidates = Vec::new();
     if let Some(pid) = &portal_id {
         if let Some(local_id) = lookup_patient_link(conn, pid)? {
             if patient_exists(conn, &local_id)? {
-                return Ok(ResolveOutcome::Patient { patient_id: local_id });
+                push_resolution_candidate(conn, &mut candidates, &local_id, &appt)?;
             }
         }
         if patient_exists(conn, pid)? {
-            return Ok(ResolveOutcome::Patient {
-                patient_id: pid.clone(),
-            });
+            push_resolution_candidate(conn, &mut candidates, pid, &appt)?;
         }
     }
 
     // Busca duplicados con los datos de la cita (nombre con mas peso).
-    let candidates = match_patients_with_reasons(
+    for candidate in match_patients_with_reasons(
         conn,
         appt.email.as_deref(),
         appt.phone.as_deref(),
         &appt.first_name,
         &appt.last_name,
-    )?;
-
-    if candidates.is_empty() {
-        // Sin coincidencias: importa los datos y abre el expediente.
-        let patient_id = import_appointment_patient(conn, appointment_id)?;
-        return Ok(ResolveOutcome::Patient { patient_id });
+    )? {
+        if !candidates
+            .iter()
+            .any(|existing: &PatientMatch| existing.patient.id == candidate.patient.id)
+        {
+            candidates.push(candidate);
+        }
     }
 
     Ok(ResolveOutcome::NeedsResolution {
@@ -876,6 +883,77 @@ pub fn list_patients(
     Ok(rows)
 }
 
+fn patient_summary_by_id(
+    conn: &Connection,
+    patient_id: &str,
+) -> Result<Option<PatientSummary>, ClinicalError> {
+    Ok(list_patients(conn, None)?
+        .into_iter()
+        .find(|patient| patient.id == patient_id))
+}
+
+fn match_flags_for_summary(
+    patient: &PatientSummary,
+    appt: &AppointmentPatient,
+) -> (bool, bool, bool) {
+    let appointment_name = normalize_name(&appt.first_name, &appt.last_name);
+    let patient_name = normalize_name(&patient.first_name, &patient.last_name);
+    let matched_name = !appointment_name.is_empty() && appointment_name == patient_name;
+
+    let appointment_phone = appt
+        .phone
+        .as_deref()
+        .map(normalize_phone)
+        .filter(|phone| !phone.is_empty());
+    let patient_phone = patient
+        .phone
+        .as_deref()
+        .map(normalize_phone)
+        .filter(|phone| !phone.is_empty());
+    let matched_phone =
+        matches!((&appointment_phone, &patient_phone), (Some(left), Some(right)) if left == right);
+
+    let appointment_email = appt
+        .email
+        .as_deref()
+        .map(normalize_text)
+        .filter(|email| !email.is_empty());
+    let patient_email = patient
+        .email
+        .as_deref()
+        .map(normalize_text)
+        .filter(|email| !email.is_empty());
+    let matched_email =
+        matches!((&appointment_email, &patient_email), (Some(left), Some(right)) if left == right);
+
+    (matched_name, matched_phone, matched_email)
+}
+
+fn push_resolution_candidate(
+    conn: &Connection,
+    candidates: &mut Vec<PatientMatch>,
+    patient_id: &str,
+    appt: &AppointmentPatient,
+) -> Result<(), ClinicalError> {
+    if candidates
+        .iter()
+        .any(|candidate| candidate.patient.id == patient_id)
+    {
+        return Ok(());
+    }
+
+    if let Some(patient) = patient_summary_by_id(conn, patient_id)? {
+        let (matched_name, matched_phone, matched_email) = match_flags_for_summary(&patient, appt);
+        candidates.push(PatientMatch {
+            patient,
+            matched_name,
+            matched_phone,
+            matched_email,
+        });
+    }
+    Ok(())
+}
+
 /// Ficha de un paciente: sus datos mas el historial de encuentros con su
 /// diagnostico mas reciente, ordenado del mas nuevo al mas antiguo.
 pub fn get_patient_profile(
@@ -998,7 +1076,7 @@ pub fn match_patients_with_reasons(
         .collect();
 
     // El nombre pesa mas: los candidatos que coinciden por nombre van primero.
-    matches.sort_by(|a, b| b.matched_name.cmp(&a.matched_name));
+    matches.sort_by_key(|m| std::cmp::Reverse(m.matched_name));
     Ok(matches)
 }
 
@@ -1837,12 +1915,15 @@ mod tests {
         assert!(!patient_exists(&conn, "portal-xyz").unwrap());
         assert_eq!(encounter_count_for(&conn, "appt-1"), 0);
 
-        // Una segunda cita del MISMO id de portal se resuelve sola (vinculo
-        // recordado) y abre el mismo expediente, sin volver a preguntar.
+        // Una segunda cita del MISMO id de portal ya conoce el vinculo, pero
+        // desde la agenda igual debe mostrar la ventanita antes de navegar.
         seed_appointment(&conn, "appt-2", "portal-xyz");
         match resolve_appointment_patient(&conn, "appt-2", None, false).unwrap() {
-            ResolveOutcome::Patient { patient_id } => assert_eq!(patient_id, local.id),
-            _ => panic!("el vinculo recordado debio resolver solo"),
+            ResolveOutcome::NeedsResolution { candidates, .. } => {
+                assert_eq!(candidates.len(), 1);
+                assert_eq!(candidates[0].patient.id, local.id);
+            }
+            ResolveOutcome::Patient { .. } => panic!("debio mostrar resolucion, no navegar"),
         }
     }
 
@@ -1851,13 +1932,39 @@ mod tests {
         let conn = test_conn("resolve-new");
         seed_appointment(&conn, "appt-9", "portal-new");
 
-        // Sin coincidencias: importa el expediente y lo abre, sin encuentro.
+        // Sin coincidencias: la agenda no importa ni abre nada automaticamente.
+        // El medico debe confirmar si crea un expediente nuevo.
         match resolve_appointment_patient(&conn, "appt-9", None, false).unwrap() {
+            ResolveOutcome::NeedsResolution {
+                appointment_patient,
+                candidates,
+            } => {
+                assert_eq!(appointment_patient.first_name, "Hugo");
+                assert!(candidates.is_empty());
+            }
+            ResolveOutcome::Patient { .. } => panic!("debio pedir confirmacion para crear"),
+        }
+        assert!(!patient_exists(&conn, "portal-new").unwrap());
+        assert_eq!(encounter_count_for(&conn, "appt-9"), 0);
+
+        // El medico confirma crear el expediente nuevo.
+        match resolve_appointment_patient(&conn, "appt-9", None, true).unwrap() {
             ResolveOutcome::Patient { patient_id } => assert_eq!(patient_id, "portal-new"),
-            _ => panic!("sin duplicados debio importar y abrir el expediente"),
+            _ => panic!("force_new debio crear expediente nuevo"),
         }
         assert!(patient_exists(&conn, "portal-new").unwrap());
         assert_eq!(encounter_count_for(&conn, "appt-9"), 0);
+
+        // Si el id del portal ya existe como expediente local, tampoco debe
+        // navegar automaticamente desde la agenda.
+        seed_appointment(&conn, "appt-11", "portal-new");
+        match resolve_appointment_patient(&conn, "appt-11", None, false).unwrap() {
+            ResolveOutcome::NeedsResolution { candidates, .. } => {
+                assert_eq!(candidates.len(), 1);
+                assert_eq!(candidates[0].patient.id, "portal-new");
+            }
+            ResolveOutcome::Patient { .. } => panic!("debio mostrar resolucion, no navegar"),
+        }
 
         // force_new sobre una persona con duplicado tambien evita el encuentro.
         create_patient(

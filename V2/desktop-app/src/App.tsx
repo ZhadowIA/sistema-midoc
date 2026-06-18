@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { call } from "./ipc";
 import { Atencion } from "./Atencion";
 import { Recepcion } from "./Recepcion";
@@ -29,6 +29,7 @@ interface DoctorProfile {
   display_name: string;
   created_at: string;
   last_used_at: string | null;
+  photo_url?: string | null;
 }
 
 interface SyncStatus {
@@ -63,9 +64,38 @@ type ResolveOutcome =
       candidates: PatientMatch[];
     };
 
+type AttendOutcome =
+  | { kind: "encounter"; encounter_id: string }
+  | {
+      kind: "needs_resolution";
+      appointment_patient: ResolutionPatient;
+      candidates: PatientMatch[];
+    };
+
+function profileInitials(displayName: string) {
+  const parts = displayName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  return parts.map((part) => part[0]?.toUpperCase()).join("") || "M";
+}
+
+function profileHue(seed: string) {
+  let hash = 0;
+  for (const char of seed) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 360;
+  }
+  return 190 + (hash % 55);
+}
+
+function profileAvatarStyle(profile: DoctorProfile): CSSProperties {
+  return { "--profile-hue": profileHue(profile.id) } as CSSProperties;
+}
+
 function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => void }) {
   const [profiles, setProfiles] = useState<DoctorProfile[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [selectedProfile, setSelectedProfile] = useState<DoctorProfile | null>(null);
   const [newProfileName, setNewProfileName] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [error, setError] = useState("");
@@ -76,12 +106,11 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
     try {
       const nextProfiles = await call<DoctorProfile[]>("list_doctor_profiles");
       setProfiles(nextProfiles);
-      setSelectedProfileId((current) => {
-        if (current && nextProfiles.some((profile) => profile.id === current)) {
-          return current;
+      setSelectedProfile((current) => {
+        if (!current) {
+          return null;
         }
-        const lastUsed = nextProfiles.find((profile) => profile.last_used_at);
-        return lastUsed?.id ?? nextProfiles[0]?.id ?? "";
+        return nextProfiles.find((profile) => profile.id === current.id) ?? null;
       });
     } catch (e) {
       setError(String(e));
@@ -101,7 +130,8 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
       const profile = await call<DoctorProfile>("create_doctor_profile", { displayName });
       setNewProfileName("");
       await loadProfiles();
-      setSelectedProfileId(profile.id);
+      setSelectedProfile(profile);
+      setPassphrase("");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -110,11 +140,12 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
   }
 
   async function unlock() {
+    if (!selectedProfile) return;
     setBusy(true);
     setError("");
     try {
       const result = await call<UnlockResult>("unlock_database", {
-        profileId: selectedProfileId,
+        profileId: selectedProfile.id,
         passphrase
       });
       setPassphrase("");
@@ -128,75 +159,128 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
 
   return (
     <div className="auth-shell">
-      <article className="auth-card">
+      <article className={selectedProfile ? "auth-card auth-card-narrow" : "auth-card auth-card-wide"}>
         <header>
           <span className="brand-mark">MiDoc</span>
-          <h1>Abre tu expediente</h1>
+          <h1>{selectedProfile ? "Frase de seguridad" : "Abre tu expediente"}</h1>
           <p>
-            Cada medico tiene su propia base cifrada en esta computadora. Elige el perfil e
-            introduce su frase de seguridad.
+            {selectedProfile
+              ? "Confirma la frase de este perfil para abrir su base cifrada local."
+              : "Cada medico tiene su propia base cifrada en esta computadora. Elige el perfil para continuar."}
           </p>
         </header>
-        <form
-          className="stack"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void unlock();
-          }}
-        >
-          <label className="field">
-            <span>Medico</span>
-            <select
-              value={selectedProfileId}
-              onChange={(e) => setSelectedProfileId(e.currentTarget.value)}
-            >
+        {selectedProfile ? (
+          <form
+            className="stack"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void unlock();
+            }}
+          >
+            <div className="selected-profile-card">
+              <div className="profile-photo" style={profileAvatarStyle(selectedProfile)} aria-hidden="true">
+                {selectedProfile.photo_url ? (
+                  <img src={selectedProfile.photo_url} alt="" />
+                ) : (
+                  <span>{profileInitials(selectedProfile.display_name)}</span>
+                )}
+              </div>
+              <div>
+                <span className="selected-profile-label">Medico seleccionado</span>
+                <strong>{selectedProfile.display_name}</strong>
+              </div>
+            </div>
+            <label className="field">
+              <span>Frase de seguridad</span>
+              <input
+                type="password"
+                value={passphrase}
+                onChange={(e) => setPassphrase(e.currentTarget.value)}
+                autoFocus
+              />
+            </label>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="button-row">
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => {
+                  setSelectedProfile(null);
+                  setPassphrase("");
+                  setError("");
+                }}
+              >
+                Volver
+              </button>
+              <button className="action-button" type="submit" disabled={busy || passphrase.length === 0}>
+                {busy ? "Abriendo..." : "Desbloquear"}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="stack">
+            <div className="profile-card-grid" aria-label="Medicos disponibles">
               {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.display_name}
-                </option>
+                <button
+                  key={profile.id}
+                  className="profile-card"
+                  type="button"
+                  onClick={() => {
+                    setSelectedProfile(profile);
+                    setPassphrase("");
+                    setError("");
+                  }}
+                >
+                  <span className="profile-photo" style={profileAvatarStyle(profile)} aria-hidden="true">
+                    {profile.photo_url ? (
+                      <img src={profile.photo_url} alt="" />
+                    ) : (
+                      <span>{profileInitials(profile.display_name)}</span>
+                    )}
+                  </span>
+                  <span className="profile-card-name">{profile.display_name}</span>
+                  {profile.last_used_at ? <span className="profile-card-meta">Usado recientemente</span> : null}
+                </button>
               ))}
-            </select>
-          </label>
-          <div className="profile-create-row">
-            <input
-              type="text"
-              value={newProfileName}
-              onChange={(e) => setNewProfileName(e.currentTarget.value)}
-              placeholder="Nuevo medico"
-            />
-            <button
-              className="ghost-button"
-              type="button"
-              disabled={creatingProfile || newProfileName.trim().length === 0}
-              onClick={() => void createProfile()}
-            >
-              {creatingProfile ? "Creando..." : "Crear"}
-            </button>
+              <form
+                className="profile-add-card"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void createProfile();
+                }}
+              >
+                <span className="profile-add-icon" aria-hidden="true">
+                  +
+                </span>
+                <label className="field compact-field">
+                  <span>Nuevo medico</span>
+                  <input
+                    type="text"
+                    value={newProfileName}
+                    onChange={(e) => setNewProfileName(e.currentTarget.value)}
+                    placeholder="Nombre"
+                  />
+                </label>
+                <button
+                  className="ghost-button"
+                  type="submit"
+                  disabled={creatingProfile || newProfileName.trim().length === 0}
+                >
+                  {creatingProfile ? "Creando..." : "Crear"}
+                </button>
+              </form>
+            </div>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
           </div>
-          <label className="field">
-            <span>Frase de seguridad</span>
-            <input
-              type="password"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.currentTarget.value)}
-              autoFocus
-            />
-          </label>
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="button-row">
-            <button
-              className="action-button"
-              type="submit"
-              disabled={busy || selectedProfileId.length === 0 || passphrase.length === 0}
-            >
-              {busy ? "Abriendo…" : "Desbloquear"}
-            </button>
-          </div>
-        </form>
+        )}
       </article>
     </div>
   );
@@ -388,10 +472,30 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     onLock();
   }
 
-  // "Atender" desde la agenda: NO abre una consulta nueva. Resuelve a que
-  // expediente pertenece la cita (busca duplicados; si los hay, el medico decide
-  // si es un paciente con expediente previo) y abre ese expediente. La consulta
-  // se inicia despues, desde el propio expediente.
+  // Desvincula este equipo del portal (borra token/URL/cursor de sync, sin tocar
+  // el expediente cifrado) y muestra de nuevo el formulario para re-vincular.
+  // Util si el portal se reinstalo o el dispositivo fue revocado: el token local
+  // queda huerfano y el sync responde "No autorizado.".
+  async function unlink() {
+    if (!window.confirm(
+      "Esto desvincula este equipo del portal para que puedas volver a vincularlo. " +
+        "Tu expediente y tus datos locales NO se borran. ¿Continuar?"
+    )) {
+      return;
+    }
+    setError("");
+    setMessage("");
+    try {
+      await call("unlink_device");
+      await refresh();
+      await refreshPending();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Click desde la agenda: primero muestra una decision explicita. Si no hay
+  // similitudes, tambien se pide confirmar antes de crear un expediente.
   async function openPatientFromAppointment(
     appointmentId: string,
     opts?: { linkPatientId?: string; forceNew?: boolean }
@@ -407,6 +511,35 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       if (outcome.kind === "patient") {
         setResolution(null);
         setActivePatient(outcome.patient_id);
+      } else {
+        setResolution({
+          appointmentId,
+          patient: outcome.appointment_patient,
+          candidates: outcome.candidates
+        });
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startConsultationFromAppointment(
+    appointmentId: string,
+    opts?: { linkPatientId?: string; forceNew?: boolean }
+  ) {
+    setError("");
+    setBusy(true);
+    try {
+      const outcome = await call<AttendOutcome>("attend_appointment", {
+        appointmentId,
+        linkPatientId: opts?.linkPatientId ?? null,
+        forceNew: opts?.forceNew ?? false
+      });
+      if (outcome.kind === "encounter") {
+        setResolution(null);
+        setActiveEncounter(outcome.encounter_id);
       } else {
         setResolution({
           appointmentId,
@@ -444,39 +577,6 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     );
   }
 
-  if (resolution) {
-    return (
-      <>
-        <header className="app-topbar">
-          <button className="ghost-button" onClick={() => setResolution(null)}>
-            ← Agenda
-          </button>
-          <span className="topbar-context">Identificar paciente de la cita</span>
-        </header>
-        <div className="content">
-          <PatientResolution
-            patient={resolution.patient}
-            candidates={resolution.candidates}
-            busy={busy}
-            onLink={(patientId) =>
-              void openPatientFromAppointment(resolution.appointmentId, {
-                linkPatientId: patientId
-              })
-            }
-            onCreateNew={() =>
-              void openPatientFromAppointment(resolution.appointmentId, { forceNew: true })
-            }
-          />
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-        </div>
-      </>
-    );
-  }
-
   return (
     <>
       <header className="app-topbar">
@@ -486,12 +586,17 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
         </span>
         <div className="button-row">
           {status?.linked ? (
-            <button className="action-button sync-button" onClick={() => void syncNow()} disabled={busy}>
-              {busy ? "Sincronizando…" : "Sincronizar"}
-              {pendingSync && !busy ? (
-                <span className="sync-badge" role="status" aria-label="Cambios pendientes por sincronizar" />
-              ) : null}
-            </button>
+            <>
+              <button className="action-button sync-button" onClick={() => void syncNow()} disabled={busy}>
+                {busy ? "Sincronizando…" : "Sincronizar"}
+                {pendingSync && !busy ? (
+                  <span className="sync-badge" role="status" aria-label="Cambios pendientes por sincronizar" />
+                ) : null}
+              </button>
+              <button className="ghost-button" onClick={() => void unlink()} disabled={busy}>
+                Desvincular
+              </button>
+            </>
           ) : null}
           <button className="ghost-button" onClick={() => void lock()}>
             Bloquear
@@ -613,6 +718,37 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
           Respaldo: {unlocked.backup_path}
         </p>
       </div>
+
+      {resolution ? (
+        <div className="modal-backdrop">
+          <div
+            className="modal-shell"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="patient-resolution-title"
+          >
+            <PatientResolution
+              patient={resolution.patient}
+              candidates={resolution.candidates}
+              busy={busy}
+              onOpenRecord={(patientId) =>
+                void openPatientFromAppointment(resolution.appointmentId, {
+                  linkPatientId: patientId
+                })
+              }
+              onStartConsultation={(patientId) =>
+                void startConsultationFromAppointment(resolution.appointmentId, {
+                  linkPatientId: patientId
+                })
+              }
+              onCreateNew={() =>
+                void openPatientFromAppointment(resolution.appointmentId, { forceNew: true })
+              }
+              onClose={() => setResolution(null)}
+            />
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

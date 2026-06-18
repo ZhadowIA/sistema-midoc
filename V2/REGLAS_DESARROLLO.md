@@ -43,7 +43,7 @@ Reglas:
 
 1. Datos clinicos (notas, diagnosticos, recetas, documentos, respuestas de preconsulta) **solo** se persisten en la base local cifrada de la app del medico, o transitoriamente en el buzon cifrado de la nube con expiracion y purga.
 2. **Prohibido registrar contenido clinico en logs**, telemetria, mensajes de error, analytics o trazas de IA — en ambas aplicaciones. Los logs referencian IDs, nunca contenido.
-3. Todo envio a servicios de terceros (IA en nube, SMS, correo) lleva el minimo de datos: para IA, contenido seudonimizado y con consentimiento registrado; para notificaciones, solo nombre, contacto y datos de cita.
+3. Todo envio a servicios de terceros (IA en nube, SMS, correo, WhatsApp Business oficial) lleva el minimo de datos: para IA, contenido seudonimizado y con consentimiento registrado; para notificaciones, solo nombre, contacto y datos de cita.
 4. Toda nueva tabla o campo se clasifica al diseñarse: `CLINICO` (solo local/buzon), `CONTACTO` (nube minima) u `OPERATIVO` (segun residencia). La clasificacion se anota en el esquema.
 5. Tokens y enlaces publicos (cuestionario, carga de estudios, acciones de cita) siempre tienen expiracion, un solo proposito y auditoria de uso.
 
@@ -51,7 +51,7 @@ Reglas:
 
 - Cada servicio de dominio tiene pruebas unitarias. Cada endpoint y comando de sincronizacion tiene al menos una prueba de integracion del camino feliz y una de rechazo (sin permiso / payload invalido).
 - Logica critica de concurrencia (holds, doble reserva, purga de buzon, conflictos de sync) requiere pruebas especificas de carrera/duplicado.
-- Las pruebas no dependen de servicios externos reales: IA, SMS y correo se prueban contra fakes/mocks; el contrato real se prueba en staging.
+- Las pruebas no dependen de servicios externos reales: IA, SMS, WhatsApp Business oficial y correo se prueban contra fakes/mocks; el contrato real se prueba en staging.
 - Una funcionalidad sin pruebas no esta terminada, aunque "funcione".
 
 ## 6. Migraciones y datos
@@ -85,7 +85,7 @@ Un cambio esta terminado cuando:
 ## 9. Dependencias
 
 - Agregar una dependencia requiere justificacion en el PR: que problema resuelve y por que no se resuelve con lo ya instalado.
-- Preferir dependencias mantenidas y auditables; prohibido depender de APIs no oficiales o scraping (leccion de V1: whatsapp-web.js).
+- Preferir dependencias mantenidas y auditables; prohibido depender de APIs no oficiales o scraping (leccion de V1: `whatsapp-web.js`). WhatsApp solo puede usarse por canales oficiales, por ejemplo Twilio WhatsApp Business/API, con consentimiento del paciente, plantillas aprobadas cuando apliquen, contenido minimo y sin contenido clinico en mensajes, logs ni telemetria.
 - Revisar licencias: nada copyleft incompatible con distribucion comercial de la app instalable.
 
 ## 10. Trabajo asistido por IA (Claude/Codex)

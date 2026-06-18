@@ -92,6 +92,11 @@ pub fn set_state(conn: &Connection, key: &str, value: &str) -> Result<(), SyncEr
     Ok(())
 }
 
+pub fn delete_state(conn: &Connection, key: &str) -> Result<(), SyncError> {
+    conn.execute("DELETE FROM sync_state WHERE key = ?1", params![key])?;
+    Ok(())
+}
+
 pub fn get_cursor(conn: &Connection) -> Result<i64, SyncError> {
     Ok(get_state(conn, "cursor")?
         .and_then(|value| value.parse().ok())
@@ -956,6 +961,26 @@ mod tests {
         assert_eq!(get_cursor(&conn).unwrap(), 42);
         set_state(&conn, "cursor", "43").unwrap();
         assert_eq!(get_cursor(&conn).unwrap(), 43);
+    }
+
+    #[test]
+    fn delete_state_clears_link_so_relinking_is_possible() {
+        let conn = test_conn("unlink");
+
+        set_state(&conn, "device_token", "tok-123").unwrap();
+        set_state(&conn, "server_url", "http://localhost:3000").unwrap();
+        set_state(&conn, "cursor", "57").unwrap();
+
+        delete_state(&conn, "device_token").unwrap();
+        delete_state(&conn, "server_url").unwrap();
+        delete_state(&conn, "cursor").unwrap();
+
+        assert_eq!(get_state(&conn, "device_token").unwrap(), None);
+        assert_eq!(get_state(&conn, "server_url").unwrap(), None);
+        // Cursor vuelve al default (0) para que el re-vinculo baje desde cero.
+        assert_eq!(get_cursor(&conn).unwrap(), 0);
+        // Borrar algo inexistente no falla (idempotente).
+        delete_state(&conn, "device_token").unwrap();
     }
 
     #[test]

@@ -68,6 +68,15 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
     phone: "",
     email: ""
   });
+  const [notificationConsent, setNotificationConsent] = useState<{
+    sms: boolean;
+    whatsapp: boolean;
+    preferredPhoneChannel?: "SMS" | "WHATSAPP";
+  }>({
+    sms: true,
+    whatsapp: false,
+    preferredPhoneChannel: "SMS"
+  });
   // Clave de pais del telefono: Mexico por defecto, autodetectada del locale tras
   // montar (evita desajuste de hidratacion) y editable por el usuario.
   const [patientCountry, setPatientCountry] = useState(DEFAULT_COUNTRY);
@@ -255,7 +264,8 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
               : undefined,
           legal: {
             acceptedTerms: true,
-            acceptedPrivacy: true
+            acceptedPrivacy: true,
+            notificationConsent
           }
         })
       });
@@ -423,6 +433,89 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
               onChange={(event) => setPatient((current) => ({ ...current, email: event.target.value }))}
             />
           </label>
+
+          <fieldset className="field field-full notification-consent-fieldset">
+            <legend>Recordatorios por teléfono</legend>
+
+            <div className="notification-consent-checks">
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={notificationConsent.sms}
+                  onChange={(event) =>
+                    setNotificationConsent((current) => ({
+                      ...current,
+                      sms: event.target.checked,
+                      preferredPhoneChannel: !event.target.checked && current.preferredPhoneChannel === "SMS"
+                        ? current.whatsapp
+                          ? "WHATSAPP"
+                          : undefined
+                        : current.preferredPhoneChannel
+                    }))
+                  }
+                />
+                <span>Acepto SMS</span>
+              </label>
+
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={notificationConsent.whatsapp}
+                  onChange={(event) =>
+                    setNotificationConsent((current) => ({
+                      ...current,
+                      whatsapp: event.target.checked,
+                      preferredPhoneChannel: !event.target.checked && current.preferredPhoneChannel === "WHATSAPP"
+                        ? current.sms
+                          ? "SMS"
+                          : undefined
+                        : current.preferredPhoneChannel
+                    }))
+                  }
+                />
+                <span>Acepto WhatsApp</span>
+              </label>
+            </div>
+
+            <div className="booking-for-toggle notification-channel-toggle" role="radiogroup" aria-label="Canal preferido">
+              <button
+                type="button"
+                className={
+                  notificationConsent.preferredPhoneChannel === "SMS" ? "toggle-option toggle-active" : "toggle-option"
+                }
+                aria-pressed={notificationConsent.preferredPhoneChannel === "SMS"}
+                disabled={!notificationConsent.sms}
+                onClick={() =>
+                  setNotificationConsent((current) => ({
+                    ...current,
+                    sms: true,
+                    preferredPhoneChannel: "SMS"
+                  }))
+                }
+              >
+                SMS
+              </button>
+              <button
+                type="button"
+                className={
+                  notificationConsent.preferredPhoneChannel === "WHATSAPP"
+                    ? "toggle-option toggle-active"
+                    : "toggle-option"
+                }
+                aria-pressed={notificationConsent.preferredPhoneChannel === "WHATSAPP"}
+                disabled={!notificationConsent.whatsapp}
+                onClick={() =>
+                  setNotificationConsent((current) => ({
+                    ...current,
+                    whatsapp: true,
+                    preferredPhoneChannel: "WHATSAPP"
+                  }))
+                }
+              >
+                WhatsApp
+              </button>
+            </div>
+          </fieldset>
 
           {bookingFor === "other" ? (
             <fieldset className="field field-full guardian-fieldset">

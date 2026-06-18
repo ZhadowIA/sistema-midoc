@@ -27,6 +27,10 @@ type AppointmentDetails = {
     status: string;
     responses: unknown;
   } | null;
+  precheckinState?: {
+    medicalHistorySubmitted: boolean;
+    aiPreconsultaSubmitted: boolean;
+  };
 };
 
 type AppointmentClientProps = {
@@ -92,12 +96,22 @@ export function AppointmentClient({
   // ya contesto -> preconsulta guiada). Si ya hay respuestas previas, se entra
   // directo al formulario.
   const hasPreviousResponses = Boolean(
-    precheckinResponses.motivo || precheckinResponses.antecedentes || precheckinResponses.sintomas
+    precheckinResponses.motivo ||
+      precheckinResponses.antecedentes ||
+      precheckinResponses.sintomas ||
+      details.precheckinState?.medicalHistorySubmitted ||
+      details.precheckinState?.aiPreconsultaSubmitted
   );
   const [precheckinStarted, setPrecheckinStarted] = useState(hasPreviousResponses);
-  const [firstVisit, setFirstVisit] = useState<boolean | null>(null);
-  const [medicalHistorySaved, setMedicalHistorySaved] = useState(false);
-  const [aiPreconsultaSaved, setAiPreconsultaSaved] = useState(false);
+  const [firstVisit, setFirstVisit] = useState<boolean | null>(
+    details.precheckinState?.aiPreconsultaSubmitted ? false : null
+  );
+  const [medicalHistorySaved, setMedicalHistorySaved] = useState(
+    Boolean(details.precheckinState?.medicalHistorySubmitted)
+  );
+  const [aiPreconsultaSaved, setAiPreconsultaSaved] = useState(
+    Boolean(details.precheckinState?.aiPreconsultaSubmitted)
+  );
   // El enlace de cancelacion del recordatorio abre la cita con este aviso al frente.
   const [showCancelPrompt, setShowCancelPrompt] = useState(Boolean(cancelIntent));
 
@@ -266,6 +280,11 @@ export function AppointmentClient({
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleMedicalHistorySaved() {
+    setMedicalHistorySaved(true);
+    setFirstVisit(false);
   }
 
   return (
@@ -445,12 +464,17 @@ export function AppointmentClient({
                 <MedicalHistoryForm
                   token={token}
                   publicKey={documentPublicKey}
-                  onSaved={() => setMedicalHistorySaved(true)}
+                  onSaved={handleMedicalHistorySaved}
                 />
               )}
             </>
           ) : (
             <>
+              {medicalHistorySaved ? (
+                <p className="form-success" role="status">
+                  Antecedentes enviados de forma cifrada. Ahora puede contestar su preconsulta.
+                </p>
+              ) : null}
               <p className="precheckin-path-note">
                 Ya nos visitó antes: preconsulta guiada.{" "}
                 {!aiPreconsultaSaved ? (

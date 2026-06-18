@@ -56,6 +56,7 @@ async function seedDoctorWithDeviceAndAppointment(label: string, withKey = true)
     firstName: "Silvia",
     lastName: "Marin",
     professionalName: "Dra. Silvia Marin",
+    licenseNumber: "1234567",
     specialty: "GENERAL_MEDICINE",
     termsVersion: "2026-05",
     privacyVersion: "2026-05"
@@ -233,6 +234,24 @@ describe("medical history sealed precheckin (paso 19, rebanada 7)", () => {
       const purged = await prisma.precheckinSubmission.findUnique({ where: { id } });
       expect(purged?.ciphertext).toBeNull();
       expect(purged?.purgedAt).not.toBeNull();
+    } finally {
+      await cleanupUserByEmail(ctx.email);
+    }
+  });
+
+  it("rejects duplicate AI preconsulta submissions for the same appointment", async () => {
+    const ctx = await seedDoctorWithDeviceAndAppointment("ai-duplicate");
+    const payload = { motivo: "tos seca", conversation: [{ question: "¿desde cuándo?", answer: "3 días" }] };
+
+    try {
+      await _sodium.ready;
+      const publicKeyB64 = _sodium.to_base64(ctx.keypair.publicKey, _sodium.base64_variants.ORIGINAL);
+      const ciphertext = await sealFor(publicKeyB64, payload, "ai-preconsulta");
+
+      await submitAiPreconsulta({ confirmationToken: ctx.confirmationToken, ciphertext });
+      await expect(
+        submitAiPreconsulta({ confirmationToken: ctx.confirmationToken, ciphertext })
+      ).rejects.toMatchObject({ status: 409 });
     } finally {
       await cleanupUserByEmail(ctx.email);
     }

@@ -26,6 +26,12 @@ import {
 } from "./consultationScribe";
 import { MedicationSafety } from "./MedicationSafety";
 import { call } from "./ipc";
+import { buildBackgroundReview } from "./precheckinBackground";
+import {
+  flattenMedicalHistoryDisplayRows,
+  formatMedicalHistoryForDisplay,
+  type MedicalHistoryGroup
+} from "./medicalHistoryFormat";
 
 type SpecialtyPayload = GeneralMedicinePayload | DentalPayload;
 type RecordingState = "idle" | "recording" | "stopping";
@@ -208,27 +214,6 @@ type SectionId =
   | "modulo"
   | "receta";
 
-// Titulos legibles de los grupos del formulario de antecedentes (paridad con el
-// contrato del portal). Las claves de campo se humanizan automaticamente.
-const PRECHECKIN_GROUP_LABELS: Record<string, string> = {
-  sex: "Sexo biologico",
-  identification: "Identificacion",
-  familyHistory: "Heredofamiliares",
-  nonPathological: "No patologicos",
-  pathological: "Patologicos",
-  gyneco: "Ginecoobstetricos",
-  andro: "Andrologicos",
-  allergies: "Alergias",
-  currentMedications: "Medicamentos cronicos"
-};
-
-const SEX_LABELS: Record<string, string> = { F: "Femenino", M: "Masculino" };
-
-function humanizeKey(key: string): string {
-  const spaced = key.replace(/([a-z])([A-Z])/g, "$1 $2");
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
-
 function formatRecordingDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remaining = seconds % 60;
@@ -269,24 +254,30 @@ function formatPrecheckin(raw: string): Array<[string, string]> {
       return rows;
     }
 
-    const rows: Array<[string, string]> = [];
-    for (const [key, value] of Object.entries(parsed)) {
-      if (value === null || value === undefined) continue;
-      const groupLabel = PRECHECKIN_GROUP_LABELS[key] ?? humanizeKey(key);
-      if (typeof value === "object") {
-        for (const [field, fieldValue] of Object.entries(value as Record<string, unknown>)) {
-          const text = String(fieldValue ?? "").trim();
-          if (text) rows.push([`${groupLabel} · ${humanizeKey(field)}`, text]);
-        }
-      } else {
-        const text = key === "sex" ? (SEX_LABELS[String(value)] ?? "") : String(value).trim();
-        if (text) rows.push([groupLabel, text]);
-      }
-    }
-    return rows;
+    return flattenMedicalHistoryDisplayRows(raw);
   } catch {
     return [["respuestas", raw]];
   }
+}
+
+function MedicalHistoryGroups({ groups }: { groups: MedicalHistoryGroup[] }) {
+  return (
+    <div className="medical-history-groups">
+      {groups.map((group) => (
+        <section key={group.key} className="medical-history-group">
+          <h4>{group.title}</h4>
+          <dl className="precheckin-list">
+            {group.rows.map((row) => (
+              <div key={`${group.key}-${row.label}`}>
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ))}
+    </div>
+  );
 }
 
 export function Atencion({
@@ -331,6 +322,7 @@ export function Atencion({
   const [aiUsage, setAiUsage] = useState<UsageSummary | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
   const [activeSection, setActiveSection] = useState<SectionId>("nota");
+  const [backgroundReviewDismissed, setBackgroundReviewDismissed] = useState(false);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -338,6 +330,7 @@ export function Atencion({
   const recorderChunksRef = useRef<Float32Array[]>([]);
   const recordingStartedAtRef = useRef<number>(0);
   const recordingTimerRef = useRef<number | null>(null);
+  const initialSectionSetRef = useRef(false);
 
   const load = useCallback(() => {
     call<EncounterDetail>("get_encounter", { encounterId })
@@ -358,6 +351,10 @@ export function Atencion({
           family_background: data.patient.family_background ?? "",
           birth_date: data.patient.birth_date ?? ""
         });
+        if (data.precheckin && !initialSectionSetRef.current) {
+          initialSectionSetRef.current = true;
+          setActiveSection("preconsulta");
+        }
         if (data.encounter.status === "SIGNED") {
           call<boolean>("verify_signature", { encounterId })
             .then(setSignatureValid)
@@ -427,6 +424,10 @@ export function Atencion({
 
   const signed = detail.encounter.status === "SIGNED";
   const patientId = detail.patient.id;
+  const backgroundReview = buildBackgroundReview(background, detail.precheckin);
+  const medicalHistoryGroups = formatMedicalHistoryForDisplay(detail.precheckin);
+  const showBackgroundReview =
+    Boolean(backgroundReview?.hasImportableChanges) && !backgroundReviewDismissed && !signed;
 
   const moduleLabel =
     resolvedProfile === "ODONTOLOGY" ? "Modulo odontologico" : "Medicina general / familiar";
@@ -496,6 +497,31 @@ export function Atencion({
           medical_background: background.medical_background || null,
           family_background: background.family_background || null,
           birth_date: background.birth_date || null
+        }
+      })
+    );
+  }
+
+  function importPrecheckinBackground() {
+    if (!backgroundReview) return;
+    const nextBackground = {
+      ...background,
+      allergies: backgroundReview.incoming.allergies || background.allergies,
+      medical_background:
+        backgroundReview.incoming.medical_background || background.medical_background,
+      family_background:
+        backgroundReview.incoming.family_background || background.family_background
+    };
+    setBackground(nextBackground);
+    setBackgroundReviewDismissed(true);
+    void run("Antecedentes importados desde el cuestionario.", () =>
+      call("update_patient_background", {
+        patientId,
+        background: {
+          allergies: nextBackground.allergies || null,
+          medical_background: nextBackground.medical_background || null,
+          family_background: nextBackground.family_background || null,
+          birth_date: nextBackground.birth_date || null
         }
       })
     );
@@ -1022,14 +1048,18 @@ export function Atencion({
             {resolvedSection === "preconsulta" && detail.precheckin ? (
               <section className="panel">
                 <h3>Preconsulta del paciente</h3>
-                <dl className="precheckin-list">
-                  {formatPrecheckin(detail.precheckin).map(([key, value]) => (
-                    <div key={key}>
-                      <dt>{key}</dt>
-                      <dd>{value}</dd>
-                    </div>
-                  ))}
-                </dl>
+                {medicalHistoryGroups.length > 0 ? (
+                  <MedicalHistoryGroups groups={medicalHistoryGroups} />
+                ) : (
+                  <dl className="precheckin-list">
+                    {formatPrecheckin(detail.precheckin).map(([key, value]) => (
+                      <div key={key}>
+                        <dt>{key}</dt>
+                        <dd>{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
               </section>
             ) : null}
 
@@ -1054,6 +1084,80 @@ export function Atencion({
             {resolvedSection === "antecedentes" ? (
               <section className="panel">
                 <h3>Antecedentes</h3>
+                {medicalHistoryGroups.length > 0 ? (
+                  <div className="questionnaire-history">
+                    <div className="panel-header">
+                      <strong>Cuestionario de antecedentes</strong>
+                      <p>Respuestas recibidas con el mismo formato que vio el paciente.</p>
+                    </div>
+                    <MedicalHistoryGroups groups={medicalHistoryGroups} />
+                  </div>
+                ) : null}
+                {showBackgroundReview && backgroundReview ? (
+                  <div className="background-review" role="status">
+                    <div className="panel-header">
+                      <strong>
+                        {backgroundReview.hasDiscrepancies
+                          ? "El paciente envio antecedentes distintos"
+                          : "El paciente envio antecedentes nuevos"}
+                      </strong>
+                      <p>
+                        Compara el expediente actual contra el cuestionario de preconsulta antes
+                        de decidir si importas la version nueva.
+                      </p>
+                    </div>
+                    <div className="background-review-grid">
+                      {backgroundReview.fields.map((field) => (
+                        <div
+                          key={field.key}
+                          className={
+                            field.hasDifference
+                              ? "background-review-row background-review-row-different"
+                              : "background-review-row"
+                          }
+                        >
+                          <strong>{field.label}</strong>
+                          <div>
+                            <span className="meta">Expediente actual</span>
+                            <p>{field.current || "Sin dato registrado"}</p>
+                          </div>
+                          <div>
+                            <span className="meta">Cuestionario nuevo</span>
+                            <p>{field.incoming || "Sin dato enviado"}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="button-row">
+                      <button
+                        className="ghost-button"
+                        disabled={busy}
+                        onClick={() => {
+                          setBackgroundReviewDismissed(true);
+                          setMessage("Se mantuvieron los antecedentes anteriores.");
+                        }}
+                      >
+                        Mantener anteriores
+                      </button>
+                      <button
+                        className="action-button"
+                        disabled={busy}
+                        onClick={importPrecheckinBackground}
+                      >
+                        Importar nuevos
+                      </button>
+                      {detail.precheckin ? (
+                        <button
+                          className="ghost-button"
+                          disabled={busy}
+                          onClick={() => setActiveSection("preconsulta")}
+                        >
+                          Ver preconsulta
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
           <div className="stack">
             <label className="field">
               <span>Alergias</span>

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ClinicalProfile, HoldStatus, PrismaClient } from "@prisma/client";
+import { approveDoctorAccountForTesting } from "../helpers/doctor-accounts";
 
 import { createDoctorAccount, createDoctorSubscription } from "../../src/services/auth/auth-service";
 import {
@@ -114,10 +115,13 @@ describe("public booking flow", () => {
         firstName: "Paula",
         lastName: "Reyes",
         professionalName: "Dra. Paula Reyes",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -173,10 +177,13 @@ describe("public booking flow", () => {
         firstName: "Sara",
         lastName: "Lopez",
         professionalName: "Dra. Sara Lopez",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -260,6 +267,7 @@ describe("public booking flow", () => {
         lastName: "Campos",
         phone: "6140000300",
         professionalName: "Dra. Lucia Campos",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -269,6 +277,8 @@ describe("public booking flow", () => {
         doctorUserId: account.user.id,
         planCode: "ESSENTIAL"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -365,6 +375,7 @@ describe("public booking flow", () => {
         lastName: "Castro",
         phone: "6140000301",
         professionalName: "Dra. Nora Castro",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -374,6 +385,8 @@ describe("public booking flow", () => {
         doctorUserId: account.user.id,
         planCode: "ESSENTIAL"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -480,12 +493,15 @@ describe("public booking flow", () => {
         lastName: "Reyes",
         phone: "6140000401",
         professionalName: "Dra. Olivia Reyes",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
 
       await createDoctorSubscription({ doctorUserId: account.user.id, planCode: "ESSENTIAL" });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -563,12 +579,15 @@ describe("public booking flow", () => {
         lastName: "Mena",
         phone: "6140000501",
         professionalName: "Dra. Paula Mena",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
 
       await createDoctorSubscription({ doctorUserId: account.user.id, planCode: "ESSENTIAL" });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -681,10 +700,13 @@ describe("public booking flow", () => {
         firstName: "Carmen",
         lastName: "Rios",
         professionalName: "Dra. Carmen Rios",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -740,10 +762,13 @@ describe("public booking flow", () => {
         firstName: "Pedro",
         lastName: "Galvan",
         professionalName: "Dr. Pedro Galvan",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
@@ -860,12 +885,14 @@ describe("public booking flow", () => {
         firstName: "Elena",
         lastName: "Mora",
         professionalName: "Dra. Elena Mora",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
 
       // Ciudad de Mexico es UTC-6 fijo (sin horario de verano desde 2022).
+      await approveDoctorAccountForTesting(prisma, account.user.id);
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
         isPublic: true,
@@ -927,12 +954,14 @@ describe("public booking flow", () => {
         firstName: "Paula",
         lastName: "Reyes",
         professionalName: "Dra. Paula Reyes",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
 
       // Tijuana si observa horario de verano: PDT (UTC-7) verano, PST (UTC-8) invierno.
+      await approveDoctorAccountForTesting(prisma, account.user.id);
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,
         isPublic: true,

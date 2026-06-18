@@ -323,6 +323,22 @@ fn sync_status(state: tauri::State<'_, AppDb>) -> Result<SyncStatus, String> {
     })
 }
 
+/// Desvincula este equipo de la cuenta del portal: borra el device token, la URL
+/// del servidor y el cursor de sincronizacion de la base local cifrada. NO toca
+/// los datos clinicos (expediente, citas, notas): solo el vinculo de sync. Sirve
+/// para re-vincular tras cambiar de servidor, reinstalar el portal o si el
+/// dispositivo fue revocado (el token local queda huerfano y el sync da 401).
+/// El cursor se limpia para que el proximo vinculo baje el buzon desde cero.
+#[tauri::command]
+fn unlink_device(state: tauri::State<'_, AppDb>) -> Result<(), String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    sync::delete_state(conn, "device_token").map_err(|e| e.to_string())?;
+    sync::delete_state(conn, "server_url").map_err(|e| e.to_string())?;
+    sync::delete_state(conn, "cursor").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Vincula la app con la cuenta del medico en el portal. El device token se
 /// guarda dentro de la base cifrada; la contrasena no se persiste.
 #[tauri::command]
@@ -947,7 +963,7 @@ fn check_in_appointment(
 #[derive(serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum WalkInOutcome {
-    Visit { visit: operations::Visit },
+    Visit { visit: Box<operations::Visit> },
     NeedsResolution { candidates: Vec<clinical::PatientMatch> },
 }
 
@@ -965,13 +981,17 @@ fn register_walk_in(
     if let Some(patient_id) = &link_patient_id {
         let visit = operations::register_walk_in_for_patient(conn, &walk_in, patient_id)
             .map_err(|e| e.to_string())?;
-        return Ok(WalkInOutcome::Visit { visit });
+        return Ok(WalkInOutcome::Visit {
+            visit: Box::new(visit),
+        });
     }
 
     // El recepcionista confirmo que es alguien nuevo.
     if force_new {
         let visit = operations::register_walk_in(conn, &walk_in).map_err(|e| e.to_string())?;
-        return Ok(WalkInOutcome::Visit { visit });
+        return Ok(WalkInOutcome::Visit {
+            visit: Box::new(visit),
+        });
     }
 
     // Automatico: busca duplicados por nombre (con mas peso) y telefono.
@@ -991,7 +1011,9 @@ fn register_walk_in(
 
     if candidates.is_empty() {
         let visit = operations::register_walk_in(conn, &walk_in).map_err(|e| e.to_string())?;
-        Ok(WalkInOutcome::Visit { visit })
+        Ok(WalkInOutcome::Visit {
+            visit: Box::new(visit),
+        })
     } else {
         Ok(WalkInOutcome::NeedsResolution { candidates })
     }
@@ -1634,8 +1656,11 @@ fn transcription_model_status(
     for asset in transcription_model::all_assets() {
         let final_path = transcription_model::model_path(&base_dir, &asset.file_name);
         let part = transcription_model::part_path(&final_path);
-        let final_present = final_path.exists();
+        let final_exists = final_path.exists();
         let final_len = fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
+        let final_size_ok =
+            transcription_model::is_complete_model_size(final_len, asset.size_bytes);
+        let final_present = final_exists && final_size_ok;
         let part_len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
 
         let prog = progress.get(&asset.model_id);
@@ -1644,6 +1669,7 @@ fn transcription_model_status(
         // Un archivo presente con checksum fijado que coincide se considera
         // verificado. Sin checksum fijado en el build, queda como no verificado.
         let verified = final_present
+            && transcription_model::should_verify_file(&asset.sha256)
             && transcription_model::verify_file(&final_path, &asset.sha256).unwrap_or(false);
         // Si hay descarga en curso, el progreso manda sobre el tamano del .part.
         let part_for_status = prog
@@ -1658,7 +1684,16 @@ fn transcription_model_status(
             part_for_status,
             verified,
             downloading,
-            error,
+            error.or_else(|| {
+                if final_exists && !final_size_ok {
+                    Some(format!(
+                        "archivo de modelo incompleto o corrupto: {} bytes, esperado {}",
+                        final_len, asset.size_bytes
+                    ))
+                } else {
+                    None
+                }
+            }),
         );
         // Durante la descarga, el total informado por el servidor (si lo hay) es
         // mas fiel que el tamano aproximado del catalogo.
@@ -1689,8 +1724,36 @@ async fn download_transcription_model(
 
     let final_path = transcription_model::model_path(&base_dir, &asset.file_name);
     if final_path.exists() {
-        return Ok(());
+        let len = fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
+        if transcription_model::is_complete_model_size(len, asset.size_bytes) {
+            return Ok(());
+        }
+        fs::remove_file(&final_path).map_err(|e| e.to_string())?;
     }
+
+    // Reclama el slot de descarga bajo el mutex para impedir descargas
+    // concurrentes del mismo modelo: dos clics escribirian el mismo `.part` y se
+    // corromperian entre si (el porcentaje retrocede, el archivo final queda en
+    // 0 bytes al renombrar una mientras la otra sigue escribiendo). Si ya hay una
+    // en curso, no se inicia otra.
+    {
+        let mut map = downloads.0.lock().unwrap();
+        if let Some(p) = map.get(&model_id) {
+            if !p.done && p.error.is_none() {
+                return Ok(());
+            }
+        }
+        map.insert(
+            model_id.clone(),
+            DownloadProgress {
+                downloaded: 0,
+                total: asset.size_bytes,
+                done: false,
+                error: None,
+            },
+        );
+    }
+
     let part = transcription_model::part_path(&final_path);
     let part_len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
 
@@ -1699,11 +1762,22 @@ async fn download_transcription_model(
     if let Some(free) = available_disk_bytes(&dir) {
         let required = transcription_model::required_free_bytes(asset.size_bytes);
         if !transcription_model::has_enough_disk(free, required) {
-            return Err(format!(
+            let msg = format!(
                 "espacio insuficiente: se necesitan ~{} MB libres para {}",
                 required / (1024 * 1024),
                 asset.file_name
-            ));
+            );
+            // Libera el slot reclamado para que la UI deje de mostrar "descargando".
+            downloads.0.lock().unwrap().insert(
+                model_id.clone(),
+                DownloadProgress {
+                    downloaded: 0,
+                    total: asset.size_bytes,
+                    done: true,
+                    error: Some(msg.clone()),
+                },
+            );
+            return Err(msg);
         }
     }
 
@@ -1725,8 +1799,18 @@ async fn download_transcription_model(
 
     match stream_to_part(&asset, &part, resume, &set_progress).await {
         Ok(total) => {
+            let downloaded_len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+            if !transcription_model::is_complete_model_size(downloaded_len, asset.size_bytes) {
+                let _ = fs::remove_file(&part);
+                let msg = format!(
+                    "la descarga quedo incompleta o corrupta: {} bytes, esperado {}",
+                    downloaded_len, asset.size_bytes
+                );
+                set_progress(0, asset.size_bytes, true, Some(msg.clone()));
+                return Err(msg);
+            }
             // Verifica el checksum si esta fijado; si no coincide, descarta.
-            if !asset.sha256.is_empty()
+            if transcription_model::should_verify_file(&asset.sha256)
                 && !transcription_model::verify_file(&part, &asset.sha256).unwrap_or(false)
             {
                 let _ = fs::remove_file(&part);
@@ -1765,15 +1849,17 @@ async fn stream_to_part(
     if !response.status().is_success() {
         return Err(format!("la fuente respondio {}", response.status()));
     }
+    let effective_resume =
+        transcription_model::resume_offset_for_http_status(resume, response.status().as_u16())?;
 
     // Total = lo ya descargado + lo que falta segun el servidor (si lo informa).
     let total = response
         .content_length()
-        .map(|r| resume + r)
+        .map(|r| effective_resume + r)
         .filter(|t| *t > 0)
         .unwrap_or(asset.size_bytes);
 
-    let mut file = if resume > 0 {
+    let mut file = if effective_resume > 0 {
         fs::OpenOptions::new()
             .append(true)
             .open(part)
@@ -1782,7 +1868,7 @@ async fn stream_to_part(
         fs::File::create(part).map_err(|e| e.to_string())?
     };
 
-    let mut downloaded = resume;
+    let mut downloaded = effective_resume;
     while let Some(chunk) = response
         .chunk()
         .await
@@ -1866,6 +1952,7 @@ pub fn run() {
             lock_database,
             sync_status,
             link_account,
+            unlink_device,
             sync_now,
             sync_pending,
             publish_authorized_summary,

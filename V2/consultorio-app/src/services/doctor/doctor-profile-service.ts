@@ -3,11 +3,17 @@ import {
   ClinicalProfile,
   DoctorReview,
   DoctorServiceStatus,
-  UserRole
+  UserRole,
+  UserStatus
 } from "@prisma/client";
 
 import { writeAuditLog } from "../../lib/audit";
 import { ServiceError } from "../../lib/errors";
+import {
+  normalizeLicenseNumber,
+  normalizeMexicanE164Phone,
+  normalizeProfessionalName
+} from "../../lib/identity-validation";
 import { prisma } from "../../lib/prisma";
 import { isValidTimeZone } from "../../lib/timezone";
 
@@ -124,17 +130,41 @@ export async function updateDoctorProfile(
     throw new DoctorProfileServiceError("Consultation duration must be greater than zero.");
   }
 
+  if (input.isPublic === true && (!doctor.emailVerifiedAt || doctor.status !== UserStatus.ACTIVE)) {
+    throw new DoctorProfileServiceError(
+      "Verifica tu correo y espera la aprobacion de tu cuenta antes de publicar el perfil.",
+      403
+    );
+  }
+
+  const professionalName =
+    input.professionalName !== undefined
+      ? normalizeProfessionalName(input.professionalName)
+      : undefined;
+  const licenseNumber =
+    input.licenseNumber === null
+      ? null
+      : input.licenseNumber !== undefined
+        ? normalizeLicenseNumber(input.licenseNumber)
+        : undefined;
+  const phone =
+    input.phone === null
+      ? null
+      : input.phone !== undefined
+        ? normalizeMexicanE164Phone(input.phone)
+        : undefined;
+
   const updatedProfile = await prisma.doctorProfile.update({
     where: {
       id: doctorProfile.id
     },
     data: {
-      professionalName: input.professionalName?.trim(),
+      professionalName,
       publicSlug: input.publicSlug?.trim(),
       specialty: input.specialty,
       description: input.description?.trim() ?? input.description,
-      licenseNumber: input.licenseNumber?.trim() ?? input.licenseNumber,
-      phone: input.phone?.trim() ?? input.phone,
+      licenseNumber,
+      phone,
       addressLine1: input.addressLine1?.trim() ?? input.addressLine1,
       addressLine2: input.addressLine2?.trim() ?? input.addressLine2,
       city: input.city?.trim() ?? input.city,

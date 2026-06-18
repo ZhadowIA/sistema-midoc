@@ -53,6 +53,7 @@ async function createPublicDoctor(input: {
     firstName: input.professionalName.replace(/^Dr\.?\s*/i, "").split(" ")[0] ?? "Medico",
     lastName: "Busqueda",
     professionalName: input.professionalName,
+    licenseNumber: "1234567",
     specialty: input.specialty,
     termsVersion: "2026-05",
     privacyVersion: "2026-05"

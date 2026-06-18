@@ -13,7 +13,7 @@
 
 **Paso 13 completado** (post-MVP, app del médico): directorio clínico de pacientes y expediente longitudinal con línea del tiempo editable. Rebanadas 1 (directorio), 2 (línea del tiempo), 3 (independencia agenda/directorio + anti-duplicados) y 4 (agenda semanal por bloques + "Atender" abre expediente) entregadas el 2026-06-12/13.
 
-**Decisiones de proveedores (2026-06-13):** SMS = **Twilio**, correo = **Resend** (doc 08). IA: base **Gemini 3 Flash** por costo con fallback (Gemini 3.1 Pro / GPT-5.5); transcripción **Whisper local** primero y nube (AssemblyAI/Deepgram) como respaldo con consentimiento; MedLM/HealthScribe descartados para MVP porque los generalistas los superan en benchmark (doc 11). La seguridad de medicación se resuelve con herramientas **deterministas** (DDInter, openFDA, RxNorm/RxClass), no con IA.
+**Decisiones de proveedores (2026-06-13):** SMS = **Twilio**, correo = **Resend** (doc 08), dominio web = **midocapp.com.mx** (2026-06-15). IA: base **Gemini 3 Flash** por costo con fallback (Gemini 3.1 Pro / GPT-5.5); transcripción **Whisper local** primero y nube (AssemblyAI/Deepgram) como respaldo con consentimiento; MedLM/HealthScribe descartados para MVP porque los generalistas los superan en benchmark (doc 11). La seguridad de medicación se resuelve con herramientas **deterministas** (DDInter, openFDA, RxNorm/RxClass), no con IA.
 
 **Extensión de la línea (pasos 14-17, planeados 2026-06-13):** estos pasos llevan a producción los pendientes acordados, en orden de dependencia:
 
@@ -767,7 +767,9 @@ Decision de base (2026-06-13, doc 11): Gemini 3 Flash como base por costo; los L
 | Compuerta de avance | Solo nombre, contacto y datos de cita salen a los proveedores de notificacion (regla 4); secretos en boveda; sin contenido clinico en mensajes, logs ni telemetria. |
 | Push recomendado | Hacer push cuando SMS y correo reales entreguen desde dominios propios y el cobro de la suscripcion opere con gating real, con pruebas contra fakes del contrato. |
 
-Decisiones (2026-06-13, doc 08): SMS = Twilio, correo = Resend. La pasarela de pago concreta queda por elegir (candidatos: Stripe, Mercado Pago).
+Decisiones (2026-06-13, doc 08; aclaracion 2026-06-15): SMS = Twilio, WhatsApp Business puede usarse si es por canal oficial de Twilio, correo = Resend. La pasarela de pago concreta queda por elegir (candidatos: Stripe, Mercado Pago). Sigue prohibido el bot no oficial de V1 (`whatsapp-web.js`) por riesgo de baneo/scraping; los recordatorios se envian con contenido minimo, consentimiento y plantillas aprobadas cuando el canal lo requiera.
+
+Implementado (2026-06-15): la cola de notificaciones soporta `WHATSAPP` como canal separado y lo entrega por Twilio WhatsApp Business/API (`whatsapp:+E164`) cuando `WHATSAPP_PROVIDER=twilio`. `PHONE_NOTIFICATION_CHANNEL=SMS|WHATSAPP` decide si las notificaciones a telefono se encolan como SMS (default) o WhatsApp; usar WhatsApp solo con consentimiento/politica lista.
 
 ## Paso 18 - Agendado con responsable/tutor
 

@@ -14,7 +14,7 @@ Sistema MiDoc/
     └── *.md                # Product, roadmap, and functional documentation
 ```
 
-V2 is **local-first** (decision 2026-06-09): clinical data lives encrypted on the doctor's machine in the desktop app; the cloud portal only handles public booking, a temporary inbox (purged after sync), notifications, and subscription. Never persist clinical data permanently in the cloud, and never log clinical content. Notifications are oriented to `SMS` and `EMAIL`. There is no WhatsApp bot.
+V2 is **local-first** (decision 2026-06-09): clinical data lives encrypted on the doctor's machine in the desktop app; the cloud portal only handles public booking, a temporary inbox (purged after sync), notifications, and subscription. Never persist clinical data permanently in the cloud, and never log clinical content. Notifications are oriented to official provider channels: `SMS`, `EMAIL`, and WhatsApp Business only when sent through an official provider such as Twilio. Do not use unofficial WhatsApp automation, browser scraping, or V1-style `whatsapp-web.js`.
 
 Binding rules: `V2/REGLAS_DESARROLLO.md`. Development line and gates: `V2/10_linea_de_desarrollo.md`. V1 feature inventory: `V2/12_inventario_funcional_v1.md`.
 
@@ -48,6 +48,14 @@ PRIVACY_VERSION
 SMS_PROVIDER
 SMS_BASE_URL
 SMS_API_KEY
+WHATSAPP_PROVIDER
+PHONE_NOTIFICATION_CHANNEL
+TWILIO_ACCOUNT_SID
+TWILIO_AUTH_TOKEN
+TWILIO_MESSAGING_SERVICE_SID
+TWILIO_FROM_PHONE_NUMBER
+TWILIO_WHATSAPP_MESSAGING_SERVICE_SID
+TWILIO_WHATSAPP_FROM_PHONE_NUMBER
 NOTIFICATION_CRON_SECRET
 PAYMENTS_PROVIDER
 PAYMENTS_WEBHOOK_SECRET
@@ -85,7 +93,7 @@ This project uses **Next.js 16**. Before writing App Router, dynamic route, or r
 - `DoctorService` stores active/inactive services with pricing and duration
 - `DoctorAvailability` stores weekly rules or date overrides
 - `DoctorAvailabilityBlock` stores temporary schedule exceptions
-- `Notification` is prepared for `SMS` and `EMAIL`
+- `Notification` supports `SMS`, `EMAIL`, and `WHATSAPP` (WhatsApp Business via official Twilio channel only).
 
 ### Current onboarding flow
 

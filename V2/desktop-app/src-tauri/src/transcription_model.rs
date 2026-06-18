@@ -92,7 +92,29 @@ fn asset_of(model: WhisperModel) -> ModelAsset {
         file_name: model.file_name().to_string(),
         url: model_url(model),
         sha256: model_sha256(model),
-        size_bytes: model.approx_size_bytes(),
+        size_bytes: model_download_size(model),
+    }
+}
+
+fn model_download_size(model: WhisperModel) -> u64 {
+    let configured = match model {
+        WhisperModel::Small => option_env!("MIDOC_WHISPER_SMALL_SIZE_BYTES"),
+        WhisperModel::Medium => option_env!("MIDOC_WHISPER_MEDIUM_SIZE_BYTES"),
+        WhisperModel::LargeV3 => option_env!("MIDOC_WHISPER_LARGE_SIZE_BYTES"),
+    };
+
+    if let Some(raw) = configured {
+        if let Ok(size) = raw.trim().parse::<u64>() {
+            if size > 0 {
+                return size;
+            }
+        }
+    }
+
+    match model {
+        WhisperModel::Small => 487_601_967,
+        WhisperModel::Medium => 1_533_763_059,
+        WhisperModel::LargeV3 => 3_095_033_483,
     }
 }
 
@@ -159,6 +181,29 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// (no hay checksum fijado: no se puede afirmar integridad).
 pub fn matches_sha256(actual_hex: &str, expected_hex: &str) -> bool {
     !expected_hex.is_empty() && actual_hex.eq_ignore_ascii_case(expected_hex)
+}
+
+pub fn should_verify_file(expected_sha256: &str) -> bool {
+    !expected_sha256.trim().is_empty()
+}
+
+pub fn is_complete_model_size(actual_bytes: u64, expected_bytes: u64) -> bool {
+    expected_bytes > 0 && actual_bytes == expected_bytes
+}
+
+/// Offset efectivo para escribir la respuesta HTTP de descarga.
+///
+/// Si pedimos Range y la fuente responde 206, se puede appendear. Si responde
+/// 200, ignoro el Range y mando el archivo completo: hay que reiniciar el `.part`
+/// para no crear un binario sobredimensionado.
+pub fn resume_offset_for_http_status(resume: u64, status_code: u16) -> Result<u64, String> {
+    match (resume, status_code) {
+        (_, 200) => Ok(0),
+        (0, 206) => Ok(0),
+        (_, 206) => Ok(resume),
+        (_, code) if (200..300).contains(&code) => Ok(0),
+        (_, code) => Err(format!("la fuente respondio {code}")),
+    }
 }
 
 /// Calcula el SHA-256 de un archivo (streaming, sin cargarlo entero en memoria) y
@@ -306,5 +351,37 @@ mod tests {
 
         let failed = build_status(&asset, false, 0, 0, false, false, Some("sin red".into()));
         assert_eq!(failed.error.as_deref(), Some("sin red"));
+    }
+
+    #[test]
+    fn assets_use_exact_download_sizes_for_corruption_checks() {
+        assert_eq!(asset_for("small").unwrap().size_bytes, 487_601_967);
+        assert_eq!(asset_for("medium").unwrap().size_bytes, 1_533_763_059);
+        assert_eq!(asset_for("large-v3").unwrap().size_bytes, 3_095_033_483);
+    }
+
+    #[test]
+    fn complete_model_size_must_match_expected_bytes() {
+        let asset = asset_for("large-v3").unwrap();
+        assert!(is_complete_model_size(asset.size_bytes, asset.size_bytes));
+        assert!(!is_complete_model_size(asset.size_bytes - 1, asset.size_bytes));
+        assert!(!is_complete_model_size(3_492_965_169, asset.size_bytes));
+    }
+
+    #[test]
+    fn empty_checksum_skips_expensive_file_verification() {
+        assert!(!should_verify_file(""));
+        assert!(!should_verify_file("   "));
+        assert!(should_verify_file(
+            "766d11cebbdf5a67c179c5774e2642b609e35e1a30240e7b559d5647c655b0a4"
+        ));
+    }
+
+    #[test]
+    fn ignored_range_response_restarts_instead_of_appending() {
+        assert_eq!(resume_offset_for_http_status(0, 200).unwrap(), 0);
+        assert_eq!(resume_offset_for_http_status(123, 206).unwrap(), 123);
+        assert_eq!(resume_offset_for_http_status(123, 200).unwrap(), 0);
+        assert!(resume_offset_for_http_status(123, 416).is_err());
     }
 }

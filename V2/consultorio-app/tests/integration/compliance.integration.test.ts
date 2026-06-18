@@ -27,6 +27,7 @@ async function registerDoctor(label: string) {
     firstName: "Lucia",
     lastName: "Pena",
     professionalName: "Dra. Lucia Pena",
+    licenseNumber: "1234567",
     specialty: "GENERAL_MEDICINE",
     termsVersion: "2026-05",
     privacyVersion: "2026-05"

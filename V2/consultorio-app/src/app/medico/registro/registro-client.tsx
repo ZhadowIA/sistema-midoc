@@ -16,6 +16,25 @@ function passwordMeetsPolicy(password: string) {
   );
 }
 
+function normalizePhoneForSubmit(phone: string) {
+  const trimmed = phone.trim();
+  const digits = trimmed.replace(/\D/g, "");
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (digits.length === 10) {
+    return `+52${digits}`;
+  }
+
+  if (digits.length === 12 && digits.startsWith("52")) {
+    return `+${digits}`;
+  }
+
+  return trimmed;
+}
+
 export function RegistroClient() {
   const router = useRouter();
   const [form, setForm] = useState({
@@ -24,14 +43,19 @@ export function RegistroClient() {
     email: "",
     phone: "",
     professionalName: "",
+    licenseNumber: "",
     specialty: "GENERAL_MEDICINE",
-    password: ""
+    password: "",
+    passwordConfirmation: ""
   });
   const [passwordTouched, setPasswordTouched] = useState(false);
+  const [confirmationTouched, setConfirmationTouched] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const passwordInvalid = passwordTouched && !passwordMeetsPolicy(form.password);
+  const confirmationInvalid =
+    confirmationTouched && form.passwordConfirmation !== form.password;
 
   function update(field: keyof typeof form, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -40,6 +64,10 @@ export function RegistroClient() {
   async function submit() {
     if (!passwordMeetsPolicy(form.password)) {
       setPasswordTouched(true);
+      return;
+    }
+    if (form.passwordConfirmation !== form.password) {
+      setConfirmationTouched(true);
       return;
     }
 
@@ -51,7 +79,11 @@ export function RegistroClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
-          phone: form.phone || undefined
+          firstName: form.firstName.trim().replace(/\s+/g, " "),
+          lastName: form.lastName.trim().replace(/\s+/g, " "),
+          professionalName: form.professionalName.trim().replace(/\s+/g, " "),
+          licenseNumber: form.licenseNumber.trim().replace(/\s+/g, " "),
+          phone: normalizePhoneForSubmit(form.phone)
         })
       });
       const data = await response.json();
@@ -131,6 +163,17 @@ export function RegistroClient() {
           </div>
 
           <div className="field">
+            <label htmlFor="reg-license">Cedula profesional</label>
+            <input
+              id="reg-license"
+              required
+              placeholder="1234567"
+              value={form.licenseNumber}
+              onChange={(event) => update("licenseNumber", event.currentTarget.value)}
+            />
+          </div>
+
+          <div className="field">
             <label htmlFor="reg-specialty">Especialidad</label>
             <select
               id="reg-specialty"
@@ -186,6 +229,24 @@ export function RegistroClient() {
                 {PASSWORD_RULE}
               </p>
             )}
+          </div>
+
+          <div className={confirmationInvalid ? "field has-error" : "field"}>
+            <label htmlFor="reg-password-confirmation">Confirmar contrasena</label>
+            <input
+              id="reg-password-confirmation"
+              type="password"
+              autoComplete="new-password"
+              required
+              value={form.passwordConfirmation}
+              onBlur={() => setConfirmationTouched(true)}
+              onChange={(event) => update("passwordConfirmation", event.currentTarget.value)}
+            />
+            {confirmationInvalid ? (
+              <p className="field-error" role="alert">
+                La confirmacion no coincide.
+              </p>
+            ) : null}
           </div>
 
           {error ? (

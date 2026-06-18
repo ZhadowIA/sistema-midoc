@@ -705,9 +705,17 @@ pub struct AiUsageReport {
     pub status: String,
     pub provider_name: String,
     pub provider_type: String,
+    // El portal valida estos opcionales con Zod `.optional().strict()`, que acepta
+    // que la clave falte (undefined) pero RECHAZA `null`. Serde serializa
+    // `Option::None` como `null`, asi que omitimos la clave cuando no hay valor
+    // (p. ej. un run local de transcripcion sin costo ni version de modelo);
+    // mandarla como `null` hacia que el sync fallara con "Datos invalidos.".
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model_version: Option<String>,
     pub prompt_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_cost_cents: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub latency_ms: Option<i64>,
     pub occurred_at: String,
     pub input_reference: serde_json::Value,
@@ -2366,6 +2374,34 @@ mod tests {
         let serialized = serde_json::to_string(report).unwrap();
         assert!(!serialized.contains("audio bytes"));
         assert!(!serialized.contains("Transcripcion"));
+    }
+
+    #[test]
+    fn usage_report_omits_empty_optionals_instead_of_sending_null() {
+        // El portal valida con Zod `.optional().strict()`: la clave puede faltar,
+        // pero un `null` explicito lo rechaza ("Datos invalidos."). Un reporte con
+        // costo/latencia/version de modelo vacios debe OMITIR esas claves.
+        let report = AiUsageReport {
+            external_run_id: "run-1".into(),
+            usage_type: USAGE_TRANSCRIPTION.into(),
+            status: "APPROVED".into(),
+            provider_name: "whisper-local".into(),
+            provider_type: "TRANSCRIPTION".into(),
+            model_version: None,
+            prompt_version: "v1".into(),
+            estimated_cost_cents: None,
+            latency_ms: None,
+            occurred_at: "2026-06-16T12:00:00+00:00".into(),
+            input_reference: serde_json::json!({}),
+            output_reference: serde_json::json!({}),
+        };
+        let value = serde_json::to_value(&report).unwrap();
+        let object = value.as_object().unwrap();
+        assert!(!object.contains_key("modelVersion"));
+        assert!(!object.contains_key("estimatedCostCents"));
+        assert!(!object.contains_key("latencyMs"));
+        // Sin valores `null` en ningun campo del reporte.
+        assert!(object.values().all(|v| !v.is_null()));
     }
 }
 

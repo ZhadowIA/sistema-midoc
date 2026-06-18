@@ -16,6 +16,13 @@ param termsVersion string
 param privacyVersion string
 param smsProvider string
 param smsBaseUrl string
+param whatsappProvider string
+param phoneNotificationChannel string
+param twilioAccountSid string
+param twilioMessagingServiceSid string
+param twilioFromPhoneNumber string
+param twilioWhatsAppMessagingServiceSid string
+param twilioWhatsAppFromPhoneNumber string
 param emailProvider string
 param emailBaseUrl string
 param emailFrom string
@@ -35,6 +42,8 @@ param notificationCronSecret string
 param paymentsWebhookSecret string
 @secure()
 param smsApiKey string
+@secure()
+param twilioAuthToken string
 @secure()
 param emailApiKey string
 @secure()
@@ -213,6 +222,11 @@ resource secretSms 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   name: 'sms-api-key'
   properties: { value: smsApiKey }
 }
+resource secretTwilioAuthToken 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(twilioAuthToken)) {
+  parent: keyVault
+  name: 'twilio-auth-token'
+  properties: { value: twilioAuthToken }
+}
 resource secretEmail 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: keyVault
   name: 'email-api-key'
@@ -240,7 +254,7 @@ var appBaseUrl = 'https://${portalAppName}.${containerEnv.properties.defaultDoma
 var image = empty(portalImageName) ? placeholderImage : portalImageName
 
 // Referencias a secretos de Key Vault (versión "latest").
-var kvSecretRefs = [
+var kvSecretRefsBase = [
   { name: 'database-url', keyVaultUrl: secretDatabaseUrl.properties.secretUri, identity: uami.id }
   { name: 'nextauth-secret', keyVaultUrl: secretNextAuth.properties.secretUri, identity: uami.id }
   { name: 'questionnaire-token-secret', keyVaultUrl: secretQuestionnaire.properties.secretUri, identity: uami.id }
@@ -251,12 +265,26 @@ var kvSecretRefs = [
   { name: 'email-api-key', keyVaultUrl: secretEmail.properties.secretUri, identity: uami.id }
 ]
 
+var kvSecretRefs = concat(
+  kvSecretRefsBase,
+  empty(twilioAuthToken) ? [] : [
+    { name: 'twilio-auth-token', keyVaultUrl: secretTwilioAuthToken!.properties.secretUri, identity: uami.id }
+  ]
+)
+
 var nonSecretEnv = [
   { name: 'APP_BASE_URL', value: appBaseUrl }
   { name: 'TERMS_VERSION', value: termsVersion }
   { name: 'PRIVACY_VERSION', value: privacyVersion }
   { name: 'SMS_PROVIDER', value: smsProvider }
   { name: 'SMS_BASE_URL', value: smsBaseUrl }
+  { name: 'WHATSAPP_PROVIDER', value: whatsappProvider }
+  { name: 'PHONE_NOTIFICATION_CHANNEL', value: phoneNotificationChannel }
+  { name: 'TWILIO_ACCOUNT_SID', value: twilioAccountSid }
+  { name: 'TWILIO_MESSAGING_SERVICE_SID', value: twilioMessagingServiceSid }
+  { name: 'TWILIO_FROM_PHONE_NUMBER', value: twilioFromPhoneNumber }
+  { name: 'TWILIO_WHATSAPP_MESSAGING_SERVICE_SID', value: twilioWhatsAppMessagingServiceSid }
+  { name: 'TWILIO_WHATSAPP_FROM_PHONE_NUMBER', value: twilioWhatsAppFromPhoneNumber }
   { name: 'EMAIL_PROVIDER', value: emailProvider }
   { name: 'EMAIL_BASE_URL', value: emailBaseUrl }
   { name: 'EMAIL_FROM', value: emailFrom }
@@ -264,7 +292,7 @@ var nonSecretEnv = [
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
 ]
 
-var secretEnv = [
+var secretEnvBase = [
   { name: 'DATABASE_URL', secretRef: 'database-url' }
   { name: 'NEXTAUTH_SECRET', secretRef: 'nextauth-secret' }
   { name: 'QUESTIONNAIRE_TOKEN_SECRET', secretRef: 'questionnaire-token-secret' }
@@ -274,6 +302,13 @@ var secretEnv = [
   { name: 'SMS_API_KEY', secretRef: 'sms-api-key' }
   { name: 'EMAIL_API_KEY', secretRef: 'email-api-key' }
 ]
+
+var secretEnv = concat(
+  secretEnvBase,
+  empty(twilioAuthToken) ? [] : [
+    { name: 'TWILIO_AUTH_TOKEN', secretRef: 'twilio-auth-token' }
+  ]
+)
 
 // ---------- Container App (portal) ----------
 resource portalApp 'Microsoft.App/containerApps@2024-03-01' = {

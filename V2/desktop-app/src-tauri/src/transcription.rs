@@ -55,13 +55,6 @@ impl WhisperModel {
         }
     }
 
-    /// Tamano aproximado de los pesos en bytes. Referencia para validar espacio
-    /// en disco y para el progreso de descarga si el servidor no informa el
-    /// tamano; no es un valor exacto ni de seguridad.
-    pub fn approx_size_bytes(self) -> u64 {
-        self.disk_mb() * 1024 * 1024
-    }
-
     /// Todos los modelos soportados, de menor a mayor exigencia.
     pub fn all() -> [WhisperModel; 3] {
         [

@@ -611,18 +611,15 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       }
       const candidates = matchPatientsMock(appt?.patient_name, appt?.patient_phone);
       if (candidates.length === 0) {
-        const created = {
-          id: `pat-${mockState.patients.length + 1}`,
-          ...splitNameMock(appt?.patient_name ?? "Paciente"),
-          phone: appt?.patient_phone ?? null,
-          email: null as string | null,
-          birth_date: null as string | null,
-          allergies: null as string | null,
-          medical_background: null as string | null,
-          family_background: null as string | null
-        };
-        mockState.patients.push(created);
-        return { kind: "patient", patient_id: created.id } as T;
+        return {
+          kind: "needs_resolution",
+          appointment_patient: {
+            ...splitNameMock(appt?.patient_name ?? "Paciente"),
+            phone: appt?.patient_phone ?? null,
+            email: null
+          },
+          candidates: []
+        } as T;
       }
       return {
         kind: "needs_resolution",

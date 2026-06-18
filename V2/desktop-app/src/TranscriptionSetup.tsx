@@ -49,6 +49,10 @@ export function TranscriptionSetup() {
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
+  // Marca local: el backend aun no registro la descarga, pero queremos arrancar
+  // el sondeo y deshabilitar el boton de inmediato (evita dobles clics que
+  // lanzarian descargas concurrentes).
+  const [starting, setStarting] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   const loadModels = useCallback(async () => {
@@ -74,9 +78,14 @@ export function TranscriptionSetup() {
 
   const recommended = rec ? models.find((m) => m.modelId === rec.modelId) ?? null : null;
 
+  // En cuanto el backend confirma la descarga, soltamos la marca optimista.
+  useEffect(() => {
+    if (starting && recommended?.downloading) setStarting(false);
+  }, [starting, recommended?.downloading]);
+
   // Sondea el estado mientras hay una descarga en curso, para pintar el avance.
   useEffect(() => {
-    const downloading = recommended?.downloading ?? false;
+    const downloading = starting || (recommended?.downloading ?? false);
     if (downloading && pollRef.current === null) {
       pollRef.current = window.setInterval(() => void loadModels(), 800);
     } else if (!downloading && pollRef.current !== null) {
@@ -89,21 +98,21 @@ export function TranscriptionSetup() {
         pollRef.current = null;
       }
     };
-  }, [recommended?.downloading, loadModels]);
+  }, [starting, recommended?.downloading, loadModels]);
 
   async function downloadRecommended() {
-    if (!rec) return;
+    if (!rec || starting || recommended?.downloading) return;
     setError("");
+    // Marca optimista: arranca el sondeo y deshabilita el boton ya, sin esperar
+    // a que el backend registre la descarga (asi no se lanzan dos a la vez).
+    setStarting(true);
     try {
-      // Marca de inmediato el estado para que arranque el sondeo de progreso.
-      await loadModels();
-      void call("download_transcription_model", { modelId: rec.modelId }).then(
-        () => void loadModels(),
-        (e) => setError(String(e))
-      );
-      await loadModels();
+      await call("download_transcription_model", { modelId: rec.modelId });
     } catch (e) {
       setError(String(e));
+    } finally {
+      setStarting(false);
+      await loadModels();
     }
   }
 
@@ -171,20 +180,20 @@ export function TranscriptionSetup() {
                 Modelo descargado y listo para transcribir sin conexion
                 {recommended.verified ? " (verificado)." : "."}
               </p>
-            ) : recommended?.downloading ? (
+            ) : starting || recommended?.downloading ? (
               <div className="stack">
                 <div
                   className="model-progress"
                   role="progressbar"
                   aria-valuemin={0}
-                  aria-valuemax={recommended.expectedSizeBytes}
-                  aria-valuenow={recommended.downloadedBytes}
+                  aria-valuemax={recommended?.expectedSizeBytes ?? 0}
+                  aria-valuenow={recommended?.downloadedBytes ?? 0}
                 >
                   <span
                     className="model-progress-bar"
                     style={{
                       width: `${
-                        recommended.expectedSizeBytes > 0
+                        recommended && recommended.expectedSizeBytes > 0
                           ? Math.min(
                               100,
                               Math.round(
@@ -197,8 +206,8 @@ export function TranscriptionSetup() {
                   />
                 </div>
                 <p className="meta">
-                  Descargando… {bytesToGb(recommended.downloadedBytes)} de{" "}
-                  {bytesToGb(recommended.expectedSizeBytes)}
+                  Descargando… {bytesToGb(recommended?.downloadedBytes ?? 0)} de{" "}
+                  {bytesToGb(recommended?.expectedSizeBytes ?? rec.diskMb * 1024 * 1024)}
                 </p>
               </div>
             ) : (
