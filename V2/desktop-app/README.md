@@ -11,17 +11,17 @@ Aplicacion instalable local-first de MiDoc V2: todo el dato clinico vive en una 
 ## Comandos
 
 ```bash
-npm install          # primera vez
-npm run tauri dev    # app en modo desarrollo
-npm run build        # typecheck + build del frontend
-npm run tauri build  # instalador de produccion
+npm install             # primera vez
+npm run tauri:dev       # app con Whisper local en desarrollo
+npm run build           # typecheck + build del frontend
+npm run tauri:build     # instalador de produccion con Whisper local
 
 cd src-tauri
 cargo test           # pruebas de la capa Rust (incluye cifrado y migraciones)
 cargo clippy         # lint de Rust
 ```
 
-Requisitos de build en Windows: Rust (rustup, toolchain MSVC), VS Build Tools 2022 con C++, Strawberry Perl y NASM (estos dos solo para compilar OpenSSL/SQLCipher la primera vez).
+Requisitos de build en Windows: Rust (rustup, toolchain MSVC), VS Build Tools 2022 con C++, CMake, LLVM/libclang, Strawberry Perl y NASM (estos dos ultimos solo para compilar OpenSSL/SQLCipher la primera vez). Los scripts `tauri:dev` y `tauri:build` activan el feature nativo `whisper-local`; `cargo test` permanece liviano y no lo activa por defecto.
 
 ## Base de datos cifrada
 
@@ -56,7 +56,7 @@ Reserva una cita en el portal por HTTP, la baja a una base cifrada temporal, y v
 **Capa 3 — smoke manual de GUI** (la ventana nativa de Tauri no es automatizable):
 
 1. `npm run dev` en `V2/consultorio-app`.
-2. `npm run tauri dev` en `V2/desktop-app`; desbloquear con una frase.
+2. `npm run tauri:dev` en `V2/desktop-app`; desbloquear con una frase.
 3. Vincular: URL `http://localhost:3000`, correo y contrasena del medico.
 4. Reservar una cita en el portal (`/perfil/<slug>/agenda`).
 5. En la app, "Sincronizar ahora": la cita aparece en la agenda.
