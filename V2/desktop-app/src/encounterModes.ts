@@ -37,7 +37,7 @@ export function buildEncounterModes({
   if (hasPreconsulta) modes.push({ id: "preconsulta", label: "Preconsulta" });
   if (hasHistory) modes.push({ id: "historial", label: "Historial" });
   modes.push({ id: "antecedentes", label: "Antecedentes" });
-  if (!signed) modes.push({ id: "ia", label: "Asistencia de IA" });
+  if (!signed) modes.push({ id: "ia", label: "Transcripción consulta" });
   modes.push({ id: "nota", label: "Nota clinica (SOAP)" });
   modes.push({ id: "modulo", label: moduleLabel });
   modes.push({ id: "receta", label: "Receta" });

@@ -42,6 +42,9 @@ import {
 import { buildPreconsultaPresentation } from "./clinicalQuestionnairePresentation";
 import { MedicalHistoryEditor } from "./MedicalHistoryEditor";
 import { MedicalHistoryConflictReview } from "./MedicalHistoryConflictReview";
+import { TranscriptionWorkspace } from "./ConsultationTranscriptionPanel";
+import { ClinicalAidRail } from "./ClinicalAidRail";
+import type { ClinicalAidDraft } from "./clinicalAid";
 import {
   applyConflictDecisions,
   reconcileMedicalHistories,
@@ -56,7 +59,7 @@ import {
 } from "./medicalHistoryFormat";
 
 type SpecialtyPayload = GeneralMedicinePayload | DentalPayload;
-type RecordingState = "idle" | "recording" | "stopping";
+type RecordingState = "idle" | "recording" | "paused" | "stopping";
 
 interface NoteContent {
   subjective: string;
@@ -156,6 +159,17 @@ interface TranscriptionDraft {
 interface DiarizationDraft extends TranscriptionDraft {
   turns: ConsultationTurn[];
   diarized: boolean;
+}
+
+interface ReviewedTranscription {
+  id: string;
+  encounter_id: string;
+  run_id: string;
+  transcript_text: string;
+  turns: ConsultationTurn[];
+  status: "REVIEWED";
+  created_at: string;
+  reviewed_at: string;
 }
 
 interface ConsultationStructuringDraft {
@@ -369,6 +383,9 @@ export function Atencion({
   const [aiText, setAiText] = useState<TextDraft | null>(null);
   const [aiTranscription, setAiTranscription] = useState<TranscriptionDraft | null>(null);
   const [scribeTurns, setScribeTurns] = useState<ConsultationTurn[]>([]);
+  const [reviewedTranscription, setReviewedTranscription] =
+    useState<ReviewedTranscription | null>(null);
+  const [clinicalAidDraft, setClinicalAidDraft] = useState<ClinicalAidDraft | null>(null);
   const [scribeDraft, setScribeDraft] = useState<ConsultationStructuringDraft | null>(null);
   const [appliedScribeSegments, setAppliedScribeSegments] = useState<string[]>([]);
   const [consultationTemplates, setConsultationTemplates] = useState<StoredConsultationTemplate[]>([]);
@@ -453,6 +470,14 @@ export function Atencion({
             )
           )
           .catch(() => setConsultationTemplates([]));
+        call<ReviewedTranscription | null>("ai_latest_reviewed_transcription", {
+          encounterId
+        })
+          .then((reviewed) => {
+            setReviewedTranscription(reviewed);
+            if (reviewed) setScribeTurns(reviewed.turns);
+          })
+          .catch(() => setReviewedTranscription(null));
       })
       .catch((e: unknown) => setError(String(e)));
   }, [encounterId, resolvedProfile]);
@@ -493,7 +518,7 @@ export function Atencion({
   // Modo Foco: al dictar, atenúa el chrome de navegación (clase en <body>, ver
   // App.css). Se limpia al salir de la consulta o al dejar de grabar.
   useEffect(() => {
-    const active = isDictating(recordingState);
+    const active = isDictating(recordingState === "paused" ? "recording" : recordingState);
     document.body.classList.toggle(DICTATING_BODY_CLASS, active);
     return () => document.body.classList.remove(DICTATING_BODY_CLASS);
   }, [recordingState]);
@@ -580,6 +605,7 @@ export function Atencion({
   });
 
   const resolvedSection = resolveActiveSection(navItems, activeSection);
+  const showLegacyAi = false as boolean;
 
   function selectAgendaAppointment(appointmentId: string) {
     const needsConfirmation = shouldConfirmEncounterSwitch({
@@ -1094,7 +1120,7 @@ export function Atencion({
   }
 
   function stopConsultationRecording() {
-    if (recordingState !== "recording") return;
+    if (recordingState !== "recording" && recordingState !== "paused") return;
     setRecordingState("stopping");
     const inputSampleRate = audioContextRef.current?.sampleRate ?? 48_000;
     const chunks = recorderChunksRef.current.slice();
@@ -1109,6 +1135,76 @@ export function Atencion({
     } finally {
       setRecordingState("idle");
     }
+  }
+
+  async function pauseConsultationRecording() {
+    if (recordingState !== "recording" || !audioContextRef.current) return;
+    await audioContextRef.current.suspend();
+    setRecordingState("paused");
+  }
+
+  async function resumeConsultationRecording() {
+    if (recordingState !== "paused" || !audioContextRef.current) return;
+    await audioContextRef.current.resume();
+    setRecordingState("recording");
+  }
+
+  function markTranscriptionReviewed() {
+    if (!aiTranscription || scribeTurns.every((turn) => !turn.text.trim())) return;
+    setBusy(true);
+    setError("");
+    call<ReviewedTranscription>("ai_save_reviewed_transcription", {
+      encounterId,
+      runId: aiTranscription.run_id,
+      turns: scribeTurns
+    })
+      .then((reviewed) => {
+        setReviewedTranscription(reviewed);
+        setAiTranscription(null);
+        setMessage("Transcripción revisada. Ayuda IA ya puede usarla.");
+      })
+      .catch((cause: unknown) => setError(String(cause)))
+      .finally(() => setBusy(false));
+  }
+
+  function generateClinicalAid() {
+    if (!reviewedTranscription) return;
+    setBusy(true);
+    setError("");
+    setClinicalAidDraft(null);
+    call<ClinicalAidDraft>("ai_generate_clinical_aid", {
+      encounterId,
+      template: activeTemplate
+    })
+      .then((draft) => {
+        setClinicalAidDraft(draft);
+        setMessage("Ayuda clínica generada. Revisa cada propuesta antes de aplicarla.");
+        refreshUsage();
+      })
+      .catch((cause: unknown) => setError(String(cause)))
+      .finally(() => setBusy(false));
+  }
+
+  function applyClinicalAidSoap() {
+    if (!clinicalAidDraft) return;
+    const draft = clinicalAidDraft.soap;
+    setNote((current) => ({
+      ...current,
+      subjective: draft.subjective,
+      objective: draft.objective,
+      assessment: draft.assessment,
+      diagnosis: draft.diagnosis,
+      plan: draft.plan,
+      instructions: draft.instructions
+    }));
+    setMessage("SOAP aplicado al editor. Revisa y guarda manualmente.");
+  }
+
+  function discardClinicalAid() {
+    if (!clinicalAidDraft) return;
+    const runId = clinicalAidDraft.run_id;
+    setClinicalAidDraft(null);
+    void call("ai_review_run", { runId, status: "DISCARDED", feedback: null });
   }
 
   function applyScribeSegment(segment: SegmentDraft) {
@@ -1422,6 +1518,40 @@ export function Atencion({
             ) : null}
 
             {resolvedSection === "ia" && !signed ? (
+              <section className="panel transcription-panel">
+                <div className="panel-header">
+                  <h3>Transcripción consulta</h3>
+                  <p>
+                    Graba o carga la conversación, revisa el texto y corrige los
+                    hablantes. El acomodo clínico se solicita desde Ayuda IA.
+                  </p>
+                </div>
+                <TranscriptionWorkspace
+                  busy={busy}
+                  voiceConsent={aiVoiceConsent}
+                  recordingState={recordingState}
+                  recordingSeconds={recordingSeconds}
+                  recordingError={recordingError}
+                  useCloud={useCloudTranscription}
+                  turns={scribeTurns}
+                  reviewed={Boolean(reviewedTranscription)}
+                  provider={aiTranscription?.provider ?? reviewedTranscription?.run_id ?? null}
+                  onToggleConsent={() => void toggleVoiceConsent()}
+                  onStart={() => void startConsultationRecording()}
+                  onPause={() => void pauseConsultationRecording()}
+                  onResume={() => void resumeConsultationRecording()}
+                  onStop={stopConsultationRecording}
+                  onFile={transcribeAudioFile}
+                  onCloudChange={setUseCloudTranscription}
+                  onTurnChange={updateScribeTurn}
+                  onSwapRoles={swapScribeRoles}
+                  onMarkReviewed={markTranscriptionReviewed}
+                  onDiscard={discardAiTranscription}
+                />
+              </section>
+            ) : null}
+
+            {showLegacyAi && resolvedSection === "ia" && !signed ? (
           <section className="panel">
             <div className="panel-header">
               <h3>Asistencia de IA</h3>
@@ -2040,6 +2170,19 @@ export function Atencion({
           </div>
 
           <aside className="encounter-context" aria-label="Contexto del paciente">
+            <ClinicalAidRail
+              ready={Boolean(reviewedTranscription)}
+              consent={aiScribeConsent}
+              hasHistory={medicalHistoryGroups.length > 0}
+              hasPreconsulta={Boolean(detail.preconsulta)}
+              busy={busy}
+              draft={clinicalAidDraft}
+              onToggleConsent={() => void toggleScribeConsent()}
+              onGenerate={generateClinicalAid}
+              onApplySoap={applyClinicalAidSoap}
+              onApplySegment={applyScribeSegment}
+              onDiscard={discardClinicalAid}
+            />
             {allergyText(detail.patient.allergies) ? (
               <p className="alert-allergies">Alergias: {allergyText(detail.patient.allergies)}</p>
             ) : (

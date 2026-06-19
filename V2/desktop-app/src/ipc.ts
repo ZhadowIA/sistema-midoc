@@ -92,6 +92,7 @@ const mockState = {
   aiBudgetCents: 0,
   aiRuns: [] as Array<{ id: string; usage_type: string; cost_cents: number; status: string; reported: boolean }>,
   consultationTemplates: [] as Array<Record<string, unknown>>,
+  reviewedTranscriptions: {} as Record<string, Record<string, unknown>>,
   medicationRef: { version: "seed-v1", medications: 27, interactions: 15, labels: 0 },
   benchmarks: [] as Array<Record<string, unknown>>,
   arcoRequests: [] as Array<Record<string, unknown>>,
@@ -1080,6 +1081,33 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         audio_retention_policy: "discarded_after_transcription"
       } as T;
     }
+    case "ai_save_reviewed_transcription": {
+      const encounterId = String(args?.encounterId ?? "");
+      const runId = String(args?.runId ?? "");
+      const turns = (args?.turns ?? []) as Array<{
+        id: string;
+        speaker: "MEDICO" | "PACIENTE";
+        text: string;
+      }>;
+      if (!encounterId || !runId || turns.every((turn) => !turn.text.trim())) {
+        throw "la transcripcion revisada necesita texto";
+      }
+      const reviewedAt = new Date().toISOString();
+      const value = {
+        id: `reviewed-${runId}`,
+        encounter_id: encounterId,
+        run_id: runId,
+        transcript_text: turns.map((turn) => `${turn.speaker}: ${turn.text}`).join("\n"),
+        turns,
+        status: "REVIEWED",
+        created_at: reviewedAt,
+        reviewed_at: reviewedAt
+      };
+      mockState.reviewedTranscriptions[encounterId] = value;
+      return value as T;
+    }
+    case "ai_latest_reviewed_transcription":
+      return (mockState.reviewedTranscriptions[String(args?.encounterId ?? "")] ?? null) as T;
     case "ai_structure_consultation": {
       if (!mockState.aiScribeConsent) {
         throw "falta el consentimiento del paciente para asistencia de IA";
@@ -1119,6 +1147,61 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         })),
         missing: [],
         warnings: ["Acomodo simulado en navegador."]
+      } as T;
+    }
+    case "ai_generate_clinical_aid": {
+      if (!mockState.aiScribeConsent) {
+        throw "falta el consentimiento del paciente para asistencia de IA";
+      }
+      const encounterId = String(args?.encounterId ?? "");
+      if (!mockState.reviewedTranscriptions[encounterId]) {
+        throw "revisa la transcripcion antes de usar Ayuda IA";
+      }
+      mockState.aiRunSeq += 1;
+      const runId = `ai-run-${mockState.aiRunSeq}`;
+      mockState.aiRuns.push({
+        id: runId,
+        usage_type: "CLINICAL_AID",
+        cost_cents: 1,
+        status: "DRAFT",
+        reported: false
+      });
+      return {
+        run_id: runId,
+        usage_type: "CLINICAL_AID",
+        provider: "fake-clinico",
+        model_version: "fake-1",
+        estimated_cost_cents: 1,
+        latency_ms: 2,
+        soap: {
+          subjective: "Fatiga e insomnio según la información revisada.",
+          objective: "",
+          assessment: "Requiere valoración clínica y exploración.",
+          diagnosis: "",
+          plan: "",
+          instructions: "",
+          specialty: null
+        },
+        template_segments: [],
+        possibilities: [{
+          title: "Alteración del sueño",
+          compatibility: "MEDIUM",
+          explanation: "La fatiga coincide con insomnio y descanso insuficiente.",
+          supporting_findings: ["Insomnio", "Descanso insuficiente"],
+          conflicting_findings: [],
+          missing_data: ["Exploración física", "Signos vitales"]
+        }],
+        studies: [{
+          name: "Biometría hemática",
+          reason: "Valorar causas frecuentes de fatiga si el criterio médico lo indica.",
+          priority: "ROUTINE"
+        }],
+        treatments: [{
+          name: "Medidas de higiene del sueño",
+          reason: "La preconsulta refiere insomnio.",
+          precautions: ["Confirmar causas secundarias."]
+        }],
+        warnings: ["Todas las propuestas requieren revisión médica."]
       } as T;
     }
     case "list_consultation_templates":

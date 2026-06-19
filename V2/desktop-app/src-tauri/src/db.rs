@@ -438,6 +438,19 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_patient_medical_history_latest
         ON patient_medical_history_versions(patient_id, version DESC);",
+    // Transcripción corregida por el médico. CLINICO: solo SQLite cifrado local.
+    "CREATE TABLE consultation_transcriptions (
+        id TEXT PRIMARY KEY NOT NULL,
+        encounter_id TEXT NOT NULL REFERENCES encounters(id),
+        run_id TEXT NOT NULL UNIQUE REFERENCES ai_runs(id),
+        transcript_text TEXT NOT NULL,
+        turns_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'REVIEWED',
+        created_at TEXT NOT NULL,
+        reviewed_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_consultation_transcriptions_encounter
+        ON consultation_transcriptions(encounter_id, reviewed_at DESC);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
@@ -556,6 +569,21 @@ mod tests {
         drop(open_encrypted(&path, "k").unwrap());
         let conn = open_encrypted(&path, "k").unwrap();
         assert_eq!(schema_version(&conn).unwrap(), MIGRATIONS.len() as i64);
+    }
+
+    #[test]
+    fn creates_local_reviewed_transcription_table() {
+        let path = temp_db_path("reviewed-transcriptions");
+        let conn = open_encrypted(&path, "clave-correcta").unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('consultation_transcriptions')
+                 WHERE name IN ('transcript_text', 'turns_json', 'reviewed_at')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 3);
     }
 
     #[test]

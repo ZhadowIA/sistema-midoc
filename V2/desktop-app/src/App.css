@@ -1773,6 +1773,127 @@ body.dictating .encounter-modes:focus-within {
   gap: 8px;
 }
 
+.clinical-aid-launch {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in oklch, var(--primary) 32%, var(--line));
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+}
+
+.clinical-aid-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.clinical-aid-results {
+  display: grid;
+  gap: 4px;
+}
+
+.clinical-aid-result {
+  display: grid;
+  gap: 7px;
+  padding-block: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.clinical-aid-result p {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.clinical-aid-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.compatibility-high { color: var(--success); }
+.compatibility-medium { color: oklch(0.48 0.11 70); }
+.compatibility-low { color: var(--muted); }
+
+.transcription-workspace {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.8fr) minmax(190px, 0.65fr) minmax(300px, 1.2fr);
+  gap: 12px;
+}
+
+.transcription-capture,
+.transcription-settings,
+.transcription-review {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+}
+
+.transcription-capture {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  text-align: center;
+  background: color-mix(in oklch, var(--surface) 70%, var(--bg));
+}
+
+.transcription-settings,
+.transcription-review {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.transcription-mic {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--bg);
+  background: var(--primary);
+}
+
+.transcription-facts {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.transcription-facts div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.transcription-facts dt {
+  color: var(--muted);
+}
+
+.transcription-facts dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.transcription-empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  text-align: center;
+  color: var(--muted);
+}
+
+@media (max-width: 1180px) {
+  .transcription-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
 .recording-button {
   border-color: var(--danger);
   color: var(--danger);

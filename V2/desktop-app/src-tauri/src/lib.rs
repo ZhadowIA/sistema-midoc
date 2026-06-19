@@ -1381,6 +1381,28 @@ fn ai_transcribe_audio(
     })
 }
 
+#[tauri::command]
+fn ai_save_reviewed_transcription(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    run_id: String,
+    turns: Vec<ai::ConsultationTurn>,
+) -> Result<ai::ReviewedTranscription, String> {
+    with_ai(&state, |conn| {
+        ai::save_reviewed_transcription(conn, &encounter_id, &run_id, turns)
+    })
+}
+
+#[tauri::command]
+fn ai_latest_reviewed_transcription(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+) -> Result<Option<ai::ReviewedTranscription>, String> {
+    with_ai(&state, |conn| {
+        ai::latest_reviewed_transcription(conn, &encounter_id)
+    })
+}
+
 /// Rutas en disco de los dos modelos ONNX de diarizacion (segmentacion + embedding).
 /// No exige que existan: si faltan, el diarizador fallara y el flujo degradara a
 /// transcripcion sin separacion.
@@ -1450,6 +1472,18 @@ fn ai_structure_consultation(
     let registry = ai::ProviderRegistry::default_local();
     with_ai(&state, |conn| {
         ai::structure_consultation(conn, &encounter_id, turns, template.segments, &registry)
+    })
+}
+
+#[tauri::command]
+fn ai_generate_clinical_aid(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    template: ConsultationTemplatePayload,
+) -> Result<ai::ClinicalAidDraft, String> {
+    let registry = ai::ProviderRegistry::default_local();
+    with_ai(&state, |conn| {
+        ai::generate_clinical_aid(conn, &encounter_id, template.segments, &registry)
     })
 }
 
@@ -2154,8 +2188,11 @@ pub fn run() {
             ai_assist_soap,
             ai_assist_text,
             ai_transcribe_audio,
+            ai_save_reviewed_transcription,
+            ai_latest_reviewed_transcription,
             ai_diarize_consultation,
             ai_structure_consultation,
+            ai_generate_clinical_aid,
             list_consultation_templates,
             save_consultation_template,
             delete_consultation_template,
