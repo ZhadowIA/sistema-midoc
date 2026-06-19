@@ -44,6 +44,7 @@ whatsapp-bot/.wwebjs_cache/
 .claude/
 .atl/
 .superpowers/
+.worktrees/
 
 # Temporary files
 tmp_*.js
