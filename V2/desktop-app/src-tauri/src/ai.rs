@@ -971,6 +971,32 @@ pub struct TranscriptionDraft {
     pub audio_retention_policy: String,
 }
 
+/// Motor de diarizacion inyectado: recibe muestras f32 y su frecuencia, devuelve
+/// tramos de hablante. En produccion es sherpa-onnx (tras el feature); en pruebas,
+/// un cierre determinista. Mantenerlo como alias evita un tipo "muy complejo".
+pub type Diarizer<'a> =
+    dyn Fn(&[f32], u32) -> Result<Vec<crate::diarization::SpeakerSegment>, AiError> + 'a;
+
+/// Resultado de transcribir + separar hablantes (diarizacion local). Ademas del
+/// borrador de transcripcion, trae el dialogo en turnos Medico/Paciente para que el
+/// medico lo revise. `diarized = false` cuando no hubo separacion (sin modelos,
+/// feature apagado o audio no decodificable): en ese caso el frontend cae a su
+/// heuristica de turnos sobre el texto.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiarizationDraft {
+    pub run_id: String,
+    pub usage_type: String,
+    pub provider: String,
+    pub model_version: String,
+    pub estimated_cost_cents: i64,
+    pub latency_ms: i64,
+    pub transcript_text: String,
+    pub turns: Vec<crate::diarization::DiarizedTurn>,
+    pub diarized: bool,
+    pub audio_retention_policy: String,
+}
+
 /// Nucleo comun de toda asistencia de IA sobre el expediente: valida encuentro
 /// abierto, exige consentimiento de texto vigente, seudonimiza el contexto,
 /// invoca el orquestador (con fallback) y registra la traza en estado DRAFT.
@@ -1358,6 +1384,40 @@ pub fn transcribe_audio(
     let input_metadata = audio_input_metadata(&audio)?;
     let response = provider.transcribe(&request, &audio)?;
 
+    let run_id = record_transcription_run(
+        conn,
+        encounter_id,
+        &patient_id,
+        provider.name(),
+        &response,
+        &input_metadata,
+        &consent_id,
+    )?;
+
+    Ok(TranscriptionDraft {
+        run_id,
+        usage_type: USAGE_TRANSCRIPTION.into(),
+        provider: provider.name().into(),
+        model_version: response.model_version,
+        estimated_cost_cents: response.estimated_cost_cents,
+        latency_ms: response.latency_ms,
+        transcript_text: response.output,
+        audio_retention_policy: AUDIO_RETENTION_DISCARD.into(),
+    })
+}
+
+/// Registra en estado DRAFT la traza de una transcripcion local (ai_run + auditoria),
+/// con la misma politica de residencia: solo metadata seudonimizada en `input_redacted`,
+/// nunca el audio. Comun a la transcripcion simple y a la diarizacion.
+fn record_transcription_run(
+    conn: &Connection,
+    encounter_id: &str,
+    patient_id: &str,
+    provider_name: &str,
+    response: &AiResponse,
+    input_metadata: &str,
+    consent_id: &str,
+) -> Result<String, AiError> {
     let run_id = uuid::Uuid::new_v4().to_string();
     conn.execute(
         "INSERT INTO ai_runs
@@ -1370,7 +1430,7 @@ pub fn transcribe_audio(
             encounter_id,
             patient_id,
             USAGE_TRANSCRIPTION,
-            provider.name(),
+            provider_name,
             response.model_version,
             PROMPT_VERSION_TRANSCRIPTION,
             input_metadata,
@@ -1388,8 +1448,67 @@ pub fn transcribe_audio(
         "transcription-draft-generated",
         Some(USAGE_TRANSCRIPTION),
     )?;
+    Ok(run_id)
+}
 
-    Ok(TranscriptionDraft {
+/// Transcribe la consulta y, ademas, separa hablantes (diarizacion local) para
+/// entregar un dialogo Medico/Paciente revisable. Misma gobernanza y residencia que
+/// `transcribe_audio`: consentimiento de voz vigente, presupuesto, traza DRAFT y
+/// audio transitorio (se decodifica en memoria y se descarta).
+///
+/// El `diarizer` se inyecta (cierre) para que este modulo no dependa del motor
+/// nativo: en produccion es sherpa-onnx (tras el feature `diarization-local`); sin el
+/// devuelve vacio y la transcripcion degrada a turnos por heuristica en el frontend.
+pub fn diarize_consultation(
+    conn: &Connection,
+    encounter_id: &str,
+    audio: AudioInput,
+    provider: &dyn TranscriptionProvider,
+    diarizer: &Diarizer,
+) -> Result<DiarizationDraft, AiError> {
+    validate_audio_input(&audio)?;
+
+    let detail =
+        clinical::get_encounter_detail(conn, encounter_id).map_err(|_| AiError::NotFound)?;
+    if detail.encounter.status == "SIGNED" {
+        return Err(AiError::Invalid("el encuentro ya fue firmado".into()));
+    }
+
+    let patient_id = detail.encounter.patient_id.clone();
+    let consent_id = active_consent(conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION)?
+        .ok_or(AiError::ConsentMissing)?;
+    ensure_within_budget(conn)?;
+
+    let request = TranscriptionRequest {
+        media_type: audio.media_type.clone(),
+        byte_len: audio.bytes.len(),
+        duration_seconds: audio.duration_seconds,
+    };
+    let input_metadata = audio_input_metadata(&audio)?;
+    let (response, whisper_segments) = provider.transcribe_detailed(&request, &audio)?;
+
+    // Separacion de hablantes sobre las muestras decodificadas en memoria (16 kHz
+    // mono). El audio nunca se persiste. Si no se puede decodificar o no hay
+    // motor/modelos, se degrada a transcripcion sin separacion.
+    let speaker_segments = match crate::audio::decode_wav_pcm16_to_whisper(&audio.bytes) {
+        Ok(decoded) => diarizer(&decoded.samples, 16_000).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    let diarized = !speaker_segments.is_empty() && !whisper_segments.is_empty();
+    let turns =
+        crate::diarization::merge_segments_with_speakers(&whisper_segments, &speaker_segments);
+
+    let run_id = record_transcription_run(
+        conn,
+        encounter_id,
+        &patient_id,
+        provider.name(),
+        &response,
+        &input_metadata,
+        &consent_id,
+    )?;
+
+    Ok(DiarizationDraft {
         run_id,
         usage_type: USAGE_TRANSCRIPTION.into(),
         provider: provider.name().into(),
@@ -1397,6 +1516,8 @@ pub fn transcribe_audio(
         estimated_cost_cents: response.estimated_cost_cents,
         latency_ms: response.latency_ms,
         transcript_text: response.output,
+        turns,
+        diarized,
         audio_retention_policy: AUDIO_RETENTION_DISCARD.into(),
     })
 }
@@ -2343,6 +2464,168 @@ mod tests {
         assert_eq!(note_count, 0);
     }
 
+    /// WAV PCM16 mono 16 kHz de silencio, para que la decodificacion de audio de
+    /// `diarize_consultation` tenga exito sin depender de audio real.
+    fn silent_wav_16k(seconds: usize) -> Vec<u8> {
+        let sample_count = 16_000 * seconds;
+        let data_len = (sample_count * 2) as u32;
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data_len).to_le_bytes());
+        out.extend_from_slice(b"WAVE");
+        out.extend_from_slice(b"fmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&16_000u32.to_le_bytes());
+        out.extend_from_slice(&32_000u32.to_le_bytes());
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&data_len.to_le_bytes());
+        out.extend(std::iter::repeat(0u8).take((sample_count * 2) as usize));
+        out
+    }
+
+    /// Proveedor de prueba que devuelve segmentos de texto con marcas de tiempo,
+    /// para ejercitar la fusion con la diarizacion.
+    struct SegmentedFakeProvider;
+    impl TranscriptionProvider for SegmentedFakeProvider {
+        fn name(&self) -> &str {
+            "fake-segmented"
+        }
+        fn transcribe(
+            &self,
+            _request: &TranscriptionRequest,
+            _audio: &AudioInput,
+        ) -> Result<AiResponse, AiError> {
+            Ok(AiResponse {
+                output: "Buenos dias. Me duele la cabeza.".into(),
+                model_version: "fake-1".into(),
+                estimated_cost_cents: 0,
+                latency_ms: 1,
+            })
+        }
+        fn transcribe_detailed(
+            &self,
+            request: &TranscriptionRequest,
+            audio: &AudioInput,
+        ) -> Result<(AiResponse, Vec<crate::diarization::WhisperSegment>), AiError> {
+            let response = self.transcribe(request, audio)?;
+            let segments = vec![
+                crate::diarization::WhisperSegment {
+                    start_cs: 0,
+                    end_cs: 100,
+                    text: "Buenos dias.".into(),
+                },
+                crate::diarization::WhisperSegment {
+                    start_cs: 100,
+                    end_cs: 250,
+                    text: "Me duele la cabeza.".into(),
+                },
+            ];
+            Ok((response, segments))
+        }
+    }
+
+    #[test]
+    fn diarization_separates_two_speakers_and_records_draft() {
+        let conn = test_conn("diarize-ok");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = SegmentedFakeProvider;
+        // Diarizador de prueba: el primer segmento es hablante 0, el segundo el 1.
+        let diarizer = |_samples: &[f32], _sr: u32| {
+            Ok(vec![
+                crate::diarization::SpeakerSegment { start_cs: 0, end_cs: 100, speaker_idx: 0 },
+                crate::diarization::SpeakerSegment { start_cs: 100, end_cs: 250, speaker_idx: 1 },
+            ])
+        };
+
+        let draft = diarize_consultation(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: silent_wav_16k(1),
+                duration_seconds: Some(1),
+            },
+            &provider,
+            &diarizer,
+        )
+        .unwrap();
+
+        assert!(draft.diarized, "hubo separacion de hablantes");
+        assert_eq!(draft.turns.len(), 2);
+        assert_eq!(draft.turns[0].speaker, crate::diarization::ScribeRole::Medico);
+        assert_eq!(draft.turns[1].speaker, crate::diarization::ScribeRole::Paciente);
+        assert_eq!(draft.usage_type, USAGE_TRANSCRIPTION);
+        assert_eq!(draft.audio_retention_policy, AUDIO_RETENTION_DISCARD);
+
+        // Se registro una traza DRAFT como cualquier transcripcion local.
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM ai_runs WHERE id = ?1",
+                params![draft.run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "DRAFT");
+    }
+
+    #[test]
+    fn diarization_degrades_when_diarizer_yields_nothing() {
+        let conn = test_conn("diarize-degrade");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = SegmentedFakeProvider;
+        // Sin motor/modelos: el diarizador devuelve vacio.
+        let diarizer = |_s: &[f32], _r: u32| Ok(Vec::new());
+
+        let draft = diarize_consultation(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: silent_wav_16k(1),
+                duration_seconds: Some(1),
+            },
+            &provider,
+            &diarizer,
+        )
+        .unwrap();
+
+        assert!(!draft.diarized, "sin diarizacion, degrada");
+        assert!(draft.transcript_text.contains("duele la cabeza"));
+    }
+
+    #[test]
+    fn diarization_requires_voice_consent() {
+        let conn = test_conn("diarize-consent");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+        let provider = SegmentedFakeProvider;
+        let diarizer = |_s: &[f32], _r: u32| Ok(Vec::new());
+
+        assert!(matches!(
+            diarize_consultation(
+                &conn,
+                &encounter_id,
+                AudioInput {
+                    file_name: Some("consulta.wav".into()),
+                    media_type: "audio/wav".into(),
+                    bytes: silent_wav_16k(1),
+                    duration_seconds: Some(1),
+                },
+                &provider,
+                &diarizer,
+            ),
+            Err(AiError::ConsentMissing)
+        ));
+    }
+
     #[test]
     fn transcription_usage_report_is_reference_only_and_transcription_provider() {
         let conn = test_conn("voice-report");
@@ -2437,4 +2720,17 @@ pub trait TranscriptionProvider: Send + Sync {
         request: &TranscriptionRequest,
         audio: &AudioInput,
     ) -> Result<AiResponse, AiError>;
+
+    /// Variante que ademas devuelve los segmentos de texto con sus marcas de tiempo
+    /// (centisegundos), necesarios para fusionar la transcripcion con la diarizacion
+    /// (separacion de hablantes). Por defecto reutiliza `transcribe` y no aporta
+    /// segmentos: los proveedores sin timestamps (nube, fake) degradan a una
+    /// transcripcion sin separacion. El proveedor Whisper local lo sobreescribe.
+    fn transcribe_detailed(
+        &self,
+        request: &TranscriptionRequest,
+        audio: &AudioInput,
+    ) -> Result<(AiResponse, Vec<crate::diarization::WhisperSegment>), AiError> {
+        Ok((self.transcribe(request, audio)?, Vec::new()))
+    }
 }

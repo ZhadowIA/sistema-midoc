@@ -56,6 +56,13 @@ const MOCK_MODEL_SIZES: Record<string, number> = {
   "large-v3": 3000 * 1024 * 1024
 };
 
+// Tamanos reales (bytes) de los dos modelos ONNX de diarizacion, para el avance
+// simulado de la descarga en navegador.
+const MOCK_DIARIZATION_SIZES: Record<string, number> = {
+  "diarization-segmentation": 5_992_913,
+  "diarization-embedding": 29_292_684
+};
+
 const mockState = {
   profiles: [
     {
@@ -67,6 +74,11 @@ const mockState = {
   ],
   // Descarga de modelos Whisper simulada: el estado avanza en cada sondeo.
   transcriptionModels: {} as Record<
+    string,
+    { downloaded: number; total: number; present: boolean; downloading: boolean; error: string | null }
+  >,
+  // Descarga simulada de los modelos de diarizacion (mismo patron que Whisper).
+  diarizationModels: {} as Record<
     string,
     { downloaded: number; total: number; present: boolean; downloading: boolean; error: string | null }
   >,
@@ -193,7 +205,18 @@ const mockState = {
       medical_background: "Hipertension en tratamiento (losartan)." as string | null,
       family_background: "Padre con DM2." as string | null
     }
-  }
+  },
+  medicalHistoryVersions: [] as Array<{
+    id: string;
+    patient_id: string;
+    version: number;
+    payload_json: string;
+    source: string;
+    encounter_id: string | null;
+    source_appointment_id: string | null;
+    reconciled_source_hash: string | null;
+    created_at: string;
+  }>
 };
 
 function mockDetail() {
@@ -857,6 +880,41 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       Object.assign(e.patient, background);
       return undefined as T;
     }
+    case "get_patient_medical_history": {
+      const patientId = String(args?.patientId ?? "");
+      const latest = mockState.medicalHistoryVersions
+        .filter((version) => version.patient_id === patientId)
+        .sort((a, b) => b.version - a.version)[0];
+      return (latest ?? null) as T;
+    }
+    case "save_patient_medical_history": {
+      if (e.status === "SIGNED") throw "la nota ya fue firmada y no puede modificarse";
+      const patientId = String(args?.patientId ?? "");
+      const input = args?.input as {
+        payload_json: string;
+        source: string;
+        encounter_id: string | null;
+        source_appointment_id: string | null;
+        reconciled_source_hash: string | null;
+      };
+      JSON.parse(input.payload_json);
+      const version = mockState.medicalHistoryVersions.filter(
+        (item) => item.patient_id === patientId
+      ).length + 1;
+      const saved = {
+        id: `mh-${patientId}-${version}`,
+        patient_id: patientId,
+        version,
+        payload_json: input.payload_json,
+        source: input.source,
+        encounter_id: input.encounter_id,
+        source_appointment_id: input.source_appointment_id,
+        reconciled_source_hash: input.reconciled_source_hash,
+        created_at: new Date().toISOString()
+      };
+      mockState.medicalHistoryVersions.push(saved);
+      return saved as T;
+    }
     case "sign_encounter":
       if (e.notes.length === 0) throw "no se puede firmar un encuentro sin nota";
       e.status = "SIGNED";
@@ -982,6 +1040,43 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         estimated_cost_cents: 1,
         latency_ms: 2,
         transcript_text: `Transcripcion (borrador, ${viaCloud ? "nube" : "local"}): audio ${audio?.mediaType ?? "audio/wav"}. Revise terminos clinicos, medicamentos, dosis y hablantes antes de usarla.`,
+        audio_retention_policy: "discarded_after_transcription"
+      } as T;
+    }
+    case "ai_diarize_consultation": {
+      if (!mockState.aiVoiceConsent) {
+        throw "falta el consentimiento del paciente para asistencia de IA";
+      }
+      const spentDiar = mockState.aiRuns.reduce((s, r) => s + r.cost_cents, 0);
+      if (mockState.aiBudgetCents > 0 && spentDiar >= mockState.aiBudgetCents) {
+        throw "se alcanzo el presupuesto mensual de IA; ajustalo para continuar";
+      }
+      mockState.aiRunSeq += 1;
+      const diarRunId = `ai-run-${mockState.aiRunSeq}`;
+      mockState.aiRuns.push({
+        id: diarRunId,
+        usage_type: "TRANSCRIPTION",
+        cost_cents: 1,
+        status: "DRAFT",
+        reported: false
+      });
+      // Dialogo de demostracion ya separado en turnos medico/paciente.
+      const turns = [
+        { id: "turn-1", speaker: "MEDICO", text: "Buenos dias, que lo trae a consulta?" },
+        { id: "turn-2", speaker: "PACIENTE", text: "Me duele la cabeza desde hace tres dias." },
+        { id: "turn-3", speaker: "MEDICO", text: "Tiene fiebre o nauseas?" },
+        { id: "turn-4", speaker: "PACIENTE", text: "No, solo el dolor y algo de sensibilidad a la luz." }
+      ];
+      return {
+        run_id: diarRunId,
+        usage_type: "TRANSCRIPTION",
+        provider: "whisper-local-medium+sherpa-diarize",
+        model_version: "whisper-local-medium",
+        estimated_cost_cents: 1,
+        latency_ms: 2,
+        transcript_text: turns.map((t) => t.text).join(" "),
+        turns,
+        diarized: true,
         audio_retention_policy: "discarded_after_transcription"
       } as T;
     }
@@ -1286,6 +1381,48 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       };
       return undefined as T;
     }
+    case "diarization_model_status": {
+      const ids = ["diarization-segmentation", "diarization-embedding"];
+      return ids.map((modelId) => {
+        const total = MOCK_DIARIZATION_SIZES[modelId];
+        const m = mockState.diarizationModels[modelId];
+        if (m && m.downloading && !m.present) {
+          // Simula el avance de la descarga en cada sondeo (~4 pasos).
+          m.downloaded = Math.min(m.total, m.downloaded + Math.ceil(m.total / 4));
+          if (m.downloaded >= m.total) {
+            m.present = true;
+            m.downloading = false;
+          }
+        }
+        return {
+          modelId,
+          fileName:
+            modelId === "diarization-segmentation"
+              ? "sherpa-segmentation-3.0.onnx"
+              : "sherpa-embedding-campplus.onnx",
+          expectedSizeBytes: total,
+          downloadedBytes: m ? m.downloaded : 0,
+          present: m ? m.present : false,
+          verified: false, // sin checksum fijado en el mock
+          downloading: m ? m.downloading : false,
+          error: m ? m.error : null
+        };
+      }) as T;
+    }
+    case "download_diarization_model": {
+      const modelId = String(args?.modelId ?? "");
+      if (!(modelId in MOCK_DIARIZATION_SIZES)) {
+        throw `modelo no reconocido: ${modelId}`;
+      }
+      mockState.diarizationModels[modelId] = {
+        downloaded: 0,
+        total: MOCK_DIARIZATION_SIZES[modelId],
+        present: false,
+        downloading: true,
+        error: null
+      };
+      return undefined as T;
+    }
     case "ai_usage_summary": {
       const byMap = new Map<string, { run_count: number; cost_cents: number }>();
       for (const r of mockState.aiRuns) {
@@ -1341,6 +1478,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         family_background: null,
         encounters: [],
         documents: [],
+        medical_history_versions: mockState.medicalHistoryVersions,
         generated_at: new Date().toISOString()
       } as T;
     case "arco_fulfill_cancellation": {
@@ -1359,6 +1497,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         deleted_ai_runs: 0,
         deleted_ai_consents: 0,
         deleted_precheckins: 0,
+        deleted_medical_history_versions: 0,
         anonymized_visits: 0,
         anonymized_appointments: 0
       } as T;

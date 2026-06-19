@@ -20,6 +20,7 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::ai::{AiError, AiResponse, AudioInput, TranscriptionProvider, TranscriptionRequest};
 use crate::audio;
+use crate::diarization::WhisperSegment;
 
 /// Transcriptor local respaldado por whisper.cpp con un modelo GGML en disco.
 pub struct WhisperLocalProvider {
@@ -43,9 +44,19 @@ impl TranscriptionProvider for WhisperLocalProvider {
 
     fn transcribe(
         &self,
-        _request: &TranscriptionRequest,
+        request: &TranscriptionRequest,
         audio: &AudioInput,
     ) -> Result<AiResponse, AiError> {
+        // Reutiliza la version detallada y descarta los segmentos: el texto unido
+        // es lo unico que necesita la transcripcion simple.
+        Ok(self.transcribe_detailed(request, audio)?.0)
+    }
+
+    fn transcribe_detailed(
+        &self,
+        _request: &TranscriptionRequest,
+        audio: &AudioInput,
+    ) -> Result<(AiResponse, Vec<WhisperSegment>), AiError> {
         let start = Instant::now();
 
         // Decodifica el WAV a muestras mono f32 a 16 kHz en memoria (sin tocar disco).
@@ -74,24 +85,33 @@ impl TranscriptionProvider for WhisperLocalProvider {
             .full(params, &decoded.samples)
             .map_err(|e| AiError::Invalid(format!("fallo la transcripcion: {e}")))?;
 
-        let segments = state.full_n_segments();
+        let n = state.full_n_segments();
         let mut text = String::new();
-        for i in 0..segments {
+        let mut segments: Vec<WhisperSegment> = Vec::new();
+        for i in 0..n {
             if let Some(segment) = state.get_segment(i) {
                 let piece = segment
                     .to_str()
                     .map_err(|e| AiError::Invalid(format!("no se pudo leer un segmento: {e}")))?;
                 text.push_str(piece);
+                // whisper.cpp entrega las marcas de tiempo en centisegundos, la
+                // misma unidad que consume la fusion con la diarizacion.
+                segments.push(WhisperSegment {
+                    start_cs: segment.start_timestamp(),
+                    end_cs: segment.end_timestamp(),
+                    text: piece.trim().to_string(),
+                });
             }
         }
 
-        Ok(AiResponse {
+        let response = AiResponse {
             output: text.trim().to_string(),
             model_version: self.name.clone(),
             // La transcripcion local no tiene costo por uso (corre en el equipo).
             estimated_cost_cents: 0,
             latency_ms: start.elapsed().as_millis() as i64,
-        })
+        };
+        Ok((response, segments))
     }
 }
 

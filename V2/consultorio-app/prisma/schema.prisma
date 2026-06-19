@@ -480,6 +480,11 @@ model Patient {
   userId                String?
   firstName             String
   lastName              String
+  // Apellidos por separado capturados al agendar. `lastName` conserva la forma
+  // combinada (display + dedup); estos alimentan el prellenado de la ficha de
+  // identificacion en los antecedentes. El materno es opcional.
+  apellidoPaterno       String?
+  apellidoMaterno       String?
   phone                 String?
   email                 String?
   birthDate             DateTime?
@@ -731,6 +736,13 @@ model PrecheckinSubmission {
   appointment  Appointment?    @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
   encounter    Encounter?      @relation(fields: [encounterId], references: [id], onDelete: SetNull)
   patient      Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  // Un solo precheckin por cita+paciente+tipo: el envio de antecedentes se
+  // sobreescribe (upsert) y la preconsulta IA se rechaza si ya existe. Cierra la
+  // carrera del findFirst+create ante envios casi simultaneos (doble pestana).
+  // appointmentId nulo (flujos por encounter) queda fuera: Postgres trata los
+  // NULL como distintos y no los restringe.
+  @@unique([appointmentId, patientId, kind])
 }
 
 model ClinicalDocument {

@@ -21,6 +21,12 @@ type MedicalHistoryFormProps = {
   token: string;
   /** Llave publica del dispositivo del medico para sellar (sealed box). */
   publicKey: string;
+  /**
+   * Valores ya capturados al agendar (apellidos, telefono, fecha de nacimiento)
+   * para prellenar la ficha de identificacion y no pedirlos dos veces. Las claves
+   * corresponden a los campos del grupo `identification`.
+   */
+  prefillIdentification?: Record<string, string>;
   onSaved: () => void;
 };
 
@@ -36,9 +42,20 @@ const SEX_LABELS: Record<BiologicalSex, string> = {
 
 const FAMILY_HISTORY_KEY = "familyHistory";
 
-export function MedicalHistoryForm({ token, publicKey, onSaved }: MedicalHistoryFormProps) {
+export function MedicalHistoryForm({
+  token,
+  publicKey,
+  prefillIdentification,
+  onSaved
+}: MedicalHistoryFormProps) {
   const [sex, setSex] = useState<BiologicalSex>("");
-  const [groups, setGroups] = useState<GroupValues>({});
+  const [groups, setGroups] = useState<GroupValues>(() => {
+    const initial: GroupValues = {};
+    if (prefillIdentification && Object.keys(prefillIdentification).length > 0) {
+      initial.identification = { ...prefillIdentification };
+    }
+    return initial;
+  });
   const [family, setFamily] = useState<FamilyValues>({});
   const [allergies, setAllergies] = useState("");
   const [currentMedications, setCurrentMedications] = useState("");

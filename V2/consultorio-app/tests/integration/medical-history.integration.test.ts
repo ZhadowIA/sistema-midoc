@@ -1,9 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { PatientStatus, PrismaClient } from "@prisma/client";
 import _sodium from "libsodium-wrappers";
 
+import { prisma as servicePrisma } from "../../src/lib/prisma";
 import { createDoctorAccount } from "../../src/services/auth/auth-service";
 import {
   submitAiPreconsulta,
@@ -253,6 +254,51 @@ describe("medical history sealed precheckin (paso 19, rebanada 7)", () => {
         submitAiPreconsulta({ confirmationToken: ctx.confirmationToken, ciphertext })
       ).rejects.toMatchObject({ status: 409 });
     } finally {
+      await cleanupUserByEmail(ctx.email);
+    }
+  });
+
+  it("accepts exactly one of two concurrent AI preconsulta submissions", async () => {
+    const ctx = await seedDoctorWithDeviceAndAppointment("ai-concurrent");
+    const payload = { motivo: "tos seca", conversation: [{ question: "¿desde cuándo?", answer: "3 días" }] };
+    const originalFindFirst = servicePrisma.precheckinSubmission.findFirst.bind(
+      servicePrisma.precheckinSubmission
+    );
+    let reads = 0;
+    let releaseReads: (() => void) | undefined;
+    const bothReadsFinished = new Promise<void>((resolve) => {
+      releaseReads = resolve;
+    });
+    const findFirstSpy = vi
+      .spyOn(servicePrisma.precheckinSubmission, "findFirst")
+      .mockImplementation(async (args) => {
+        const result = await originalFindFirst(args);
+        reads += 1;
+        if (reads === 2) {
+          releaseReads?.();
+        }
+        await bothReadsFinished;
+        return result;
+      });
+
+    try {
+      await _sodium.ready;
+      const publicKeyB64 = _sodium.to_base64(ctx.keypair.publicKey, _sodium.base64_variants.ORIGINAL);
+      const ciphertext = await sealFor(publicKeyB64, payload, "ai-preconsulta");
+
+      const results = await Promise.allSettled([
+        submitAiPreconsulta({ confirmationToken: ctx.confirmationToken, ciphertext }),
+        submitAiPreconsulta({ confirmationToken: ctx.confirmationToken, ciphertext })
+      ]);
+
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      const rejected = results.find((result) => result.status === "rejected");
+      expect(rejected).toMatchObject({
+        status: "rejected",
+        reason: { status: 409 }
+      });
+    } finally {
+      findFirstSpy.mockRestore();
       await cleanupUserByEmail(ctx.email);
     }
   });

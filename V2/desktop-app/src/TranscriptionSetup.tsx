@@ -44,6 +44,17 @@ function bytesToGb(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+function bytesToMb(bytes: number): string {
+  return `${Math.round(bytes / 1024 / 1024)} MB`;
+}
+
+// Etiquetas legibles de los dos modelos ONNX de diarizacion (el backend solo
+// devuelve el identificador estable y el nombre de archivo).
+const DIARIZATION_LABELS: Record<string, string> = {
+  "diarization-segmentation": "Segmentacion de voz (detecta cuando hay habla)",
+  "diarization-embedding": "Identificacion de hablante (separa las voces)"
+};
+
 export function TranscriptionSetup() {
   const [rec, setRec] = useState<TranscriptionRecommendation | null>(null);
   const [models, setModels] = useState<ModelStatus[]>([]);
@@ -121,6 +132,7 @@ export function TranscriptionSetup() {
   }, []);
 
   return (
+    <>
     <section className="panel">
       <div className="panel-header">
         <h2>Transcripcion de consulta</h2>
@@ -238,6 +250,153 @@ export function TranscriptionSetup() {
           </div>
         </div>
       ) : null}
+    </section>
+    <DiarizationModelsSetup />
+    </>
+  );
+}
+
+/**
+ * Descarga de los modelos de separacion de voces (diarizacion local con
+ * sherpa-onnx). Son dos modelos ONNX (segmentacion + embedding) que corren en el
+ * dispositivo, igual que Whisper: REFERENCIA publica, sin enviar audio a la nube.
+ * Con ellos, la transcripcion puede separarse en turnos Medico/Paciente; sin ellos,
+ * la consulta se transcribe igual (solo sin la separacion automatica de hablantes).
+ */
+export function DiarizationModelsSetup() {
+  const [models, setModels] = useState<ModelStatus[]>([]);
+  const [error, setError] = useState("");
+  // Modelo cuya descarga acabamos de lanzar (marca optimista antes de que el
+  // backend la registre), para deshabilitar su boton y arrancar el sondeo.
+  const [starting, setStarting] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setModels(await call<ModelStatus[]>("diarization_model_status"));
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  const anyDownloading = starting !== null || models.some((m) => m.downloading);
+
+  // Suelta la marca optimista cuando el backend confirma la descarga.
+  useEffect(() => {
+    if (starting && models.find((m) => m.modelId === starting)?.downloading) {
+      setStarting(null);
+    }
+  }, [starting, models]);
+
+  // Sondea mientras haya alguna descarga en curso, para pintar el avance.
+  useEffect(() => {
+    if (anyDownloading && pollRef.current === null) {
+      pollRef.current = window.setInterval(() => void load(), 800);
+    } else if (!anyDownloading && pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    return () => {
+      if (pollRef.current !== null) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [anyDownloading, load]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function download(modelId: string) {
+    const current = models.find((m) => m.modelId === modelId);
+    if (starting || current?.downloading) return;
+    setError("");
+    setStarting(modelId);
+    try {
+      await call("download_diarization_model", { modelId });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setStarting(null);
+      await load();
+    }
+  }
+
+  const allReady = models.length > 0 && models.every((m) => m.present);
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Separacion de voces (medico y paciente)</h2>
+        <p>
+          Opcional: separa la transcripcion en turnos de medico y paciente. Corre en
+          esta computadora (sin enviar audio a la nube). Sin estos modelos, la
+          consulta se transcribe igual, solo sin la separacion automatica.
+        </p>
+      </div>
+
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+
+      {allReady && (
+        <p className="form-success" role="status">
+          Modelos de separacion de voces listos: la transcripcion se dividira en
+          turnos de medico y paciente para tu revision.
+        </p>
+      )}
+
+      <div className="stack">
+        {models.map((model) => {
+          const downloading = starting === model.modelId || model.downloading;
+          const pct =
+            model.expectedSizeBytes > 0
+              ? Math.min(100, Math.round((model.downloadedBytes / model.expectedSizeBytes) * 100))
+              : 0;
+          return (
+            <div className="model-download" key={model.modelId}>
+              <strong>{DIARIZATION_LABELS[model.modelId] ?? model.fileName}</strong>
+              {model.present ? (
+                <p className="form-success" role="status">
+                  Descargado y listo{model.verified ? " (verificado)." : "."}
+                </p>
+              ) : downloading ? (
+                <div className="stack">
+                  <div
+                    className="model-progress"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={model.expectedSizeBytes}
+                    aria-valuenow={model.downloadedBytes}
+                  >
+                    <span className="model-progress-bar" style={{ width: `${pct}%` }} />
+                  </div>
+                  <p className="meta">
+                    Descargando… {bytesToMb(model.downloadedBytes)} de{" "}
+                    {bytesToMb(model.expectedSizeBytes)}
+                  </p>
+                </div>
+              ) : (
+                <button
+                  className="action-button"
+                  onClick={() => void download(model.modelId)}
+                  disabled={starting !== null}
+                >
+                  Descargar ({bytesToMb(model.expectedSizeBytes)})
+                </button>
+              )}
+              {model.error && (
+                <p className="form-error" role="alert">
+                  {model.error}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }

@@ -91,6 +91,18 @@ Politica de seleccion (sobre RAM total del equipo y si hay GPU dedicada acelerab
 
 La transcripcion es por lotes salvo que el equipo (RAM/GPU/nucleos) permita el modo casi en vivo. Cuando el equipo queda por debajo del minimo comodo, la app sugiere la transcripcion en nube (AssemblyAI/Deepgram) seudonimizada y con consentimiento, sin bloquear el modo offline.
 
+### Diarizacion local (separacion de hablantes)
+
+Whisper transcribe ("que se dijo") pero **no separa hablantes**. Para dividir la consulta en turnos Medico/Paciente se usa un **segundo motor paralelo** de diarizacion ("quien hablo cuando") que corre tambien en el equipo; el pegamento entre ambos es una fusion por solape temporal de marcas de tiempo. El criterio que manda no es la precision (en el escenario sencillo de 2 voces todas las opciones rondan DER ~7-12%) sino **como se empaqueta en el instalador Tauri sin Python**.
+
+| Opcion | Runtime | Encaje en Tauri | Licencia | Decision |
+|---|---|---|---|---|
+| **sherpa-onnx** (`sherpa-rs`) | C++ + ONNX, binding Rust | Excelente: in-process, CPU, sin Python; mismo patron que `whisper-rs` tras un feature | Apache-2.0 (lib); modelos permisivos | **Elegida.** Local-first real, coherente con la arquitectura. |
+| pyannote.audio / WhisperX | Python + PyTorch | Malo en desktop (bundling de PyTorch, cientos de MB-GB, gestion de venv) | mixta (modelos pyannote MIT pero *gated*) | Descartadas para local; solo referencia de nivel o ruta de nube. |
+| NVIDIA NeMo | Python + PyTorch, ideal GPU NVIDIA | Malo en desktop | permisiva | Solo si hubiera GPU NVIDIA + nube. |
+
+**Decision (2026-06-18):** diarizacion local con **sherpa-onnx** (crate `sherpa-rs`), dos modelos ONNX — segmentacion derivada de `pyannote/segmentation-3.0` + embedding WeSpeaker CAM++ — corriendo en CPU, sin enviar audio a la nube. `num_speakers` fijo en **2** (Medico/Paciente); el acompanante ocasional se corrige a mano (la correccion de turnos ya existe). pyannote/WhisperX/NeMo quedan como referencia de nivel; la diarizacion en nube (OpenAI) es la alternativa con consentimiento cuando se prefiera. Implementacion en el paso 22 (ver `10_linea_de_desarrollo.md`): nucleo de fusion + descarga de modelos + provider tras el feature `diarization-local`. Avisos a cerrar antes de distribuir: rehospedar los `.onnx` ya convertidos y verificar la cadena de licencias (los pesos de segmentacion estan *gated* en HuggingFace).
+
 ## Recomendacion por modulo
 
 | Modulo MiDoc | Proveedor recomendado (costo) | Fallback | Criterio de decision |

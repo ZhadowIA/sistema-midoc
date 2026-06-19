@@ -7,13 +7,22 @@ import { bookPublicAppointment } from "../../../../services/booking/public-booki
 
 const appointmentSchema = z.object({
   holdToken: z.string().min(1),
-  patient: z.object({
-    firstName: z.string().min(1),
-    lastName: z.string().min(1),
-    phone: z.string().min(7).optional(),
-    email: z.string().email().optional(),
-    birthDate: z.string().date().optional()
-  }),
+  patient: z
+    .object({
+      firstName: z.string().min(1),
+      // Apellido paterno obligatorio; materno opcional. `lastName` combinado se
+      // mantiene para compatibilidad con clientes/llamadas legadas.
+      apellidoPaterno: z.string().min(1).max(120).optional(),
+      apellidoMaterno: z.string().max(120).optional(),
+      lastName: z.string().min(1).optional(),
+      phone: z.string().min(7).optional(),
+      email: z.string().email().optional(),
+      birthDate: z.string().date().optional()
+    })
+    .refine((patient) => Boolean(patient.apellidoPaterno || patient.lastName), {
+      message: "Se requiere el apellido paterno.",
+      path: ["apellidoPaterno"]
+    }),
   reason: z.string().max(1000).optional(),
   contact: z
     .object({

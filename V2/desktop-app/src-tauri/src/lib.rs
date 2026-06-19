@@ -6,6 +6,11 @@ mod cloud_transcription;
 mod consultation_templates;
 mod crypto;
 mod db;
+mod diarization;
+mod diarization_model;
+// Diarizacion local con sherpa-onnx: binding nativo tras el feature
+// `diarization-local`; sin el feature, un stub degrada sin separar hablantes.
+mod sherpa_diarization;
 mod medication;
 mod operations;
 mod sync;
@@ -658,14 +663,20 @@ async fn publish_authorized_summary(
 fn list_appointments(state: tauri::State<'_, AppDb>) -> Result<Vec<AppointmentRow>, String> {
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    load_appointments(conn)
+}
 
+fn load_appointments(conn: &rusqlite::Connection) -> Result<Vec<AppointmentRow>, String> {
     let mut statement = conn
         .prepare(
             "SELECT a.id, a.status, a.scheduled_start, a.scheduled_end, a.service_name,
                     a.reason, a.patient_first_name, a.patient_last_name, a.patient_phone,
-                    (p.appointment_id IS NOT NULL) AS has_precheckin
+                    EXISTS(
+                        SELECT 1
+                        FROM precheckins p
+                        WHERE p.appointment_id = a.id
+                    ) AS has_precheckin
              FROM appointments a
-             LEFT JOIN precheckins p ON p.appointment_id = a.id
              ORDER BY a.scheduled_start ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -889,6 +900,28 @@ fn update_patient_background(
     with_conn(&state, |conn| {
         clinical::update_patient_background(conn, &patient_id, &background)
     })
+}
+
+#[tauri::command]
+fn get_patient_medical_history(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<Option<clinical::PatientMedicalHistoryVersion>, String> {
+    with_conn(&state, |conn| {
+        clinical::latest_patient_medical_history(conn, &patient_id)
+    })
+}
+
+#[tauri::command]
+fn save_patient_medical_history(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+    input: clinical::SavePatientMedicalHistoryInput,
+) -> Result<clinical::PatientMedicalHistoryVersion, String> {
+    let mut guard = state.0.lock().unwrap();
+    let conn = guard.as_mut().ok_or("la base esta bloqueada")?;
+    clinical::save_patient_medical_history_version(conn, &patient_id, &input)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1348,6 +1381,65 @@ fn ai_transcribe_audio(
     })
 }
 
+/// Rutas en disco de los dos modelos ONNX de diarizacion (segmentacion + embedding).
+/// No exige que existan: si faltan, el diarizador fallara y el flujo degradara a
+/// transcripcion sin separacion.
+fn diarization_model_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
+    let base_dir = app_data_dir(app)?;
+    let seg = diarization_model::asset_for("diarization-segmentation")
+        .ok_or("modelo de segmentacion no reconocido")?;
+    let emb = diarization_model::asset_for("diarization-embedding")
+        .ok_or("modelo de embedding no reconocido")?;
+    Ok((
+        transcription_model::model_path(&base_dir, &seg.file_name),
+        transcription_model::model_path(&base_dir, &emb.file_name),
+    ))
+}
+
+/// Transcribe la consulta y separa hablantes (diarizacion local) para entregar un
+/// dialogo Medico/Paciente revisable. Local-first: Whisper + sherpa-onnx corren en
+/// el equipo, el audio se decodifica en memoria y se descarta. Si faltan los modelos
+/// de diarizacion o el feature nativo, `diarized=false` y el frontend cae a su
+/// heuristica de turnos sobre el texto (la consulta se transcribe igual).
+#[tauri::command]
+fn ai_diarize_consultation(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    audio: AudioTranscriptionPayload,
+) -> Result<ai::DiarizationDraft, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(audio.audio_base64.as_bytes())
+        .map_err(|_| "audio invalido".to_string())?;
+    // La diarizacion necesita los segmentos con marcas de tiempo de Whisper local;
+    // la transcripcion en nube no los aporta, asi que aqui se usa la via local.
+    let provider = resolve_transcription_provider(&app, false)?;
+    let (seg_path, emb_path) = diarization_model_paths(&app)?;
+    let diarizer = move |samples: &[f32], sample_rate: u32| {
+        sherpa_diarization::diarize_samples(
+            samples,
+            sample_rate,
+            &seg_path,
+            &emb_path,
+            diarization::DEFAULT_NUM_SPEAKERS,
+        )
+    };
+    with_ai(&state, |conn| {
+        ai::diarize_consultation(
+            conn,
+            &encounter_id,
+            ai::AudioInput {
+                file_name: audio.file_name,
+                media_type: audio.media_type,
+                bytes,
+                duration_seconds: audio.duration_seconds,
+            },
+            provider.as_ref(),
+            &diarizer,
+        )
+    })
+}
+
 #[tauri::command]
 fn ai_structure_consultation(
     state: tauri::State<'_, AppDb>,
@@ -1642,19 +1734,18 @@ fn available_disk_bytes(path: &Path) -> Option<u64> {
         .map(|disk| disk.available_space())
 }
 
-/// Estado de los modelos Whisper: presencia en disco, verificacion y progreso de
-/// descarga en curso. El frontend lo sondea para pintar el avance.
-#[tauri::command]
-fn transcription_model_status(
-    app: tauri::AppHandle,
-    downloads: tauri::State<'_, ModelDownloads>,
-) -> Result<Vec<transcription_model::ModelStatus>, String> {
-    let base_dir = app_data_dir(&app)?;
-    let progress = downloads.0.lock().unwrap().clone();
-
+/// Construye el estado de una lista de assets descargables (Whisper o diarizacion)
+/// a partir de lo observado en disco y del progreso de descarga en curso. Comun a
+/// ambos catalogos: la unica diferencia entre transcripcion y diarizacion es que
+/// assets se le pasan.
+fn collect_model_status(
+    base_dir: &Path,
+    progress: &HashMap<String, DownloadProgress>,
+    assets: Vec<transcription_model::ModelAsset>,
+) -> Vec<transcription_model::ModelStatus> {
     let mut out = Vec::new();
-    for asset in transcription_model::all_assets() {
-        let final_path = transcription_model::model_path(&base_dir, &asset.file_name);
+    for asset in assets {
+        let final_path = transcription_model::model_path(base_dir, &asset.file_name);
         let part = transcription_model::part_path(&final_path);
         let final_exists = final_path.exists();
         let final_len = fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
@@ -1702,7 +1793,40 @@ fn transcription_model_status(
         }
         out.push(status);
     }
-    Ok(out)
+    out
+}
+
+/// Estado de los modelos Whisper: presencia en disco, verificacion y progreso de
+/// descarga en curso. El frontend lo sondea para pintar el avance.
+#[tauri::command]
+fn transcription_model_status(
+    app: tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+) -> Result<Vec<transcription_model::ModelStatus>, String> {
+    let base_dir = app_data_dir(&app)?;
+    let progress = downloads.0.lock().unwrap().clone();
+    Ok(collect_model_status(
+        &base_dir,
+        &progress,
+        transcription_model::all_assets(),
+    ))
+}
+
+/// Estado de los modelos de diarizacion (segmentacion + embedding). Mismo contrato
+/// que `transcription_model_status`; el frontend lo sondea igual. Comparte el mapa
+/// de progreso de descargas (las claves no colisionan: ids distintos).
+#[tauri::command]
+fn diarization_model_status(
+    app: tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+) -> Result<Vec<transcription_model::ModelStatus>, String> {
+    let base_dir = app_data_dir(&app)?;
+    let progress = downloads.0.lock().unwrap().clone();
+    Ok(collect_model_status(
+        &base_dir,
+        &progress,
+        diarization_model::all_assets(),
+    ))
 }
 
 /// Descarga (o reanuda) los pesos del modelo Whisper indicado a la carpeta
@@ -1718,7 +1842,33 @@ async fn download_transcription_model(
 ) -> Result<(), String> {
     let asset = transcription_model::asset_for(&model_id)
         .ok_or_else(|| format!("modelo no reconocido: {model_id}"))?;
-    let base_dir = app_data_dir(&app)?;
+    run_model_download(&app, downloads, &model_id, &asset).await
+}
+
+/// Descarga (o reanuda) un modelo de diarizacion (segmentacion o embedding) a la
+/// carpeta compartida de modelos. Misma frontera de red y garantias que la descarga
+/// de Whisper: REFERENCIA publica, sin datos del paciente, checksum si esta fijado.
+#[tauri::command]
+async fn download_diarization_model(
+    app: tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+    model_id: String,
+) -> Result<(), String> {
+    let asset = diarization_model::asset_for(&model_id)
+        .ok_or_else(|| format!("modelo no reconocido: {model_id}"))?;
+    run_model_download(&app, downloads, &model_id, &asset).await
+}
+
+/// Orquesta la descarga de cualquier asset (Whisper o diarizacion): reclama el slot
+/// bajo el mutex, valida espacio, reanuda el `.part`, informa progreso, verifica el
+/// checksum (si esta fijado) y renombra al archivo final. Comun a ambos catalogos.
+async fn run_model_download(
+    app: &tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+    model_id: &str,
+    asset: &transcription_model::ModelAsset,
+) -> Result<(), String> {
+    let base_dir = app_data_dir(app)?;
     let dir = transcription_model::models_dir(&base_dir);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
@@ -1738,13 +1888,13 @@ async fn download_transcription_model(
     // en curso, no se inicia otra.
     {
         let mut map = downloads.0.lock().unwrap();
-        if let Some(p) = map.get(&model_id) {
+        if let Some(p) = map.get(model_id) {
             if !p.done && p.error.is_none() {
                 return Ok(());
             }
         }
         map.insert(
-            model_id.clone(),
+            model_id.to_string(),
             DownloadProgress {
                 downloaded: 0,
                 total: asset.size_bytes,
@@ -1769,7 +1919,7 @@ async fn download_transcription_model(
             );
             // Libera el slot reclamado para que la UI deje de mostrar "descargando".
             downloads.0.lock().unwrap().insert(
-                model_id.clone(),
+                model_id.to_string(),
                 DownloadProgress {
                     downloaded: 0,
                     total: asset.size_bytes,
@@ -1784,7 +1934,7 @@ async fn download_transcription_model(
     let set_progress = |downloaded: u64, total: u64, done: bool, error: Option<String>| {
         let mut map = downloads.0.lock().unwrap();
         map.insert(
-            model_id.clone(),
+            model_id.to_string(),
             DownloadProgress {
                 downloaded,
                 total,
@@ -1797,7 +1947,7 @@ async fn download_transcription_model(
     let resume = transcription_model::resume_from(part_len, asset.size_bytes);
     set_progress(resume, asset.size_bytes, false, None);
 
-    match stream_to_part(&asset, &part, resume, &set_progress).await {
+    match stream_to_part(asset, &part, resume, &set_progress).await {
         Ok(total) => {
             let downloaded_len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
             if !transcription_model::is_complete_model_size(downloaded_len, asset.size_bytes) {
@@ -1973,6 +2123,8 @@ pub fn run() {
             save_note,
             save_prescription,
             update_patient_background,
+            get_patient_medical_history,
+            save_patient_medical_history,
             sign_encounter,
             verify_signature,
             list_resources,
@@ -2002,6 +2154,7 @@ pub fn run() {
             ai_assist_soap,
             ai_assist_text,
             ai_transcribe_audio,
+            ai_diarize_consultation,
             ai_structure_consultation,
             list_consultation_templates,
             save_consultation_template,
@@ -2015,6 +2168,8 @@ pub fn run() {
             transcription_recommendation,
             transcription_model_status,
             download_transcription_model,
+            diarization_model_status,
+            download_diarization_model,
             check_medication_safety,
             medication_reference_status,
             import_medication_reference,
@@ -2034,6 +2189,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
     use std::path::Path;
 
     #[test]
@@ -2058,5 +2214,50 @@ mod tests {
         assert!(validate_profile_id("../otro").is_err());
         assert!(validate_profile_id("dr/ana").is_err());
         assert!(validate_profile_id("").is_err());
+    }
+
+    #[test]
+    fn agenda_returns_one_appointment_when_two_precheckin_kinds_exist() {
+        let path = std::env::temp_dir().join(format!(
+            "midoc-agenda-precheckin-{}-{}.db",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let conn = db::open_encrypted(&path, "clave-de-prueba").unwrap();
+
+        conn.execute(
+            "INSERT INTO appointments (
+                id, status, scheduled_start, scheduled_end, service_name,
+                patient_first_name, patient_last_name, updated_at
+             ) VALUES (?1, 'CONFIRMED', ?2, ?3, 'Consulta general', 'Sebastian', 'Palos', ?4)",
+            params![
+                "appt-with-two-precheckins",
+                "2026-06-19T16:30:00Z",
+                "2026-06-19T17:00:00Z",
+                "2026-06-19T15:00:00Z"
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO precheckins (appointment_id, responses_json, kind, received_at)
+             VALUES (?1, '{}', 'medical-history', ?2)",
+            params!["appt-with-two-precheckins", "2026-06-19T15:01:00Z"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO precheckins (appointment_id, responses_json, kind, received_at)
+             VALUES (?1, '{}', 'ai-preconsulta', ?2)",
+            params!["appt-with-two-precheckins", "2026-06-19T15:02:00Z"],
+        )
+        .unwrap();
+
+        let appointments = load_appointments(&conn).unwrap();
+
+        assert_eq!(appointments.len(), 1);
+        assert_eq!(appointments[0].id, "appt-with-two-precheckins");
+        assert!(appointments[0].has_precheckin);
+
+        drop(conn);
+        let _ = std::fs::remove_file(path);
     }
 }

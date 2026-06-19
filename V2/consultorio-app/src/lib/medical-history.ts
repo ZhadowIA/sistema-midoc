@@ -135,6 +135,32 @@ function symptomFields(items: Array<[string, string]>): FieldDef[] {
   return items.map(([key, label]) => ({ key, label, kind: "yesno" as FieldKind }));
 }
 
+/** Estado de una inmunizacion: aplicada o no, sin pedir la fecha exacta. */
+const VACCINE_OPTIONS: FieldOption[] = [
+  { value: "aplicada", label: "Aplicada" },
+  { value: "noAplicada", label: "No aplicada" }
+];
+
+/**
+ * Inmunizacion como checklist: un select Aplicada/No aplicada y, solo si se
+ * marca "Aplicada", la edad aproximada en que se aplico (la fecha exacta casi
+ * nadie la recuerda).
+ */
+function immunizationFields(key: string, label: string): FieldDef[] {
+  return [
+    { key, label, kind: "select", options: VACCINE_OPTIONS },
+    {
+      key: `${key}Edad`,
+      label: `${label}: edad aproximada al aplicarse`,
+      kind: "number",
+      suffix: "anios",
+      min: 0,
+      max: 120,
+      showWhen: { field: key, equals: "aplicada" }
+    }
+  ];
+}
+
 /**
  * Grupos del cuestionario en orden de captura. Las ramas condicionales (por sexo
  * y por respuesta previa) se controlan con `onlyForSex` y `showWhen`.
@@ -144,6 +170,7 @@ export const MEDICAL_HISTORY_GROUPS: readonly GroupDef[] = [
     key: "identification",
     title: "Ficha de identificacion",
     fields: [
+      { key: "nombre", label: "Nombre(s)", kind: "text" },
       { key: "apellidoPaterno", label: "Apellido paterno", kind: "text" },
       { key: "apellidoMaterno", label: "Apellido materno", kind: "text" },
       { key: "fechaNacimiento", label: "Fecha de nacimiento", kind: "date" },
@@ -199,13 +226,13 @@ export const MEDICAL_HISTORY_GROUPS: readonly GroupDef[] = [
         ]
       },
       {
-        title: "Inmunizaciones (fecha o anio)",
+        title: "Inmunizaciones",
         fields: [
-          { key: "antitetanica", label: "Antitetanica", kind: "date" },
-          { key: "antisarampion", label: "Antisarampion", kind: "date" },
-          { key: "antirubeola", label: "Antirubeola", kind: "date" },
-          { key: "antihepatica", label: "Antihepatica", kind: "date" },
-          { key: "desparasitacion", label: "Desparasitacion", kind: "date" }
+          ...immunizationFields("antitetanica", "Antitetanica"),
+          ...immunizationFields("antisarampion", "Antisarampion"),
+          ...immunizationFields("antirubeola", "Antirubeola"),
+          ...immunizationFields("antihepatica", "Antihepatica"),
+          ...immunizationFields("desparasitacion", "Desparasitacion")
         ]
       },
       {

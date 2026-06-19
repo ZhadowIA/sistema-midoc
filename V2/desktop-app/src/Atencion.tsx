@@ -39,7 +39,16 @@ import {
   resolveActiveSection,
   type EncounterSectionId as SectionId
 } from "./encounterModes";
-import { buildBackgroundReview } from "./precheckinBackground";
+import { buildPreconsultaPresentation } from "./clinicalQuestionnairePresentation";
+import { MedicalHistoryEditor } from "./MedicalHistoryEditor";
+import { MedicalHistoryConflictReview } from "./MedicalHistoryConflictReview";
+import {
+  applyConflictDecisions,
+  reconcileMedicalHistories,
+  type ConflictDecision,
+  type MedicalHistoryPayload,
+  type MedicalHistoryReconciliation as MedicalHistoryReconciliationState
+} from "./medicalHistoryReconciliation";
 import {
   flattenMedicalHistoryDisplayRows,
   formatMedicalHistoryForDisplay,
@@ -99,6 +108,18 @@ interface EncounterDetail {
   }>;
 }
 
+interface PatientMedicalHistoryVersion {
+  id: string;
+  patient_id: string;
+  version: number;
+  payload_json: string;
+  source: string;
+  encounter_id: string | null;
+  source_appointment_id: string | null;
+  reconciled_source_hash: string | null;
+  created_at: string;
+}
+
 interface SoapDraft {
   run_id: string;
   provider: string;
@@ -127,6 +148,14 @@ interface TranscriptionDraft {
   latency_ms: number;
   transcript_text: string;
   audio_retention_policy: string;
+}
+
+// Borrador de transcripcion + separacion de hablantes (diarizacion local). Si
+// `diarized` es false (sin modelos/feature o audio no diarizable), `turns` viene
+// vacio y el frontend cae a la heuristica de turnos sobre el texto.
+interface DiarizationDraft extends TranscriptionDraft {
+  turns: ConsultationTurn[];
+  diarized: boolean;
 }
 
 interface ConsultationStructuringDraft {
@@ -245,7 +274,29 @@ function formatRecordingDuration(seconds: number): string {
   return `${String(minutes).padStart(2, "0")}:${String(remaining).padStart(2, "0")}`;
 }
 
-type AiConversationTurn = { question?: string; answer?: string };
+function parseMedicalHistoryPayload(raw: string | null): MedicalHistoryPayload {
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function legacyMedicalHistory(detail: EncounterDetail): MedicalHistoryPayload {
+  const payload: MedicalHistoryPayload = {};
+  if (detail.patient.allergies) payload.allergies = detail.patient.allergies;
+  if (detail.patient.birth_date) {
+    payload.identification = { fechaNacimiento: detail.patient.birth_date.slice(0, 10) };
+  }
+  return payload;
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 function createTemplateDraft(profile: ClinicalProfile): StoredConsultationTemplate {
   const base = buildTemplateSegments(profile);
@@ -257,43 +308,20 @@ function createTemplateDraft(profile: ClinicalProfile): StoredConsultationTempla
   };
 }
 
-/**
- * Aplana la preconsulta a pares legibles. Soporta el formato plano (placeholder
- * de la rebanada 6), el de antecedentes anidado (rebanada 7) y el resultado de
- * la preconsulta guiada por IA (rebanada 8: motivo + conversacion Q&A).
- */
-function formatPrecheckin(raw: string): Array<[string, string]> {
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-
-    // Resultado de la IA: motivo + lista de preguntas/respuestas.
-    if (Array.isArray(parsed.conversation)) {
-      const rows: Array<[string, string]> = [];
-      const motivo = String(parsed.motivo ?? "").trim();
-      if (motivo) rows.push(["Motivo", motivo]);
-      (parsed.conversation as AiConversationTurn[]).forEach((turn, index) => {
-        const question = String(turn.question ?? "").trim();
-        const answer = String(turn.answer ?? "").trim();
-        if (question || answer) rows.push([question || `Pregunta ${index + 1}`, answer]);
-      });
-      return rows;
-    }
-
-    return flattenMedicalHistoryDisplayRows(raw);
-  } catch {
-    return [["respuestas", raw]];
-  }
-}
-
 function MedicalHistoryGroups({ groups }: { groups: MedicalHistoryGroup[] }) {
   return (
-    <div className="medical-history-groups">
+    <div className="clinical-response-groups medical-history-groups">
       {groups.map((group) => (
-        <section key={group.key} className="medical-history-group">
-          <h4>{group.title}</h4>
-          <dl className="precheckin-list">
+        <section key={group.key} className="clinical-response-group medical-history-group">
+          <div className="clinical-response-heading">
+            <h4>{group.title}</h4>
+            <span>
+              {group.rows.length} {group.rows.length === 1 ? "respuesta" : "respuestas"}
+            </span>
+          </div>
+          <dl className="clinical-field-list">
             {group.rows.map((row) => (
-              <div key={`${group.key}-${row.label}`}>
+              <div key={`${group.key}-${row.label}`} className="clinical-field-row">
                 <dt>{row.label}</dt>
                 <dd>{row.value}</dd>
               </div>
@@ -353,7 +381,18 @@ export function Atencion({
   const [aiUsage, setAiUsage] = useState<UsageSummary | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
   const [activeSection, setActiveSection] = useState<SectionId>("nota");
-  const [backgroundReviewDismissed, setBackgroundReviewDismissed] = useState(false);
+  const [permanentMedicalHistory, setPermanentMedicalHistory] =
+    useState<PatientMedicalHistoryVersion | null>(null);
+  const [permanentMedicalHistoryLoaded, setPermanentMedicalHistoryLoaded] = useState(false);
+  const [medicalHistoryMode, setMedicalHistoryMode] =
+    useState<"read" | "reconcile" | "edit">("read");
+  const [medicalHistoryDraft, setMedicalHistoryDraft] = useState<MedicalHistoryPayload>({});
+  const [medicalHistoryReconciliation, setMedicalHistoryReconciliation] =
+    useState<MedicalHistoryReconciliationState | null>(null);
+  const [medicalHistoryDecisions, setMedicalHistoryDecisions] = useState<
+    Record<string, ConflictDecision>
+  >({});
+  const [medicalHistorySourceHash, setMedicalHistorySourceHash] = useState<string | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -427,6 +466,22 @@ export function Atencion({
   }, [load]);
 
   useEffect(() => {
+    if (!detail) return;
+    setPermanentMedicalHistoryLoaded(false);
+    call<PatientMedicalHistoryVersion | null>("get_patient_medical_history", {
+      patientId: detail.patient.id
+    })
+      .then(setPermanentMedicalHistory)
+      .catch(() => setPermanentMedicalHistory(null))
+      .finally(() => setPermanentMedicalHistoryLoaded(true));
+    if (detail.medical_history) {
+      void sha256Hex(detail.medical_history).then(setMedicalHistorySourceHash);
+    } else {
+      setMedicalHistorySourceHash(null);
+    }
+  }, [detail?.patient.id, detail?.medical_history]);
+
+  useEffect(() => {
     setNote((current) => ({
       ...current,
       specialty: coerceSpecialtyPayload(resolvedProfile, current.specialty)
@@ -472,14 +527,31 @@ export function Atencion({
       birth_date: detail.patient.birth_date ?? ""
     }
   };
-  const hasUnsavedChanges = hasEncounterDraftChanges(
-    { note, prescription, background },
-    persistedDraft
+  const hasUnsavedChanges =
+    medicalHistoryMode !== "read" ||
+    hasEncounterDraftChanges({ note, prescription, background }, persistedDraft);
+  const displayedMedicalHistory =
+    permanentMedicalHistory?.payload_json ?? detail.medical_history;
+  const medicalHistoryGroups = formatMedicalHistoryForDisplay(displayedMedicalHistory);
+  const preconsultaPresentation = detail.preconsulta
+    ? buildPreconsultaPresentation(detail.preconsulta)
+    : null;
+  const compactPreconsultaRows: Array<[string, string]> = preconsultaPresentation
+    ? [
+        ...(preconsultaPresentation.motivo
+          ? ([["Motivo", preconsultaPresentation.motivo]] as Array<[string, string]>)
+          : []),
+        ...preconsultaPresentation.questions.map(
+          (item): [string, string] => [item.question, item.answer]
+        ),
+        ...preconsultaPresentation.legacyRows
+      ]
+    : [];
+  const hasPendingPatientMedicalHistory = Boolean(
+    permanentMedicalHistory &&
+      medicalHistorySourceHash &&
+      permanentMedicalHistory.reconciled_source_hash !== medicalHistorySourceHash
   );
-  const backgroundReview = buildBackgroundReview(background, detail.medical_history);
-  const medicalHistoryGroups = formatMedicalHistoryForDisplay(detail.medical_history);
-  const showBackgroundReview =
-    Boolean(backgroundReview?.hasImportableChanges) && !backgroundReviewDismissed && !signed;
 
   const moduleLabel =
     resolvedProfile === "ODONTOLOGY" ? "Modulo odontologico" : "Medicina general / familiar";
@@ -554,43 +626,72 @@ export function Atencion({
     );
   }
 
-  function saveBackground() {
-    void run("Antecedentes actualizados.", () =>
-      call("update_patient_background", {
-        patientId,
-        background: {
-          allergies: background.allergies || null,
-          medical_background: background.medical_background || null,
-          family_background: background.family_background || null,
-          birth_date: background.birth_date || null
-        }
-      })
-    );
+  function beginMedicalHistoryEdit() {
+    if (!detail) return;
+    const current = permanentMedicalHistory
+      ? parseMedicalHistoryPayload(permanentMedicalHistory.payload_json)
+      : legacyMedicalHistory(detail);
+    const incoming = parseMedicalHistoryPayload(detail.medical_history);
+    const sourceAlreadyReconciled =
+      Boolean(permanentMedicalHistory) &&
+      Boolean(medicalHistorySourceHash) &&
+      permanentMedicalHistory?.reconciled_source_hash === medicalHistorySourceHash;
+
+    if (sourceAlreadyReconciled || !detail.medical_history) {
+      setMedicalHistoryDraft(current);
+      setMedicalHistoryMode("edit");
+      return;
+    }
+
+    const reconciliation = reconcileMedicalHistories(current, incoming);
+    setMedicalHistoryReconciliation(reconciliation);
+    setMedicalHistoryDecisions({});
+    if (permanentMedicalHistory && reconciliation.conflicts.length > 0) {
+      setMedicalHistoryMode("reconcile");
+    } else {
+      setMedicalHistoryDraft(reconciliation.merged);
+      setMedicalHistoryMode("edit");
+    }
   }
 
-  function importPrecheckinBackground() {
-    if (!backgroundReview) return;
-    const nextBackground = {
-      ...background,
-      allergies: backgroundReview.incoming.allergies || background.allergies,
-      medical_background:
-        backgroundReview.incoming.medical_background || background.medical_background,
-      family_background:
-        backgroundReview.incoming.family_background || background.family_background
-    };
-    setBackground(nextBackground);
-    setBackgroundReviewDismissed(true);
-    void run("Antecedentes importados desde el cuestionario.", () =>
-      call("update_patient_background", {
-        patientId,
-        background: {
-          allergies: nextBackground.allergies || null,
-          medical_background: nextBackground.medical_background || null,
-          family_background: nextBackground.family_background || null,
-          birth_date: nextBackground.birth_date || null
-        }
-      })
+  function continueAfterMedicalHistoryReconciliation() {
+    if (!medicalHistoryReconciliation) return;
+    setMedicalHistoryDraft(
+      applyConflictDecisions(
+        medicalHistoryReconciliation.merged,
+        medicalHistoryReconciliation.conflicts,
+        medicalHistoryDecisions
+      )
     );
+    setMedicalHistoryMode("edit");
+  }
+
+  function savePermanentMedicalHistory() {
+    if (!detail) return;
+    const source =
+      detail.medical_history && !permanentMedicalHistory
+        ? "PATIENT_INITIAL"
+        : hasPendingPatientMedicalHistory
+          ? "PATIENT_RECONCILIATION"
+          : "DOCTOR_EDIT";
+    void run("Antecedentes guardados como nueva versión.", async () => {
+      const saved = await call<PatientMedicalHistoryVersion>("save_patient_medical_history", {
+        patientId,
+        input: {
+          payload_json: JSON.stringify(medicalHistoryDraft),
+          source,
+          encounter_id: encounterId,
+          source_appointment_id: medicalHistorySourceHash
+            ? detail.encounter.appointment_id
+            : null,
+          reconciled_source_hash: medicalHistorySourceHash
+        }
+      });
+      setPermanentMedicalHistory(saved);
+      setMedicalHistoryMode("read");
+      setMedicalHistoryReconciliation(null);
+      setMedicalHistoryDecisions({});
+    });
   }
 
   async function toggleConsent() {
@@ -714,22 +815,41 @@ export function Atencion({
     setScribeDraft(null);
     setAppliedScribeSegments([]);
     fileToBase64(file)
-      .then((audioBase64) =>
-        call<TranscriptionDraft>("ai_transcribe_audio", {
-          encounterId,
-          audio: {
-            fileName: file.name,
-            mediaType: file.type || "audio/wav",
-            audioBase64,
-            durationSeconds: null
-          },
-          useCloud: useCloudTranscription
-        })
-      )
-      .then((draft) => {
-        setAiTranscription(draft);
-        setScribeTurns(transcriptToTurns(draft.transcript_text));
-        setMessage("Transcripcion generada. Revisala antes de usarla.");
+      .then(async (audioBase64) => {
+        const audio = {
+          fileName: file.name,
+          mediaType: file.type || "audio/wav",
+          audioBase64,
+          durationSeconds: null
+        };
+        // Via local (por defecto): separa hablantes con diarizacion local. Via
+        // nube: transcripcion simple (sin marcas de tiempo, no se puede diarizar).
+        if (!useCloudTranscription) {
+          const draft = await call<DiarizationDraft>("ai_diarize_consultation", {
+            encounterId,
+            audio
+          });
+          setAiTranscription(draft);
+          setScribeTurns(
+            draft.diarized && draft.turns.length > 0
+              ? draft.turns
+              : transcriptToTurns(draft.transcript_text)
+          );
+          setMessage(
+            draft.diarized
+              ? "Transcripcion con separacion de voces generada. Revisala antes de usarla."
+              : "Transcripcion generada (sin separacion automatica de voces). Revisala antes de usarla."
+          );
+        } else {
+          const draft = await call<TranscriptionDraft>("ai_transcribe_audio", {
+            encounterId,
+            audio,
+            useCloud: true
+          });
+          setAiTranscription(draft);
+          setScribeTurns(transcriptToTurns(draft.transcript_text));
+          setMessage("Transcripcion generada. Revisala antes de usarla.");
+        }
         refreshUsage();
       })
       .catch((e: unknown) => setError(String(e)))
@@ -766,6 +886,17 @@ export function Atencion({
   function updateScribeTurn(id: string, patch: Partial<Pick<ConsultationTurn, "speaker" | "text">>) {
     setScribeTurns((current) =>
       current.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn))
+    );
+  }
+
+  // Intercambia los roles del dialogo cuando la separacion automatica asigno
+  // medico/paciente al reves (la heuristica supone que el medico abre la consulta).
+  function swapScribeRoles() {
+    setScribeTurns((current) =>
+      current.map((turn) => ({
+        ...turn,
+        speaker: turn.speaker === "MEDICO" ? "PACIENTE" : "MEDICO"
+      }))
     );
   }
 
@@ -1120,14 +1251,76 @@ export function Atencion({
               <section className="panel">
                 <h3>Preconsulta del paciente</h3>
                 <p className="meta">Cuestionario guiado por IA previo a la consulta.</p>
-                <dl className="precheckin-list">
-                  {formatPrecheckin(detail.preconsulta).map(([key, value]) => (
-                    <div key={key}>
-                      <dt>{key}</dt>
-                      <dd>{value}</dd>
-                    </div>
-                  ))}
-                </dl>
+                {preconsultaPresentation ? (
+                  <div className="clinical-response-groups preconsulta-response-groups">
+                    {preconsultaPresentation.motivo ? (
+                      <section className="clinical-response-group">
+                        <div className="clinical-response-heading">
+                          <h4>Motivo de consulta</h4>
+                          <span>1 respuesta</span>
+                        </div>
+                        <dl className="clinical-field-list">
+                          <div className="clinical-field-row">
+                            <dt>Motivo</dt>
+                            <dd>{preconsultaPresentation.motivo}</dd>
+                          </div>
+                        </dl>
+                      </section>
+                    ) : null}
+
+                    {preconsultaPresentation.questions.length > 0 ? (
+                      <section className="clinical-response-group">
+                        <div className="clinical-response-heading">
+                          <h4>Entrevista guiada</h4>
+                          <span>
+                            {preconsultaPresentation.questions.length}{" "}
+                            {preconsultaPresentation.questions.length === 1
+                              ? "respuesta"
+                              : "respuestas"}
+                          </span>
+                        </div>
+                        <dl className="clinical-question-list">
+                          {preconsultaPresentation.questions.map((item, index) => (
+                            <div
+                              key={`${item.question}-${index}`}
+                              className="clinical-question-row"
+                            >
+                              <span className="clinical-question-number" aria-hidden="true">
+                                {index + 1}
+                              </span>
+                              <div>
+                                <dt>{item.question}</dt>
+                                <dd>{item.answer || "Sin respuesta capturada"}</dd>
+                              </div>
+                            </div>
+                          ))}
+                        </dl>
+                      </section>
+                    ) : null}
+
+                    {preconsultaPresentation.legacyRows.length > 0 ? (
+                      <section className="clinical-response-group">
+                        <div className="clinical-response-heading">
+                          <h4>Respuestas recibidas</h4>
+                          <span>
+                            {preconsultaPresentation.legacyRows.length}{" "}
+                            {preconsultaPresentation.legacyRows.length === 1
+                              ? "respuesta"
+                              : "respuestas"}
+                          </span>
+                        </div>
+                        <dl className="clinical-field-list">
+                          {preconsultaPresentation.legacyRows.map(([key, value], index) => (
+                            <div key={`${key}-${index}`} className="clinical-field-row">
+                              <dt>{key}</dt>
+                              <dd>{value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </section>
+                    ) : null}
+                  </div>
+                ) : null}
               </section>
             ) : null}
 
@@ -1151,133 +1344,80 @@ export function Atencion({
 
             {resolvedSection === "antecedentes" ? (
               <section className="panel">
-                <h3>Antecedentes</h3>
-                {medicalHistoryGroups.length > 0 ? (
-                  <div className="questionnaire-history">
-                    <div className="panel-header">
-                      <strong>Cuestionario de antecedentes</strong>
-                      <p>Respuestas recibidas con el mismo formato que vio el paciente.</p>
-                    </div>
-                    <MedicalHistoryGroups groups={medicalHistoryGroups} />
+                <div className="medical-history-section-header">
+                  <div>
+                    <h3>Antecedentes</h3>
+                    <p className="meta">
+                      {permanentMedicalHistory
+                        ? `Expediente permanente · versión ${permanentMedicalHistory.version}`
+                        : "Aún no existe una versión permanente"}
+                    </p>
+                  </div>
+                  {medicalHistoryMode === "read" ? (
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      disabled={busy || signed || !permanentMedicalHistoryLoaded}
+                      onClick={beginMedicalHistoryEdit}
+                    >
+                      Editar antecedentes
+                    </button>
+                  ) : null}
+                </div>
+
+                {hasPendingPatientMedicalHistory && medicalHistoryMode === "read" ? (
+                  <div className="history-pending-notice" role="status">
+                    <strong>El paciente llenó antecedentes nuevos</strong>
+                    <p>
+                      Ya existe una versión en el expediente. Al editar podrás comparar
+                      únicamente los campos que tengan información distinta en ambas.
+                    </p>
                   </div>
                 ) : null}
-                {showBackgroundReview && backgroundReview ? (
-                  <div className="background-review" role="status">
-                    <div className="panel-header">
-                      <strong>
-                        {backgroundReview.hasDiscrepancies
-                          ? "El paciente envio antecedentes distintos"
-                          : "El paciente envio antecedentes nuevos"}
-                      </strong>
-                      <p>
-                        Compara el expediente actual contra el cuestionario de antecedentes antes
-                        de decidir si importas la version nueva.
-                      </p>
-                    </div>
-                    <div className="background-review-grid">
-                      {backgroundReview.fields.map((field) => (
-                        <div
-                          key={field.key}
-                          className={
-                            field.hasDifference
-                              ? "background-review-row background-review-row-different"
-                              : "background-review-row"
-                          }
-                        >
-                          <strong>{field.label}</strong>
-                          <div>
-                            <span className="meta">Expediente actual</span>
-                            <p>{field.current || "Sin dato registrado"}</p>
-                          </div>
-                          <div>
-                            <span className="meta">Cuestionario nuevo</span>
-                            <p>{field.incoming || "Sin dato enviado"}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="button-row">
-                      <button
-                        className="ghost-button"
-                        disabled={busy}
-                        onClick={() => {
-                          setBackgroundReviewDismissed(true);
-                          setMessage("Se mantuvieron los antecedentes anteriores.");
-                        }}
-                      >
-                        Mantener anteriores
-                      </button>
-                      <button
-                        className="action-button"
-                        disabled={busy}
-                        onClick={importPrecheckinBackground}
-                      >
-                        Importar nuevos
-                      </button>
-                      {detail.preconsulta ? (
-                        <button
-                          className="ghost-button"
-                          disabled={busy}
-                          onClick={() => setActiveSection("preconsulta")}
-                        >
-                          Ver preconsulta
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
+
+                {medicalHistoryMode === "reconcile" && medicalHistoryReconciliation ? (
+                  <MedicalHistoryConflictReview
+                    conflicts={medicalHistoryReconciliation.conflicts}
+                    decisions={medicalHistoryDecisions}
+                    autoMergedCount={medicalHistoryReconciliation.autoMergedCount}
+                    onChoose={(path, decision) =>
+                      setMedicalHistoryDecisions((current) => ({ ...current, [path]: decision }))
+                    }
+                    onContinue={continueAfterMedicalHistoryReconciliation}
+                    onCancel={() => setMedicalHistoryMode("read")}
+                  />
                 ) : null}
-          <div className="stack">
-            <label className="field">
-              <span>Alergias</span>
-              <input
-                value={background.allergies}
-                disabled={busy}
-                onChange={(e) => setBackground((current) => ({ ...current, allergies: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Antecedentes personales</span>
-              <textarea
-                rows={2}
-                value={background.medical_background}
-                disabled={busy}
-                onChange={(e) =>
-                  setBackground((current) => ({
-                    ...current,
-                    medical_background: e.target.value
-                  }))
-                }
-              />
-            </label>
-            <label className="field">
-              <span>Antecedentes familiares</span>
-              <textarea
-                rows={2}
-                value={background.family_background}
-                disabled={busy}
-                onChange={(e) =>
-                  setBackground((current) => ({
-                    ...current,
-                    family_background: e.target.value
-                  }))
-                }
-              />
-            </label>
-            <label className="field">
-              <span>Fecha de nacimiento</span>
-              <input
-                type="date"
-                value={background.birth_date}
-                disabled={busy}
-                onChange={(e) => setBackground((current) => ({ ...current, birth_date: e.target.value }))}
-              />
-            </label>
-            <div className="button-row">
-              <button className="ghost-button" onClick={saveBackground} disabled={busy}>
-                Guardar antecedentes
-              </button>
-            </div>
-          </div>
+
+                {medicalHistoryMode === "edit" ? (
+                  <MedicalHistoryEditor
+                    value={medicalHistoryDraft}
+                    busy={busy}
+                    onChange={setMedicalHistoryDraft}
+                    onSave={savePermanentMedicalHistory}
+                    onCancel={() => setMedicalHistoryMode("read")}
+                  />
+                ) : null}
+
+                {medicalHistoryMode === "read" ? (
+                  medicalHistoryGroups.length > 0 ? (
+                    <div className="questionnaire-history">
+                      <div className="panel-header">
+                        <strong>Cuestionario de antecedentes</strong>
+                        <p>
+                          {permanentMedicalHistory
+                            ? "Última versión revisada por el médico."
+                            : "Respuestas recibidas del paciente, aún sin guardar como expediente permanente."}
+                        </p>
+                      </div>
+                      <MedicalHistoryGroups groups={medicalHistoryGroups} />
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      <strong>Sin antecedentes capturados</strong>
+                      <p>Usa Editar antecedentes para completar el expediente.</p>
+                    </div>
+                  )
+                ) : null}
               </section>
             ) : null}
 
@@ -1606,6 +1746,11 @@ export function Atencion({
                   <h4>Dialogo revisable</h4>
                   <p>Corrige hablante y texto antes de acomodar la consulta en la plantilla.</p>
                 </div>
+                <div className="button-row">
+                  <button className="ghost-button" onClick={swapScribeRoles} disabled={busy}>
+                    Intercambiar medico/paciente
+                  </button>
+                </div>
                 <div className="scribe-turn-list">
                   {scribeTurns.map((turn) => (
                     <div className="scribe-turn" key={turn.id}>
@@ -1905,14 +2050,12 @@ export function Atencion({
               <div className="context-block">
                 <h4>Preconsulta (IA)</h4>
                 <dl className="precheckin-list">
-                  {formatPrecheckin(detail.preconsulta)
-                    .slice(0, 6)
-                    .map(([key, value]) => (
-                      <div key={key}>
-                        <dt>{key}</dt>
-                        <dd>{value}</dd>
-                      </div>
-                    ))}
+                  {compactPreconsultaRows.slice(0, 6).map(([key, value], index) => (
+                    <div key={`${key}-${index}`}>
+                      <dt>{key}</dt>
+                      <dd>{value}</dd>
+                    </div>
+                  ))}
                 </dl>
               </div>
             ) : null}

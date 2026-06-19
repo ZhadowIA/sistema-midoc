@@ -1046,6 +1046,30 @@ Rebanadas:
 - **Rebanada 4 — Vista de revision y aplicacion manual.** Mostrar segmentos, confianza, fuentes y advertencias; permitir aplicar por segmento o descartar; nunca guardar ni firmar automaticamente. Al aprobar, cerrar la traza de IA como `APPROVED`; al descartar, `DISCARDED`.
 - **Rebanada 5 — Editor de plantillas personalizadas.** Permitir que cada medico cree/edite plantillas locales con segmentos ordenados, obligatorios/opcionales e instrucciones para IA. Guardar localmente cifrado; no sincronizar contenido clinico ni estructura personalizada a la nube salvo decision futura explicita.
 
+## Paso 22 - Diarizacion local (separacion de hablantes)
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Separar la transcripcion de consulta en turnos de Medico y Paciente con un motor real de diarizacion local (sherpa-onnx), reemplazando la heuristica de alternancia del paso 21, sin enviar audio a la nube y sin quitar control al medico (los turnos siguen siendo corregibles a mano). |
+| Requisitos relacionados | RF40, RNF06, RNF07, RNF12, RNF15. Extiende los pasos 15 (Whisper local) y 21 (escriba clinico). |
+| Entrada necesaria | Transcripcion local real (paso 15) y dialogo revisable Medico/Paciente del escriba (paso 21 rebanada 2). |
+| Skills IA recomendadas | `superpowers:writing-plans`, `superpowers:test-driven-development`, `superpowers:verification-before-completion` |
+| Se construye | Motor de diarizacion local con sherpa-onnx (crate `sherpa-rs`) tras el feature `diarization-local`: dos modelos ONNX (segmentacion derivada de pyannote-3.0 + embedding WeSpeaker CAM++) con descarga gestionada (checksum, progreso, reanudacion) hacia `app_data_dir/models/`; nucleo puro de fusion por solape temporal entre los segmentos de Whisper (con marcas de tiempo) y los tramos de hablante; comando gobernado `ai_diarize_consultation` que transcribe + diariza + fusiona y devuelve el dialogo en turnos; cableado en la pantalla de Atencion con control "Intercambiar medico/paciente"; degradacion sin bloqueo a la heuristica de turnos cuando faltan modelos o el motor nativo. |
+| Se valida con | El medico descarga los modelos de separacion de voces, graba o carga una consulta de dos voces y obtiene el dialogo separado en turnos Medico/Paciente **offline**, los corrige si hace falta (o invierte roles con un clic) y los usa como entrada del acomodo. El audio sigue siendo transitorio (no se persiste). |
+| Compuerta de avance | La diarizacion corre offline por defecto; el audio se decodifica en memoria y se descarta; sin los modelos o el feature nativo la consulta se transcribe igual (degradacion, no bloqueo); licencias de los modelos verificadas para distribucion comercial (rehospedaje de los `.onnx` y cadena de licencias) antes de empaquetar; `num_speakers` fijo en 2 (Medico/Paciente), el acompanante se corrige a mano. |
+| Push recomendado | Hacer push por rebanada cerrada y verificada; la compilacion nativa real (`--features diarization-local`) se valida en staging con la cadena nativa instalada, igual que el binding de Whisper en el paso 15. |
+
+Clasificacion de datos: audio, transcript, tramos de hablante y turnos son CLINICO y viven como bytes transitorios o en la base local cifrada. Los modelos ONNX son REFERENCIA publica (no PHI) y se comparten entre perfiles en `app_data_dir/models/`. Las trazas de proveedor/costo son OPERATIVO local (se reusa el uso `TRANSCRIPTION`).
+
+sherpa-onnx trabaja **aparte** de Whisper (segundo motor paralelo, no un plugin): Whisper responde "que se dijo" (texto + marcas de tiempo) y sherpa-onnx "quien hablo cuando" (tramos de hablante); el pegamento es la fusion por solape temporal en Rust.
+
+Rebanadas:
+
+- **Rebanada 1 — Nucleo de fusion + gestor de descarga.** Nucleo puro y testeable de fusion (solape temporal, fusion de turnos contiguos, asignacion de roles: el primer hablante es el Medico) y gestor de descarga de los dos modelos ONNX (catalogo, checksum, reanudacion, holgura de disco), con comandos `diarization_model_status`/`download_diarization_model` y UI de descarga. Sin inferencia real.
+- **Rebanada 2 — Provider sherpa-rs + fusion de extremo a extremo.** `sherpa-rs` opcional tras el feature `diarization-local` (real) con stub que degrada sin el feature; Whisper local extendido para exponer segmentos con marcas de tiempo; funcion gobernada `diarize_consultation` (consentimiento de voz, presupuesto, traza DRAFT, audio transitorio) que inyecta el diarizador; comando `ai_diarize_consultation`; cableado en Atencion con el control "Intercambiar medico/paciente"; degradacion sin bloqueo.
+
+Estado (2026-06-18): Rebanada 1 y la parte no-nativa de la Rebanada 2 implementadas en `desktop-app`. Nucleo de fusion y gestor de descarga con pruebas (Rust por defecto en verde, clippy sin avisos nuevos); `tsc + vite build` limpio. La compilacion del binding nativo (`--features diarization-local`) y su verificacion de extremo a extremo con audio real de dos voces queda para staging con la cadena nativa (CMake/ONNX Runtime) instalada, igual que el binding real de Whisper en el paso 15. Pendiente antes de empaquetar: fijar checksums (`MIDOC_DIARIZE_*_SHA256`) y rehospedar los `.onnx` con verificacion de licencias para distribucion comercial.
+
 ## MVP recomendado
 
 El MVP debe cerrar los pasos 0 a 7 y dejar odontologia como paso 8 si el tiempo no permite incluirla desde el primer piloto. El MVP incluye necesariamente las piezas local-first: app de escritorio instalable con base cifrada, sincronizacion con purga de buzon y respaldo con restauracion probada — sin ellas la promesa de residencia de datos no se cumple. El MVP recomendado contiene:

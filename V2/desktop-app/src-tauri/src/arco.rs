@@ -116,6 +116,7 @@ pub struct PatientDataExport {
     pub rights_exercised_by: Option<String>,
     pub encounters: Vec<EncounterExport>,
     pub documents: Vec<DocumentExport>,
+    pub medical_history_versions: Vec<crate::clinical::PatientMedicalHistoryVersion>,
     pub generated_at: String,
 }
 
@@ -129,6 +130,7 @@ pub struct CancellationResult {
     pub deleted_ai_runs: usize,
     pub deleted_ai_consents: usize,
     pub deleted_precheckins: usize,
+    pub deleted_medical_history_versions: usize,
     pub anonymized_visits: usize,
     pub anonymized_appointments: usize,
 }
@@ -338,6 +340,28 @@ pub fn export_patient_data(
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
+    let mut histories_stmt = conn.prepare(
+        "SELECT id, patient_id, version, payload_json, source, encounter_id,
+                source_appointment_id, reconciled_source_hash, created_at
+         FROM patient_medical_history_versions
+         WHERE patient_id = ?1 ORDER BY version ASC",
+    )?;
+    let medical_history_versions = histories_stmt
+        .query_map(params![patient_id], |row| {
+            Ok(crate::clinical::PatientMedicalHistoryVersion {
+                id: row.get(0)?,
+                patient_id: row.get(1)?,
+                version: row.get(2)?,
+                payload_json: row.get(3)?,
+                source: row.get(4)?,
+                encounter_id: row.get(5)?,
+                source_appointment_id: row.get(6)?,
+                reconciled_source_hash: row.get(7)?,
+                created_at: row.get(8)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
     audit(conn, patient_id, "arco.data.exported", None)?;
 
     // El responsable, si existe, ejerce los derechos ARCO de un menor. Se hace
@@ -381,6 +405,7 @@ pub fn export_patient_data(
         rights_exercised_by,
         encounters,
         documents,
+        medical_history_versions,
         generated_at: now(),
     })
 }
@@ -423,6 +448,10 @@ pub fn fulfill_cancellation(
     let deleted_notes = tx.execute(
         "DELETE FROM note_versions
          WHERE encounter_id IN (SELECT id FROM encounters WHERE patient_id = ?1)",
+        params![patient_id],
+    )?;
+    let deleted_medical_history_versions = tx.execute(
+        "DELETE FROM patient_medical_history_versions WHERE patient_id = ?1",
         params![patient_id],
     )?;
     let deleted_encounters =
@@ -489,6 +518,7 @@ pub fn fulfill_cancellation(
         deleted_ai_runs,
         deleted_ai_consents,
         deleted_precheckins,
+        deleted_medical_history_versions,
         anonymized_visits,
         anonymized_appointments,
     })
@@ -556,6 +586,13 @@ mod tests {
         )
         .unwrap();
         conn.execute(
+            "INSERT INTO patient_medical_history_versions (
+                id, patient_id, version, payload_json, source, created_at
+             ) VALUES ('mh-1', ?1, 1, '{\"allergies\":\"Penicilina\"}', 'DOCTOR_EDIT', '0')",
+            params![patient_id],
+        )
+        .unwrap();
+        conn.execute(
             "INSERT INTO ai_consents (id, patient_id, scope, granted_at)
              VALUES ('cons-1', ?1, 'TEXT_ASSIST', '0')",
             params![patient_id],
@@ -595,6 +632,7 @@ mod tests {
         assert_eq!(export.encounters[0].notes.len(), 1);
         assert_eq!(export.encounters[0].prescriptions, vec!["paracetamol"]);
         assert_eq!(export.documents.len(), 1);
+        assert_eq!(export.medical_history_versions.len(), 1);
     }
 
     #[test]
@@ -671,6 +709,7 @@ mod tests {
         assert_eq!(result.deleted_ai_runs, 1);
         assert_eq!(result.deleted_ai_consents, 1);
         assert_eq!(result.deleted_precheckins, 1);
+        assert_eq!(result.deleted_medical_history_versions, 1);
 
         // El expediente clinico desaparecio.
         let encounters: i64 = conn

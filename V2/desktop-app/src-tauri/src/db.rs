@@ -421,6 +421,23 @@ const MIGRATIONS: &[&str] = &[
         SELECT appointment_id, responses_json, kind, received_at FROM precheckins;
     DROP TABLE precheckins;
     ALTER TABLE precheckins_new RENAME TO precheckins;",
+    // Historia clinica permanente y versionada por paciente. El cuestionario
+    // recibido permanece inmutable en precheckins; cada conciliacion o edicion
+    // del medico crea una version local nueva.
+    "CREATE TABLE patient_medical_history_versions (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients(id),
+        version INTEGER NOT NULL,
+        payload_json TEXT NOT NULL,
+        source TEXT NOT NULL,
+        encounter_id TEXT REFERENCES encounters(id),
+        source_appointment_id TEXT,
+        reconciled_source_hash TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(patient_id, version)
+    );
+    CREATE INDEX idx_patient_medical_history_latest
+        ON patient_medical_history_versions(patient_id, version DESC);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

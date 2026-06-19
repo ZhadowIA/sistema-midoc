@@ -14,18 +14,25 @@ export interface MedicalHistoryGroup {
   rows: MedicalHistoryRow[];
 }
 
-type FieldKind = "text" | "textarea" | "number" | "date" | "select" | "yesno";
+export type FieldKind = "text" | "textarea" | "number" | "date" | "select" | "yesno";
 
-interface FieldDef {
+export interface FieldDef {
   key: string;
   label: string;
   kind?: FieldKind;
   options?: { value: string; label: string }[];
+  placeholder?: string;
+  suffix?: string;
+  min?: number;
+  max?: number;
+  showWhen?: { field: string; equals: string | string[] };
 }
 
-interface GroupDef {
+export interface GroupDef {
   key: string;
   title: string;
+  onlyForSex?: "F" | "M";
+  audience?: "patient" | "doctor" | "both";
   fields: FieldDef[];
 }
 
@@ -47,7 +54,7 @@ const RELATION_OPTIONS = [
 ];
 
 // Heredo-familiares: estructura por padecimiento (relatives[] + tipo/notas).
-const FAMILY_RELATIVES: Record<string, string> = {
+export const FAMILY_RELATIVES: Record<string, string> = {
   abueloPaterno: "Abuelo paterno",
   abuelaPaterna: "Abuela paterna",
   abueloMaterno: "Abuelo materno",
@@ -58,7 +65,7 @@ const FAMILY_RELATIVES: Record<string, string> = {
   tios: "Tios"
 };
 
-const FAMILY_CONDITIONS: Array<{ key: string; label: string }> = [
+export const FAMILY_CONDITIONS: Array<{ key: string; label: string; hasType?: boolean }> = [
   { key: "diabetes", label: "Diabetes" },
   { key: "hipertension", label: "Hipertension arterial" },
   { key: "cardiopatia", label: "Infarto / enfermedad cardiaca" },
@@ -66,7 +73,7 @@ const FAMILY_CONDITIONS: Array<{ key: string; label: string }> = [
   { key: "dislipidemia", label: "Colesterol o trigliceridos altos" },
   { key: "obesidad", label: "Obesidad" },
   { key: "renal", label: "Enfermedad renal cronica / dialisis" },
-  { key: "cancer", label: "Cancer" },
+  { key: "cancer", label: "Cancer", hasType: true },
   { key: "tiroides", label: "Enfermedades tiroideas" },
   { key: "autoinmunes", label: "Enfermedades autoinmunes" },
   { key: "asma", label: "Asma / alergias importantes" },
@@ -82,16 +89,17 @@ const FAMILY_CONDITIONS: Array<{ key: string; label: string }> = [
   { key: "congenitas", label: "Malformaciones congenitas / geneticas" }
 ];
 
-const FAMILY_HISTORY_KEY = "familyHistory";
+export const FAMILY_HISTORY_KEY = "familyHistory";
 
 // Sub-preguntas de una enfermedad cronica (apartado patologico).
 function chronicDisease(key: string, label: string, extra: FieldDef[] = []): FieldDef[] {
+  const showWhen = { field: key, equals: "si" };
   return [
     { key, label, kind: "yesno" },
-    { key: `${key}Desde`, label: "Desde cuando" },
-    ...extra,
-    { key: `${key}Medicamento`, label: "Con que medicamento se controla" },
-    { key: `${key}Complicaciones`, label: "Ha presentado alguna complicacion" }
+    { key: `${key}Desde`, label: "Desde cuando", showWhen },
+    ...extra.map((field) => ({ ...field, showWhen })),
+    { key: `${key}Medicamento`, label: "Con que medicamento se controla", showWhen },
+    { key: `${key}Complicaciones`, label: "Ha presentado alguna complicacion", showWhen }
   ];
 }
 
@@ -99,13 +107,32 @@ function yesNo(items: Array<[string, string]>): FieldDef[] {
   return items.map(([key, label]) => ({ key, label, kind: "yesno" as FieldKind }));
 }
 
+const VACCINE_OPTIONS = [
+  { value: "aplicada", label: "Aplicada" },
+  { value: "noAplicada", label: "No aplicada" }
+];
+
+// Inmunizacion: estado (Aplicada/No aplicada) + edad aproximada al aplicarse.
+function immunization(key: string, label: string): FieldDef[] {
+  return [
+    { key, label, kind: "select", options: VACCINE_OPTIONS },
+    {
+      key: `${key}Edad`,
+      label: `${label} (edad aproximada)`,
+      kind: "number",
+      showWhen: { field: key, equals: "aplicada" }
+    }
+  ];
+}
+
 // Grupos con sus campos APLANADOS (los sub-bloques del contrato se muestran como
 // filas seguidas; el orden se conserva). Espeja MEDICAL_HISTORY_GROUPS.
-const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
+export const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
   {
     key: "identification",
     title: "Ficha de identificacion",
     fields: [
+      { key: "nombre", label: "Nombre(s)" },
       { key: "apellidoPaterno", label: "Apellido paterno" },
       { key: "apellidoMaterno", label: "Apellido materno" },
       { key: "fechaNacimiento", label: "Fecha de nacimiento" },
@@ -145,17 +172,17 @@ const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
       { key: "frutas", label: "Frutas (veces/sem)" },
       { key: "cereales", label: "Cereales (veces/sem)" },
       { key: "leguminosas", label: "Leguminosas (veces/sem)" },
-      { key: "antitetanica", label: "Inmunizacion antitetanica" },
-      { key: "antisarampion", label: "Inmunizacion antisarampion" },
-      { key: "antirubeola", label: "Inmunizacion antirubeola" },
-      { key: "antihepatica", label: "Inmunizacion antihepatica" },
-      { key: "desparasitacion", label: "Desparasitacion" },
+      ...immunization("antitetanica", "Inmunizacion antitetanica"),
+      ...immunization("antisarampion", "Inmunizacion antisarampion"),
+      ...immunization("antirubeola", "Inmunizacion antirubeola"),
+      ...immunization("antihepatica", "Inmunizacion antihepatica"),
+      ...immunization("desparasitacion", "Desparasitacion"),
       { key: "alcohol", label: "Consume alcohol", kind: "yesno" },
-      { key: "alcoholEdadInicio", label: "Edad de inicio del alcohol" },
-      { key: "alcoholCantidad", label: "Cantidad de bebidas que ingiere" },
+      { key: "alcoholEdadInicio", label: "Edad de inicio del alcohol", kind: "number", showWhen: { field: "alcohol", equals: "si" } },
+      { key: "alcoholCantidad", label: "Cantidad de bebidas que ingiere", showWhen: { field: "alcohol", equals: "si" } },
       { key: "tabaco", label: "Fuma", kind: "yesno" },
-      { key: "tabacoEdadInicio", label: "Edad de inicio del tabaco" },
-      { key: "tabacoCigarrosDia", label: "Cigarros al dia" },
+      { key: "tabacoEdadInicio", label: "Edad de inicio del tabaco", kind: "number", showWhen: { field: "tabaco", equals: "si" } },
+      { key: "tabacoCigarrosDia", label: "Cigarros al dia", kind: "number", showWhen: { field: "tabaco", equals: "si" } },
       { key: "otrasToxicomanias", label: "Otras toxicomanias" },
       { key: "tenencia", label: "Tipo de vivienda", kind: "select", options: [
         { value: "propia", label: "Propia" },
@@ -168,25 +195,26 @@ const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
       { key: "drenaje", label: "Cuenta con drenaje", kind: "yesno" },
       { key: "animales", label: "Animales en casa" },
       { key: "vidaSexualActiva", label: "Ha tenido relaciones sexuales", kind: "yesno" },
-      { key: "vidaSexualEdadInicio", label: "Edad de inicio de vida sexual" },
-      { key: "vidaSexualFrecuencia", label: "Frecuencia" },
-      { key: "vidaSexualParejas", label: "Numero de parejas" },
-      { key: "vidaSexualSexoservidoras", label: "Con sexoservidoras", kind: "yesno" },
-      { key: "vidaSexualProteccion", label: "Proteccion (cual)" }
+      { key: "vidaSexualEdadInicio", label: "Edad de inicio de vida sexual", kind: "number", showWhen: { field: "vidaSexualActiva", equals: "si" } },
+      { key: "vidaSexualFrecuencia", label: "Frecuencia", showWhen: { field: "vidaSexualActiva", equals: "si" } },
+      { key: "vidaSexualParejas", label: "Numero de parejas", kind: "number", showWhen: { field: "vidaSexualActiva", equals: "si" } },
+      { key: "vidaSexualSexoservidoras", label: "Con sexoservidoras", kind: "yesno", showWhen: { field: "vidaSexualActiva", equals: "si" } },
+      { key: "vidaSexualProteccion", label: "Proteccion (cual)", showWhen: { field: "vidaSexualActiva", equals: "si" } }
     ]
   },
   {
     key: "gyneco",
     title: "Antecedentes gineco-obstetricos",
+    onlyForSex: "F",
     fields: [
       { key: "menarca", label: "Edad de la primera menstruacion" },
       { key: "ciclo", label: "Ciclo (cada cuantos dias y duracion)" },
       { key: "dismenorrea", label: "Presenta dolor", kind: "yesno" },
-      { key: "dismenorreaMedicamento", label: "Requiere medicamentos", kind: "yesno" },
+      { key: "dismenorreaMedicamento", label: "Requiere medicamentos", kind: "yesno", showWhen: { field: "dismenorrea", equals: "si" } },
       { key: "embarazos", label: "Se ha embarazado", kind: "yesno" },
-      { key: "gestas", label: "Numero de embarazos" },
-      { key: "abortos", label: "Abortos" },
-      { key: "complicacionesObst", label: "Complicaciones" },
+      { key: "gestas", label: "Numero de embarazos", kind: "number", showWhen: { field: "embarazos", equals: "si" } },
+      { key: "abortos", label: "Abortos", kind: "number", showWhen: { field: "embarazos", equals: "si" } },
+      { key: "complicacionesObst", label: "Complicaciones", showWhen: { field: "embarazos", equals: "si" } },
       { key: "fum", label: "Fecha de ultima regla" }
     ]
   },
@@ -195,16 +223,16 @@ const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
     title: "Antecedentes personales patologicos",
     fields: [
       { key: "cirugia", label: "Intervenido quirurgicamente", kind: "yesno" },
-      { key: "cirugiaDeQue", label: "De que" },
-      { key: "cirugiaFecha", label: "Fecha de la cirugia" },
-      { key: "cirugiaComplicaciones", label: "Complicaciones de la cirugia" },
+      { key: "cirugiaDeQue", label: "De que", showWhen: { field: "cirugia", equals: "si" } },
+      { key: "cirugiaFecha", label: "Fecha de la cirugia", showWhen: { field: "cirugia", equals: "si" } },
+      { key: "cirugiaComplicaciones", label: "Complicaciones de la cirugia", showWhen: { field: "cirugia", equals: "si" } },
       { key: "transfusion", label: "Ha sido transfundido", kind: "yesno" },
-      { key: "transfusionMotivo", label: "Motivo de la transfusion" },
-      { key: "transfusionFecha", label: "Fecha de la transfusion" },
-      { key: "transfusionComplicaciones", label: "Complicaciones de la transfusion" },
+      { key: "transfusionMotivo", label: "Motivo de la transfusion", showWhen: { field: "transfusion", equals: "si" } },
+      { key: "transfusionFecha", label: "Fecha de la transfusion", showWhen: { field: "transfusion", equals: "si" } },
+      { key: "transfusionComplicaciones", label: "Complicaciones de la transfusion", showWhen: { field: "transfusion", equals: "si" } },
       { key: "alergia", label: "Ha presentado reaccion alergica", kind: "yesno" },
-      { key: "alergiaFecha", label: "Fecha de la reaccion" },
-      { key: "alergiaA", label: "Alergia a" },
+      { key: "alergiaFecha", label: "Fecha de la reaccion", showWhen: { field: "alergia", equals: "si" } },
+      { key: "alergiaA", label: "Alergia a", showWhen: { field: "alergia", equals: "si" } },
       ...chronicDisease("diabetico", "Es diabetico"),
       ...chronicDisease("hipertenso", "Es hipertenso"),
       ...chronicDisease("convulsiones", "Presenta convulsiones", [
@@ -215,6 +243,7 @@ const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
   {
     key: "systemsReview",
     title: "Interrogatorio por aparatos y sistemas",
+    audience: "doctor",
     fields: [
       ...yesNo([
         ["digFrecuentesDolores", "Dolores de estomago frecuentes"],
@@ -264,6 +293,13 @@ const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
     ]
   }
 ];
+
+export function patientMedicalHistoryGroups(sex: string): GroupDef[] {
+  return MEDICAL_HISTORY_GROUPS.filter(
+    (group) =>
+      group.audience !== "doctor" && (!group.onlyForSex || group.onlyForSex === sex)
+  );
+}
 
 function cleanText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
