@@ -6,9 +6,12 @@ interface Props {
   consent: boolean;
   hasHistory: boolean;
   hasPreconsulta: boolean;
+  templates: Array<{ id: string; name: string }>;
+  selectedTemplateId: string;
   busy: boolean;
   draft: ClinicalAidDraft | null;
   onToggleConsent(): void;
+  onTemplateChange(id: string): void;
   onGenerate(): void;
   onApplySoap(): void;
   onApplySegment(segment: SegmentDraft): void;
@@ -43,6 +46,19 @@ export function ClinicalAidRail(props: Props) {
       <button className="ghost-button" onClick={props.onToggleConsent} disabled={props.busy}>
         {props.consent ? "Revocar Ayuda IA" : "Autorizar Ayuda IA"}
       </button>
+      <label className="field">
+        <span>Plantilla clínica</span>
+        <select
+          value={props.selectedTemplateId}
+          disabled={props.busy}
+          onChange={(event) => props.onTemplateChange(event.currentTarget.value)}
+        >
+          <option value="default">SOAP predeterminado</option>
+          {props.templates.map((template) => (
+            <option key={template.id} value={template.id}>{template.name}</option>
+          ))}
+        </select>
+      </label>
       {!props.ready ? <p className="meta">Revisa la transcripción para habilitar esta acción.</p> : null}
 
       {props.draft ? (

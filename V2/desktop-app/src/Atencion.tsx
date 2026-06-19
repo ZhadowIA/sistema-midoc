@@ -15,14 +15,11 @@ import { createRecordedWavFile } from "./consultationRecorder";
 import {
   appendSegmentToNote,
   buildTemplateSegments,
-  formatSourceTurnReferences,
   normalizeTemplateDefinition,
   transcriptToTurns,
   type ConsultationTurn,
   type SegmentDraft,
-  type ScribeSpeaker,
-  type TemplateDefinition,
-  type TemplateSegment
+  type TemplateDefinition
 } from "./consultationScribe";
 import { MedicationSafety } from "./MedicationSafety";
 import { EncounterAgendaRail } from "./EncounterAgendaRail";
@@ -123,25 +120,6 @@ interface PatientMedicalHistoryVersion {
   created_at: string;
 }
 
-interface SoapDraft {
-  run_id: string;
-  provider: string;
-  model_version: string;
-  estimated_cost_cents: number;
-  latency_ms: number;
-  draft: Omit<NoteContent, "specialty"> & { specialty: unknown };
-}
-
-interface TextDraft {
-  run_id: string;
-  usage_type: string;
-  provider: string;
-  model_version: string;
-  estimated_cost_cents: number;
-  latency_ms: number;
-  text: string;
-}
-
 interface TranscriptionDraft {
   run_id: string;
   usage_type: string;
@@ -172,39 +150,12 @@ interface ReviewedTranscription {
   reviewed_at: string;
 }
 
-interface ConsultationStructuringDraft {
-  run_id: string;
-  usage_type: "CONSULTATION_STRUCTURING";
-  provider: string;
-  model_version: string;
-  estimated_cost_cents: number;
-  latency_ms: number;
-  segments: SegmentDraft[];
-  missing: string[];
-  warnings: string[];
-}
-
 interface StoredConsultationTemplate extends TemplateDefinition {
   name: string;
   clinical_profile: ClinicalProfile;
   created_at?: string | null;
   updated_at?: string | null;
 }
-
-interface UsageSummary {
-  month: string;
-  budget_cents: number;
-  spent_cents: number;
-  run_count: number;
-  by_usage: Array<{ usage_type: string; run_count: number; cost_cents: number }>;
-}
-
-const TEXT_ASSIST_LABELS: Record<string, string> = {
-  SOAP_ASSIST: "Borrador SOAP",
-  LONGITUDINAL_SUMMARY: "Resumen longitudinal",
-  PATIENT_INSTRUCTIONS: "Instrucciones al paciente",
-  CLINICAL_GAPS: "Brechas clinicas"
-};
 
 async function fileToBase64(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -216,11 +167,6 @@ async function fileToBase64(file: File): Promise<string> {
   }
   return btoa(binary);
 }
-
-const centsFormatter = new Intl.NumberFormat("es-MX", {
-  style: "currency",
-  currency: "MXN"
-});
 
 const EMPTY_NOTE: NoteContent = {
   subjective: "",
@@ -282,12 +228,6 @@ const dateTimeFormatter = new Intl.DateTimeFormat("es-MX", {
   timeStyle: "short"
 });
 
-function formatRecordingDuration(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  const remaining = seconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(remaining).padStart(2, "0")}`;
-}
-
 function parseMedicalHistoryPayload(raw: string | null): MedicalHistoryPayload {
   if (!raw) return {};
   try {
@@ -310,16 +250,6 @@ function legacyMedicalHistory(detail: EncounterDetail): MedicalHistoryPayload {
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function createTemplateDraft(profile: ClinicalProfile): StoredConsultationTemplate {
-  const base = buildTemplateSegments(profile);
-  return {
-    id: `custom-${profile.toLowerCase().replace(/_/g, "-")}-${Date.now()}`,
-    name: profile === "ODONTOLOGY" ? "Plantilla odontologica personalizada" : "Plantilla general personalizada",
-    clinical_profile: profile,
-    segments: base.segments.map((segment) => ({ ...segment }))
-  };
 }
 
 function MedicalHistoryGroups({ groups }: { groups: MedicalHistoryGroup[] }) {
@@ -376,27 +306,19 @@ export function Atencion({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [signatureValid, setSignatureValid] = useState<boolean | null>(null);
-  const [aiConsent, setAiConsent] = useState(false);
   const [aiVoiceConsent, setAiVoiceConsent] = useState(false);
   const [aiScribeConsent, setAiScribeConsent] = useState(false);
-  const [aiDraft, setAiDraft] = useState<SoapDraft | null>(null);
-  const [aiText, setAiText] = useState<TextDraft | null>(null);
   const [aiTranscription, setAiTranscription] = useState<TranscriptionDraft | null>(null);
   const [scribeTurns, setScribeTurns] = useState<ConsultationTurn[]>([]);
   const [reviewedTranscription, setReviewedTranscription] =
     useState<ReviewedTranscription | null>(null);
   const [clinicalAidDraft, setClinicalAidDraft] = useState<ClinicalAidDraft | null>(null);
-  const [scribeDraft, setScribeDraft] = useState<ConsultationStructuringDraft | null>(null);
-  const [appliedScribeSegments, setAppliedScribeSegments] = useState<string[]>([]);
   const [consultationTemplates, setConsultationTemplates] = useState<StoredConsultationTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("default");
-  const [templateEditor, setTemplateEditor] = useState<StoredConsultationTemplate | null>(null);
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingError, setRecordingError] = useState("");
   const [useCloudTranscription, setUseCloudTranscription] = useState(false);
-  const [aiUsage, setAiUsage] = useState<UsageSummary | null>(null);
-  const [budgetInput, setBudgetInput] = useState("");
   const [activeSection, setActiveSection] = useState<SectionId>("nota");
   const [permanentMedicalHistory, setPermanentMedicalHistory] =
     useState<PatientMedicalHistoryVersion | null>(null);
@@ -447,18 +369,12 @@ export function Atencion({
         } else {
           setSignatureValid(null);
         }
-        call<boolean>("ai_consent_status", { patientId: data.patient.id })
-          .then(setAiConsent)
-          .catch(() => setAiConsent(false));
         call<boolean>("ai_voice_consent_status", { patientId: data.patient.id })
           .then(setAiVoiceConsent)
           .catch(() => setAiVoiceConsent(false));
         call<boolean>("ai_scribe_consent_status", { patientId: data.patient.id })
           .then(setAiScribeConsent)
           .catch(() => setAiScribeConsent(false));
-        call<UsageSummary>("ai_usage_summary")
-          .then(setAiUsage)
-          .catch(() => setAiUsage(null));
         call<StoredConsultationTemplate[]>("list_consultation_templates")
           .then((templates) =>
             setConsultationTemplates(
@@ -481,10 +397,6 @@ export function Atencion({
       })
       .catch((e: unknown) => setError(String(e)));
   }, [encounterId, resolvedProfile]);
-
-  const refreshUsage = useCallback(() => {
-    call<UsageSummary>("ai_usage_summary").then(setAiUsage).catch(() => {});
-  }, []);
 
   useEffect(() => {
     load();
@@ -512,7 +424,6 @@ export function Atencion({
       specialty: coerceSpecialtyPayload(resolvedProfile, current.specialty)
     }));
     setSelectedTemplateId("default");
-    setTemplateEditor(null);
   }, [resolvedProfile]);
 
   // Modo Foco: al dictar, atenúa el chrome de navegación (clase en <body>, ver
@@ -589,13 +500,6 @@ export function Atencion({
     }));
   const selectedCustomTemplate = profileTemplates.find((template) => template.id === selectedTemplateId);
   const activeTemplate = selectedCustomTemplate ?? defaultTemplate;
-  const activeTemplateName =
-    selectedCustomTemplate?.name ?? (resolvedProfile === "ODONTOLOGY" ? "SOAP odontologia" : "SOAP general");
-  const targetOptions = defaultTemplate.segments.map((segment) => ({
-    target: segment.target,
-    label: segment.label
-  }));
-  const segmentLabels = new Map(activeTemplate.segments.map((segment) => [segment.id, segment.label]));
 
   const navItems = buildEncounterModes({
     hasPreconsulta: Boolean(detail.preconsulta),
@@ -605,7 +509,6 @@ export function Atencion({
   });
 
   const resolvedSection = resolveActiveSection(navItems, activeSection);
-  const showLegacyAi = false as boolean;
 
   function selectAgendaAppointment(appointmentId: string) {
     const needsConfirmation = shouldConfirmEncounterSwitch({
@@ -720,14 +623,6 @@ export function Atencion({
     });
   }
 
-  async function toggleConsent() {
-    const command = aiConsent ? "ai_revoke_consent" : "ai_grant_consent";
-    await run(
-      aiConsent ? "Consentimiento de IA revocado." : "Consentimiento de IA registrado.",
-      () => call(command, { patientId })
-    );
-  }
-
   async function toggleVoiceConsent() {
     const command = aiVoiceConsent ? "ai_revoke_voice_consent" : "ai_grant_voice_consent";
     await run(
@@ -748,98 +643,12 @@ export function Atencion({
     );
   }
 
-  function generateAiDraft() {
-    setBusy(true);
-    setMessage("");
-    setError("");
-    setAiDraft(null);
-    call<SoapDraft>("ai_assist_soap", { encounterId })
-      .then((draft) => {
-        setAiDraft(draft);
-        setMessage("Borrador IA generado. Revisalo antes de usarlo.");
-        refreshUsage();
-      })
-      .catch((e: unknown) => setError(String(e)))
-      .finally(() => setBusy(false));
-  }
-
-  function useAiDraft() {
-    if (!aiDraft) return;
-    const d = aiDraft.draft;
-    // Precarga el editor SOAP; NO guarda. El medico revisa y guarda manualmente.
-    setNote((current) => ({
-      ...current,
-      subjective: d.subjective,
-      objective: d.objective,
-      assessment: d.assessment,
-      plan: d.plan,
-      diagnosis: d.diagnosis,
-      instructions: d.instructions
-    }));
-    const runId = aiDraft.run_id;
-    setAiDraft(null);
-    setError("");
-    // Cierra la traza sin recargar: el borrador vive en el editor (aun sin
-    // guardar) y una recarga lo sobreescribiria con la nota persistida.
-    call("ai_review_run", { runId, status: "APPROVED", feedback: null })
-      .then(() => setMessage("Borrador aplicado al editor. Revisa, ajusta y guarda la nota."))
-      .catch((e: unknown) => setError(String(e)));
-  }
-
-  function discardAiDraft() {
-    if (!aiDraft) return;
-    const runId = aiDraft.run_id;
-    setAiDraft(null);
-    void run("Borrador IA descartado.", () =>
-      call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
-    );
-  }
-
-  function generateAiText(usageType: string) {
-    setBusy(true);
-    setMessage("");
-    setError("");
-    setAiText(null);
-    call<TextDraft>("ai_assist_text", { encounterId, usageType })
-      .then((draft) => {
-        setAiText(draft);
-        setMessage(`${TEXT_ASSIST_LABELS[usageType] ?? "Borrador"} generado. Revisalo antes de usarlo.`);
-        refreshUsage();
-      })
-      .catch((e: unknown) => setError(String(e)))
-      .finally(() => setBusy(false));
-  }
-
-  function useAiInstructions() {
-    if (!aiText) return;
-    const text = aiText.text;
-    // Precarga el campo de indicaciones del editor; NO guarda.
-    setNote((current) => ({ ...current, instructions: text }));
-    const runId = aiText.run_id;
-    setAiText(null);
-    setError("");
-    call("ai_review_run", { runId, status: "APPROVED", feedback: null })
-      .then(() => setMessage("Indicaciones aplicadas al editor. Revisa, ajusta y guarda la nota."))
-      .catch((e: unknown) => setError(String(e)));
-  }
-
-  function discardAiText() {
-    if (!aiText) return;
-    const runId = aiText.run_id;
-    setAiText(null);
-    void run("Borrador IA descartado.", () =>
-      call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
-    );
-  }
-
   function transcribeAudioFile(file: File | null) {
     if (!file) return;
     setBusy(true);
     setMessage("");
     setError("");
     setAiTranscription(null);
-    setScribeDraft(null);
-    setAppliedScribeSegments([]);
     fileToBase64(file)
       .then(async (audioBase64) => {
         const audio = {
@@ -876,25 +685,9 @@ export function Atencion({
           setScribeTurns(transcriptToTurns(draft.transcript_text));
           setMessage("Transcripcion generada. Revisala antes de usarla.");
         }
-        refreshUsage();
       })
       .catch((e: unknown) => setError(String(e)))
       .finally(() => setBusy(false));
-  }
-
-  function useAiTranscription() {
-    if (!aiTranscription) return;
-    const text = `Transcripcion de consulta (borrador IA):\n${aiTranscription.transcript_text}`;
-    setNote((current) => ({
-      ...current,
-      subjective: current.subjective ? `${current.subjective}\n\n${text}` : text
-    }));
-    const runId = aiTranscription.run_id;
-    setAiTranscription(null);
-    setError("");
-    call("ai_review_run", { runId, status: "APPROVED", feedback: null })
-      .then(() => setMessage("Transcripcion aplicada al editor. Revisa, ajusta y guarda la nota."))
-      .catch((e: unknown) => setError(String(e)));
   }
 
   function discardAiTranscription() {
@@ -902,8 +695,6 @@ export function Atencion({
     const runId = aiTranscription.run_id;
     setAiTranscription(null);
     setScribeTurns([]);
-    setScribeDraft(null);
-    setAppliedScribeSegments([]);
     void run("Transcripcion descartada.", () =>
       call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
     );
@@ -924,128 +715,6 @@ export function Atencion({
         speaker: turn.speaker === "MEDICO" ? "PACIENTE" : "MEDICO"
       }))
     );
-  }
-
-  function startNewTemplate() {
-    setTemplateEditor(createTemplateDraft(resolvedProfile));
-  }
-
-  function editSelectedTemplate() {
-    const selected = profileTemplates.find((template) => template.id === selectedTemplateId);
-    if (selected) {
-      setTemplateEditor({
-        ...selected,
-        segments: selected.segments.map((segment) => ({ ...segment }))
-      });
-    }
-  }
-
-  function updateTemplateSegment(index: number, patch: Partial<TemplateSegment>) {
-    setTemplateEditor((current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        segments: current.segments.map((segment, position) =>
-          position === index ? { ...segment, ...patch } : segment
-        )
-      };
-    });
-  }
-
-  function addTemplateSegment() {
-    const target = targetOptions[0]?.target ?? "subjective";
-    setTemplateEditor((current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        segments: [
-          ...current.segments,
-          {
-            id: `segment_${current.segments.length + 1}`,
-            label: "Nuevo segmento",
-            target,
-            instructions: "",
-            required: false
-          }
-        ]
-      };
-    });
-  }
-
-  function removeTemplateSegment(index: number) {
-    setTemplateEditor((current) =>
-      current
-        ? {
-            ...current,
-            segments: current.segments.filter((_, position) => position !== index)
-          }
-        : current
-    );
-  }
-
-  function saveTemplateEditor() {
-    if (!templateEditor) return;
-    const normalized = normalizeTemplateDefinition(templateEditor, resolvedProfile);
-    const payload: StoredConsultationTemplate = {
-      ...templateEditor,
-      id: normalized.id,
-      name: templateEditor.name.trim(),
-      clinical_profile: resolvedProfile,
-      segments: normalized.segments
-    };
-    if (!payload.name) {
-      setError("La plantilla necesita nombre.");
-      return;
-    }
-    void run("Plantilla guardada localmente.", async () => {
-      const saved = await call<StoredConsultationTemplate>("save_consultation_template", {
-        template: payload
-      });
-      const normalizedSaved: StoredConsultationTemplate = {
-        ...saved,
-        clinical_profile: coerceClinicalProfile(saved.clinical_profile),
-        ...normalizeTemplateDefinition(saved, coerceClinicalProfile(saved.clinical_profile))
-      };
-      setConsultationTemplates((current) => [
-        ...current.filter((template) => template.id !== normalizedSaved.id),
-        normalizedSaved
-      ]);
-      setSelectedTemplateId(normalizedSaved.id);
-      setTemplateEditor(null);
-    });
-  }
-
-  function deleteSelectedTemplate() {
-    const selected = profileTemplates.find((template) => template.id === selectedTemplateId);
-    if (!selected) return;
-    void run("Plantilla eliminada localmente.", async () => {
-      await call("delete_consultation_template", { id: selected.id });
-      setConsultationTemplates((current) => current.filter((template) => template.id !== selected.id));
-      setSelectedTemplateId("default");
-      setTemplateEditor(null);
-    });
-  }
-
-  function structureConsultation() {
-    const turns = scribeTurns.filter((turn) => turn.text.trim());
-    if (turns.length === 0) return;
-    setBusy(true);
-    setMessage("");
-    setError("");
-    setScribeDraft(null);
-    setAppliedScribeSegments([]);
-    call<ConsultationStructuringDraft>("ai_structure_consultation", {
-      encounterId,
-      turns,
-      template: activeTemplate
-    })
-      .then((draft) => {
-        setScribeDraft(draft);
-        setMessage("Acomodo por plantilla generado. Revisa cada segmento antes de aplicarlo.");
-        refreshUsage();
-      })
-      .catch((e: unknown) => setError(String(e)))
-      .finally(() => setBusy(false));
   }
 
   function cleanupRecording() {
@@ -1179,7 +848,6 @@ export function Atencion({
       .then((draft) => {
         setClinicalAidDraft(draft);
         setMessage("Ayuda clínica generada. Revisa cada propuesta antes de aplicarla.");
-        refreshUsage();
       })
       .catch((cause: unknown) => setError(String(cause)))
       .finally(() => setBusy(false));
@@ -1209,41 +877,7 @@ export function Atencion({
 
   function applyScribeSegment(segment: SegmentDraft) {
     setNote((current) => appendSegmentToNote(current, segment, activeTemplate));
-    setAppliedScribeSegments((current) =>
-      current.includes(segment.segment_id) ? current : [...current, segment.segment_id]
-    );
     setMessage("Segmento aplicado al editor. Revisa, ajusta y guarda la nota manualmente.");
-  }
-
-  function approveScribeDraft() {
-    if (!scribeDraft) return;
-    const runId = scribeDraft.run_id;
-    setScribeDraft(null);
-    setAppliedScribeSegments([]);
-    call("ai_review_run", { runId, status: "APPROVED", feedback: null })
-      .then(() => setMessage("Acomodo marcado como revisado. Guarda la nota cuando termines."))
-      .catch((e: unknown) => setError(String(e)));
-  }
-
-  function discardScribeDraft() {
-    if (!scribeDraft) return;
-    const runId = scribeDraft.run_id;
-    setScribeDraft(null);
-    setAppliedScribeSegments([]);
-    call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
-      .then(() => setMessage("Acomodo por plantilla descartado."))
-      .catch((e: unknown) => setError(String(e)));
-  }
-
-  function saveBudget() {
-    const pesos = Number(budgetInput);
-    if (!Number.isFinite(pesos) || pesos < 0) return;
-    const budgetCents = Math.round(pesos * 100);
-    setBudgetInput("");
-    void run("Presupuesto mensual de IA actualizado.", async () => {
-      await call("ai_set_budget", { budgetCents });
-      refreshUsage();
-    });
   }
 
   function sign() {
@@ -1551,518 +1185,6 @@ export function Atencion({
               </section>
             ) : null}
 
-            {showLegacyAi && resolvedSection === "ia" && !signed ? (
-          <section className="panel">
-            <div className="panel-header">
-              <h3>Asistencia de IA</h3>
-              <p>
-                La IA propone borradores a partir del expediente. Son solo un punto de
-                partida: tu los revisas, editas y guardas. Nada se guarda sin tu revision,
-                y el contenido se seudonimiza antes de procesarse.
-              </p>
-            </div>
-            <div className="button-row">
-              <span className={aiConsent ? "pill pill-success" : "pill pill-muted"}>
-                {aiConsent ? "Texto autorizado" : "Texto sin consentimiento"}
-              </span>
-              <button className="ghost-button" onClick={() => void toggleConsent()} disabled={busy}>
-                {aiConsent ? "Revocar texto" : "Autorizar texto"}
-              </button>
-              <span className={aiVoiceConsent ? "pill pill-success" : "pill pill-muted"}>
-                {aiVoiceConsent ? "Voz autorizada" : "Voz sin consentimiento"}
-              </span>
-              <button className="ghost-button" onClick={() => void toggleVoiceConsent()} disabled={busy}>
-                {aiVoiceConsent ? "Revocar voz" : "Autorizar voz"}
-              </button>
-              <span className={aiScribeConsent ? "pill pill-success" : "pill pill-muted"}>
-                {aiScribeConsent ? "Escriba autorizado" : "Escriba sin consentimiento"}
-              </span>
-              <button className="ghost-button" onClick={() => void toggleScribeConsent()} disabled={busy}>
-                {aiScribeConsent ? "Revocar escriba" : "Autorizar escriba"}
-              </button>
-            </div>
-
-            {aiUsage ? (
-              <p className="meta">
-                Uso de IA en {aiUsage.month}: {centsFormatter.format(aiUsage.spent_cents / 100)}
-                {aiUsage.budget_cents > 0
-                  ? ` de ${centsFormatter.format(aiUsage.budget_cents / 100)}`
-                  : " · sin limite mensual"}{" "}
-                · {aiUsage.run_count} ejecucion(es)
-              </p>
-            ) : null}
-            <div className="button-row">
-              <label className="field">
-                <span>Presupuesto mensual (MXN, 0 = sin limite)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={budgetInput}
-                  disabled={busy}
-                  onChange={(e) => setBudgetInput(e.currentTarget.value)}
-                />
-              </label>
-              <button className="ghost-button" onClick={saveBudget} disabled={busy || budgetInput === ""}>
-                Guardar presupuesto
-              </button>
-            </div>
-
-            <div className="button-row">
-              <button
-                className="action-button"
-                onClick={generateAiDraft}
-                disabled={busy || !aiConsent}
-              >
-                Borrador SOAP
-              </button>
-              <button
-                className="ghost-button"
-                onClick={() => generateAiText("LONGITUDINAL_SUMMARY")}
-                disabled={busy || !aiConsent}
-              >
-                Resumen longitudinal
-              </button>
-              <button
-                className="ghost-button"
-                onClick={() => generateAiText("PATIENT_INSTRUCTIONS")}
-                disabled={busy || !aiConsent}
-              >
-                Instrucciones al paciente
-              </button>
-              <button
-                className="ghost-button"
-                onClick={() => generateAiText("CLINICAL_GAPS")}
-                disabled={busy || !aiConsent}
-              >
-                Brechas clinicas
-              </button>
-            </div>
-
-            <div className="ai-draft template-editor">
-              <div className="panel-header">
-                <h4>Plantilla de acomodo</h4>
-              </div>
-              <div className="button-row">
-                <label className="field">
-                  <span>Plantilla activa</span>
-                  <select
-                    value={selectedTemplateId}
-                    disabled={busy}
-                    onChange={(event) => {
-                      setSelectedTemplateId(event.currentTarget.value);
-                      setTemplateEditor(null);
-                    }}
-                  >
-                    <option value="default">
-                      {resolvedProfile === "ODONTOLOGY" ? "SOAP odontologia" : "SOAP general"}
-                    </option>
-                    {profileTemplates.map((template) => (
-                      <option key={template.id} value={template.id}>
-                        {template.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button className="ghost-button" type="button" onClick={startNewTemplate} disabled={busy}>
-                  Nueva plantilla
-                </button>
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={editSelectedTemplate}
-                  disabled={busy || selectedTemplateId === "default"}
-                >
-                  Editar
-                </button>
-                <button
-                  className="ghost-button danger-link"
-                  type="button"
-                  onClick={deleteSelectedTemplate}
-                  disabled={busy || selectedTemplateId === "default"}
-                >
-                  Eliminar
-                </button>
-              </div>
-              <p className="meta">
-                {activeTemplateName} · {activeTemplate.segments.length} segmento(s) textuales locales.
-              </p>
-
-              {templateEditor ? (
-                <div className="template-editor-form">
-                  <label className="field">
-                    <span>Nombre</span>
-                    <input
-                      value={templateEditor.name}
-                      disabled={busy}
-                      onChange={(event) =>
-                        setTemplateEditor((current) =>
-                          current ? { ...current, name: event.currentTarget.value } : current
-                        )
-                      }
-                    />
-                  </label>
-                  <div className="template-segment-list">
-                    {templateEditor.segments.map((segment, index) => (
-                      <div className="template-segment" key={`${segment.id}-${index}`}>
-                        <label className="field compact-field">
-                          <span>Clave</span>
-                          <input
-                            value={segment.id}
-                            disabled={busy}
-                            onChange={(event) => updateTemplateSegment(index, { id: event.currentTarget.value })}
-                          />
-                        </label>
-                        <label className="field">
-                          <span>Etiqueta</span>
-                          <input
-                            value={segment.label}
-                            disabled={busy}
-                            onChange={(event) =>
-                              updateTemplateSegment(index, { label: event.currentTarget.value })
-                            }
-                          />
-                        </label>
-                        <label className="field">
-                          <span>Destino</span>
-                          <select
-                            value={segment.target}
-                            disabled={busy}
-                            onChange={(event) =>
-                              updateTemplateSegment(index, { target: event.currentTarget.value })
-                            }
-                          >
-                            {targetOptions.map((option) => (
-                              <option key={option.target} value={option.target}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="week-cancelled-toggle">
-                          <input
-                            type="checkbox"
-                            checked={segment.required}
-                            disabled={busy}
-                            onChange={(event) =>
-                              updateTemplateSegment(index, { required: event.currentTarget.checked })
-                            }
-                          />
-                          <span>Obligatorio</span>
-                        </label>
-                        <label className="field template-instructions">
-                          <span>Instrucciones para IA</span>
-                          <textarea
-                            rows={2}
-                            value={segment.instructions}
-                            disabled={busy}
-                            onChange={(event) =>
-                              updateTemplateSegment(index, { instructions: event.currentTarget.value })
-                            }
-                          />
-                        </label>
-                        <button
-                          className="ghost-button danger-link"
-                          type="button"
-                          onClick={() => removeTemplateSegment(index)}
-                          disabled={busy || templateEditor.segments.length <= 1}
-                        >
-                          Quitar
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="button-row">
-                    <button className="ghost-button" type="button" onClick={addTemplateSegment} disabled={busy}>
-                      Agregar segmento
-                    </button>
-                    <button className="action-button" type="button" onClick={saveTemplateEditor} disabled={busy}>
-                      Guardar plantilla
-                    </button>
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => setTemplateEditor(null)}
-                      disabled={busy}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="button-row">
-              <label className="field">
-                <span>Audio de consulta</span>
-                <input
-                  type="file"
-                  accept=".wav,audio/wav,audio/x-wav"
-                  disabled={busy || !aiVoiceConsent}
-                  onChange={(e) => {
-                    transcribeAudioFile(e.currentTarget.files?.[0] ?? null);
-                    e.currentTarget.value = "";
-                  }}
-                />
-              </label>
-              <div className="recording-controls">
-                <button
-                  className={recordingState === "recording" ? "ghost-button recording-button" : "ghost-button"}
-                  type="button"
-                  onClick={() => void startConsultationRecording()}
-                  disabled={busy || !aiVoiceConsent || recordingState !== "idle"}
-                >
-                  Iniciar grabacion
-                </button>
-                <button
-                  className="action-button"
-                  type="button"
-                  onClick={stopConsultationRecording}
-                  disabled={recordingState !== "recording"}
-                >
-                  Detener y transcribir
-                </button>
-                <span className={recordingState === "recording" ? "pill pill-success" : "pill pill-muted"}>
-                  {recordingState === "recording"
-                    ? `Grabando ${formatRecordingDuration(recordingSeconds)}`
-                    : recordingState === "stopping"
-                      ? "Preparando audio"
-                      : "Grabadora lista"}
-                </span>
-              </div>
-              <span className="meta">
-                WAV mono 16 kHz · {useCloudTranscription ? "respaldo en nube (bajo BAA)" : "transcripcion local"} · descarte inmediato del audio.
-              </span>
-            </div>
-            {recordingError ? (
-              <p className="form-error" role="alert">
-                {recordingError}
-              </p>
-            ) : null}
-
-            <label className="week-cancelled-toggle">
-              <input
-                type="checkbox"
-                checked={useCloudTranscription}
-                disabled={busy || !aiVoiceConsent}
-                onChange={(e) => setUseCloudTranscription(e.currentTarget.checked)}
-              />
-              <span>Usar respaldo en nube (equipo lento; el audio sale del equipo)</span>
-            </label>
-
-            {aiTranscription ? (
-              <div className="ai-draft">
-                <p className="meta">
-                  Transcripcion · proveedor {aiTranscription.provider} · modelo{" "}
-                  {aiTranscription.model_version} · costo estimado{" "}
-                  {centsFormatter.format(aiTranscription.estimated_cost_cents / 100)} ·{" "}
-                  {aiTranscription.latency_ms} ms
-                </p>
-                <p className="ai-draft-text">{aiTranscription.transcript_text}</p>
-                <div className="button-row">
-                  <button className="action-button" onClick={useAiTranscription} disabled={busy}>
-                    Usar en subjetivo
-                  </button>
-                  <button className="ghost-button" onClick={discardAiTranscription} disabled={busy}>
-                    Descartar
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {scribeTurns.length > 0 ? (
-              <div className="ai-draft">
-                <div className="panel-header">
-                  <h4>Dialogo revisable</h4>
-                  <p>Corrige hablante y texto antes de acomodar la consulta en la plantilla.</p>
-                </div>
-                <div className="button-row">
-                  <button className="ghost-button" onClick={swapScribeRoles} disabled={busy}>
-                    Intercambiar medico/paciente
-                  </button>
-                </div>
-                <div className="scribe-turn-list">
-                  {scribeTurns.map((turn) => (
-                    <div className="scribe-turn" key={turn.id}>
-                      <label className="field compact-field">
-                        <span>Hablante</span>
-                        <select
-                          value={turn.speaker}
-                          disabled={busy}
-                          onChange={(event) =>
-                            updateScribeTurn(turn.id, {
-                              speaker: event.currentTarget.value as ScribeSpeaker
-                            })
-                          }
-                        >
-                          <option value="MEDICO">Medico</option>
-                          <option value="PACIENTE">Paciente</option>
-                        </select>
-                      </label>
-                      <label className="field">
-                        <span>{turn.id}</span>
-                        <textarea
-                          rows={2}
-                          value={turn.text}
-                          disabled={busy}
-                          onChange={(event) =>
-                            updateScribeTurn(turn.id, { text: event.currentTarget.value })
-                          }
-                        />
-                      </label>
-                    </div>
-                  ))}
-                </div>
-                <div className="button-row">
-                  <button
-                    className="action-button"
-                    onClick={structureConsultation}
-                    disabled={busy || !aiScribeConsent || scribeTurns.every((turn) => !turn.text.trim())}
-                  >
-                    Acomodar en plantilla
-                  </button>
-                  <span className="meta">
-                    Usa {activeTemplateName} · no guarda la nota automaticamente.
-                  </span>
-                </div>
-              </div>
-            ) : null}
-
-            {scribeDraft ? (
-              <div className="ai-draft">
-                <p className="meta">
-                  Acomodo de plantilla · proveedor {scribeDraft.provider} · modelo{" "}
-                  {scribeDraft.model_version} · costo estimado{" "}
-                  {centsFormatter.format(scribeDraft.estimated_cost_cents / 100)} ·{" "}
-                  {scribeDraft.latency_ms} ms
-                </p>
-                {scribeDraft.warnings.length > 0 ? (
-                  <ul className="scribe-warning-list">
-                    {scribeDraft.warnings.map((warning) => (
-                      <li key={warning}>{warning}</li>
-                    ))}
-                  </ul>
-                ) : null}
-                {scribeDraft.missing.length > 0 ? (
-                  <div className="field">
-                    <span>Faltantes detectados</span>
-                    <ul className="scribe-warning-list">
-                      {scribeDraft.missing.map((missing) => (
-                        <li key={missing}>{missing}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                <div className="stack">
-                  {scribeDraft.segments.map((segment) => (
-                    <article className="scribe-segment" key={segment.segment_id}>
-                      <div>
-                        <strong>{segmentLabels.get(segment.segment_id) ?? segment.segment_id}</strong>
-                        <span className="meta">
-                          Confianza {segment.confidence} · fuentes{" "}
-                          {segment.source_turns.length > 0 ? segment.source_turns.join(", ") : "sin fuente"}
-                        </span>
-                      </div>
-                      <p className="ai-draft-text">{segment.content}</p>
-                      {segment.source_turns.length > 0 ? (
-                        <div className="scribe-source-list">
-                          {formatSourceTurnReferences(scribeTurns, segment.source_turns).map((source) => (
-                            <blockquote
-                              className={source.missing ? "scribe-source missing-source" : "scribe-source"}
-                              key={source.id}
-                            >
-                              <strong>{source.label}</strong>
-                              {source.text ? <span>{source.text}</span> : null}
-                            </blockquote>
-                          ))}
-                        </div>
-                      ) : null}
-                      {segment.warnings.length > 0 ? (
-                        <ul className="scribe-warning-list">
-                          {segment.warnings.map((warning) => (
-                            <li key={warning}>{warning}</li>
-                          ))}
-                        </ul>
-                      ) : null}
-                      <button
-                        className="ghost-button"
-                        onClick={() => applyScribeSegment(segment)}
-                        disabled={busy || appliedScribeSegments.includes(segment.segment_id)}
-                      >
-                        {appliedScribeSegments.includes(segment.segment_id)
-                          ? "Aplicado"
-                          : "Aplicar segmento"}
-                      </button>
-                    </article>
-                  ))}
-                </div>
-                <div className="button-row">
-                  <button
-                    className="action-button"
-                    onClick={approveScribeDraft}
-                    disabled={busy || appliedScribeSegments.length === 0}
-                  >
-                    Marcar revision aplicada
-                  </button>
-                  <button className="ghost-button" onClick={discardScribeDraft} disabled={busy}>
-                    Descartar acomodo
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {aiText ? (
-              <div className="ai-draft">
-                <p className="meta">
-                  {TEXT_ASSIST_LABELS[aiText.usage_type] ?? "Borrador"} · proveedor{" "}
-                  {aiText.provider} · modelo {aiText.model_version} · costo estimado{" "}
-                  {centsFormatter.format(aiText.estimated_cost_cents / 100)} · {aiText.latency_ms} ms
-                </p>
-                <p className="ai-draft-text">{aiText.text}</p>
-                <div className="button-row">
-                  {aiText.usage_type === "PATIENT_INSTRUCTIONS" ? (
-                    <button className="action-button" onClick={useAiInstructions} disabled={busy}>
-                      Usar en indicaciones
-                    </button>
-                  ) : null}
-                  <button className="ghost-button" onClick={discardAiText} disabled={busy}>
-                    Descartar
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {aiDraft ? (
-              <div className="ai-draft">
-                <p className="meta">
-                  Proveedor {aiDraft.provider} · modelo {aiDraft.model_version} · costo estimado{" "}
-                  {centsFormatter.format(aiDraft.estimated_cost_cents / 100)} · {aiDraft.latency_ms} ms
-                </p>
-                <div className="stack">
-                  {NOTE_FIELDS.map(({ key, label }) => {
-                    const value = aiDraft.draft[key];
-                    if (!value) return null;
-                    return (
-                      <div className="field" key={key}>
-                        <span>{label}</span>
-                        <p className="ai-draft-text">{value}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="button-row">
-                  <button className="action-button" onClick={useAiDraft} disabled={busy}>
-                    Usar borrador en el editor
-                  </button>
-                  <button className="ghost-button" onClick={discardAiDraft} disabled={busy}>
-                    Descartar
-                  </button>
-                </div>
-              </div>
-            ) : null}
-          </section>
-            ) : null}
-
             {resolvedSection === "nota" ? (
         <section className="panel">
           <h3>Nota clinica (SOAP)</h3>
@@ -2175,9 +1297,15 @@ export function Atencion({
               consent={aiScribeConsent}
               hasHistory={medicalHistoryGroups.length > 0}
               hasPreconsulta={Boolean(detail.preconsulta)}
+              templates={profileTemplates.map((template) => ({
+                id: template.id,
+                name: template.name
+              }))}
+              selectedTemplateId={selectedTemplateId}
               busy={busy}
               draft={clinicalAidDraft}
               onToggleConsent={() => void toggleScribeConsent()}
+              onTemplateChange={setSelectedTemplateId}
               onGenerate={generateClinicalAid}
               onApplySoap={applyClinicalAidSoap}
               onApplySegment={applyScribeSegment}
