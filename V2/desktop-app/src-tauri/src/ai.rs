@@ -45,6 +45,7 @@ pub const USAGE_INSTRUCTIONS: &str = "PATIENT_INSTRUCTIONS";
 pub const USAGE_GAPS: &str = "CLINICAL_GAPS";
 pub const USAGE_TRANSCRIPTION: &str = "TRANSCRIPTION";
 pub const USAGE_CONSULTATION_STRUCTURING: &str = "CONSULTATION_STRUCTURING";
+pub const USAGE_CLINICAL_AID: &str = "CLINICAL_AID";
 pub const AUDIO_RETENTION_DISCARD: &str = "discarded_after_transcription";
 
 const TEXT_USAGES: &[&str] = &[USAGE_SUMMARY, USAGE_INSTRUCTIONS, USAGE_GAPS];
@@ -55,6 +56,7 @@ const PROMPT_VERSION_INSTRUCTIONS: &str = "instructions/v1";
 const PROMPT_VERSION_GAPS: &str = "gaps/v1";
 const PROMPT_VERSION_TRANSCRIPTION: &str = "transcription/v1";
 pub const PROMPT_VERSION_CONSULTATION_STRUCTURING: &str = "consultation-structuring/v1";
+pub const PROMPT_VERSION_CLINICAL_AID: &str = "clinical-aid/v1";
 const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
 
 fn prompt_version_for(usage_type: &str) -> &'static str {
@@ -63,6 +65,7 @@ fn prompt_version_for(usage_type: &str) -> &'static str {
         USAGE_INSTRUCTIONS => PROMPT_VERSION_INSTRUCTIONS,
         USAGE_GAPS => PROMPT_VERSION_GAPS,
         USAGE_CONSULTATION_STRUCTURING => PROMPT_VERSION_CONSULTATION_STRUCTURING,
+        USAGE_CLINICAL_AID => PROMPT_VERSION_CLINICAL_AID,
         _ => PROMPT_VERSION_SOAP,
     }
 }
@@ -255,6 +258,7 @@ impl AiProvider for FakeProvider {
                 "Posibles brechas clinicas a revisar (borrador):\n- Verifica antecedentes y alergias.\n- Confirma seguimiento de diagnosticos previos.\n- Contexto considerado:\n{context}\n\n(Estas son sugerencias; el criterio es del medico.)"
             ),
             USAGE_CONSULTATION_STRUCTURING => fake_structuring_output(context)?,
+            USAGE_CLINICAL_AID => fake_clinical_aid_output(context)?,
             _ => return Err(AiError::Invalid("tipo de uso no soportado por el proveedor".into())),
         };
 
@@ -374,6 +378,12 @@ impl AiProvider for GeminiProvider {
                 "temperature": 0.1,
                 "responseMimeType": "application/json",
                 "responseJsonSchema": consultation_structuring_schema()
+            })
+        } else if request.usage_type == USAGE_CLINICAL_AID {
+            serde_json::json!({
+                "temperature": 0.1,
+                "responseMimeType": "application/json",
+                "responseJsonSchema": clinical_aid_schema()
             })
         } else {
             serde_json::json!({ "temperature": 0.2 })
@@ -971,6 +981,163 @@ pub struct TranscriptionDraft {
     pub audio_retention_policy: String,
 }
 
+fn clinical_aid_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["soap", "template_segments", "possibilities", "studies", "treatments", "warnings"],
+        "properties": {
+            "soap": {
+                "type": "object",
+                "required": ["subjective", "objective", "assessment", "diagnosis", "plan", "instructions", "specialty"],
+                "properties": {
+                    "subjective": {"type":"string"}, "objective": {"type":"string"},
+                    "assessment": {"type":"string"}, "diagnosis": {"type":"string"},
+                    "plan": {"type":"string"}, "instructions": {"type":"string"},
+                    "specialty": {"type":["object","null"]}
+                }
+            },
+            "template_segments": consultation_structuring_schema()["properties"]["segments"].clone(),
+            "possibilities": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["title","compatibility","explanation","supporting_findings","conflicting_findings","missing_data"],
+                    "properties": {
+                        "title":{"type":"string"},
+                        "compatibility":{"type":"string","enum":["HIGH","MEDIUM","LOW"]},
+                        "explanation":{"type":"string"},
+                        "supporting_findings":{"type":"array","items":{"type":"string"}},
+                        "conflicting_findings":{"type":"array","items":{"type":"string"}},
+                        "missing_data":{"type":"array","items":{"type":"string"}}
+                    }
+                }
+            },
+            "studies": {"type":"array","items":{"type":"object","required":["name","reason","priority"],"properties":{"name":{"type":"string"},"reason":{"type":"string"},"priority":{"type":"string","enum":["ROUTINE","SOON","URGENT"]}}}},
+            "treatments": {"type":"array","items":{"type":"object","required":["name","reason","precautions"],"properties":{"name":{"type":"string"},"reason":{"type":"string"},"precautions":{"type":"array","items":{"type":"string"}}}}},
+            "warnings":{"type":"array","items":{"type":"string"}}
+        }
+    })
+}
+
+fn fake_clinical_aid_output(context: &str) -> Result<String, AiError> {
+    let parsed: serde_json::Value = serde_json::from_str(context).unwrap_or_default();
+    let segments = parsed
+        .get("template_segments")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let template_segments = segments
+        .iter()
+        .take(4)
+        .filter_map(|segment| {
+            Some(SegmentDraft {
+                segment_id: segment.get("id")?.as_str()?.into(),
+                content: format!(
+                    "{} (borrador para revisión).",
+                    segment.get("label")?.as_str()?
+                ),
+                confidence: "medium".into(),
+                source_turns: vec!["turn-1".into()],
+                warnings: vec!["Confirmar contra la consulta.".into()],
+            })
+        })
+        .collect();
+    serde_json::to_string(&ClinicalAidOutput {
+        soap: NoteContent {
+            subjective: "Síntomas referidos en la transcripción revisada.".into(),
+            objective: String::new(),
+            assessment: "Requiere valoración clínica y exploración.".into(),
+            plan: String::new(),
+            diagnosis: String::new(),
+            instructions: String::new(),
+            specialty: serde_json::Value::Null,
+        },
+        template_segments,
+        possibilities: vec![ClinicalPossibility {
+            title: "Alteración del sueño".into(),
+            compatibility: "MEDIUM".into(),
+            explanation: "La fatiga coincide con descanso insuficiente.".into(),
+            supporting_findings: vec!["Insomnio referido".into()],
+            conflicting_findings: Vec::new(),
+            missing_data: vec!["Exploración física".into(), "Signos vitales".into()],
+        }],
+        studies: vec![StudySuggestion {
+            name: "Biometría hemática".into(),
+            reason: "Valorar causas frecuentes de fatiga si el criterio médico lo indica.".into(),
+            priority: "ROUTINE".into(),
+        }],
+        treatments: vec![TreatmentSuggestion {
+            name: "Medidas de higiene del sueño".into(),
+            reason: "La preconsulta refiere insomnio.".into(),
+            precautions: vec!["Confirmar causas secundarias.".into()],
+        }],
+        warnings: vec!["Todas las propuestas requieren revisión médica.".into()],
+    })
+    .map_err(|error| AiError::Invalid(format!("salida clinica invalida: {error}")))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClinicalPossibility {
+    pub title: String,
+    pub compatibility: String,
+    pub explanation: String,
+    pub supporting_findings: Vec<String>,
+    pub conflicting_findings: Vec<String>,
+    pub missing_data: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StudySuggestion {
+    pub name: String,
+    pub reason: String,
+    pub priority: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreatmentSuggestion {
+    pub name: String,
+    pub reason: String,
+    pub precautions: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ClinicalAidOutput {
+    soap: NoteContent,
+    template_segments: Vec<SegmentDraft>,
+    possibilities: Vec<ClinicalPossibility>,
+    studies: Vec<StudySuggestion>,
+    treatments: Vec<TreatmentSuggestion>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClinicalAidDraft {
+    pub run_id: String,
+    pub usage_type: String,
+    pub provider: String,
+    pub model_version: String,
+    pub estimated_cost_cents: i64,
+    pub latency_ms: i64,
+    pub soap: NoteContent,
+    pub template_segments: Vec<SegmentDraft>,
+    pub possibilities: Vec<ClinicalPossibility>,
+    pub studies: Vec<StudySuggestion>,
+    pub treatments: Vec<TreatmentSuggestion>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewedTranscription {
+    pub id: String,
+    pub encounter_id: String,
+    pub run_id: String,
+    pub transcript_text: String,
+    pub turns: Vec<ConsultationTurn>,
+    pub status: String,
+    pub created_at: String,
+    pub reviewed_at: String,
+}
+
 /// Motor de diarizacion inyectado: recibe muestras f32 y su frecuencia, devuelve
 /// tramos de hablante. En produccion es sherpa-onnx (tras el feature); en pruebas,
 /// un cierre determinista. Mantenerlo como alias evita un tipo "muy complejo".
@@ -1404,6 +1571,210 @@ pub fn transcribe_audio(
         transcript_text: response.output,
         audio_retention_policy: AUDIO_RETENTION_DISCARD.into(),
     })
+}
+
+fn parse_clinical_aid_output(
+    raw: &str,
+    template_segments: &[TemplateSegment],
+    turns: &[ConsultationTurn],
+) -> Result<ClinicalAidOutput, AiError> {
+    let output: ClinicalAidOutput = serde_json::from_str(raw)
+        .map_err(|error| AiError::Invalid(format!("respuesta de ayuda clinica invalida: {error}")))?;
+    for item in &output.possibilities {
+        if !matches!(item.compatibility.as_str(), "HIGH" | "MEDIUM" | "LOW")
+            || item.compatibility.contains('%')
+            || item.title.trim().is_empty()
+            || item.explanation.trim().is_empty()
+        {
+            return Err(AiError::Invalid(
+                "nivel de compatibilidad clinica invalido".into(),
+            ));
+        }
+    }
+    for study in &output.studies {
+        if study.name.trim().is_empty()
+            || study.reason.trim().is_empty()
+            || !matches!(study.priority.as_str(), "ROUTINE" | "SOON" | "URGENT")
+        {
+            return Err(AiError::Invalid("estudio sugerido invalido".into()));
+        }
+    }
+    let wrapped = serde_json::to_string(&ConsultationStructuringOutput {
+        segments: output.template_segments.clone(),
+        missing: Vec::new(),
+        warnings: Vec::new(),
+    })
+    .map_err(|error| AiError::Invalid(error.to_string()))?;
+    parse_structuring_output(&wrapped, template_segments, turns)?;
+    Ok(output)
+}
+
+pub fn generate_clinical_aid(
+    conn: &Connection,
+    encounter_id: &str,
+    template_segments: Vec<TemplateSegment>,
+    registry: &ProviderRegistry,
+) -> Result<ClinicalAidDraft, AiError> {
+    let detail =
+        clinical::get_encounter_detail(conn, encounter_id).map_err(|_| AiError::NotFound)?;
+    if detail.encounter.status == "SIGNED" {
+        return Err(AiError::Invalid("el encuentro ya fue firmado".into()));
+    }
+    let consent_id = active_consent(
+        conn,
+        &detail.encounter.patient_id,
+        SCOPE_CONSULTATION_SCRIBE,
+    )?
+    .ok_or(AiError::ConsentMissing)?;
+    ensure_within_budget(conn)?;
+    let reviewed = latest_reviewed_transcription(conn, encounter_id)?
+        .ok_or_else(|| AiError::Invalid("revisa la transcripcion antes de usar Ayuda IA".into()))?;
+    let template_segments = validate_template_segments(&template_segments)?;
+    let input = serde_json::json!({
+        "task": "Genera propuestas clinicas revisables, no decisiones.",
+        "rules": [
+            "No expreses probabilidades numericas.",
+            "Usa HIGH, MEDIUM o LOW como compatibilidad.",
+            "Explica hallazgos a favor, en contra y faltantes.",
+            "No inventes datos."
+        ],
+        "template_segments": &template_segments,
+        "turns": &reviewed.turns,
+        "encounter_context": build_context(&detail)
+    });
+    let redacted = redact(
+        &input.to_string(),
+        &detail.patient.first_name,
+        &detail.patient.last_name,
+    );
+    let request = AiRequest {
+        usage_type: USAGE_CLINICAL_AID.into(),
+        prompt_version: PROMPT_VERSION_CLINICAL_AID.into(),
+        redacted_input: redacted.clone(),
+    };
+    let (provider, response) = registry.generate(&request)?;
+    let output = parse_clinical_aid_output(
+        &response.output,
+        &template_segments,
+        &reviewed.turns,
+    )?;
+    let run_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO ai_runs
+            (id, encounter_id, patient_id, usage_type, provider, model_version,
+             prompt_version, status, input_redacted, output, estimated_cost_cents,
+             latency_ms, consent_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'DRAFT', ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            run_id,
+            encounter_id,
+            detail.encounter.patient_id,
+            USAGE_CLINICAL_AID,
+            provider,
+            response.model_version,
+            PROMPT_VERSION_CLINICAL_AID,
+            redacted,
+            response.output,
+            response.estimated_cost_cents,
+            response.latency_ms,
+            consent_id,
+            now()
+        ],
+    )?;
+    Ok(ClinicalAidDraft {
+        run_id,
+        usage_type: USAGE_CLINICAL_AID.into(),
+        provider,
+        model_version: response.model_version,
+        estimated_cost_cents: response.estimated_cost_cents,
+        latency_ms: response.latency_ms,
+        soap: output.soap,
+        template_segments: output.template_segments,
+        possibilities: output.possibilities,
+        studies: output.studies,
+        treatments: output.treatments,
+        warnings: output.warnings,
+    })
+}
+
+pub fn save_reviewed_transcription(
+    conn: &Connection,
+    encounter_id: &str,
+    run_id: &str,
+    turns: Vec<ConsultationTurn>,
+) -> Result<ReviewedTranscription, AiError> {
+    let run = read_run(conn, run_id)?;
+    if run.encounter_id.as_deref() != Some(encounter_id)
+        || run.usage_type != USAGE_TRANSCRIPTION
+        || run.status != "DRAFT"
+    {
+        return Err(AiError::Invalid(
+            "el borrador de transcripcion no puede revisarse".into(),
+        ));
+    }
+    let turns = validate_consultation_turns(&turns)?;
+    let transcript_text = turns
+        .iter()
+        .map(|turn| format!("{}: {}", turn.speaker, turn.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let turns_json = serde_json::to_string(&turns)
+        .map_err(|error| AiError::Invalid(format!("turnos invalidos: {error}")))?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let reviewed_at = now();
+    conn.execute(
+        "INSERT INTO consultation_transcriptions
+            (id, encounter_id, run_id, transcript_text, turns_json, status, created_at, reviewed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'REVIEWED', ?6, ?6)",
+        params![id, encounter_id, run_id, transcript_text, turns_json, reviewed_at],
+    )?;
+    review_run(conn, run_id, "APPROVED", None)?;
+    Ok(ReviewedTranscription {
+        id,
+        encounter_id: encounter_id.into(),
+        run_id: run_id.into(),
+        transcript_text,
+        turns,
+        status: "REVIEWED".into(),
+        created_at: reviewed_at.clone(),
+        reviewed_at,
+    })
+}
+
+pub fn latest_reviewed_transcription(
+    conn: &Connection,
+    encounter_id: &str,
+) -> Result<Option<ReviewedTranscription>, AiError> {
+    conn.query_row(
+        "SELECT id, encounter_id, run_id, transcript_text, turns_json, status,
+                created_at, reviewed_at
+         FROM consultation_transcriptions
+         WHERE encounter_id = ?1 AND status = 'REVIEWED'
+         ORDER BY reviewed_at DESC LIMIT 1",
+        [encounter_id],
+        |row| {
+            let turns_json: String = row.get(4)?;
+            let turns = serde_json::from_str(&turns_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    4,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok(ReviewedTranscription {
+                id: row.get(0)?,
+                encounter_id: row.get(1)?,
+                run_id: row.get(2)?,
+                transcript_text: row.get(3)?,
+                turns,
+                status: row.get(5)?,
+                created_at: row.get(6)?,
+                reviewed_at: row.get(7)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(AiError::from)
 }
 
 /// Registra en estado DRAFT la traza de una transcripcion local (ai_run + auditoria),
@@ -2462,6 +2833,97 @@ mod tests {
             )
             .unwrap();
         assert_eq!(note_count, 0);
+    }
+
+    #[test]
+    fn saves_and_reads_reviewed_transcription_without_audio() {
+        let conn = test_conn("reviewed-transcription");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: vec![1, 2, 3],
+                duration_seconds: Some(20),
+            },
+            &provider,
+        )
+        .unwrap();
+        let reviewed = save_reviewed_transcription(
+            &conn,
+            &encounter_id,
+            &draft.run_id,
+            vec![ConsultationTurn {
+                id: "turn-1".into(),
+                speaker: "MEDICO".into(),
+                text: "¿Desde cuándo?".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(reviewed.status, "REVIEWED");
+        assert_eq!(
+            latest_reviewed_transcription(&conn, &encounter_id)
+                .unwrap()
+                .unwrap()
+                .run_id,
+            draft.run_id
+        );
+        assert!(!reviewed.transcript_text.contains("audio"));
+    }
+
+    #[test]
+    fn clinical_aid_rejects_numeric_compatibility() {
+        let raw = r#"{
+          "soap":{"subjective":"","objective":"","assessment":"","plan":"","diagnosis":"","instructions":"","specialty":null},
+          "template_segments":[],
+          "possibilities":[{"title":"Anemia","compatibility":"82%","explanation":"Fatiga","supporting_findings":[],"conflicting_findings":[],"missing_data":[]}],
+          "studies":[],"treatments":[],"warnings":[]
+        }"#;
+        assert!(parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns()).is_err());
+    }
+
+    #[test]
+    fn clinical_aid_requires_reviewed_transcription_and_returns_levels() {
+        let conn = test_conn("clinical-aid-flow");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+        let transcript = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: vec![1, 2, 3],
+                duration_seconds: Some(20),
+            },
+            &provider,
+        )
+        .unwrap();
+        save_reviewed_transcription(
+            &conn,
+            &encounter_id,
+            &transcript.run_id,
+            scribe_turns(),
+        )
+        .unwrap();
+        let draft = generate_clinical_aid(
+            &conn,
+            &encounter_id,
+            scribe_segments(),
+            &ProviderRegistry::default_local(),
+        )
+        .unwrap();
+        assert_eq!(draft.usage_type, USAGE_CLINICAL_AID);
+        assert!(draft
+            .possibilities
+            .iter()
+            .all(|item| matches!(item.compatibility.as_str(), "HIGH" | "MEDIUM" | "LOW")));
     }
 
     /// WAV PCM16 mono 16 kHz de silencio, para que la decodificacion de audio de

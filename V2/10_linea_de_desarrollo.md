@@ -1070,6 +1070,18 @@ Rebanadas:
 
 Estado (2026-06-18): Rebanada 1 y la parte no-nativa de la Rebanada 2 implementadas en `desktop-app`. Nucleo de fusion y gestor de descarga con pruebas (Rust por defecto en verde, clippy sin avisos nuevos); `tsc + vite build` limpio. La compilacion del binding nativo (`--features diarization-local`) y su verificacion de extremo a extremo con audio real de dos voces queda para staging con la cadena nativa (CMake/ONNX Runtime) instalada, igual que el binding real de Whisper en el paso 15. Pendiente antes de empaquetar: fijar checksums (`MIDOC_DIARIZE_*_SHA256`) y rehospedar los `.onnx` con verificacion de licencias para distribucion comercial.
 
+Extension de UX (2026-06-19): la antigua seccion `Asistencia de IA` se separa
+en `Transcripcion consulta`, dedicada solo a captura, transcripcion, correccion
+de hablantes y revision. La transcripcion corregida se conserva como dato
+CLINICO en SQLite cifrado, sin audio. `Ayuda IA` vive en la columna derecha
+permanente de la Estacion Clinica y solo se habilita con una transcripcion
+revisada; combina esa fuente con antecedentes, preconsulta y plantilla activa
+para devolver SOAP, segmentos, posibilidades clinicas con compatibilidad
+Alta/Media/Baja, estudios y tratamientos revisables. No usa porcentajes, no
+aplica contenido automaticamente y no presenta `realtime_capable` como
+streaming: mientras no exista un contrato incremental, el texto aparece al
+finalizar la grabacion.
+
 ## MVP recomendado
 
 El MVP debe cerrar los pasos 0 a 7 y dejar odontologia como paso 8 si el tiempo no permite incluirla desde el primer piloto. El MVP incluye necesariamente las piezas local-first: app de escritorio instalable con base cifrada, sincronizacion con purga de buzon y respaldo con restauracion probada — sin ellas la promesa de residencia de datos no se cumple. El MVP recomendado contiene:
