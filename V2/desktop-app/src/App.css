@@ -1817,7 +1817,7 @@ body.dictating .encounter-modes:focus-within {
 
 .transcription-workspace {
   display: grid;
-  grid-template-columns: minmax(210px, 0.8fr) minmax(190px, 0.65fr) minmax(300px, 1.2fr);
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
   gap: 12px;
 }
 
@@ -1845,6 +1845,10 @@ body.dictating .encounter-modes:focus-within {
   display: grid;
   align-content: start;
   gap: 12px;
+}
+
+.transcription-review {
+  grid-column: 1 / -1;
 }
 
 .transcription-mic {
