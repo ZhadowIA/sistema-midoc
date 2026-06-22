@@ -739,6 +739,37 @@ Verificacion (rebanada 3): 130 pruebas de Rust en verde (+3: parseo de transcrip
 
 Con esto la compuerta de push del paso 15 queda cubierta: descarga de modelo verificada, transcripcion local real (binding compilado y con inferencia real verificada) y respaldo en nube gobernado, todo con pruebas y residencia local por defecto.
 
+### Extension (2026-06-21): optimizacion de transcripcion para CPU (rebanadas 4-6)
+
+Motivacion: el paso 15 se diseno descargando pesos fp16 y tratando la GPU como binario *dedicada si/no*. El sistema es para **medicos**, que rara vez tienen GPU dedicada (lo normal es CPU-only, GPU integrada o Apple Silicon). Se reorienta a maxima eficiencia/velocidad/precision en equipos sin GPU dedicada, sin abandonar a quien si la tiene. Decisiones de producto (2026-06-21): reemplazar fp16 por **cuantizados Q5** en todos los modelos, y empaquetar backend **Vulkan universal + Metal + CPU/OpenBLAS**, con la deteccion razonando por backend. Detalle en `11_recomendaciones_ia_medica.md` (seccion "Optimizacion para CPU").
+
+Entregado (rebanada 4 — modelos cuantizados Q5):
+
+- **Pesos Q5 (`transcription.rs`, `transcription_model.rs`).** `WhisperModel::file_name` apunta a las variantes cuantizadas (`ggml-small-q5_1.bin`, `ggml-medium-q5_0.bin`, `ggml-large-v3-turbo-q5_0.bin`, `ggml-large-v3-q5_0.bin`); RAM/disco aproximados y tamanos exactos de descarga (Content-Length verificado) actualizados a Q5. La URL por defecto al repo publico de whisper.cpp sirve sin cambios.
+- **Impacto.** El modelo recomendado en CPU (turbo-q5) baja de ~1.6 GB a ~575 MB en disco y de ~6 GB a ~2 GB en RAM, con perdida de precision minima.
+
+Entregado (rebanada 5 — backends de aceleracion + deteccion por backend):
+
+- **Features de Cargo (`Cargo.toml`).** `whisper-openblas`, `whisper-vulkan`, `whisper-metal` (ademas del ya existente `whisper-cuda`), compile-time y verificados en staging (regla 5). El build por defecto y las pruebas no necesitan cadena nativa.
+- **Deteccion por backend (`transcription.rs`).** El clasificador booleano `looks_like_accelerable_gpu` se reemplaza por `classify_adapter -> AdapterClass {Dedicated, Integrated, Apple, None}` y `detect_backend_from_names -> AccelBackend {Cpu, VulkanIntegrated, VulkanDedicated, Metal}`. Las GPU integradas (Intel UHD/Iris, APU Radeon) ya **no** se descartan: aceleran via Vulkan. Apple Silicon -> Metal.
+- **Politica `recommend()` CPU-first.** turbo-q5 como base en CPU (>=6 GB); large-v3-q5 para GPU dedicada y Apple con >=16 GB; small-q5 + nube solo para CPU con <6 GB. `TranscriptionRecommendation` expone `accel`/`accelLabel` ademas de `hasGpu` (compat). El frontend (`TranscriptionSetup.tsx`) muestra el backend detectado.
+
+Entregado (rebanada 6 — VAD para saltar silencios):
+
+- **Asset VAD (`transcription_model.rs`).** Modelo Silero (`vad-silero`, `ggml-silero-v5.1.2.bin`, ~865 KB) anadido al catalogo; reusa el gestor de descarga (reanudacion/checksum/estado) y vive en `models/` (referencia publica, no PHI).
+- **Cableado (`lib.rs`, `whisper_provider.rs`).** `WhisperLocalProvider` acepta una ruta VAD opcional; si el modelo esta descargado, `FullParams` activa el VAD (`enable_vad` + `set_vad_model_path` + `set_vad_params`, silencio minimo 200 ms para no cortar habla clinica) y whisper.cpp procesa solo los tramos con voz. Si no esta, degrada a procesar todo el audio.
+- **UI (`TranscriptionSetup.tsx`).** Descarga opcional del detector de voz con su propio estado/progreso, junto al modelo principal.
+
+Entregado (rebanada 7 — matriz de empaque por SO + reconciliacion con el backend compilado):
+
+- **Reconciliacion deteccion/compilacion (`transcription.rs`).** `BackendCaps::compiled()` lee los features de Cargo activos (`cfg!(feature = ...)`) y `effective_backend(detected, caps)` reduce el backend detectado por hardware al que el binario realmente puede usar; si la aceleracion no se compilo, cae a CPU. `detect_specs` aplica esta reduccion. Cierra el acoplamiento: un instalador CPU-only en una maquina con GPU recomienda turbo-q5 (CPU), no large-v3 que correria lento.
+- **Matriz de distribucion (`package.json`).** Scripts por SO: `tauri:build:vulkan` (Windows/Linux: Vulkan universal + OpenBLAS + diarizacion), `tauri:build:metal` (macOS: Metal), `tauri:build:cuda` (NVIDIA), y `tauri:build` como respaldo CPU-only. Equivalentes `tauri:dev:*` en `--release` (evita mezclar CRT Debug/Release con libs nativas). Se elimino la duplicacion `cuda:diarize` (identica a `cuda`).
+- **Pendiente de empaque (staging, regla 5).** Cada build nativo se compila/firma en su SO con la cadena correspondiente (Vulkan SDK / Xcode-Metal / CUDA toolkit); aqui se definen los comandos y la reconciliacion, la compilacion real se valida en staging como el binding de Whisper.
+
+Verificacion (rebanada 7): `effective_backend` cubierto por pruebas puras (degrada a CPU sin features; conserva backend con su feature; CUDA acelera dedicada pero no integrada; regresion del acoplamiento CPU-only+GPU -> turbo-q5) y `buildScripts.test.ts` valida la matriz por SO y que los dev nativos usan `--release`.
+
+Verificacion (rebanadas 4-6): **187 pruebas de Rust en verde** (politica por backend, clasificacion dedicada/integrada/Apple/ninguna, agregador por prioridad, assets Q5 con tamanos exactos, catalogo con VAD resoluble bajo `models/`), `cargo clippy --lib` sin advertencias nuevas, `tsc + vite build` ok. La inferencia real con VAD (`enable_vad` + modelo Silero) y la compilacion de los backends (`whisper-vulkan`/`whisper-metal`/`whisper-openblas`) se validan en staging con la cadena nativa (regla 5), igual que el binding de Whisper.
+
 ## Paso 16 - Proveedores de IA reales en staging (BAA)
 
 | Campo | Definicion |

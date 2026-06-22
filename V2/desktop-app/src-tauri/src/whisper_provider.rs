@@ -13,26 +13,105 @@
 
 #![cfg(feature = "whisper-local")]
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{
+    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperVadParams,
+};
 
 use crate::ai::{AiError, AiResponse, AudioInput, TranscriptionProvider, TranscriptionRequest};
 use crate::audio;
 use crate::diarization::WhisperSegment;
 
+struct ModelCache<T> {
+    entries: Mutex<HashMap<PathBuf, Arc<T>>>,
+}
+
+impl<T> Default for ModelCache<T> {
+    fn default() -> Self {
+        Self {
+            entries: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl<T> ModelCache<T> {
+    fn get_or_try_insert_with<E>(
+        &self,
+        path: &Path,
+        load: impl FnOnce() -> Result<T, E>,
+    ) -> Result<Arc<T>, E> {
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(cached) = entries.get(path) {
+            return Ok(Arc::clone(cached));
+        }
+
+        let loaded = Arc::new(load()?);
+        entries.insert(path.to_path_buf(), Arc::clone(&loaded));
+        Ok(loaded)
+    }
+}
+
+static CONTEXT_CACHE: OnceLock<ModelCache<WhisperContext>> = OnceLock::new();
+
+fn recommended_thread_count(physical_cores: Option<usize>, logical_cores: usize) -> i32 {
+    let physical = physical_cores.filter(|cores| *cores > 0);
+    physical
+        .unwrap_or_else(|| (logical_cores / 2).max(1))
+        .min(i32::MAX as usize) as i32
+}
+
+fn detected_thread_count() -> i32 {
+    let system = sysinfo::System::new();
+    let logical = std::thread::available_parallelism()
+        .map(|cores| cores.get())
+        .unwrap_or(1);
+    recommended_thread_count(system.physical_core_count(), logical)
+}
+
+/// Parametros de VAD para consulta clinica. Parte de los valores por defecto de
+/// whisper.cpp (umbral 0.5, voz minima 250 ms, padding 30 ms) y solo eleva el
+/// silencio minimo a 200 ms: en una consulta hay pausas naturales al pensar o
+/// escribir, y un silencio demasiado corto cortaria frases. Conservador para no
+/// perder habla clinica.
+fn default_vad_params() -> WhisperVadParams {
+    let mut params = WhisperVadParams::new();
+    params.set_min_silence_duration(200);
+    params
+}
+
+fn cached_context(model_path: &Path) -> Result<Arc<WhisperContext>, AiError> {
+    CONTEXT_CACHE
+        .get_or_init(ModelCache::default)
+        .get_or_try_insert_with(model_path, || {
+            WhisperContext::new_with_params(model_path, WhisperContextParameters::default())
+                .map_err(|error| AiError::Invalid(format!("no se pudo cargar el modelo: {error}")))
+        })
+}
+
 /// Transcriptor local respaldado por whisper.cpp con un modelo GGML en disco.
 pub struct WhisperLocalProvider {
     name: String,
     model_path: PathBuf,
+    /// Ruta del modelo VAD (deteccion de voz) Silero, si esta descargado. Cuando
+    /// esta presente, whisper.cpp salta los silencios antes de transcribir, lo que
+    /// recorta el audio que procesa la CPU (clave en equipos sin GPU). Opcional:
+    /// sin el, la transcripcion procesa todo el audio (degradacion elegante).
+    vad_model_path: Option<PathBuf>,
 }
 
 impl WhisperLocalProvider {
-    pub fn new(model_id: &str, model_path: PathBuf) -> Self {
+    pub fn new(model_id: &str, model_path: PathBuf, vad_model_path: Option<PathBuf>) -> Self {
         Self {
             name: format!("whisper-local-{model_id}"),
             model_path,
+            vad_model_path,
         }
     }
 }
@@ -60,15 +139,12 @@ impl TranscriptionProvider for WhisperLocalProvider {
         let start = Instant::now();
 
         // Decodifica el WAV a muestras mono f32 a 16 kHz en memoria (sin tocar disco).
-        let decoded =
-            audio::decode_wav_pcm16_to_whisper(&audio.bytes).map_err(AiError::Invalid)?;
+        let decoded = audio::decode_wav_pcm16_to_whisper(&audio.bytes).map_err(AiError::Invalid)?;
 
-        let model_path = self
-            .model_path
-            .to_str()
-            .ok_or_else(|| AiError::Invalid("ruta del modelo invalida".into()))?;
-        let ctx = WhisperContext::new_with_params(model_path, WhisperContextParameters::default())
-            .map_err(|e| AiError::Invalid(format!("no se pudo cargar el modelo: {e}")))?;
+        // El contexto contiene los pesos (cientos de MB o varios GB). Se conserva
+        // por ruta durante la vida del proceso para no releer el modelo ni volver
+        // a subirlo a la GPU en cada consulta.
+        let ctx = cached_context(&self.model_path)?;
         let mut state = ctx
             .create_state()
             .map_err(|e| AiError::Invalid(format!("no se pudo iniciar la transcripcion: {e}")))?;
@@ -80,6 +156,18 @@ impl TranscriptionProvider for WhisperLocalProvider {
         params.set_print_special(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+        params.set_n_threads(detected_thread_count());
+
+        // VAD opcional: si el modelo Silero esta descargado, whisper.cpp salta los
+        // silencios antes de transcribir y procesa solo los tramos con voz. En una
+        // consulta con pausas esto recorta una parte grande del audio y, por tanto,
+        // del tiempo de CPU, sin costo de precision. Si la ruta no es UTF-8 valida,
+        // se omite el VAD (degradacion elegante) en vez de fallar la transcripcion.
+        if let Some(vad_path) = self.vad_model_path.as_deref().and_then(Path::to_str) {
+            params.set_vad_model_path(Some(vad_path));
+            params.set_vad_params(default_vad_params());
+            params.enable_vad(true);
+        }
 
         state
             .full(params, &decoded.samples)
@@ -118,6 +206,38 @@ impl TranscriptionProvider for WhisperLocalProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn thread_count_prefers_physical_cores_and_has_a_safe_fallback() {
+        assert_eq!(recommended_thread_count(Some(6), 12), 6);
+        assert_eq!(recommended_thread_count(None, 12), 6);
+        assert_eq!(recommended_thread_count(None, 1), 1);
+        assert_eq!(recommended_thread_count(Some(0), 8), 4);
+    }
+
+    #[test]
+    fn model_cache_loads_each_path_only_once() {
+        let cache = ModelCache::<String>::default();
+        let loads = AtomicUsize::new(0);
+        let path = PathBuf::from("C:/models/ggml-medium.bin");
+
+        let first = cache
+            .get_or_try_insert_with(&path, || {
+                loads.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, String>("contexto".to_string())
+            })
+            .unwrap();
+        let second = cache
+            .get_or_try_insert_with(&path, || {
+                loads.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, String>("otro".to_string())
+            })
+            .unwrap();
+
+        assert_eq!(loads.load(Ordering::SeqCst), 1);
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+    }
 
     /// WAV PCM16 mono 16 kHz de silencio, para ejercitar el pipeline real sin
     /// depender de un audio con voz.
@@ -152,7 +272,11 @@ mod tests {
         let Ok(model) = std::env::var("MIDOC_TEST_WHISPER_MODEL") else {
             return;
         };
-        let provider = WhisperLocalProvider::new("tiny", PathBuf::from(model));
+        // VAD opcional via MIDOC_TEST_WHISPER_VAD_MODEL (si no, transcribe sin VAD).
+        let vad = std::env::var("MIDOC_TEST_WHISPER_VAD_MODEL")
+            .ok()
+            .map(PathBuf::from);
+        let provider = WhisperLocalProvider::new("tiny", PathBuf::from(model), vad);
         let bytes = silent_wav_16k(1);
         let audio = AudioInput {
             file_name: Some("silencio.wav".into()),

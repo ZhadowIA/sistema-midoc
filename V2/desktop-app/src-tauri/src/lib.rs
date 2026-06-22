@@ -1339,9 +1339,16 @@ fn resolve_transcription_provider(
                     .into(),
             );
         }
+        // El modelo VAD (saltar silencios) es opcional: si esta descargado se usa
+        // para acelerar; si no, la transcripcion degrada a procesar todo el audio.
+        let vad_asset = transcription_model::asset_for(transcription_model::VAD_MODEL_ID);
+        let vad_path = vad_asset
+            .map(|a| transcription_model::model_path(&base_dir, &a.file_name))
+            .filter(|p| p.exists());
         Ok(Box::new(whisper_provider::WhisperLocalProvider::new(
             &rec.model_id,
             path,
+            vad_path,
         )))
     }
     #[cfg(not(feature = "whisper-local"))]

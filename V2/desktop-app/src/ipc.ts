@@ -50,10 +50,23 @@ interface MockNote {
   specialty: unknown;
 }
 
+// Tamanos reales (bytes) de los pesos cuantizados Q5 (Content-Length verificado).
 const MOCK_MODEL_SIZES: Record<string, number> = {
-  small: 500 * 1024 * 1024,
-  medium: 1500 * 1024 * 1024,
-  "large-v3": 3000 * 1024 * 1024
+  small: 190_085_487,
+  medium: 539_212_467,
+  "large-v3-turbo": 574_041_195,
+  "large-v3": 1_081_140_203,
+  // Modelo VAD (saltar silencios): pequeno, ~865 KB.
+  "vad-silero": 885_098
+};
+
+// Nombre de archivo Q5 por modelo, para que el mock espeje el backend real.
+const MOCK_MODEL_FILES: Record<string, string> = {
+  small: "ggml-small-q5_1.bin",
+  medium: "ggml-medium-q5_0.bin",
+  "large-v3-turbo": "ggml-large-v3-turbo-q5_0.bin",
+  "large-v3": "ggml-large-v3-q5_0.bin",
+  "vad-silero": "ggml-silero-v5.1.2.bin"
 };
 
 // Tamanos reales (bytes) de los dos modelos ONNX de diarizacion, para el avance
@@ -1061,13 +1074,24 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         status: "DRAFT",
         reported: false
       });
+      // Seleccion del medico: 0 = Auto, 1 = dictado (una voz), 2/3 = fijo.
+      const requestedSpeakers = Number(args?.numSpeakers ?? 2);
       // Dialogo de demostracion ya separado en turnos medico/paciente.
-      const turns = [
-        { id: "turn-1", speaker: "MEDICO", text: "Buenos dias, que lo trae a consulta?" },
-        { id: "turn-2", speaker: "PACIENTE", text: "Me duele la cabeza desde hace tres dias." },
-        { id: "turn-3", speaker: "MEDICO", text: "Tiene fiebre o nauseas?" },
-        { id: "turn-4", speaker: "PACIENTE", text: "No, solo el dolor y algo de sensibilidad a la luz." }
-      ];
+      const turns =
+        requestedSpeakers === 1
+          ? [
+              {
+                id: "turn-1",
+                speaker: "MEDICO",
+                text: "Paciente masculino de 45 anos, refiere cefalea de tres dias, sin fiebre, con fotofobia leve."
+              }
+            ]
+          : [
+              { id: "turn-1", speaker: "MEDICO", text: "Buenos dias, que lo trae a consulta?" },
+              { id: "turn-2", speaker: "PACIENTE", text: "Me duele la cabeza desde hace tres dias." },
+              { id: "turn-3", speaker: "MEDICO", text: "Tiene fiebre o nauseas?" },
+              { id: "turn-4", speaker: "PACIENTE", text: "No, solo el dolor y algo de sensibilidad a la luz." }
+            ];
       return {
         run_id: diarRunId,
         usage_type: "TRANSCRIPTION",
@@ -1108,6 +1132,18 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     }
     case "ai_latest_reviewed_transcription":
       return (mockState.reviewedTranscriptions[String(args?.encounterId ?? "")] ?? null) as T;
+    case "ai_discard_reviewed_transcription": {
+      const encounterId = String(args?.encounterId ?? "");
+      const runId = String(args?.runId ?? "");
+      const reviewed = mockState.reviewedTranscriptions[encounterId];
+      if (!reviewed || String(reviewed.run_id ?? "") !== runId) {
+        throw "la transcripcion revisada no puede descartarse";
+      }
+      delete mockState.reviewedTranscriptions[encounterId];
+      const run = mockState.aiRuns.find((item) => item.id === runId);
+      if (run) run.status = "DISCARDED";
+      return undefined as T;
+    }
     case "ai_structure_consultation": {
       if (!mockState.aiScribeConsent) {
         throw "falta el consentimiento del paciente para asistencia de IA";
@@ -1411,22 +1447,24 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return found.map((f) => f.name) as T;
     }
     case "transcription_recommendation":
-      // Equipo de demostracion: 16 GB sin GPU → modelo mediano por lotes.
+      // Equipo de demostracion: 16 GB sin GPU (CPU optimizada) → turbo-q5 agil.
       return {
         totalRamMb: 16 * 1024,
         cpuCores: 8,
         hasGpu: false,
-        modelId: "medium",
-        modelLabel: "Whisper medium (recomendado para terminos clinicos)",
-        modelRamMb: 5 * 1024,
-        diskMb: 1500,
+        accel: "cpu",
+        accelLabel: "CPU optimizada (OpenBLAS)",
+        modelId: "large-v3-turbo",
+        modelLabel: "Whisper large-v3-turbo cuantizado (alta precision y rapido en CPU)",
+        modelRamMb: 2 * 1024,
+        diskMb: 575,
         realtimeCapable: true,
         recommendCloudFallback: false,
         reason:
-          "Equipo con 16 GB o mas y CPU de 8+ nucleos: el modelo mediano ofrece buena precision clinica con transcripcion agil."
+          "Equipo sin GPU con 6 GB o mas y CPU de 8+ nucleos: large-v3-turbo cuantizado ofrece alta precision clinica con transcripcion agil."
       } as T;
     case "transcription_model_status": {
-      const ids = ["small", "medium", "large-v3"];
+      const ids = ["small", "medium", "large-v3-turbo", "large-v3", "vad-silero"];
       return ids.map((modelId) => {
         const total = MOCK_MODEL_SIZES[modelId];
         const m = mockState.transcriptionModels[modelId];
@@ -1440,7 +1478,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         }
         return {
           modelId,
-          fileName: `ggml-${modelId}.bin`,
+          fileName: MOCK_MODEL_FILES[modelId] ?? `ggml-${modelId}.bin`,
           expectedSizeBytes: total,
           downloadedBytes: m ? m.downloaded : 0,
           present: m ? m.present : false,

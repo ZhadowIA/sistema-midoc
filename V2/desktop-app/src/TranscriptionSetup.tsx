@@ -16,6 +16,8 @@ interface TranscriptionRecommendation {
   totalRamMb: number;
   cpuCores: number;
   hasGpu: boolean;
+  accel: string;
+  accelLabel: string;
   modelId: string;
   modelLabel: string;
   modelRamMb: number;
@@ -64,6 +66,8 @@ export function TranscriptionSetup() {
   // el sondeo y deshabilitar el boton de inmediato (evita dobles clics que
   // lanzarian descargas concurrentes).
   const [starting, setStarting] = useState(false);
+  // Marca optimista equivalente para la descarga del modelo VAD (saltar silencios).
+  const [vadStarting, setVadStarting] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   const loadModels = useCallback(async () => {
@@ -88,15 +92,26 @@ export function TranscriptionSetup() {
   }
 
   const recommended = rec ? models.find((m) => m.modelId === rec.modelId) ?? null : null;
+  // Modelo VAD (saltar silencios): opcional pero recomendado en CPU. Acelera la
+  // transcripcion recortando los silencios; sin el, se transcribe todo el audio.
+  const vad = models.find((m) => m.modelId === "vad-silero") ?? null;
 
   // En cuanto el backend confirma la descarga, soltamos la marca optimista.
   useEffect(() => {
     if (starting && recommended?.downloading) setStarting(false);
   }, [starting, recommended?.downloading]);
 
+  useEffect(() => {
+    if (vadStarting && vad?.downloading) setVadStarting(false);
+  }, [vadStarting, vad?.downloading]);
+
   // Sondea el estado mientras hay una descarga en curso, para pintar el avance.
   useEffect(() => {
-    const downloading = starting || (recommended?.downloading ?? false);
+    const downloading =
+      starting ||
+      vadStarting ||
+      (recommended?.downloading ?? false) ||
+      (vad?.downloading ?? false);
     if (downloading && pollRef.current === null) {
       pollRef.current = window.setInterval(() => void loadModels(), 800);
     } else if (!downloading && pollRef.current !== null) {
@@ -109,7 +124,7 @@ export function TranscriptionSetup() {
         pollRef.current = null;
       }
     };
-  }, [starting, recommended?.downloading, loadModels]);
+  }, [starting, vadStarting, recommended?.downloading, vad?.downloading, loadModels]);
 
   async function downloadRecommended() {
     if (!rec || starting || recommended?.downloading) return;
@@ -123,6 +138,20 @@ export function TranscriptionSetup() {
       setError(String(e));
     } finally {
       setStarting(false);
+      await loadModels();
+    }
+  }
+
+  async function downloadVad() {
+    if (vadStarting || vad?.downloading) return;
+    setError("");
+    setVadStarting(true);
+    try {
+      await call("download_transcription_model", { modelId: "vad-silero" });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setVadStarting(false);
       await loadModels();
     }
   }
@@ -168,7 +197,7 @@ export function TranscriptionSetup() {
             </div>
             <div>
               <dt>Aceleracion</dt>
-              <dd>{rec.hasGpu ? "GPU compatible detectada" : "Sin GPU dedicada (usa CPU)"}</dd>
+              <dd>{rec.accelLabel}</dd>
             </div>
             <div>
               <dt>El modelo usa</dt>
@@ -230,6 +259,56 @@ export function TranscriptionSetup() {
             {recommended?.error && (
               <p className="form-error" role="alert">
                 {recommended.error}
+              </p>
+            )}
+          </div>
+
+          <div className="model-download">
+            <p className="meta">
+              Acelerador opcional: el detector de voz (VAD) salta los silencios de la
+              consulta para transcribir mas rapido en equipos sin GPU, sin perder precision.
+            </p>
+            {vad?.present ? (
+              <p className="form-success" role="status">
+                Detector de voz listo: se saltaran los silencios al transcribir
+                {vad.verified ? " (verificado)." : "."}
+              </p>
+            ) : vadStarting || vad?.downloading ? (
+              <div className="stack">
+                <div
+                  className="model-progress"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={vad?.expectedSizeBytes ?? 0}
+                  aria-valuenow={vad?.downloadedBytes ?? 0}
+                >
+                  <span
+                    className="model-progress-bar"
+                    style={{
+                      width: `${
+                        vad && vad.expectedSizeBytes > 0
+                          ? Math.min(
+                              100,
+                              Math.round((vad.downloadedBytes / vad.expectedSizeBytes) * 100)
+                            )
+                          : 0
+                      }%`
+                    }}
+                  />
+                </div>
+                <p className="meta">
+                  Descargando detector de voz… {bytesToMb(vad?.downloadedBytes ?? 0)} de{" "}
+                  {bytesToMb(vad?.expectedSizeBytes ?? 0)}
+                </p>
+              </div>
+            ) : (
+              <button className="ghost-button" onClick={() => void downloadVad()}>
+                Descargar detector de voz (~{bytesToMb(vad?.expectedSizeBytes ?? 885098)})
+              </button>
+            )}
+            {vad?.error && (
+              <p className="form-error" role="alert">
+                {vad.error}
               </p>
             )}
           </div>

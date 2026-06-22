@@ -71,25 +71,52 @@ Esfuerzo recomendado por modelo:
 
 ### Whisper local: seleccion automatica de modelo segun el equipo
 
-Whisper es de pesos abiertos y corre en el equipo del medico (via `whisper.cpp`, integrable con Tauri y operable en CPU). Viene en varios tamanos: a mayor tamano, mas precision en terminos clinicos pero mas RAM y mas tiempo de proceso. Para que el medico no tenga que entender de esto, la app **detecta el hardware al configurar la transcripcion y sugiere el tamano de modelo** (implementado en `desktop-app/src-tauri/src/transcription.rs`, comando `transcription_recommendation`, pantalla "Transcripcion").
+Whisper es de pesos abiertos y corre en el equipo del medico (via `whisper.cpp`, integrable con Tauri y operable en CPU). Para que el medico no tenga que entender de tamanos de modelo, la app **detecta el hardware al configurar la transcripcion y sugiere el modelo** (implementado en `desktop-app/src-tauri/src/transcription.rs`, comando `transcription_recommendation`, pantalla "Transcripcion").
 
-Requisitos por modelo (referencia; no son limites duros):
+#### Optimizacion para CPU (2026-06-21)
 
-| Modelo | RAM del modelo | Disco | Calidad en español clinico |
+El equipo del medico tipico **no tiene GPU dedicada**: lo normal es CPU-only o, a lo sumo, GPU integrada (Intel/AMD) o Apple Silicon. La configuracion se optimizo para ese escenario con cuatro palancas, sin abandonar a quien si tiene GPU:
+
+1. **Pesos cuantizados Q5 (no fp16).** En CPU rinden mas rapido y ocupan ~1/3 de la RAM y el disco con perdida de precision minima (~1% WER). Es la base. La GPU tambien se beneficia (menos VRAM).
+2. **`large-v3-turbo` cuantizado como caballo de batalla en CPU.** Su decoder de 4 capas (vs 32 de large-v3) lo hace viable sin GPU con precision cercana a large; sustituye a `medium` como modelo por defecto en CPU.
+3. **VAD (deteccion de voz) Silero opcional.** Salta los silencios de la consulta antes de transcribir; en una consulta con pausas recorta una parte grande del audio y del tiempo de CPU, sin costo de precision. Es un modelo pequeno (~865 KB) descargable con el mismo gestor (`vad-silero`).
+4. **Backends de aceleracion por plataforma.** El build de distribucion incluye **Vulkan** (acelera GPU integrada *y* dedicada en Windows/Linux), **Metal** (Apple Silicon) y **CPU con OpenBLAS/AVX2** de respaldo. Features de Cargo: `whisper-openblas`, `whisper-vulkan`, `whisper-metal`, `whisper-cuda` (verificados en staging, regla 5).
+
+Requisitos por modelo (pesos **Q5**; referencia, no limites duros):
+
+| Modelo (Q5) | RAM del modelo | Disco | Calidad en español clinico |
 |---|---|---|---|
-| small | ~2 GB | ~0.5 GB | Minimo usable para consulta general |
-| medium | ~5 GB | ~1.5 GB | Recomendado: buen balance para terminos clinicos y acentos |
-| large-v3 | ~10 GB | ~3 GB | Maxima precision; practico con GPU |
+| small-q5 | ~1 GB | ~190 MB | Minimo usable; solo equipos muy modestos |
+| medium-q5 | ~2 GB | ~540 MB | Buen balance; opcion alternativa |
+| large-v3-turbo-q5 | ~2 GB | ~575 MB | **Recomendado en CPU:** precision ~large y rapido |
+| large-v3-q5 | ~3 GB | ~1.08 GB | Maxima precision; para GPU dedicada o Apple Metal |
 
-Politica de seleccion (sobre RAM total del equipo y si hay GPU dedicada acelerable; la deteccion de GPU consulta los adaptadores de video del sistema y es conservadora: GPU integrada o adaptador virtual cuentan como "sin GPU"):
+Politica de seleccion por **backend de aceleracion** (la deteccion clasifica los adaptadores de video en dedicada / integrada / Apple / ninguna; ya no es "GPU si/no"):
 
-| RAM total | Sin GPU | Con GPU |
+| Hardware | Modelo | Tiempo real |
 |---|---|---|
-| < 8 GB | small + sugerir nube con consentimiento | small + sugerir nube |
-| 8-16 GB | small (por lotes) | medium (casi en vivo) |
-| >= 16 GB | medium (casi en vivo si CPU >= 8 nucleos) | large-v3 (casi en vivo) |
+| Apple (Metal) | turbo-q5 (large-v3-q5 si RAM >= 16 GB) | si |
+| GPU dedicada (Vulkan/CUDA) | large-v3-q5 | si |
+| GPU integrada (Vulkan) | turbo-q5 | casi en vivo |
+| CPU, RAM < 6 GB | small-q5 + sugerir nube | por lotes |
+| CPU, RAM >= 6 GB | turbo-q5 | casi en vivo si CPU >= 8 nucleos, si no por lotes |
 
-La transcripcion es por lotes salvo que el equipo (RAM/GPU/nucleos) permita el modo casi en vivo. Cuando el equipo queda por debajo del minimo comodo, la app sugiere la transcripcion en nube (AssemblyAI/Deepgram) seudonimizada y con consentimiento, sin bloquear el modo offline.
+La transcripcion es por lotes salvo que el equipo (backend/RAM/nucleos) permita el modo casi en vivo. Solo cuando el equipo queda por debajo del minimo comodo (CPU + <6 GB) la app sugiere la transcripcion en nube (AssemblyAI/Deepgram) seudonimizada y con consentimiento, sin bloquear el modo offline.
+
+#### Matriz de empaque del instalador (que backend trae cada build)
+
+El backend de aceleracion **se decide al compilar**, no en runtime: whisper.cpp solo usa el backend que el binario trae. Por eso la deteccion de hardware se **reconcilia** con lo realmente compilado (`effective_backend` + `BackendCaps::compiled()` en `transcription.rs`): si el binario no trae un backend de GPU, el equipo se trata como CPU aunque tenga GPU, y se recomienda el modelo de CPU (turbo-q5), no uno pesado que correria lento. Asi la recomendacion nunca asume una aceleracion inexistente.
+
+La matriz de distribucion (scripts en `desktop-app/package.json`, build nativo verificado en staging, regla 5):
+
+| SO objetivo | Script | Features | Cubre |
+|---|---|---|---|
+| Windows / Linux (distribucion) | `tauri:build:vulkan` | `whisper-local whisper-vulkan whisper-openblas diarization-local` | GPU integrada y dedicada (Vulkan) **y** CPU (OpenBLAS) en un solo instalador |
+| macOS (distribucion) | `tauri:build:metal` | `whisper-local whisper-metal diarization-local` | Apple Silicon (Metal) + memoria unificada |
+| Windows / Linux con NVIDIA | `tauri:build:cuda` | `whisper-cuda diarization-local` | Alternativa optimizada para NVIDIA (CUDA) |
+| Respaldo sin GPU / sin cadena nativa de GPU | `tauri:build` | `whisper-local` | CPU pura (fallback seguro) |
+
+Vulkan es el backend universal en Windows/Linux: acelera GPU integrada (Intel/AMD) y dedicada, y si la maquina no tiene GPU utilizable, whisper.cpp cae a CPU (acelerada por OpenBLAS). Por eso el instalador estandar Win/Linux es el de Vulkan; CUDA queda como variante opcional para quien prefiera NVIDIA nativo.
 
 ### Diarizacion local (separacion de hablantes)
 

@@ -50,10 +50,26 @@ sherpa-rs = { version = "0.6", optional = true }
 [features]
 # Activa el proveedor de transcripcion Whisper local (requiere cadena nativa).
 whisper-local = ["dep:whisper-rs"]
+# Backends de aceleracion de whisper.cpp. Se mantienen como features separados
+# (compilan solo con la cadena nativa correspondiente, verificados en staging,
+# regla 5) para que la matriz de distribucion elija por plataforma. El build por
+# defecto y las pruebas NO necesitan ninguno.
+#   - El medico tipico es CPU-only o, a lo sumo, con GPU integrada: por eso la
+#     base es CPU acelerada con OpenBLAS/AVX2 y, donde haya GPU, Vulkan universal.
+# Acelera la CPU con OpenBLAS (BLAS optimizado) — utilidad principal en equipos
+# sin GPU, que son la mayoria.
+whisper-openblas = ["whisper-local", "whisper-rs/openblas"]
+# Vulkan acelera tanto GPU integrada (Intel/AMD) como dedicada (NVIDIA/AMD) en
+# Windows/Linux: backend universal de GPU para el build de distribucion.
+whisper-vulkan = ["whisper-local", "whisper-rs/vulkan"]
+# Metal acelera en Apple Silicon (chip M) con memoria unificada: build de macOS.
+whisper-metal = ["whisper-local", "whisper-rs/metal"]
+# Compila Whisper con CUDA. Se mantiene separado para los equipos NVIDIA que
+# prefieran CUDA sobre Vulkan; los demas usan Vulkan/CPU sin depender del toolkit.
+whisper-cuda = ["whisper-local", "whisper-rs/cuda"]
 # Activa la diarizacion local con sherpa-onnx (requiere cadena nativa).
 diarization-local = ["dep:sherpa-rs"]
 
 [dev-dependencies]
 chrono = "0.4.45"
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
-
