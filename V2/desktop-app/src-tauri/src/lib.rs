@@ -1410,6 +1410,17 @@ fn ai_latest_reviewed_transcription(
     })
 }
 
+#[tauri::command]
+fn ai_discard_reviewed_transcription(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    run_id: String,
+) -> Result<(), String> {
+    with_ai(&state, |conn| {
+        ai::discard_reviewed_transcription(conn, &encounter_id, &run_id)
+    })
+}
+
 /// Rutas en disco de los dos modelos ONNX de diarizacion (segmentacion + embedding).
 /// No exige que existan: si faltan, el diarizador fallara y el flujo degradara a
 /// transcripcion sin separacion.
@@ -1436,10 +1447,16 @@ fn ai_diarize_consultation(
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
     audio: AudioTranscriptionPayload,
+    num_speakers: Option<u8>,
 ) -> Result<ai::DiarizationDraft, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(audio.audio_base64.as_bytes())
         .map_err(|_| "audio invalido".to_string())?;
+    // Seleccion del medico: 0 = Auto (sherpa estima), 1..=3 = fijo. Se acota al
+    // tope razonable; cualquier valor mayor se trata como el maximo.
+    let requested = num_speakers
+        .unwrap_or(diarization::DEFAULT_NUM_SPEAKERS)
+        .min(diarization::MAX_NUM_SPEAKERS);
     // La diarizacion necesita los segmentos con marcas de tiempo de Whisper local;
     // la transcripcion en nube no los aporta, asi que aqui se usa la via local.
     let provider = resolve_transcription_provider(&app, false)?;
@@ -1450,7 +1467,7 @@ fn ai_diarize_consultation(
             sample_rate,
             &seg_path,
             &emb_path,
-            diarization::DEFAULT_NUM_SPEAKERS,
+            requested,
         )
     };
     with_ai(&state, |conn| {
@@ -2197,6 +2214,7 @@ pub fn run() {
             ai_transcribe_audio,
             ai_save_reviewed_transcription,
             ai_latest_reviewed_transcription,
+            ai_discard_reviewed_transcription,
             ai_diarize_consultation,
             ai_structure_consultation,
             ai_generate_clinical_aid,

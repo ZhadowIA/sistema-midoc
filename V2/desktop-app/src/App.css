@@ -322,6 +322,14 @@ textarea::placeholder {
   color: var(--muted);
 }
 
+/* Textarea que crece con su contenido: sin scroll interno ni redimension manual
+   (el alto lo controla AutoGrowTextarea). min-height conserva un tamano usable. */
+textarea.autogrow {
+  overflow-y: hidden;
+  resize: none;
+  min-height: 3.4em;
+}
+
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
@@ -1890,6 +1898,37 @@ body.dictating .encounter-modes:focus-within {
   gap: 6px;
   text-align: center;
   color: var(--muted);
+}
+
+.transcription-loading {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.transcription-spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid color-mix(in oklch, var(--primary) 25%, transparent);
+  border-top-color: var(--primary);
+  animation: transcription-spin 0.8s linear infinite;
+}
+
+@keyframes transcription-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcription-spinner {
+    animation-duration: 2s;
+  }
 }
 
 @media (max-width: 1180px) {

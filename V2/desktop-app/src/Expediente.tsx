@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
+import { MedicalHistoryGroups } from "./MedicalHistoryGroups";
+import { formatMedicalHistoryForDisplay } from "./medicalHistoryFormat";
 
 interface Guardian {
   name: string;
@@ -37,6 +40,18 @@ interface HistoryEntry {
 interface PatientProfile {
   patient: PatientRecord;
   history: HistoryEntry[];
+}
+
+interface PatientMedicalHistoryVersion {
+  id: string;
+  patient_id: string;
+  version: number;
+  payload_json: string;
+  source: string;
+  encounter_id: string | null;
+  source_appointment_id: string | null;
+  reconciled_source_hash: string | null;
+  created_at: string;
 }
 
 interface TimelineEvent {
@@ -129,6 +144,8 @@ export function Expediente({
   onOpenEncounter: (encounterId: string) => void;
 }) {
   const [profile, setProfile] = useState<PatientProfile | null>(null);
+  const [patientMedicalHistory, setPatientMedicalHistory] =
+    useState<PatientMedicalHistoryVersion | null>(null);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [section, setSection] = useState<SectionId>("timeline");
   const [editing, setEditing] = useState<"new" | string | null>(null);
@@ -156,10 +173,17 @@ export function Expediente({
       .catch((e: unknown) => setError(String(e)));
   }, [patientId]);
 
+  const loadMedicalHistory = useCallback(() => {
+    call<PatientMedicalHistoryVersion | null>("get_patient_medical_history", { patientId })
+      .then(setPatientMedicalHistory)
+      .catch((e: unknown) => setError(String(e)));
+  }, [patientId]);
+
   useEffect(() => {
     loadProfile();
     loadEvents();
-  }, [loadProfile, loadEvents]);
+    loadMedicalHistory();
+  }, [loadProfile, loadEvents, loadMedicalHistory]);
 
   function startNew() {
     setForm({ ...EMPTY_FORM, event_date: todayIso() });
@@ -285,6 +309,9 @@ export function Expediente({
   }
 
   const p = profile.patient;
+  const medicalHistoryGroups = formatMedicalHistoryForDisplay(
+    patientMedicalHistory?.payload_json ?? null
+  );
   const navItems: Array<{ id: SectionId; label: string }> = [
     { id: "antecedentes", label: "Antecedentes" },
     { id: "historial", label: "Historial" },
@@ -384,7 +411,7 @@ export function Expediente({
                     </label>
                     <label className="field">
                       <span>Antecedentes personales</span>
-                      <textarea
+                      <AutoGrowTextarea
                         rows={2}
                         value={backgroundForm.medical_background}
                         disabled={busy}
@@ -395,7 +422,7 @@ export function Expediente({
                     </label>
                     <label className="field">
                       <span>Antecedentes familiares</span>
-                      <textarea
+                      <AutoGrowTextarea
                         rows={2}
                         value={backgroundForm.family_background}
                         disabled={busy}
@@ -432,6 +459,16 @@ export function Expediente({
                       </button>
                     </div>
                   </form>
+                ) : medicalHistoryGroups.length > 0 ? (
+                  <div className="questionnaire-history">
+                    <div className="panel-header">
+                      <strong>Cuestionario de antecedentes</strong>
+                      <p>
+                        Expediente permanente · versión {patientMedicalHistory?.version}
+                      </p>
+                    </div>
+                    <MedicalHistoryGroups groups={medicalHistoryGroups} />
+                  </div>
                 ) : p.allergies || p.medical_background || p.family_background ? (
                   <dl className="precheckin-list">
                     {p.allergies ? (
@@ -566,7 +603,7 @@ export function Expediente({
                     </label>
                     <label className="field">
                       <span>Detalle (opcional)</span>
-                      <textarea
+                      <AutoGrowTextarea
                         rows={3}
                         value={form.detail}
                         disabled={busy}

@@ -64,9 +64,13 @@ function nextSpeaker(speaker: ScribeSpeaker): ScribeSpeaker {
   return speaker === "MEDICO" ? "PACIENTE" : "MEDICO";
 }
 
-export function transcriptToTurns(transcript: string): ConsultationTurn[] {
+export function transcriptToTurns(transcript: string | null | undefined): ConsultationTurn[] {
   const turns: ConsultationTurn[] = [];
   let fallbackSpeaker: ScribeSpeaker = "MEDICO";
+
+  // Guarda defensiva: un borrador sin texto (o malformado) no debe tumbar la
+  // pantalla de consulta; simplemente no genera turnos.
+  if (!transcript) return turns;
 
   for (const rawLine of transcript.split(/\r?\n/)) {
     const line = rawLine.trim();

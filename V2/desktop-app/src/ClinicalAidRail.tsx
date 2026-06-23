@@ -63,6 +63,11 @@ export function ClinicalAidRail(props: Props) {
 
       {props.draft ? (
         <div className="clinical-aid-results">
+          <p className={props.draft.provider === "gemini-direct" ? "pill pill-success" : "pill pill-muted"}>
+            {props.draft.provider === "gemini-direct"
+              ? "Generado por IA (gemini-direct)"
+              : `Borrador de demostración (${props.draft.provider}) · sin IA real`}
+          </p>
           <article className="clinical-aid-result">
             <strong>SOAP</strong>
             <p className="meta">{props.draft.soap.assessment || "Borrador disponible"}</p>

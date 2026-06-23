@@ -15,6 +15,8 @@ npm install             # primera vez
 npm run tauri:dev       # app con Whisper local en desarrollo
 npm run build           # typecheck + build del frontend
 npm run tauri:build     # instalador de produccion con Whisper local
+npm run tauri:dev:cuda  # Whisper acelerado con NVIDIA CUDA
+npm run tauri:build:cuda # instalador para equipos con NVIDIA CUDA
 
 cd src-tauri
 cargo test           # pruebas de la capa Rust (incluye cifrado y migraciones)
@@ -22,6 +24,11 @@ cargo clippy         # lint de Rust
 ```
 
 Requisitos de build en Windows: Rust (rustup, toolchain MSVC), VS Build Tools 2022 con C++, CMake, LLVM/libclang, Strawberry Perl y NASM (estos dos ultimos solo para compilar OpenSSL/SQLCipher la primera vez). Los scripts `tauri:dev` y `tauri:build` activan el feature nativo `whisper-local`; `cargo test` permanece liviano y no lo activa por defecto.
+
+Para NVIDIA, instala CUDA Toolkit y usa los comandos `:cuda`. El feature
+`whisper-cuda` se mantiene separado del build CPU para que MiDoc también pueda
+distribuirse en equipos sin GPU NVIDIA. En ambos builds el modelo se conserva en
+memoria entre transcripciones y Whisper usa los nucleos fisicos disponibles.
 
 ## Base de datos cifrada
 

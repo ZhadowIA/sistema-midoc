@@ -54,6 +54,64 @@ function downsample(samples: Float32Array, inputSampleRate: number): Float32Arra
   return output;
 }
 
+function removeDcOffset(samples: Float32Array): Float32Array {
+  const mean = samples.reduce((total, sample) => total + sample, 0) / samples.length;
+  return Float32Array.from(samples, (sample) => sample - mean);
+}
+
+function peakAmplitude(samples: Float32Array): number {
+  return samples.reduce(
+    (maximum, sample) => Math.max(maximum, Math.abs(sample)),
+    0
+  );
+}
+
+function maximumWindowRms(samples: Float32Array): number {
+  const windowLength = Math.min(TARGET_SAMPLE_RATE / 10, samples.length);
+  let maximum = 0;
+  for (let start = 0; start < samples.length; start += windowLength) {
+    const end = Math.min(start + windowLength, samples.length);
+    let sumSquares = 0;
+    for (let index = start; index < end; index += 1) {
+      const sample = samples[index] ?? 0;
+      sumSquares += sample * sample;
+    }
+    maximum = Math.max(maximum, Math.sqrt(sumSquares / Math.max(1, end - start)));
+  }
+  return maximum;
+}
+
+/**
+ * Prepara la señal capturada por Web Audio antes de codificarla. La entrada del
+ * micrófono puede llegar con volumen muy bajo o con desplazamiento DC; enviarla
+ * así a Whisper provoca alucinaciones breves sobre ruido residual.
+ */
+export function prepareRecordedSamples(
+  chunks: Float32Array[],
+  inputSampleRate: number
+): Float32Array {
+  if (chunks.length === 0) {
+    throw new Error("la grabacion no contiene audio");
+  }
+
+  const samples = removeDcOffset(
+    downsample(mergeChunks(chunks), inputSampleRate)
+  );
+  const peak = peakAmplitude(samples);
+  const activeRms = maximumWindowRms(samples);
+
+  if (peak < 0.003 || activeRms < 0.0015) {
+    throw new Error(
+      "No se detectó voz con volumen suficiente. Revisa el micrófono y vuelve a grabar."
+    );
+  }
+
+  const desiredGain = activeRms < 0.08 ? 0.08 / activeRms : 1;
+  const clippingLimit = 0.95 / peak;
+  const gain = Math.min(desiredGain, clippingLimit, 20);
+  return Float32Array.from(samples, (sample) => sample * gain);
+}
+
 function writeAscii(view: DataView, offset: number, value: string): void {
   for (let index = 0; index < value.length; index += 1) {
     view.setUint8(offset + index, value.charCodeAt(index));
@@ -96,10 +154,7 @@ export function createRecordedWavFile(
   inputSampleRate: number,
   date = new Date()
 ): File {
-  if (chunks.length === 0) {
-    throw new Error("la grabacion no contiene audio");
-  }
-  const samples = downsample(mergeChunks(chunks), inputSampleRate);
+  const samples = prepareRecordedSamples(chunks, inputSampleRate);
   const wav = encodePcm16Wav(samples, TARGET_SAMPLE_RATE);
   return new File([wav], recordedWavFileName(date), { type: "audio/wav" });
 }

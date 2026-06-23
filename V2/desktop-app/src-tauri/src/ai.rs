@@ -177,10 +177,11 @@ impl ProviderRegistry {
         #[cfg(not(test))]
         {
             if let Some(gemini) = GeminiProvider::from_env() {
-                Self::new(vec![
-                    Box::new(gemini),
-                    Box::new(FakeProvider::new("fake-clinico")),
-                ])
+                // Proveedor real configurado: NO se agrega el fake como respaldo.
+                // Sustituir IA real por un borrador de demostracion en silencio es
+                // peligroso (el medico podria tomarlo por una sugerencia clinica
+                // real). Si Gemini falla, el error se reporta y el medico lo ve.
+                Self::new(vec![Box::new(gemini)])
             } else {
                 Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))])
             }
@@ -188,12 +189,17 @@ impl ProviderRegistry {
     }
 
     fn generate(&self, request: &AiRequest) -> Result<(String, AiResponse), AiError> {
+        let mut last_err: Option<AiError> = None;
         for provider in &self.providers {
-            if let Ok(response) = provider.generate(request) {
-                return Ok((provider.name().to_string(), response));
+            match provider.generate(request) {
+                Ok(response) => return Ok((provider.name().to_string(), response)),
+                // Conserva el error real del proveedor para reportarlo si todos
+                // fallan, en vez de un generico que oculta la causa (p. ej. el
+                // codigo de error de Gemini).
+                Err(err) => last_err = Some(err),
             }
         }
-        Err(AiError::AllProvidersFailed)
+        Err(last_err.unwrap_or(AiError::AllProvidersFailed))
     }
 }
 
@@ -402,13 +408,37 @@ impl AiProvider for GeminiProvider {
             "generationConfig": generation_config
         });
 
-        let client = reqwest::blocking::Client::new();
-        let response = client
-            .post(endpoint)
-            .header("x-goog-api-key", &self.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| AiError::Invalid(format!("Gemini no respondio: {e}")))?;
+        // Timeout generoso: los modelos con razonamiento + salida estructurada
+        // pueden tardar; sin timeout una conexion colgada bloquearia el flujo.
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| AiError::Invalid(format!("no se pudo crear el cliente HTTP: {e}")))?;
+
+        // Reintenta ante fallos de RED transitorios (conexion cortada/reset, DNS
+        // momentaneo). No reintenta ante respuestas HTTP: esas son deterministas y
+        // se reportan tal cual mas abajo.
+        let mut attempt = 0;
+        let response = loop {
+            attempt += 1;
+            match client
+                .post(&endpoint)
+                .header("x-goog-api-key", &self.api_key)
+                .json(&body)
+                .send()
+            {
+                Ok(resp) => break resp,
+                Err(error) if attempt < 3 => {
+                    std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
+                    let _ = error;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(AiError::Invalid(format!("Gemini no respondio: {error}")));
+                }
+            }
+        };
         if !response.status().is_success() {
             return Err(AiError::Invalid(format!(
                 "Gemini rechazo la solicitud: {}",
@@ -1149,8 +1179,11 @@ pub type Diarizer<'a> =
 /// medico lo revise. `diarized = false` cuando no hubo separacion (sin modelos,
 /// feature apagado o audio no decodificable): en ese caso el frontend cae a su
 /// heuristica de turnos sobre el texto.
+// Sin `rename_all`: el frontend (y el mock IPC) leen estos campos en snake_case,
+// igual que `TranscriptionDraft` y el resto de borradores de IA. Serializar en
+// camelCase dejaba `transcript_text`/`run_id` como undefined en el build real y
+// rompia `transcriptToTurns` con "Cannot read properties of undefined".
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct DiarizationDraft {
     pub run_id: String,
     pub usage_type: String,
@@ -1343,22 +1376,23 @@ fn validate_template_segments(
     Ok(cleaned)
 }
 
-fn parse_structuring_output(
-    raw: &str,
-    template_segments: &[TemplateSegment],
-    turns: &[ConsultationTurn],
-) -> Result<ConsultationStructuringOutput, AiError> {
-    use std::collections::HashSet;
+/// Advertencia que se inyecta cuando la IA devuelve un segmento sin fuentes en la
+/// conversacion. No se rechaza la respuesta completa: se marca el segmento para que
+/// el medico no lo tome por sustentado y lo verifique.
+const SEGMENT_NO_SOURCE_WARNING: &str =
+    "Sin fuentes en la conversacion: el medico debe verificar este segmento.";
 
-    let output: ConsultationStructuringOutput = serde_json::from_str(raw)
-        .map_err(|e| AiError::Invalid(format!("respuesta de acomodo invalida: {e}")))?;
-    let allowed: HashSet<&str> = template_segments
-        .iter()
-        .map(|segment| segment.id.as_str())
-        .collect();
-    let allowed_turns: HashSet<&str> = turns.iter().map(|turn| turn.id.as_str()).collect();
-    for segment in &output.segments {
-        if !allowed.contains(segment.segment_id.as_str()) {
+/// Valida los segmentos devueltos por la IA y los repara cuando es seguro hacerlo.
+/// Errores DUROS (indican alucinacion, se rechaza todo): segmento o turno fuente
+/// inexistente, confianza invalida. Reparacion (no rechazo): un segmento sin
+/// fuentes ni advertencia recibe una advertencia explicita. Muta los segmentos.
+fn validate_and_repair_segments(
+    segments: &mut [SegmentDraft],
+    allowed_segments: &std::collections::HashSet<&str>,
+    allowed_turns: &std::collections::HashSet<&str>,
+) -> Result<(), AiError> {
+    for segment in segments.iter_mut() {
+        if !allowed_segments.contains(segment.segment_id.as_str()) {
             return Err(AiError::Invalid(format!(
                 "segmento desconocido devuelto por IA: {}",
                 segment.segment_id
@@ -1379,12 +1413,27 @@ fn parse_structuring_output(
             }
         }
         if segment.source_turns.is_empty() && segment.warnings.is_empty() {
-            return Err(AiError::Invalid(format!(
-                "segmento sin fuentes requiere advertencia: {}",
-                segment.segment_id
-            )));
+            segment.warnings.push(SEGMENT_NO_SOURCE_WARNING.to_string());
         }
     }
+    Ok(())
+}
+
+fn parse_structuring_output(
+    raw: &str,
+    template_segments: &[TemplateSegment],
+    turns: &[ConsultationTurn],
+) -> Result<ConsultationStructuringOutput, AiError> {
+    use std::collections::HashSet;
+
+    let mut output: ConsultationStructuringOutput = serde_json::from_str(raw)
+        .map_err(|e| AiError::Invalid(format!("respuesta de acomodo invalida: {e}")))?;
+    let allowed: HashSet<&str> = template_segments
+        .iter()
+        .map(|segment| segment.id.as_str())
+        .collect();
+    let allowed_turns: HashSet<&str> = turns.iter().map(|turn| turn.id.as_str()).collect();
+    validate_and_repair_segments(&mut output.segments, &allowed, &allowed_turns)?;
     Ok(output)
 }
 
@@ -1578,7 +1627,7 @@ fn parse_clinical_aid_output(
     template_segments: &[TemplateSegment],
     turns: &[ConsultationTurn],
 ) -> Result<ClinicalAidOutput, AiError> {
-    let output: ClinicalAidOutput = serde_json::from_str(raw)
+    let mut output: ClinicalAidOutput = serde_json::from_str(raw)
         .map_err(|error| AiError::Invalid(format!("respuesta de ayuda clinica invalida: {error}")))?;
     for item in &output.possibilities {
         if !matches!(item.compatibility.as_str(), "HIGH" | "MEDIUM" | "LOW")
@@ -1599,13 +1648,13 @@ fn parse_clinical_aid_output(
             return Err(AiError::Invalid("estudio sugerido invalido".into()));
         }
     }
-    let wrapped = serde_json::to_string(&ConsultationStructuringOutput {
-        segments: output.template_segments.clone(),
-        missing: Vec::new(),
-        warnings: Vec::new(),
-    })
-    .map_err(|error| AiError::Invalid(error.to_string()))?;
-    parse_structuring_output(&wrapped, template_segments, turns)?;
+    let allowed: std::collections::HashSet<&str> = template_segments
+        .iter()
+        .map(|segment| segment.id.as_str())
+        .collect();
+    let allowed_turns: std::collections::HashSet<&str> =
+        turns.iter().map(|turn| turn.id.as_str()).collect();
+    validate_and_repair_segments(&mut output.template_segments, &allowed, &allowed_turns)?;
     Ok(output)
 }
 
@@ -1636,7 +1685,8 @@ pub fn generate_clinical_aid(
             "No expreses probabilidades numericas.",
             "Usa HIGH, MEDIUM o LOW como compatibilidad.",
             "Explica hallazgos a favor, en contra y faltantes.",
-            "No inventes datos."
+            "No inventes datos.",
+            "En cada template_segment cita en source_turns los ids de turnos que lo sustentan; si la conversacion no cubre ese segmento, deja source_turns vacio y agrega una advertencia."
         ],
         "template_segments": &template_segments,
         "turns": &reviewed.turns,
@@ -1775,6 +1825,53 @@ pub fn latest_reviewed_transcription(
     )
     .optional()
     .map_err(AiError::from)
+}
+
+pub fn discard_reviewed_transcription(
+    conn: &Connection,
+    encounter_id: &str,
+    run_id: &str,
+) -> Result<(), AiError> {
+    let reviewed_exists: bool = conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM consultation_transcriptions
+            WHERE encounter_id = ?1 AND run_id = ?2 AND status = 'REVIEWED'
+        )",
+        params![encounter_id, run_id],
+        |row| row.get(0),
+    )?;
+    let run = read_run(conn, run_id)?;
+    if !reviewed_exists
+        || run.encounter_id.as_deref() != Some(encounter_id)
+        || run.usage_type != USAGE_TRANSCRIPTION
+        || run.status != "APPROVED"
+    {
+        return Err(AiError::Invalid(
+            "la transcripcion revisada no puede descartarse".into(),
+        ));
+    }
+
+    let discarded_at = now();
+    conn.execute(
+        "UPDATE consultation_transcriptions
+         SET status = 'DISCARDED'
+         WHERE encounter_id = ?1 AND run_id = ?2 AND status = 'REVIEWED'",
+        params![encounter_id, run_id],
+    )?;
+    conn.execute(
+        "UPDATE ai_runs
+         SET status = 'DISCARDED', feedback = NULL, reviewed_at = ?2, usage_reported_at = NULL
+         WHERE id = ?1",
+        params![run_id, discarded_at],
+    )?;
+    audit(
+        conn,
+        "ai_run",
+        run_id,
+        "reviewed-transcription-discarded",
+        Some(USAGE_TRANSCRIPTION),
+    )?;
+    Ok(())
 }
 
 /// Registra en estado DRAFT la traza de una transcripcion local (ai_run + auditoria),
@@ -2397,7 +2494,7 @@ mod tests {
     }
 
     #[test]
-    fn consultation_scribe_requires_warning_when_segment_has_no_sources() {
+    fn consultation_scribe_injects_warning_when_segment_has_no_sources() {
         let conn = test_conn("scribe-source-warning");
         let (encounter_id, patient_id) = seed_encounter(&conn);
         grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
@@ -2405,16 +2502,25 @@ mod tests {
             r#"{"segments":[{"segment_id":"subjective","content":"tos de tres dias","confidence":"low","source_turns":[],"warnings":[]}],"missing":[],"warnings":[]}"#,
         ))]);
 
-        assert!(matches!(
-            structure_consultation(
-                &conn,
-                &encounter_id,
-                scribe_turns(),
-                scribe_segments(),
-                &registry
-            ),
-            Err(AiError::Invalid(message)) if message.contains("sin fuentes")
-        ));
+        // Un segmento sin fuentes ya no rechaza toda la respuesta: se conserva y se
+        // marca con una advertencia para que el medico lo verifique.
+        let draft = structure_consultation(
+            &conn,
+            &encounter_id,
+            scribe_turns(),
+            scribe_segments(),
+            &registry,
+        )
+        .unwrap();
+        let segment = draft
+            .segments
+            .iter()
+            .find(|segment| segment.segment_id == "subjective")
+            .expect("el segmento se conserva");
+        assert!(
+            !segment.warnings.is_empty(),
+            "un segmento sin fuentes debe recibir advertencia automatica"
+        );
     }
 
     #[test]
@@ -2873,6 +2979,44 @@ mod tests {
             draft.run_id
         );
         assert!(!reviewed.transcript_text.contains("audio"));
+    }
+
+    #[test]
+    fn discards_reviewed_transcription_so_it_is_no_longer_loaded() {
+        let conn = test_conn("discard-reviewed-transcription");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: vec![1, 2, 3],
+                duration_seconds: Some(20),
+            },
+            &provider,
+        )
+        .unwrap();
+        save_reviewed_transcription(
+            &conn,
+            &encounter_id,
+            &draft.run_id,
+            vec![ConsultationTurn {
+                id: "turn-1".into(),
+                speaker: "MEDICO".into(),
+                text: "Paciente con dolor de tres días.".into(),
+            }],
+        )
+        .unwrap();
+
+        discard_reviewed_transcription(&conn, &encounter_id, &draft.run_id).unwrap();
+
+        assert!(latest_reviewed_transcription(&conn, &encounter_id)
+            .unwrap()
+            .is_none());
+        assert_eq!(read_run(&conn, &draft.run_id).unwrap().status, "DISCARDED");
     }
 
     #[test]

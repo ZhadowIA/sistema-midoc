@@ -1,6 +1,8 @@
 import type { ConsultationTurn, ScribeSpeaker } from "./consultationScribe";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import {
   deriveTranscriptionView,
+  SPEAKER_COUNT_OPTIONS,
   type RecordingState
 } from "./transcriptionWorkspace";
 
@@ -11,6 +13,8 @@ interface Props {
   recordingSeconds: number;
   recordingError: string;
   useCloud: boolean;
+  numSpeakers: number;
+  transcribing: boolean;
   turns: ConsultationTurn[];
   reviewed: boolean;
   provider: string | null;
@@ -21,6 +25,7 @@ interface Props {
   onStop(): void;
   onFile(file: File | null): void;
   onCloudChange(value: boolean): void;
+  onNumSpeakersChange(value: number): void;
   onTurnChange(id: string, patch: Partial<Pick<ConsultationTurn, "speaker" | "text">>): void;
   onSwapRoles(): void;
   onMarkReviewed(): void;
@@ -92,6 +97,23 @@ export function TranscriptionWorkspace(props: Props) {
           />
           <span>Usar respaldo en nube</span>
         </label>
+        <label className="field compact-field">
+          <span>Número de voces</span>
+          <select
+            value={props.numSpeakers}
+            disabled={props.busy || !props.voiceConsent || props.useCloud}
+            onChange={(event) => props.onNumSpeakersChange(Number(event.currentTarget.value))}
+          >
+            {SPEAKER_COUNT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {props.useCloud ? (
+          <p className="meta">La separación de voces solo está disponible en modo local.</p>
+        ) : null}
         <dl className="transcription-facts">
           <div><dt>Método</dt><dd>{props.useCloud ? "Nube" : "Local"}</dd></div>
           <div><dt>Proveedor</dt><dd>{props.provider ?? "Pendiente"}</dd></div>
@@ -105,9 +127,19 @@ export function TranscriptionWorkspace(props: Props) {
       <section className="transcription-review" aria-label="Transcripción de consulta">
         <div className="panel-header">
           <h4>Transcripción</h4>
-          <p>{view.transcriptMessage}</p>
+          <p>{props.transcribing ? "Procesando el audio en este equipo…" : view.transcriptMessage}</p>
         </div>
-        {props.turns.length ? (
+        {props.transcribing ? (
+          <div className="transcription-loading" role="status" aria-live="polite">
+            <span className="transcription-spinner" aria-hidden="true" />
+            <strong>Transcribiendo audio…</strong>
+            <p className="meta">
+              {props.useCloud
+                ? "Enviando el audio al proveedor de respaldo."
+                : "Whisper y la separación de voces corren localmente; en audios largos puede tardar."}
+            </p>
+          </div>
+        ) : props.turns.length ? (
           <>
             <button className="ghost-button" onClick={props.onSwapRoles} disabled={props.busy || props.reviewed}>
               Intercambiar médico/paciente
@@ -132,7 +164,7 @@ export function TranscriptionWorkspace(props: Props) {
                   </label>
                   <label className="field">
                     <span>{turn.id}</span>
-                    <textarea
+                    <AutoGrowTextarea
                       rows={3}
                       value={turn.text}
                       disabled={props.busy || props.reviewed}

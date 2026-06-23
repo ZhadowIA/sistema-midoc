@@ -6,6 +6,7 @@ import {
   type FieldDef
 } from "./medicalHistoryFormat";
 import type { MedicalHistoryPayload } from "./medicalHistoryReconciliation";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
 
 function objectValue(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -54,7 +55,7 @@ export function MedicalHistoryEditor({
     const current = String(objectValue(value[groupKey])[field.key] ?? "");
     const update = (next: string) => setField(groupKey, field.key, next);
     if (field.kind === "textarea") {
-      return <textarea rows={2} value={current} onChange={(event) => update(event.target.value)} />;
+      return <AutoGrowTextarea rows={2} value={current} onChange={(event) => update(event.target.value)} />;
     }
     if (field.kind === "yesno") {
       return (
@@ -144,7 +145,7 @@ export function MedicalHistoryEditor({
           </label>
           <label className="field">
             <span>Alergias</span>
-            <textarea
+            <AutoGrowTextarea
               rows={2}
               value={String(value.allergies ?? "")}
               onChange={(event) => setTopLevel("allergies", event.target.value)}
@@ -152,7 +153,7 @@ export function MedicalHistoryEditor({
           </label>
           <label className="field">
             <span>Medicamentos actuales</span>
-            <textarea
+            <AutoGrowTextarea
               rows={2}
               value={String(value.currentMedications ?? "")}
               onChange={(event) => setTopLevel("currentMedications", event.target.value)}

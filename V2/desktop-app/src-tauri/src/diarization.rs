@@ -17,9 +17,39 @@
 
 use serde::Serialize;
 
-/// Numero de hablantes a separar. Decision de producto: la consulta es Medico +
-/// Paciente; el acompanante ocasional se corrige a mano (la UI ya lo permite).
+/// Numero de hablantes a separar por defecto. La consulta tipica es Medico +
+/// Paciente; fijar 2 maximiza la precision en ese caso. El medico puede cambiarlo
+/// en la UI (Auto/1/2/3) cuando dicta solo o hay acompanante.
 pub const DEFAULT_NUM_SPEAKERS: u8 = 2;
+
+/// Seleccion "Auto": el medico no fija el numero y sherpa-onnx lo estima.
+/// (Solo lo consume el motor real tras `diarization-local` y las pruebas.)
+#[cfg_attr(not(feature = "diarization-local"), allow(dead_code))]
+pub const AUTO_NUM_SPEAKERS: u8 = 0;
+
+/// Tope razonable de hablantes en consulta: Medico + Paciente + acompanante.
+pub const MAX_NUM_SPEAKERS: u8 = 3;
+
+/// Umbral de clustering por defecto (el mismo que sherpa-onnx). Solo se usa en modo
+/// Auto: menor umbral separa mas voces; mayor, menos. Afinable en staging con audio
+/// real via `MIDOC_DIARIZE_THRESHOLD`.
+#[cfg_attr(not(feature = "diarization-local"), allow(dead_code))]
+pub const DEFAULT_DIARIZE_THRESHOLD: f32 = 0.5;
+
+/// Traduce la seleccion del medico a los parametros de clustering de sherpa-onnx:
+/// `(num_clusters, threshold)`. Con `num_speakers == 0` (Auto) devuelve
+/// `num_clusters <= 0`, lo que hace que sherpa ESTIME el numero de hablantes con el
+/// umbral; con `num_speakers > 0` lo FIJA (el umbral lo ignora el motor). Funcion
+/// pura: el mapeo se prueba sin la cadena nativa; el motor real lo usa tras el
+/// feature `diarization-local`.
+#[cfg_attr(not(feature = "diarization-local"), allow(dead_code))]
+pub fn clustering_params(num_speakers: u8, threshold: f32) -> (i32, f32) {
+    if num_speakers == AUTO_NUM_SPEAKERS {
+        (0, threshold)
+    } else {
+        (num_speakers as i32, threshold)
+    }
+}
 
 /// Segmento de texto de Whisper con sus marcas de tiempo (en centisegundos, la
 /// unidad nativa de los timestamps de whisper.cpp). Frontera de entrada: la
@@ -192,6 +222,36 @@ mod tests {
     #[test]
     fn default_num_speakers_is_two() {
         assert_eq!(DEFAULT_NUM_SPEAKERS, 2);
+    }
+
+    #[test]
+    fn clustering_params_auto_lets_sherpa_estimate() {
+        // Auto (0): num_clusters <= 0 activa la estimacion por umbral.
+        assert_eq!(clustering_params(AUTO_NUM_SPEAKERS, 0.5), (0, 0.5));
+    }
+
+    #[test]
+    fn clustering_params_fixed_pins_the_count() {
+        assert_eq!(clustering_params(1, 0.5), (1, 0.5));
+        assert_eq!(clustering_params(2, 0.5), (2, 0.5));
+        assert_eq!(clustering_params(3, 0.7), (3, 0.7));
+    }
+
+    #[test]
+    fn three_speakers_map_first_to_doctor_rest_to_patient() {
+        // Con acompanante: idx 0 (primer hablante) = Medico; idx 1 y 2 = Paciente.
+        // El medico corrige a mano si hace falta (la UI lo permite).
+        let whisper = [
+            ws(0, 100, "Buenos dias."),
+            ws(100, 200, "Me duele la cabeza."),
+            ws(200, 300, "Mi hijo tambien tose."),
+        ];
+        let speakers = [sp(0, 100, 0), sp(100, 200, 1), sp(200, 300, 2)];
+        let turns = merge_segments_with_speakers(&whisper, &speakers);
+        assert_eq!(turns.len(), 3);
+        assert_eq!(turns[0].speaker, ScribeRole::Medico);
+        assert_eq!(turns[1].speaker, ScribeRole::Paciente);
+        assert_eq!(turns[2].speaker, ScribeRole::Paciente);
     }
 
     #[test]

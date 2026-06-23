@@ -10,6 +10,27 @@ export interface TranscriptionWorkspaceInput {
   realtimeCapable: boolean;
 }
 
+// Numero de voces que el medico le indica a la diarizacion. 0 = Auto (el motor lo
+// estima); 1 = dictado de una sola voz; 2 = consulta tipica (medico y paciente);
+// 3 = con acompanante. Debe coincidir con el clamp del backend (MAX_NUM_SPEAKERS).
+export interface SpeakerCountOption {
+  value: number;
+  label: string;
+}
+
+export const SPEAKER_COUNT_OPTIONS: SpeakerCountOption[] = [
+  { value: 0, label: "Auto (detectar)" },
+  { value: 1, label: "1 · dictado" },
+  { value: 2, label: "2 · médico y paciente" },
+  { value: 3, label: "3 · con acompañante" }
+];
+
+export const DEFAULT_SPEAKER_COUNT = 2;
+
+export function speakerCountLabel(value: number): string {
+  return SPEAKER_COUNT_OPTIONS.find((option) => option.value === value)?.label ?? `${value}`;
+}
+
 export function deriveTranscriptionView(input: TranscriptionWorkspaceInput) {
   const hasTranscript = input.hasTranscript;
   return {

@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { buildEncounterModes } from "./encounterModes.ts";
 import {
   deriveTranscriptionView,
+  DEFAULT_SPEAKER_COUNT,
+  speakerCountLabel,
+  SPEAKER_COUNT_OPTIONS,
   type TranscriptionWorkspaceInput
 } from "./transcriptionWorkspace.ts";
 
@@ -46,4 +50,22 @@ test("habilita Ayuda IA únicamente después de revisar el texto", () => {
       .canUseClinicalAid,
     true
   );
+});
+
+test("ofrece Auto/1/2/3 voces con default en 2 (consulta típica)", () => {
+  assert.equal(DEFAULT_SPEAKER_COUNT, 2);
+  assert.deepEqual(
+    SPEAKER_COUNT_OPTIONS.map((option) => option.value),
+    [0, 1, 2, 3]
+  );
+  assert.equal(speakerCountLabel(0), "Auto (detectar)");
+  assert.equal(speakerCountLabel(1), "1 · dictado");
+  assert.equal(speakerCountLabel(2), "2 · médico y paciente");
+});
+
+test("descartar una transcripción revisada la elimina del almacenamiento y de la pantalla", () => {
+  const source = readFileSync(new URL("./Atencion.tsx", import.meta.url), "utf8");
+  assert.match(source, /call\("ai_discard_reviewed_transcription"/);
+  assert.match(source, /setReviewedTranscription\(null\)/);
+  assert.match(source, /setScribeTurns\(\[\]\)/);
 });

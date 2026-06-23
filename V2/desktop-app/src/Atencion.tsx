@@ -24,7 +24,6 @@ import {
 import { MedicationSafety } from "./MedicationSafety";
 import { EncounterAgendaRail } from "./EncounterAgendaRail";
 import { call } from "./ipc";
-import { allergyText, buildContextHistory, isFirstVisit } from "./encounterContext";
 import { DICTATING_BODY_CLASS, isDictating } from "./focusMode";
 import {
   hasEncounterDraftChanges,
@@ -39,7 +38,10 @@ import {
 import { buildPreconsultaPresentation } from "./clinicalQuestionnairePresentation";
 import { MedicalHistoryEditor } from "./MedicalHistoryEditor";
 import { MedicalHistoryConflictReview } from "./MedicalHistoryConflictReview";
+import { MedicalHistoryGroups } from "./MedicalHistoryGroups";
 import { TranscriptionWorkspace } from "./ConsultationTranscriptionPanel";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
+import { DEFAULT_SPEAKER_COUNT } from "./transcriptionWorkspace";
 import { ClinicalAidRail } from "./ClinicalAidRail";
 import type { ClinicalAidDraft } from "./clinicalAid";
 import {
@@ -49,11 +51,7 @@ import {
   type MedicalHistoryPayload,
   type MedicalHistoryReconciliation as MedicalHistoryReconciliationState
 } from "./medicalHistoryReconciliation";
-import {
-  flattenMedicalHistoryDisplayRows,
-  formatMedicalHistoryForDisplay,
-  type MedicalHistoryGroup
-} from "./medicalHistoryFormat";
+import { formatMedicalHistoryForDisplay } from "./medicalHistoryFormat";
 
 type SpecialtyPayload = GeneralMedicinePayload | DentalPayload;
 type RecordingState = "idle" | "recording" | "paused" | "stopping";
@@ -252,31 +250,6 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function MedicalHistoryGroups({ groups }: { groups: MedicalHistoryGroup[] }) {
-  return (
-    <div className="clinical-response-groups medical-history-groups">
-      {groups.map((group) => (
-        <section key={group.key} className="clinical-response-group medical-history-group">
-          <div className="clinical-response-heading">
-            <h4>{group.title}</h4>
-            <span>
-              {group.rows.length} {group.rows.length === 1 ? "respuesta" : "respuestas"}
-            </span>
-          </div>
-          <dl className="clinical-field-list">
-            {group.rows.map((row) => (
-              <div key={`${group.key}-${row.label}`} className="clinical-field-row">
-                <dt>{row.label}</dt>
-                <dd>{row.value}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      ))}
-    </div>
-  );
-}
-
 export function Atencion({
   encounterId,
   clinicalProfile,
@@ -319,6 +292,8 @@ export function Atencion({
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingError, setRecordingError] = useState("");
   const [useCloudTranscription, setUseCloudTranscription] = useState(false);
+  const [numSpeakers, setNumSpeakers] = useState(DEFAULT_SPEAKER_COUNT);
+  const [transcribing, setTranscribing] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionId>("nota");
   const [permanentMedicalHistory, setPermanentMedicalHistory] =
     useState<PatientMedicalHistoryVersion | null>(null);
@@ -472,17 +447,6 @@ export function Atencion({
   const preconsultaPresentation = detail.preconsulta
     ? buildPreconsultaPresentation(detail.preconsulta)
     : null;
-  const compactPreconsultaRows: Array<[string, string]> = preconsultaPresentation
-    ? [
-        ...(preconsultaPresentation.motivo
-          ? ([["Motivo", preconsultaPresentation.motivo]] as Array<[string, string]>)
-          : []),
-        ...preconsultaPresentation.questions.map(
-          (item): [string, string] => [item.question, item.answer]
-        ),
-        ...preconsultaPresentation.legacyRows
-      ]
-    : [];
   const hasPendingPatientMedicalHistory = Boolean(
     permanentMedicalHistory &&
       medicalHistorySourceHash &&
@@ -646,6 +610,7 @@ export function Atencion({
   function transcribeAudioFile(file: File | null) {
     if (!file) return;
     setBusy(true);
+    setTranscribing(true);
     setMessage("");
     setError("");
     setAiTranscription(null);
@@ -662,7 +627,8 @@ export function Atencion({
         if (!useCloudTranscription) {
           const draft = await call<DiarizationDraft>("ai_diarize_consultation", {
             encounterId,
-            audio
+            audio,
+            numSpeakers
           });
           setAiTranscription(draft);
           setScribeTurns(
@@ -687,17 +653,34 @@ export function Atencion({
         }
       })
       .catch((e: unknown) => setError(String(e)))
-      .finally(() => setBusy(false));
+      .finally(() => {
+        setBusy(false);
+        setTranscribing(false);
+      });
   }
 
-  function discardAiTranscription() {
-    if (!aiTranscription) return;
-    const runId = aiTranscription.run_id;
-    setAiTranscription(null);
-    setScribeTurns([]);
-    void run("Transcripcion descartada.", () =>
-      call("ai_review_run", { runId, status: "DISCARDED", feedback: null })
-    );
+  async function discardAiTranscription() {
+    const runId = reviewedTranscription?.run_id ?? aiTranscription?.run_id;
+    if (!runId) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      if (reviewedTranscription) {
+        await call("ai_discard_reviewed_transcription", { encounterId, runId });
+      } else {
+        await call("ai_review_run", { runId, status: "DISCARDED", feedback: null });
+      }
+      setAiTranscription(null);
+      setReviewedTranscription(null);
+      setScribeTurns([]);
+      setClinicalAidDraft(null);
+      setMessage("Transcripción descartada.");
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
   }
 
   function updateScribeTurn(id: string, patch: Partial<Pick<ConsultationTurn, "speaker" | "text">>) {
@@ -756,10 +739,14 @@ export function Atencion({
         audio: {
           channelCount: 1,
           echoCancellation: true,
-          noiseSuppression: true
+          noiseSuppression: true,
+          autoGainControl: true
         }
       });
       const context = new AudioContextCtor();
+      if (context.state === "suspended") {
+        await context.resume();
+      }
       const source = context.createMediaStreamSource(stream);
       const processor = context.createScriptProcessor(4096, 1, 1);
 
@@ -1167,6 +1154,8 @@ export function Atencion({
                   recordingSeconds={recordingSeconds}
                   recordingError={recordingError}
                   useCloud={useCloudTranscription}
+                  numSpeakers={numSpeakers}
+                  transcribing={transcribing}
                   turns={scribeTurns}
                   reviewed={Boolean(reviewedTranscription)}
                   provider={aiTranscription?.provider ?? reviewedTranscription?.run_id ?? null}
@@ -1177,6 +1166,7 @@ export function Atencion({
                   onStop={stopConsultationRecording}
                   onFile={transcribeAudioFile}
                   onCloudChange={setUseCloudTranscription}
+                  onNumSpeakersChange={setNumSpeakers}
                   onTurnChange={updateScribeTurn}
                   onSwapRoles={swapScribeRoles}
                   onMarkReviewed={markTranscriptionReviewed}
@@ -1192,7 +1182,7 @@ export function Atencion({
             {NOTE_FIELDS.map(({ key, label, rows }) => (
               <label className="field" key={key}>
                 <span>{label}</span>
-                <textarea
+                <AutoGrowTextarea
                   rows={rows}
                   value={note[key]}
                   disabled={busy || signed}
@@ -1229,7 +1219,7 @@ export function Atencion({
               {GENERAL_MEDICINE_FIELDS.map(({ key, label, rows }) => (
                 <label className="field" key={key}>
                   <span>{label}</span>
-                  <textarea
+                  <AutoGrowTextarea
                     rows={rows}
                     value={coerceGeneralMedicinePayload(note.specialty)[key]}
                     disabled={busy || signed}
@@ -1261,7 +1251,7 @@ export function Atencion({
         <section className="panel">
           <h3>Receta</h3>
           <div className="stack">
-            <textarea
+            <AutoGrowTextarea
               rows={4}
               placeholder="Medicamento, dosis, via, frecuencia y duracion…"
               value={prescription}
@@ -1311,58 +1301,6 @@ export function Atencion({
               onApplySegment={applyScribeSegment}
               onDiscard={discardClinicalAid}
             />
-            {allergyText(detail.patient.allergies) ? (
-              <p className="alert-allergies">Alergias: {allergyText(detail.patient.allergies)}</p>
-            ) : (
-              <p className="context-empty">Sin alergias registradas</p>
-            )}
-
-            {detail.preconsulta ? (
-              <div className="context-block">
-                <h4>Preconsulta (IA)</h4>
-                <dl className="precheckin-list">
-                  {compactPreconsultaRows.slice(0, 6).map(([key, value], index) => (
-                    <div key={`${key}-${index}`}>
-                      <dt>{key}</dt>
-                      <dd>{value}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-            ) : null}
-
-            {medicalHistoryGroups.length > 0 ? (
-              <div className="context-block">
-                <h4>Antecedentes</h4>
-                <dl className="precheckin-list">
-                  {flattenMedicalHistoryDisplayRows(detail.medical_history)
-                    .slice(0, 6)
-                    .map(([key, value]) => (
-                      <div key={key}>
-                        <dt>{key}</dt>
-                        <dd>{value}</dd>
-                      </div>
-                    ))}
-                </dl>
-              </div>
-            ) : null}
-
-            <div className="context-block">
-              <h4>Consultas previas</h4>
-              {isFirstVisit(detail.history) ? (
-                <p className="context-empty">Primera vez — sin consultas previas</p>
-              ) : (
-                <ul className="history-list">
-                  {buildContextHistory(detail.history, (iso) =>
-                    dateTimeFormatter.format(new Date(iso))
-                  ).map((row) => (
-                    <li key={row.encounterId}>
-                      <span className="meta">{row.when ?? "(sin firmar)"}</span> {row.diagnosis}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
           </aside>
         </div>
       </div>

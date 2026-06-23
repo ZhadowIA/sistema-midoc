@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { call } from "./ipc";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
 
 /**
  * Verificacion determinista de seguridad de la prescripcion (paso 14): el medico
@@ -123,7 +124,7 @@ export function MedicationSafety({
         medicamento por linea.
       </p>
       <div className="stack">
-        <textarea
+        <AutoGrowTextarea
           rows={3}
           placeholder={"Ibuprofeno\nWarfarina"}
           value={text}

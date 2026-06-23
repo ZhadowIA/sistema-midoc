@@ -20,9 +20,21 @@ use std::path::Path;
 use crate::ai::AiError;
 use crate::diarization::SpeakerSegment;
 
+/// Umbral de clustering para el modo Auto. Afinable con audio real en staging via
+/// `MIDOC_DIARIZE_THRESHOLD`; si no esta o es invalido, usa el default de sherpa.
+#[cfg(feature = "diarization-local")]
+fn resolve_threshold() -> f32 {
+    std::env::var("MIDOC_DIARIZE_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .filter(|t| *t > 0.0)
+        .unwrap_or(crate::diarization::DEFAULT_DIARIZE_THRESHOLD)
+}
+
 /// Separa hablantes en las muestras dadas (f32 mono al `sample_rate` indicado, por
-/// convencion 16 kHz). `num_speakers` fija el numero esperado de hablantes (2 en la
-/// consulta). Devuelve tramos de hablante con marcas de tiempo en centisegundos.
+/// convencion 16 kHz). `num_speakers` fija el numero esperado de hablantes; `0`
+/// (Auto) deja que sherpa lo ESTIME con el umbral. Devuelve tramos de hablante con
+/// marcas de tiempo en centisegundos.
 ///
 /// Variante REAL (feature `diarization-local`): corre la diarizacion offline de
 /// sherpa-onnx con el modelo de segmentacion y el de embedding descargados.
@@ -43,9 +55,13 @@ pub fn diarize_samples(
         .to_str()
         .ok_or_else(|| AiError::Invalid("ruta del modelo de embedding invalida".into()))?;
 
-    // Numero de hablantes conocido (2): fija el clustering y maximiza precision.
+    // Auto (num_speakers == 0): num_clusters <= 0 hace que sherpa estime el numero
+    // con el umbral. Fijo (> 0): lo pina y maximiza precision (consulta tipica = 2).
+    let (num_clusters, threshold) =
+        crate::diarization::clustering_params(num_speakers, resolve_threshold());
     let config = DiarizeConfig {
-        num_clusters: Some(num_speakers as i32),
+        num_clusters: Some(num_clusters),
+        threshold: Some(threshold),
         ..Default::default()
     };
 
