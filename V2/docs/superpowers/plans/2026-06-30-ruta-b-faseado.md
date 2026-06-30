@@ -1,0 +1,97 @@
+# Ruta B — Plan de implementación faseado (transcripción OpenAI gobernada por el portal)
+
+Fecha: 2026-06-30
+Estado: faseo aprobado, en ejecución (F1 iniciada)
+Superficies: `V2/desktop-app`, `V2/consultorio-app`
+Pasos línea de desarrollo: 15 ext. (respaldo nube gobernado) → 16 (activación staging con BAA/ZDR)
+
+> Este documento es la **capa de orquestación** sobre el plan task-by-task
+> [`2026-06-18-openai-cloud-transcription.md`](./2026-06-18-openai-cloud-transcription.md).
+> No reemplaza las tareas: las agrupa en fases entregables e independientemente
+> mergeables a `dev`, respetando la regla de "rama corta por unidad de trabajo"
+> ([REGLAS_DESARROLLO.md §7](../../REGLAS_DESARROLLO.md)).
+
+## Decisión de fondo (por qué Ruta B y no el adaptador directo)
+
+- La clave de proveedor NO se hornea en el binario (extraíble) — el diseño ya
+  descartó ese anti-patrón.
+- El cobro por créditos (`ceil(s/900)` estándar, `ceil(s/600)` diarizado) solo
+  es posible si el portal media la llamada y mide la duración autoritativa.
+- El multi-proveedor (RF41) se centraliza en el portal: agregar Deepgram u otro
+  proveedor no requiere recompilar la app de escritorio.
+
+## Multi-proveedor en dos niveles
+
+| Nivel | Abstracción | Intercambiable |
+|---|---|---|
+| Desktop (Rust) | `trait TranscriptionProvider` | Whisper local ↔ Portal |
+| Portal (TS) | Interfaz de proveedor de nube inyectable | OpenAI ↔ Deepgram ↔ HealthScribe… |
+
+Decisión abierta para F1: introducir una interfaz `CloudTranscriptionProvider`
+en el portal (OpenAI como primera implementación) en lugar de acoplar a un único
+`openai-transcription-provider.ts`, para que el multi-proveedor sea pluggable
+desde el día uno.
+
+## Principio rector
+
+Cada fase termina en estado **mergeable a `dev` y verificable**. OpenAI real NO
+se llama hasta F4 (todo contra proveedor *fake*). El audio nunca toca disco; el
+contenido clínico nunca se persiste en el portal.
+
+## Las 4 fases
+
+| Fase | Alcance | Tareas base | Superficie | Branch sugerido |
+|---|---|---|---|---|
+| **F1 · Portal: cimientos puros** | Fórmulas de crédito por modo, gate de entorno BAA/ZDR, parser WAV autoritativo, contrato del proveedor (estándar + diarizado) — unidad, sin red | 1, 2, 3, 4 | `consultorio-app` | `v2/paso15-nube-cimientos` |
+| **F2 · Portal: servicio + endpoint** | Servicio gobernado (idempotencia `(doctorId, runId)`, reserva, finalización de crédito), route handler multipart autenticado, protección del crédito autoritativo en sync | 5 | `consultorio-app` | `v2/paso15-nube-endpoint` |
+| **F3 · Desktop: cliente del portal (estándar)** | Reemplazar `cloud_transcription.rs` por cliente del portal (token + `runId`), borrador SQLite cifrado, eliminar `MIDOC_CLOUD_STT_*`, selector local / nube estándar | 6 + parte de 7 | `desktop-app` | `v2/paso15-desktop-cliente-nube` |
+| **F4 · Diarización + activación** | Mapeo hablantes anónimos → turnos, gate de roles antes de Gemini, tercer modo del selector, docs, y activación real con BAA/ZDR en staging | resto de 7, 8 | ambas | `v2/paso15-diarizacion-ui` + `v2/paso16-activacion-staging` |
+
+## Por qué este orden
+
+1. El portal construye AMBOS modos desde F1 (es más barato construir el contrato
+   completo una vez, testeado con fake) y se gobierna la *exposición* desde el
+   desktop/UI.
+2. El portal va antes que el desktop: el desktop consume un contrato HTTP que
+   debe estar estable.
+3. La diarización se separa al final: el valor mínimo viable (estándar en nube)
+   ya se entregó en F3.
+4. La activación real es lo último y depende de algo que NO es código: BAA
+   firmado + ZDR verificado.
+
+## Gates de salida por fase (Definition of Done)
+
+| Fase | Verificación obligatoria |
+|---|---|
+| F1 | `npm run test/lint/build` verde; tests rojo→verde por fórmula; env rechaza sin ZDR; WAV inválido no calcula duración |
+| F2 | Integración con fake: 900s→1, 901s→2, 600s(diar)→1; reintento mismo `runId`→sin doble cobro; fallo→`FAILED` 0 créditos; DB sin audio ni transcript; migración desde cero y sobre base existente |
+| F3 | `cargo test` + `cargo clippy --all-targets -D warnings` + `npm run build`; Whisper local intacto; camino de fallo de red probado; migración SQLCipher forward-only desde cero y sobre base existente |
+| F4 | Gate de roles impide acomodar sin asignar; `rg` confirma texto/segmentos solo en request/response transitorio; prueba manual con OpenAI real solo en staging con BAA/ZDR + audio autorizado |
+
+## Riesgos y mitigaciones
+
+| Riesgo | Fase | Mitigación |
+|---|---|---|
+| Next.js 16 rompe convenciones de Route Handlers / `request.formData()` | F2 | Consultar `node_modules/next/dist/docs/` antes de escribir el handler (REGLAS §10) |
+| Carrera de idempotencia con `runId` concurrente | F2 | Constraint único `(doctorId, externalRunId)` + reserva antes de llamar al proveedor |
+| Cambiar `TRANSCRIPTION` de crédito fijo rompe usos existentes | F1 | Catálogo fijo intacto para usos no-transcripción; cobro de nube solo del servicio autoritativo |
+| Migraciones (Prisma + SQLCipher) sobre base existente | F1/F3 | Probar ambos sentidos; SQLCipher forward-only |
+| BAA/ZDR es bloqueante externo, no código | F4 | F4 se planifica pero no se activa hasta verificación humana/documental del contrato |
+| Audio fuera del equipo = único punto donde sale PHI | F2-F4 | Endpoint sin logs de cuerpo, sin colas, sin object storage; nombre neutro `consultation.wav`; consentimiento validado localmente |
+
+## Camino crítico
+
+F1 → F2 → F3 entregan transcripción estándar en nube usable (en staging).
+F4 agrega diarización y producción. F1+F2+F3 son 100% código y testeables sin
+terceros; solo F4 depende del BAA.
+
+## Estado de ejecución
+
+- [x] F1 · Tarea 1 — fórmulas de crédito por modo + esquema operativo (7/7 tests verde; migración `20260630140000_cloud_transcription_usage`)
+- [x] F1 · Tarea 2 — gate de entorno BAA/ZDR (5/5 tests verde; esquema separado en `env-schema.ts` para testeabilidad sin secretos)
+- [x] F1 · Tarea 3 — parser WAV autoritativo (6/6 tests verde; `audio-duration.ts` puro, recorre sub-chunks RIFF, rechaza no-PCM/vacío/truncado)
+- [x] F1 · Tarea 4 — contrato del proveedor (7/7 tests verde; interfaz pluggable `CloudTranscriptionProvider` + `OpenAiTranscriptionProvider` con transporte inyectable)
+- [x] **F1 COMPLETA** — 25/25 tests verde, 0 errores de tipos en `src`. Decisión aplicada: multi-proveedor pluggable en el portal desde el día uno.
+- [ ] F2 — servicio gobernado + endpoint multipart + sync
+- [ ] F3 — cliente del portal en desktop + borrador cifrado
+- [ ] F4 — diarización UI + activación staging
