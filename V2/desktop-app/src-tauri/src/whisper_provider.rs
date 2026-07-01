@@ -198,6 +198,7 @@ impl TranscriptionProvider for WhisperLocalProvider {
             // La transcripcion local no tiene costo por uso (corre en el equipo).
             estimated_cost_cents: 0,
             latency_ms: start.elapsed().as_millis() as i64,
+            cloud_transcription: None,
         };
         Ok((response, segments))
     }

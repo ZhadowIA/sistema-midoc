@@ -1303,29 +1303,18 @@ fn ai_assist_text(
     })
 }
 
-/// Elige el proveedor de transcripcion segun la via solicitada.
+/// Proveedor de transcripcion LOCAL (Whisper en el dispositivo). Con el feature
+/// `whisper-local`, usa el modelo descargado (rebanada 1) y transcribe EN EL
+/// DISPOSITIVO; si aun no se descargo, guia a descargarlo. Sin el feature,
+/// explica que esta build no incluye el binding nativo (se compila en la build
+/// de distribucion).
 ///
-/// - Nube (`use_cloud`): respaldo gobernado. Requiere configuracion
-///   (`MIDOC_CLOUD_STT_*`, cableada en staging con BAA); el audio sale del equipo
-///   solo aqui, bajo consentimiento de voz (lo aplica `ai::transcribe_audio`). Sin
-///   configuracion, se rechaza con una guia.
-/// - Local (por defecto): con el feature `whisper-local`, usa el modelo Whisper
-///   descargado (rebanada 1) y transcribe EN EL DISPOSITIVO; si el modelo aun no
-///   se descargo, guia a descargarlo. Sin el feature, explica que esta build no
-///   incluye el binding nativo (se compila en la build de distribucion).
-fn resolve_transcription_provider(
+/// La via en nube gobernada por el portal se construye aparte en
+/// `ai_transcribe_audio`: necesita el estado de sync cifrado (server_url +
+/// device_token), no variables de entorno.
+fn resolve_local_transcription_provider(
     app: &tauri::AppHandle,
-    use_cloud: bool,
 ) -> Result<Box<dyn ai::TranscriptionProvider>, String> {
-    if use_cloud {
-        let config = cloud_transcription::CloudConfig::from_env().ok_or(
-            "El respaldo de transcripcion en nube no esta configurado en esta version. Se habilita en la build de distribucion con el proveedor bajo BAA.",
-        )?;
-        return Ok(Box::new(cloud_transcription::CloudTranscriptionProvider::new(
-            config,
-        )));
-    }
-
     #[cfg(feature = "whisper-local")]
     {
         let rec = transcription::recommendation();
@@ -1372,7 +1361,39 @@ fn ai_transcribe_audio(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(audio.audio_base64.as_bytes())
         .map_err(|_| "audio invalido".to_string())?;
-    let provider = resolve_transcription_provider(&app, use_cloud.unwrap_or(false))?;
+
+    let provider: Box<dyn ai::TranscriptionProvider> = if use_cloud.unwrap_or(false) {
+        // Via en nube gobernada: el desktop NO conoce la clave del proveedor;
+        // envia el audio al portal con el token del dispositivo vinculado. El
+        // server_url y el device_token viven en el estado de sync cifrado.
+        let (server_url, device_token) = {
+            let guard = state.0.lock().unwrap();
+            let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+            let server_url = sync::get_state(conn, "server_url").map_err(|e| e.to_string())?;
+            let token = sync::get_state(conn, "device_token").map_err(|e| e.to_string())?;
+            let (Some(server_url), Some(token)) = (server_url, token) else {
+                return Err(
+                    "El respaldo en nube requiere vincular este equipo con el portal.".into(),
+                );
+            };
+            (server_url, token)
+        };
+        // `runId` operativo por transcripcion: hace idempotente el credito en el
+        // portal. F3 cubre el modo estandar; la diarizacion en nube es F4.
+        let run_id = uuid::Uuid::new_v4().to_string();
+        Box::new(
+            cloud_transcription::PortalTranscriptionProvider::new(
+                server_url,
+                device_token,
+                run_id,
+                "standard",
+            )
+            .map_err(|e| e.to_string())?,
+        )
+    } else {
+        resolve_local_transcription_provider(&app)?
+    };
+
     with_ai(&state, |conn| {
         ai::transcribe_audio(
             conn,
@@ -1459,7 +1480,7 @@ fn ai_diarize_consultation(
         .min(diarization::MAX_NUM_SPEAKERS);
     // La diarizacion necesita los segmentos con marcas de tiempo de Whisper local;
     // la transcripcion en nube no los aporta, asi que aqui se usa la via local.
-    let provider = resolve_transcription_provider(&app, false)?;
+    let provider = resolve_local_transcription_provider(&app)?;
     let (seg_path, emb_path) = diarization_model_paths(&app)?;
     let diarizer = move |samples: &[f32], sample_rate: u32| {
         sherpa_diarization::diarize_samples(

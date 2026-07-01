@@ -451,6 +451,16 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_consultation_transcriptions_encounter
         ON consultation_transcriptions(encounter_id, reviewed_at DESC);",
+    // Metadata del borrador de transcripcion en nube gobernada por el portal
+    // (Ruta B, F3). Clase: CLINICO (segmentos) + OPERATIVO (modo/duracion/credito);
+    // todo permanece en la base local cifrada, nunca sube al portal. `credit_cost`
+    // es el cobro autoritativo que fijo el portal; `segments_json` guarda los
+    // turnos anonimos crudos (speaker_0) antes de asignar roles (F4). Nullable
+    // para que las filas existentes migren sin datos.
+    "ALTER TABLE ai_runs ADD COLUMN transcription_mode TEXT;
+    ALTER TABLE ai_runs ADD COLUMN duration_seconds INTEGER;
+    ALTER TABLE ai_runs ADD COLUMN credit_cost INTEGER;
+    ALTER TABLE ai_runs ADD COLUMN segments_json TEXT;",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
@@ -584,6 +594,23 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn ai_runs_has_cloud_transcription_columns() {
+        // Metadata del borrador de transcripcion en nube gobernada (Ruta B, F3):
+        // modo, duracion autoritativa, credito y segmentos crudos del portal.
+        let path = temp_db_path("cloud-tx-columns");
+        let conn = open_encrypted(&path, "clave-correcta").unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('ai_runs')
+                 WHERE name IN ('transcription_mode', 'duration_seconds', 'credit_cost', 'segments_json')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 4);
     }
 
     #[test]

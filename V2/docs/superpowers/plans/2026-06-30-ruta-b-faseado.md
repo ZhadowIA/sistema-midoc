@@ -97,5 +97,11 @@ terceros; solo F4 depende del BAA.
   - [x] Route handler `POST /api/sync/ai/transcriptions` (Next 16 `request.formData()`, `runtime=nodejs`, `maxDuration=120`, límites 25 MiB/WAV) + factory `resolveOpenAiTranscriptionProvider` env-gated (403 sin ZDR/key).
   - [x] Protección de crédito autoritativo en `recordAiUsageBatch`: fila con `transcriptionMode` solo actualiza revisión; `whisper-local*`→0 créditos.
   - Nota: 1 test preexistente de sync (`charges plan credits...`) falla solo por frontera de mes UTC (hardcodea junio 2026); ajeno a F2.
-- [ ] F3 — cliente del portal en desktop + borrador cifrado
+- [x] **F3 COMPLETA** — 195 cargo tests + 25 node tests verde; clippy limpio en archivos tocados (11 lints restantes preexistentes en `ai.rs`/`operations.rs`). 5 ciclos TDD:
+  - [x] `parse_portal_response` + `PortalTranscriptionResult`/`PortalSegment` (parser puro de la respuesta del endpoint de F2).
+  - [x] `PortalTranscriptionProvider` (reemplaza el adaptador Deepgram): multipart `bearer_auth(device_token)` + `runId` + `mode` a `{server_url}/api/sync/ai/transcriptions`; solo campos aprobados, nombre neutro. Feature `multipart` de reqwest.
+  - [x] Wiring en `lib.rs`: `ai_transcribe_audio` construye el provider desde el estado de sync cifrado (`server_url`+`device_token`); eliminado `CloudConfig`/`CloudTranscriptionProvider`/`MIDOC_CLOUD_STT_*`.
+  - [x] Migración forward-only en `db.rs`: `ai_runs` + `transcription_mode`/`duration_seconds`/`credit_cost`/`segments_json`.
+  - [x] Flujo de metadata: `AiResponse`+`CloudTranscriptionMeta`; `record_transcription_run` reusa el `runId` autoritativo del portal y persiste el borrador cifrado.
+  - Nota: F3 cubre el modo estándar; el toggle local/nube ya existía y rutea al portal. Selector de 3 modos + estimación de créditos + deshabilitar-sin-vínculo van en F4/polish.
 - [ ] F4 — diarización UI + activación staging
