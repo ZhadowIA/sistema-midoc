@@ -7,7 +7,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
-    "env:check": "tsx --env-file=.env --env-file=.env.local src/lib/env.ts",
+    "env:check": "tsx --env-file=.env.local src/lib/env.ts",
     "db:migrate:dev": "prisma migrate dev",
     "db:generate": "prisma generate"
   },

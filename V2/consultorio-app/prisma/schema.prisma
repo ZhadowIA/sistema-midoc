@@ -1138,6 +1138,11 @@ model AiUsageLog {
   creditCost         Int           @default(0)
   estimatedCostCents Int?
   latencyMs          Int?
+  // OPERATIVO: metadata de cobro de transcripcion en nube. No contiene
+  // contenido clinico. `durationSeconds` es la duracion autoritativa del WAV
+  // validado por el portal; `transcriptionMode` es "standard" | "diarized".
+  durationSeconds    Int?
+  transcriptionMode  String?
   reviewedAt         DateTime?
   feedback           String?
   reportedAt         DateTime?

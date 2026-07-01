@@ -12,9 +12,11 @@ const packageManifest = JSON.parse(
 ) as PackageManifest;
 
 test("los comandos de producto compilan Whisper local", () => {
+  // Dev usa un wrapper local para preparar PATH en Windows antes de invocar
+  // Tauri; conserva las mismas features de producto.
   assert.equal(
     packageManifest.scripts["tauri:dev"],
-    "tauri dev --features whisper-local"
+    "node ./scripts/tauri-dev.mjs --features whisper-local"
   );
   // El build por defecto es CPU-only: respaldo seguro para maquinas sin la
   // cadena nativa de GPU. La aceleracion va en los builds por SO de la matriz.

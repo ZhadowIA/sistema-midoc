@@ -22,7 +22,12 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher-vendored-openssl"] }
+# En Windows, `bundled-sqlcipher-vendored-openssl` recompila OpenSSL completo
+# durante el arranque y puede dejar `tauri dev` aparentemente "colgado" por
+# varios minutos en `openssl-sys`. Para desarrollo local usamos SQLCipher
+# bundlado, pero enlazando contra un OpenSSL MSVC ya instalado via OPENSSL_DIR
+# (ver `.cargo/config.toml`).
+rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher"] }
 thiserror = "2.0.18"
 reqwest = { version = "0.13.4", features = ["json", "cookies", "blocking"] }
 uuid = { version = "1.23.3", features = ["v4"] }
@@ -46,6 +51,17 @@ whisper-rs = { version = "0.16", optional = true }
 # (el modulo `sherpa_diarization` provee un stub que degrada sin el feature). El
 # binding real se compila y verifica en staging (regla 5), como el de Whisper.
 sherpa-rs = { version = "0.6", optional = true }
+# Decodificacion de audio para el importador de archivos (WAV de cualquier
+# tasa/bit depth, MP3, M4A/AAC). Puro Rust (MPL-2.0), sin cadena nativa: a
+# diferencia de whisper-rs/sherpa-rs, compila y corre en el build y los tests
+# por defecto. No incluye Opus/OGG ni FLAC (fuera de alcance).
+symphonia = { version = "0.6", default-features = false, features = ["wav", "pcm", "mp3", "isomp4", "aac"] }
+# Resampleo a 16 kHz (lo que exige Whisper) cuando el archivo importado no
+# viene ya a esa tasa. Puro Rust, MIT.
+rubato = "0.15"
+# Carga `.env` en `src-tauri/` al arrancar, para que `MIDOC_GEMINI_API_KEY` y
+# similares no dependan de exportarlas a mano en la shell de cada equipo.
+dotenvy = "0.15"
 
 [features]
 # Activa el proveedor de transcripcion Whisper local (requiere cadena nativa).

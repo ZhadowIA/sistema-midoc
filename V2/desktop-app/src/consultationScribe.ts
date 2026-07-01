@@ -13,6 +13,16 @@ export interface ConsultationTurn {
   id: string;
   speaker: ScribeSpeaker;
   text: string;
+  speakerId?: string;
+}
+
+export interface DiarizedTurn {
+  id: string;
+  speakerId: string;
+  role: ScribeSpeaker;
+  text: string;
+  startCs: number;
+  endCs: number;
 }
 
 export interface TemplateSegment {
@@ -92,6 +102,59 @@ export function transcriptToTurns(transcript: string | null | undefined): Consul
   }
 
   return turns;
+}
+
+export function diarizedTurnsToConsultationTurns(turns: DiarizedTurn[]): ConsultationTurn[] {
+  return turns
+    .map((turn) => ({
+      id: turn.id,
+      speaker: turn.role,
+      speakerId: turn.speakerId,
+      text: turn.text.trim()
+    }))
+    .filter((turn) => turn.text);
+}
+
+export function assignRoleToSpeaker(
+  turns: ConsultationTurn[],
+  speakerId: string,
+  speaker: ScribeSpeaker
+): ConsultationTurn[] {
+  return turns.map((turn) =>
+    turn.speakerId === speakerId
+      ? {
+          ...turn,
+          speaker
+        }
+      : turn
+  );
+}
+
+export function swapTwoSpeakerRoles(turns: ConsultationTurn[]): ConsultationTurn[] {
+  const speakerIds = Array.from(
+    new Set(turns.map((turn) => turn.speakerId).filter((id): id is string => Boolean(id)))
+  );
+
+  if (speakerIds.length !== 2) {
+    return turns.map((turn) => ({
+      ...turn,
+      speaker: nextSpeaker(turn.speaker)
+    }));
+  }
+
+  const currentRoleBySpeakerId = new Map<string, ScribeSpeaker>();
+  for (const turn of turns) {
+    if (turn.speakerId && !currentRoleBySpeakerId.has(turn.speakerId)) {
+      currentRoleBySpeakerId.set(turn.speakerId, turn.speaker);
+    }
+  }
+
+  return turns.map((turn) => ({
+    ...turn,
+    speaker: turn.speakerId
+      ? nextSpeaker(currentRoleBySpeakerId.get(turn.speakerId) ?? turn.speaker)
+      : nextSpeaker(turn.speaker)
+  }));
 }
 
 function speakerLabel(speaker: ScribeSpeaker): string {

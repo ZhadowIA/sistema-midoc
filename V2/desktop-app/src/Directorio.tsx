@@ -44,6 +44,10 @@ const dateTimeFormatter = new Intl.DateTimeFormat("es-MX", {
 
 const dateFormatter = new Intl.DateTimeFormat("es-MX", { dateStyle: "medium" });
 
+function patientInitials(patient: PatientSummary): string {
+  return `${patient.first_name.charAt(0)}${patient.last_name.charAt(0)}`.toUpperCase();
+}
+
 const EMPTY_NEW_PATIENT = {
   first_name: "",
   last_name: "",
@@ -393,10 +397,22 @@ export function Directorio({
 
   // ---- Lista del directorio ----
   return (
-    <section className="panel">
-      <div className="panel-header">
-        <h2>Directorio de pacientes</h2>
-        <p>Todos los pacientes de tu expediente cifrado local.</p>
+    <div className="directory">
+      <div className="page-heading">
+        <div>
+          <h1>Pacientes</h1>
+          <p>Directorio de tu expediente cifrado local</p>
+        </div>
+        <button
+          className="action-button"
+          onClick={() => {
+            setMatches(null);
+            setError("");
+            setCreating(true);
+          }}
+        >
+          Nuevo paciente
+        </button>
       </div>
 
       {message && (
@@ -410,23 +426,15 @@ export function Directorio({
         </p>
       )}
 
-      <div className="button-row directory-toolbar">
+      <div className="directory-search-row">
         <input
           type="search"
+          className="directory-search"
           placeholder="Buscar por nombre o telefono…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <button
-          className="action-button"
-          onClick={() => {
-            setMatches(null);
-            setError("");
-            setCreating(true);
-          }}
-        >
-          Nuevo paciente
-        </button>
+        <span className="directory-count">{patients.length} pacientes</span>
       </div>
 
       {patients.length === 0 ? (
@@ -439,34 +447,39 @@ export function Directorio({
           </p>
         </div>
       ) : (
-        <ul className="appointment-list">
+        <div className="directory-list">
           {patients.map((patient) => (
-            <li key={patient.id} className="list-row">
+            <div className="directory-item" key={patient.id}>
               <button
                 type="button"
-                className="list-row-main directory-row"
+                className="directory-item-main"
                 onClick={() => void openProfile(patient.id)}
               >
-                <strong>
-                  {patient.first_name} {patient.last_name}
-                </strong>
-                <span className="meta">
-                  {patient.phone ?? "Sin telefono"}
-                  {" · "}
-                  {patient.encounter_count > 0
-                    ? `${patient.encounter_count} consulta(s)`
-                    : "Sin consultas"}
-                  {patient.last_visit
-                    ? ` · Ultima: ${dateFormatter.format(new Date(patient.last_visit))}`
-                    : ""}
+                <span className="directory-avatar" aria-hidden="true">
+                  {patientInitials(patient)}
                 </span>
-                {patient.allergies ? (
-                  <span className="meta directory-allergy">Alergias: {patient.allergies}</span>
-                ) : null}
+                <span className="directory-info">
+                  <strong>
+                    {patient.first_name} {patient.last_name}
+                  </strong>
+                  <span className="meta">
+                    {patient.phone ?? "Sin telefono"}
+                    {" · "}
+                    {patient.encounter_count > 0
+                      ? `${patient.encounter_count} consulta(s)`
+                      : "Sin consultas"}
+                    {patient.last_visit
+                      ? ` · Ultima: ${dateFormatter.format(new Date(patient.last_visit))}`
+                      : ""}
+                  </span>
+                  {patient.allergies ? (
+                    <span className="directory-allergy">Alergias: {patient.allergies}</span>
+                  ) : null}
+                </span>
               </button>
               <div className="row-actions">
                 <button
-                  className="ghost-button"
+                  className="directory-action-primary"
                   onClick={() => void startEncounter(patient.id)}
                   disabled={busy}
                 >
@@ -476,10 +489,10 @@ export function Directorio({
                   Expediente
                 </button>
               </div>
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
-    </section>
+    </div>
   );
 }

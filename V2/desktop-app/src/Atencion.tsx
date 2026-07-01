@@ -15,9 +15,13 @@ import { createRecordedWavFile } from "./consultationRecorder";
 import {
   appendSegmentToNote,
   buildTemplateSegments,
+  assignRoleToSpeaker,
+  diarizedTurnsToConsultationTurns,
   normalizeTemplateDefinition,
+  swapTwoSpeakerRoles,
   transcriptToTurns,
   type ConsultationTurn,
+  type DiarizedTurn,
   type SegmentDraft,
   type TemplateDefinition
 } from "./consultationScribe";
@@ -133,7 +137,7 @@ interface TranscriptionDraft {
 // `diarized` es false (sin modelos/feature o audio no diarizable), `turns` viene
 // vacio y el frontend cae a la heuristica de turnos sobre el texto.
 interface DiarizationDraft extends TranscriptionDraft {
-  turns: ConsultationTurn[];
+  turns: DiarizedTurn[];
   diarized: boolean;
 }
 
@@ -314,8 +318,6 @@ export function Atencion({
   const recorderChunksRef = useRef<Float32Array[]>([]);
   const recordingStartedAtRef = useRef<number>(0);
   const recordingTimerRef = useRef<number | null>(null);
-  const initialSectionSetRef = useRef(false);
-
   const load = useCallback(() => {
     call<EncounterDetail>("get_encounter", { encounterId })
       .then((data) => {
@@ -328,15 +330,6 @@ export function Atencion({
           family_background: data.patient.family_background ?? "",
           birth_date: data.patient.birth_date ?? ""
         });
-        if (!initialSectionSetRef.current) {
-          if (data.preconsulta) {
-            initialSectionSetRef.current = true;
-            setActiveSection("preconsulta");
-          } else if (data.medical_history) {
-            initialSectionSetRef.current = true;
-            setActiveSection("antecedentes");
-          }
-        }
         if (data.encounter.status === "SIGNED") {
           call<boolean>("verify_signature", { encounterId })
             .then(setSignatureValid)
@@ -633,7 +626,7 @@ export function Atencion({
           setAiTranscription(draft);
           setScribeTurns(
             draft.diarized && draft.turns.length > 0
-              ? draft.turns
+              ? diarizedTurnsToConsultationTurns(draft.turns)
               : transcriptToTurns(draft.transcript_text)
           );
           setMessage(
@@ -689,15 +682,15 @@ export function Atencion({
     );
   }
 
+  function assignScribeSpeakerRole(speakerId: string, speaker: ConsultationTurn["speaker"]) {
+    setScribeTurns((current) => assignRoleToSpeaker(current, speakerId, speaker));
+  }
+
   // Intercambia los roles del dialogo cuando la separacion automatica asigno
-  // medico/paciente al reves (la heuristica supone que el medico abre la consulta).
+  // medico/paciente al reves. Si hay speaker tecnico, el cambio respeta ese mapeo
+  // global; si no, cae al intercambio por turno legado.
   function swapScribeRoles() {
-    setScribeTurns((current) =>
-      current.map((turn) => ({
-        ...turn,
-        speaker: turn.speaker === "MEDICO" ? "PACIENTE" : "MEDICO"
-      }))
-    );
+    setScribeTurns((current) => swapTwoSpeakerRoles(current));
   }
 
   function cleanupRecording() {
@@ -876,60 +869,74 @@ export function Atencion({
   }
 
   return (
-    <>
-      <header className="app-topbar">
-        <button className="ghost-button" onClick={onBack}>
-          ← Agenda
-        </button>
-        <span className="topbar-context">
-          {resolvedProfile === "ODONTOLOGY" ? "Consulta odontologica" : "Consulta en curso"}
-        </span>
-        {signed ? (
-          <span
-            className={
-              signatureValid === false ? "signature-banner invalid" : "signature-banner"
-            }
-          >
-            {signatureValid === false
-              ? "¡La firma no coincide con el contenido!"
-              : "Consulta firmada"}
-          </span>
-        ) : (
-          <button
-            className="action-button"
-            onClick={sign}
-            disabled={busy || detail.note_version_count === 0}
-          >
-            Firmar y cerrar
+    <div className="consultation-station">
+      <header className="consultation-topbar">
+        <div className="consultation-titlebar">
+          <button className="ghost-button" onClick={onBack}>
+            ‹ Agenda
           </button>
-        )}
-      </header>
-
-      <div className="content encounter-content">
-        <section className="panel patient-banner">
-          <div className="panel-header">
-            <h2>
+          <div className="consultation-patient-title">
+            <strong>
               {detail.patient.first_name} {detail.patient.last_name}
-            </h2>
-            <p>
+            </strong>
+            <span>
               {detail.appointment_start
                 ? dateTimeFormatter.format(new Date(detail.appointment_start))
                 : "Sin cita asociada"}
-              {detail.appointment_reason ? ` · Motivo: ${detail.appointment_reason}` : ""}
-              {detail.patient.phone ? ` · Tel: ${detail.patient.phone}` : ""}
-            </p>
-          </div>
-          <div className="button-row">
-            <span className="pill pill-warning">
-              {resolvedProfile === "ODONTOLOGY"
-                ? "Perfil odontologia"
-                : "Perfil medicina general"}
             </span>
-            {detail.note ? <span className="meta">Version actual: {detail.note.version}</span> : null}
           </div>
-        </section>
+        </div>
 
-        <div className="encounter-layout">
+        <div className="button-row consultation-actions">
+          {signed ? (
+            <span
+              className={
+                signatureValid === false ? "signature-banner invalid" : "signature-banner"
+              }
+            >
+              {signatureValid === false
+                ? "¡La firma no coincide con el contenido!"
+                : "Consulta firmada"}
+            </span>
+          ) : (
+            <button
+              className="action-button"
+              onClick={sign}
+              disabled={busy || detail.note_version_count === 0}
+            >
+              Firmar y cerrar
+            </button>
+          )}
+        </div>
+      </header>
+
+      <div className="consultation-body">
+        <aside className="consultation-route-rail" aria-label="Ruta de la consulta">
+          <div className="consultation-route-section">
+            <span className="sidebar-heading">Ruta de la consulta</span>
+            <nav className="consultation-steps" aria-label="Secciones de la consulta">
+              {navItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={
+                    resolvedSection === item.id
+                      ? "consultation-step consultation-step-active"
+                      : "consultation-step"
+                  }
+                  aria-current={resolvedSection === item.id ? "page" : undefined}
+                  onClick={() => setActiveSection(item.id)}
+                >
+                  <span className="consultation-step-dot" aria-hidden="true" />
+                  <span>
+                    <strong>{item.label}</strong>
+                    <small>{item.id === "nota" ? "SOAP" : item.id === "ia" ? "Dictado" : item.id === "ayuda" ? "Asistencia" : "Clínico"}</small>
+                  </span>
+                </button>
+              ))}
+            </nav>
+          </div>
+
           <EncounterAgendaRail
             appointments={appointments}
             currentAppointmentId={currentAppointmentId}
@@ -937,30 +944,33 @@ export function Atencion({
             busy={appointmentSelectionBusy}
             onSelectAppointment={selectAgendaAppointment}
           />
+        </aside>
 
-          <div className="encounter-main">
-            <nav className="encounter-modes" aria-label="Secciones de la consulta">
-              {navItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={resolvedSection === item.id ? "mode-item mode-item-active" : "mode-item"}
-                  aria-current={resolvedSection === item.id ? "page" : undefined}
-                  onClick={() => setActiveSection(item.id)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </nav>
-
+        <main className="consultation-center">
             {message && (
               <p className="form-success" role="status">
-                {message}
+                <span>{message}</span>
+                <button
+                  type="button"
+                  className="form-message-dismiss"
+                  aria-label="Cerrar mensaje"
+                  onClick={() => setMessage("")}
+                >
+                  ×
+                </button>
               </p>
             )}
             {error && (
               <p className="form-error" role="alert">
-                {error}
+                <span>{error}</span>
+                <button
+                  type="button"
+                  className="form-message-dismiss"
+                  aria-label="Cerrar error"
+                  onClick={() => setError("")}
+                >
+                  ×
+                </button>
               </p>
             )}
 
@@ -1140,12 +1150,19 @@ export function Atencion({
 
             {resolvedSection === "ia" && !signed ? (
               <section className="panel transcription-panel">
-                <div className="panel-header">
-                  <h3>Transcripción consulta</h3>
-                  <p>
-                    Graba o carga la conversación, revisa el texto y corrige los
-                    hablantes. El acomodo clínico se solicita desde Ayuda IA.
-                  </p>
+                <div className="consultation-section-heading transcription-heading">
+                  <div>
+                    <span className="section-kicker">Dictado clínico</span>
+                    <h2>Transcripción de la consulta</h2>
+                    <p>
+                      Captura la conversación, confirma los hablantes y deja el texto listo
+                      para que Ayuda IA genere la nota clínica.
+                    </p>
+                  </div>
+                  <div className="consultation-save-meta">
+                    {reviewedTranscription ? <span>Revisada</span> : <span>Por revisar</span>}
+                    <span>{useCloudTranscription ? "Nube" : "Local"}</span>
+                  </div>
                 </div>
                 <TranscriptionWorkspace
                   busy={busy}
@@ -1168,6 +1185,7 @@ export function Atencion({
                   onCloudChange={setUseCloudTranscription}
                   onNumSpeakersChange={setNumSpeakers}
                   onTurnChange={updateScribeTurn}
+                  onSpeakerRoleChange={assignScribeSpeakerRole}
                   onSwapRoles={swapScribeRoles}
                   onMarkReviewed={markTranscriptionReviewed}
                   onDiscard={discardAiTranscription}
@@ -1176,22 +1194,41 @@ export function Atencion({
             ) : null}
 
             {resolvedSection === "nota" ? (
-        <section className="panel">
-          <h3>Nota clinica (SOAP)</h3>
-          <div className="stack">
-            {NOTE_FIELDS.map(({ key, label, rows }) => (
-              <label className="field" key={key}>
-                <span>{label}</span>
-                <AutoGrowTextarea
-                  rows={rows}
-                  value={note[key]}
-                  disabled={busy || signed}
-                  onChange={(e) => setNote((current) => ({ ...current, [key]: e.target.value }))}
-                />
-              </label>
-            ))}
-          </div>
-        </section>
+              <section className="consultation-soap">
+                <div className="consultation-section-heading">
+                  <div>
+                    <h2>Nota clínica — SOAP</h2>
+                    <p>Estructura tu razonamiento; el dictado llena los campos y tú revisas.</p>
+                  </div>
+                  <div className="consultation-save-meta">
+                    {detail.note ? <span>v{detail.note.version}</span> : null}
+                    {signed ? <span>Firmada</span> : <span>Edición activa</span>}
+                  </div>
+                </div>
+                <div className="soap-field-grid">
+                  {NOTE_FIELDS.map(({ key, label, rows }, index) => (
+                    <label className="soap-field-card" key={key}>
+                      <span className="soap-field-heading">
+                        <span className="soap-field-key">{index + 1}</span>
+                        <span>{label}</span>
+                      </span>
+                      <AutoGrowTextarea
+                        rows={rows}
+                        value={note[key]}
+                        disabled={busy || signed}
+                        onChange={(e) => setNote((current) => ({ ...current, [key]: e.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </div>
+                {!signed ? (
+                  <div className="button-row">
+                    <button className="action-button" onClick={saveNote} disabled={busy}>
+                      Guardar nota
+                    </button>
+                  </div>
+                ) : null}
+              </section>
             ) : null}
 
             {resolvedSection === "modulo" ? (
@@ -1215,10 +1252,13 @@ export function Atencion({
               onChange={(specialty) => setNote((current) => ({ ...current, specialty }))}
             />
           ) : (
-            <div className="stack">
-              {GENERAL_MEDICINE_FIELDS.map(({ key, label, rows }) => (
-                <label className="field" key={key}>
-                  <span>{label}</span>
+            <div className="soap-field-grid">
+              {GENERAL_MEDICINE_FIELDS.map(({ key, label, rows }, index) => (
+                <label className="soap-field-card" key={key}>
+                  <span className="soap-field-heading">
+                    <span className="soap-field-key">{index + 1}</span>
+                    <span>{label}</span>
+                  </span>
                   <AutoGrowTextarea
                     rows={rows}
                     value={coerceGeneralMedicinePayload(note.specialty)[key]}
@@ -1250,24 +1290,51 @@ export function Atencion({
             {resolvedSection === "receta" ? (
         <section className="panel">
           <h3>Receta</h3>
-          <div className="stack">
-            <AutoGrowTextarea
-              rows={4}
-              placeholder="Medicamento, dosis, via, frecuencia y duracion…"
-              value={prescription}
-              disabled={busy || signed}
-              onChange={(e) => setPrescription(e.target.value)}
-            />
-            {!signed ? (
-              <div className="button-row">
-                <button className="action-button" onClick={savePrescription} disabled={busy}>
-                  Guardar receta
-                </button>
-              </div>
-            ) : null}
+          <div className="soap-field-grid">
+            <label className="soap-field-card">
+              <span className="soap-field-heading">
+                <span>Receta</span>
+              </span>
+              <AutoGrowTextarea
+                rows={4}
+                placeholder="Medicamento, dosis, via, frecuencia y duracion…"
+                value={prescription}
+                disabled={busy || signed}
+                onChange={(e) => setPrescription(e.target.value)}
+              />
+            </label>
           </div>
+          {!signed ? (
+            <div className="button-row">
+              <button className="action-button" onClick={savePrescription} disabled={busy}>
+                Guardar receta
+              </button>
+            </div>
+          ) : null}
           <MedicationSafety encounterId={encounterId} disabled={signed} prescription={prescription} />
         </section>
+            ) : null}
+
+            {resolvedSection === "ayuda" ? (
+              <ClinicalAidRail
+                ready={Boolean(reviewedTranscription)}
+                consent={aiScribeConsent}
+                hasHistory={medicalHistoryGroups.length > 0}
+                hasPreconsulta={Boolean(detail.preconsulta)}
+                templates={profileTemplates.map((template) => ({
+                  id: template.id,
+                  name: template.name
+                }))}
+                selectedTemplateId={selectedTemplateId}
+                busy={busy}
+                draft={clinicalAidDraft}
+                onToggleConsent={() => void toggleScribeConsent()}
+                onTemplateChange={setSelectedTemplateId}
+                onGenerate={generateClinicalAid}
+                onApplySoap={applyClinicalAidSoap}
+                onApplySegment={applyScribeSegment}
+                onDiscard={discardClinicalAid}
+              />
             ) : null}
 
             {signed ? (
@@ -1279,31 +1346,8 @@ export function Atencion({
                 · huella {detail.encounter.signed_hash?.slice(0, 16)}…
               </p>
             ) : null}
-          </div>
-
-          <aside className="encounter-context" aria-label="Contexto del paciente">
-            <ClinicalAidRail
-              ready={Boolean(reviewedTranscription)}
-              consent={aiScribeConsent}
-              hasHistory={medicalHistoryGroups.length > 0}
-              hasPreconsulta={Boolean(detail.preconsulta)}
-              templates={profileTemplates.map((template) => ({
-                id: template.id,
-                name: template.name
-              }))}
-              selectedTemplateId={selectedTemplateId}
-              busy={busy}
-              draft={clinicalAidDraft}
-              onToggleConsent={() => void toggleScribeConsent()}
-              onTemplateChange={setSelectedTemplateId}
-              onGenerate={generateClinicalAid}
-              onApplySoap={applyClinicalAidSoap}
-              onApplySegment={applyScribeSegment}
-              onDiscard={discardClinicalAid}
-            />
-          </aside>
-        </div>
+        </main>
       </div>
-    </>
+    </div>
   );
 }
