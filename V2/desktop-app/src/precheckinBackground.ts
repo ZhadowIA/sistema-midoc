@@ -40,10 +40,7 @@ export function extractPrecheckinBackground(raw: string | null): BackgroundDraft
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (Array.isArray(parsed.conversation)) return null;
 
-    const medicalLines = [
-      cleanText(parsed.antecedentes),
-      ...linesForMedicalHistoryGroup(raw, "pathological")
-    ].filter(Boolean);
+    const medicalLines = linesForMedicalHistoryGroup(raw, "pathological");
     const familyLines = linesForMedicalHistoryGroup(raw, "familyHistory");
 
     const draft: BackgroundDraft = {

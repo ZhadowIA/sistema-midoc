@@ -164,6 +164,7 @@ main {
 .home-shell,
 .public-shell,
 .booking-shell,
+.appointment-view,
 .profile-grid,
 .app-grid,
 .settings-stack {
@@ -422,6 +423,15 @@ a.service-card:hover {
   font: inherit;
   color: var(--ink);
   transition: border-color var(--speed) var(--ease), box-shadow var(--speed) var(--ease);
+}
+
+/* Las casillas y radios no deben estirarse con el width:100% de .field:
+   eso empujaria la etiqueta al extremo opuesto (espejo del fix desktop). */
+.field input[type="checkbox"],
+.field input[type="radio"] {
+  width: auto;
+  padding: 0;
+  accent-color: var(--primary);
 }
 
 .field input::placeholder,
@@ -934,10 +944,64 @@ a.service-card:hover {
   margin: 14px 0 0;
 }
 
-.appointment-summary {
+/* ---------- Confirmacion de cita: cabecera en banda (paso 19) ----------
+   La cita se aplana en una cabecera horizontal para que la preconsulta ocupe
+   todo el ancho debajo; el formulario respira en 3-4 columnas en escritorio y
+   colapsa a una sola en telefono (acceso principal de los pacientes). */
+.appointment-banner-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px 28px;
+}
+
+.appointment-identity {
   display: grid;
   gap: 8px;
-  margin-bottom: 18px;
+  min-width: 200px;
+}
+
+.appointment-identity h2 {
+  margin: 0;
+}
+
+.appointment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1;
+}
+
+.meta-chip {
+  flex: 1 1 130px;
+  min-width: 130px;
+  padding: 8px 14px;
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.meta-chip small {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.appointment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Separador entre la cabecera de la cita y los antecedentes (ambas secciones
+   ya no tienen panel, asi que la linea las diferencia). */
+.appointment-antecedentes {
+  border-top: 1px solid var(--line);
+  padding-top: 24px;
 }
 
 .panel > .booking-shell .panel {
@@ -2002,6 +2066,59 @@ a.service-card:hover {
   grid-column: 1 / -1;
 }
 
+.mh-block + .mh-block {
+  margin-top: 14px;
+}
+
+.mh-block-title {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mh-suffix {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.mh-family-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.mh-family-row:first-of-type {
+  border-top: 0;
+}
+
+.mh-family-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.mh-family-detail {
+  margin: 8px 0 4px 26px;
+}
+
+.mh-family-relatives {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.mh-relative {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
 .ai-preconsulta-consent {
   display: grid;
   gap: 12px;
@@ -2423,6 +2540,17 @@ a.service-card:hover {
 
   .booking-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  /* En telefono la cabecera de la cita se apila: los botones ocupan todo el
+     ancho para ser comodos al tacto. */
+  .appointment-meta,
+  .appointment-actions {
+    width: 100%;
+  }
+
+  .appointment-actions button {
+    flex: 1 1 auto;
   }
 
   .slot-grid {

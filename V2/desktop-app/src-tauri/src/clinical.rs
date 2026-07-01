@@ -197,7 +197,11 @@ pub struct EncounterDetail {
     pub patient: PatientRecord,
     pub appointment_reason: Option<String>,
     pub appointment_start: Option<String>,
-    pub precheckin: Option<String>,
+    /// Formulario de antecedentes / historia clinica que envio el paciente
+    /// (sobre kind medical-history o generic). Distinto de la preconsulta IA.
+    pub medical_history: Option<String>,
+    /// Resultado de la preconsulta guiada por IA (sobre kind ai-preconsulta).
+    pub preconsulta: Option<String>,
     pub note: Option<NoteVersion>,
     pub note_version_count: i64,
     pub prescription: Option<String>,
@@ -723,30 +727,44 @@ pub fn get_encounter_detail(
         .optional()?
         .ok_or(ClinicalError::NotFound)?;
 
-    let (appointment_reason, appointment_start, precheckin) = match &encounter.appointment_id {
-        Some(appointment_id) => {
-            let pair: Option<(Option<String>, String)> = conn
-                .query_row(
-                    "SELECT reason, scheduled_start FROM appointments WHERE id = ?1",
-                    params![appointment_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+    let (appointment_reason, appointment_start, medical_history, preconsulta) =
+        match &encounter.appointment_id {
+            Some(appointment_id) => {
+                let pair: Option<(Option<String>, String)> = conn
+                    .query_row(
+                        "SELECT reason, scheduled_start FROM appointments WHERE id = ?1",
+                        params![appointment_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                // Una cita puede tener dos sobres: el formulario de antecedentes
+                // (kind medical-history/generic) y la preconsulta guiada por IA
+                // (kind ai-preconsulta). Se separan para no mostrarlos cruzados.
+                let mut medical_history: Option<String> = None;
+                let mut preconsulta: Option<String> = None;
+                let mut statement = conn.prepare(
+                    "SELECT responses_json, kind FROM precheckins WHERE appointment_id = ?1",
+                )?;
+                let rows = statement.query_map(params![appointment_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                for row in rows {
+                    let (responses_json, kind) = row?;
+                    if kind == "ai-preconsulta" {
+                        preconsulta = Some(responses_json);
+                    } else {
+                        medical_history = Some(responses_json);
+                    }
+                }
+                (
+                    pair.as_ref().and_then(|(reason, _)| reason.clone()),
+                    pair.map(|(_, start)| start),
+                    medical_history,
+                    preconsulta,
                 )
-                .optional()?;
-            let precheckin: Option<String> = conn
-                .query_row(
-                    "SELECT responses_json FROM precheckins WHERE appointment_id = ?1",
-                    params![appointment_id],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            (
-                pair.as_ref().and_then(|(reason, _)| reason.clone()),
-                pair.map(|(_, start)| start),
-                precheckin,
-            )
-        }
-        None => (None, None, None),
-    };
+            }
+            None => (None, None, None, None),
+        };
 
     let note = conn
         .query_row(
@@ -818,7 +836,8 @@ pub fn get_encounter_detail(
         patient,
         appointment_reason,
         appointment_start,
-        precheckin,
+        medical_history,
+        preconsulta,
         note,
         note_version_count,
         prescription,
@@ -1300,6 +1319,175 @@ pub fn delete_timeline_event(conn: &Connection, event_id: &str) -> Result<(), Cl
 
 /* ---------- Nota SOAP, receta y antecedentes ---------- */
 
+#[derive(Debug, Serialize, Clone)]
+pub struct PatientMedicalHistoryVersion {
+    pub id: String,
+    pub patient_id: String,
+    pub version: i64,
+    pub payload_json: String,
+    pub source: String,
+    pub encounter_id: Option<String>,
+    pub source_appointment_id: Option<String>,
+    pub reconciled_source_hash: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SavePatientMedicalHistoryInput {
+    pub payload_json: String,
+    pub source: String,
+    pub encounter_id: Option<String>,
+    pub source_appointment_id: Option<String>,
+    pub reconciled_source_hash: Option<String>,
+}
+
+pub fn medical_history_source_hash(payload_json: &str) -> String {
+    Sha256::digest(payload_json.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn medical_history_version_from_row(
+    row: &rusqlite::Row,
+) -> rusqlite::Result<PatientMedicalHistoryVersion> {
+    Ok(PatientMedicalHistoryVersion {
+        id: row.get(0)?,
+        patient_id: row.get(1)?,
+        version: row.get(2)?,
+        payload_json: row.get(3)?,
+        source: row.get(4)?,
+        encounter_id: row.get(5)?,
+        source_appointment_id: row.get(6)?,
+        reconciled_source_hash: row.get(7)?,
+        created_at: row.get(8)?,
+    })
+}
+
+pub fn latest_patient_medical_history(
+    conn: &Connection,
+    patient_id: &str,
+) -> Result<Option<PatientMedicalHistoryVersion>, ClinicalError> {
+    conn.query_row(
+        "SELECT id, patient_id, version, payload_json, source, encounter_id,
+                source_appointment_id, reconciled_source_hash, created_at
+         FROM patient_medical_history_versions
+         WHERE patient_id = ?1
+         ORDER BY version DESC
+         LIMIT 1",
+        params![patient_id],
+        medical_history_version_from_row,
+    )
+    .optional()
+    .map_err(ClinicalError::from)
+}
+
+pub fn save_patient_medical_history_version(
+    conn: &mut Connection,
+    patient_id: &str,
+    input: &SavePatientMedicalHistoryInput,
+) -> Result<PatientMedicalHistoryVersion, ClinicalError> {
+    serde_json::from_str::<serde_json::Value>(&input.payload_json)
+        .map_err(|_| ClinicalError::Invalid("antecedentes invalidos".into()))?;
+    if !matches!(
+        input.source.as_str(),
+        "DOCTOR_EDIT" | "PATIENT_INITIAL" | "PATIENT_RECONCILIATION"
+    ) {
+        return Err(ClinicalError::Invalid(
+            "fuente de antecedentes invalida".into(),
+        ));
+    }
+    let patient_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM patients WHERE id = ?1)",
+        params![patient_id],
+        |row| row.get(0),
+    )?;
+    if !patient_exists {
+        return Err(ClinicalError::NotFound);
+    }
+    if let Some(encounter_id) = &input.encounter_id {
+        let encounter = read_encounter(conn, encounter_id)?;
+        if encounter.patient_id != patient_id {
+            return Err(ClinicalError::Invalid(
+                "el encuentro no pertenece al paciente".into(),
+            ));
+        }
+        ensure_open(&encounter)?;
+    }
+    if let (Some(appointment_id), Some(expected_hash)) = (
+        input.source_appointment_id.as_deref(),
+        input.reconciled_source_hash.as_deref(),
+    ) {
+        let current_payload: Option<String> = conn
+            .query_row(
+                "SELECT responses_json FROM precheckins
+                 WHERE appointment_id = ?1 AND kind IN ('medical-history', 'generic')
+                 ORDER BY CASE kind WHEN 'medical-history' THEN 0 ELSE 1 END
+                 LIMIT 1",
+                params![appointment_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(current_payload) = current_payload else {
+            return Err(ClinicalError::Invalid(
+                "el cuestionario del paciente ya no esta disponible".into(),
+            ));
+        };
+        if medical_history_source_hash(&current_payload) != expected_hash {
+            return Err(ClinicalError::Invalid(
+                "el cuestionario del paciente cambio; recarga antes de guardar".into(),
+            ));
+        }
+    }
+
+    let tx = conn.transaction()?;
+    let next_version: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(version), 0) + 1
+         FROM patient_medical_history_versions WHERE patient_id = ?1",
+        params![patient_id],
+        |row| row.get(0),
+    )?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let created_at = now();
+    tx.execute(
+        "INSERT INTO patient_medical_history_versions (
+            id, patient_id, version, payload_json, source, encounter_id,
+            source_appointment_id, reconciled_source_hash, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            id,
+            patient_id,
+            next_version,
+            input.payload_json,
+            input.source,
+            input.encounter_id,
+            input.source_appointment_id,
+            input.reconciled_source_hash,
+            created_at
+        ],
+    )?;
+    audit(
+        &tx,
+        "patient_medical_history",
+        patient_id,
+        "version-saved",
+        Some(&format!("v{next_version};source={}", input.source)),
+    )?;
+    tx.commit()?;
+
+    Ok(PatientMedicalHistoryVersion {
+        id,
+        patient_id: patient_id.to_string(),
+        version: next_version,
+        payload_json: input.payload_json.clone(),
+        source: input.source.clone(),
+        encounter_id: input.encounter_id.clone(),
+        source_appointment_id: input.source_appointment_id.clone(),
+        reconciled_source_hash: input.reconciled_source_hash.clone(),
+        created_at,
+    })
+}
+
 pub fn save_note(
     conn: &Connection,
     encounter_id: &str,
@@ -1677,6 +1865,104 @@ mod tests {
             .query_row("SELECT count(*) FROM clinical_audit", [], |row| row.get(0))
             .unwrap();
         assert!(audit_count >= 5, "se esperaban >=5 eventos, hubo {audit_count}");
+    }
+
+    #[test]
+    fn patient_medical_history_versions_increment_and_keep_precheckin_immutable() {
+        let mut conn = test_conn("patient-medical-history");
+        seed_appointment(&conn, "appt-mh", "pat-mh");
+        let encounter = open_encounter_for_appointment(&conn, "appt-mh").unwrap();
+        let patient_payload = r#"{"allergies":"Penicilina","identification":{"estado":"Jalisco"}}"#;
+        conn.execute(
+            "INSERT INTO precheckins (appointment_id, responses_json, kind, received_at)
+             VALUES (?1, ?2, 'medical-history', '2026-06-19T15:00:00Z')",
+            params!["appt-mh", patient_payload],
+        )
+        .unwrap();
+        let source_hash = medical_history_source_hash(patient_payload);
+
+        let first = save_patient_medical_history_version(
+            &mut conn,
+            "pat-mh",
+            &SavePatientMedicalHistoryInput {
+                payload_json: r#"{"allergies":"Penicilina"}"#.into(),
+                source: "PATIENT_INITIAL".into(),
+                encounter_id: Some(encounter.id.clone()),
+                source_appointment_id: Some("appt-mh".into()),
+                reconciled_source_hash: Some(source_hash.clone()),
+            },
+        )
+        .unwrap();
+        let second = save_patient_medical_history_version(
+            &mut conn,
+            "pat-mh",
+            &SavePatientMedicalHistoryInput {
+                payload_json: r#"{"allergies":"Sulfas"}"#.into(),
+                source: "DOCTOR_EDIT".into(),
+                encounter_id: Some(encounter.id),
+                source_appointment_id: Some("appt-mh".into()),
+                reconciled_source_hash: Some(source_hash),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(first.version, 1);
+        assert_eq!(second.version, 2);
+        assert_eq!(
+            latest_patient_medical_history(&conn, "pat-mh")
+                .unwrap()
+                .unwrap()
+                .payload_json,
+            r#"{"allergies":"Sulfas"}"#
+        );
+        let original: String = conn
+            .query_row(
+                "SELECT responses_json FROM precheckins
+                 WHERE appointment_id = 'appt-mh' AND kind = 'medical-history'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(original, patient_payload);
+        let audit_details: String = conn
+            .query_row(
+                "SELECT details FROM clinical_audit
+                 WHERE entity = 'patient_medical_history'
+                 ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!audit_details.contains("Sulfas"));
+    }
+
+    #[test]
+    fn patient_medical_history_rejects_unknown_patient_and_signed_encounter() {
+        let mut conn = test_conn("patient-medical-history-guards");
+        let input = SavePatientMedicalHistoryInput {
+            payload_json: "{}".into(),
+            source: "DOCTOR_EDIT".into(),
+            encounter_id: None,
+            source_appointment_id: None,
+            reconciled_source_hash: None,
+        };
+        assert!(matches!(
+            save_patient_medical_history_version(&mut conn, "missing", &input),
+            Err(ClinicalError::NotFound)
+        ));
+
+        seed_appointment(&conn, "appt-signed-mh", "pat-signed-mh");
+        let encounter = open_encounter_for_appointment(&conn, "appt-signed-mh").unwrap();
+        save_note(&conn, &encounter.id, &NoteContent::default()).unwrap();
+        sign_encounter(&conn, &encounter.id).unwrap();
+        let signed_input = SavePatientMedicalHistoryInput {
+            encounter_id: Some(encounter.id),
+            ..input
+        };
+        assert!(matches!(
+            save_patient_medical_history_version(&mut conn, "pat-signed-mh", &signed_input),
+            Err(ClinicalError::AlreadySigned)
+        ));
     }
 
     #[test]

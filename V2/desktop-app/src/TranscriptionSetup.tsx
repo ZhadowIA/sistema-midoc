@@ -16,6 +16,8 @@ interface TranscriptionRecommendation {
   totalRamMb: number;
   cpuCores: number;
   hasGpu: boolean;
+  accel: string;
+  accelLabel: string;
   modelId: string;
   modelLabel: string;
   modelRamMb: number;
@@ -44,6 +46,17 @@ function bytesToGb(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+function bytesToMb(bytes: number): string {
+  return `${Math.round(bytes / 1024 / 1024)} MB`;
+}
+
+// Etiquetas legibles de los dos modelos ONNX de diarizacion (el backend solo
+// devuelve el identificador estable y el nombre de archivo).
+const DIARIZATION_LABELS: Record<string, string> = {
+  "diarization-segmentation": "Segmentacion de voz (detecta cuando hay habla)",
+  "diarization-embedding": "Identificacion de hablante (separa las voces)"
+};
+
 export function TranscriptionSetup() {
   const [rec, setRec] = useState<TranscriptionRecommendation | null>(null);
   const [models, setModels] = useState<ModelStatus[]>([]);
@@ -53,6 +66,8 @@ export function TranscriptionSetup() {
   // el sondeo y deshabilitar el boton de inmediato (evita dobles clics que
   // lanzarian descargas concurrentes).
   const [starting, setStarting] = useState(false);
+  // Marca optimista equivalente para la descarga del modelo VAD (saltar silencios).
+  const [vadStarting, setVadStarting] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   const loadModels = useCallback(async () => {
@@ -77,15 +92,26 @@ export function TranscriptionSetup() {
   }
 
   const recommended = rec ? models.find((m) => m.modelId === rec.modelId) ?? null : null;
+  // Modelo VAD (saltar silencios): opcional pero recomendado en CPU. Acelera la
+  // transcripcion recortando los silencios; sin el, se transcribe todo el audio.
+  const vad = models.find((m) => m.modelId === "vad-silero") ?? null;
 
   // En cuanto el backend confirma la descarga, soltamos la marca optimista.
   useEffect(() => {
     if (starting && recommended?.downloading) setStarting(false);
   }, [starting, recommended?.downloading]);
 
+  useEffect(() => {
+    if (vadStarting && vad?.downloading) setVadStarting(false);
+  }, [vadStarting, vad?.downloading]);
+
   // Sondea el estado mientras hay una descarga en curso, para pintar el avance.
   useEffect(() => {
-    const downloading = starting || (recommended?.downloading ?? false);
+    const downloading =
+      starting ||
+      vadStarting ||
+      (recommended?.downloading ?? false) ||
+      (vad?.downloading ?? false);
     if (downloading && pollRef.current === null) {
       pollRef.current = window.setInterval(() => void loadModels(), 800);
     } else if (!downloading && pollRef.current !== null) {
@@ -98,7 +124,7 @@ export function TranscriptionSetup() {
         pollRef.current = null;
       }
     };
-  }, [starting, recommended?.downloading, loadModels]);
+  }, [starting, vadStarting, recommended?.downloading, vad?.downloading, loadModels]);
 
   async function downloadRecommended() {
     if (!rec || starting || recommended?.downloading) return;
@@ -116,11 +142,26 @@ export function TranscriptionSetup() {
     }
   }
 
+  async function downloadVad() {
+    if (vadStarting || vad?.downloading) return;
+    setError("");
+    setVadStarting(true);
+    try {
+      await call("download_transcription_model", { modelId: "vad-silero" });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setVadStarting(false);
+      await loadModels();
+    }
+  }
+
   useEffect(() => {
     void detect();
   }, []);
 
   return (
+    <>
     <section className="panel">
       <div className="panel-header">
         <h2>Transcripcion de consulta</h2>
@@ -156,7 +197,7 @@ export function TranscriptionSetup() {
             </div>
             <div>
               <dt>Aceleracion</dt>
-              <dd>{rec.hasGpu ? "GPU compatible detectada" : "Sin GPU dedicada (usa CPU)"}</dd>
+              <dd>{rec.accelLabel}</dd>
             </div>
             <div>
               <dt>El modelo usa</dt>
@@ -222,6 +263,56 @@ export function TranscriptionSetup() {
             )}
           </div>
 
+          <div className="model-download">
+            <p className="meta">
+              Acelerador opcional: el detector de voz (VAD) salta los silencios de la
+              consulta para transcribir mas rapido en equipos sin GPU, sin perder precision.
+            </p>
+            {vad?.present ? (
+              <p className="form-success" role="status">
+                Detector de voz listo: se saltaran los silencios al transcribir
+                {vad.verified ? " (verificado)." : "."}
+              </p>
+            ) : vadStarting || vad?.downloading ? (
+              <div className="stack">
+                <div
+                  className="model-progress"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={vad?.expectedSizeBytes ?? 0}
+                  aria-valuenow={vad?.downloadedBytes ?? 0}
+                >
+                  <span
+                    className="model-progress-bar"
+                    style={{
+                      width: `${
+                        vad && vad.expectedSizeBytes > 0
+                          ? Math.min(
+                              100,
+                              Math.round((vad.downloadedBytes / vad.expectedSizeBytes) * 100)
+                            )
+                          : 0
+                      }%`
+                    }}
+                  />
+                </div>
+                <p className="meta">
+                  Descargando detector de voz… {bytesToMb(vad?.downloadedBytes ?? 0)} de{" "}
+                  {bytesToMb(vad?.expectedSizeBytes ?? 0)}
+                </p>
+              </div>
+            ) : (
+              <button className="ghost-button" onClick={() => void downloadVad()}>
+                Descargar detector de voz (~{bytesToMb(vad?.expectedSizeBytes ?? 885098)})
+              </button>
+            )}
+            {vad?.error && (
+              <p className="form-error" role="alert">
+                {vad.error}
+              </p>
+            )}
+          </div>
+
           {rec.recommendCloudFallback && (
             <p className="form-success" role="status">
               Tu equipo esta por debajo del minimo comodo para transcripcion local fluida.
@@ -238,6 +329,153 @@ export function TranscriptionSetup() {
           </div>
         </div>
       ) : null}
+    </section>
+    <DiarizationModelsSetup />
+    </>
+  );
+}
+
+/**
+ * Descarga de los modelos de separacion de voces (diarizacion local con
+ * sherpa-onnx). Son dos modelos ONNX (segmentacion + embedding) que corren en el
+ * dispositivo, igual que Whisper: REFERENCIA publica, sin enviar audio a la nube.
+ * Con ellos, la transcripcion puede separarse en turnos Medico/Paciente; sin ellos,
+ * la consulta se transcribe igual (solo sin la separacion automatica de hablantes).
+ */
+export function DiarizationModelsSetup() {
+  const [models, setModels] = useState<ModelStatus[]>([]);
+  const [error, setError] = useState("");
+  // Modelo cuya descarga acabamos de lanzar (marca optimista antes de que el
+  // backend la registre), para deshabilitar su boton y arrancar el sondeo.
+  const [starting, setStarting] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setModels(await call<ModelStatus[]>("diarization_model_status"));
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  const anyDownloading = starting !== null || models.some((m) => m.downloading);
+
+  // Suelta la marca optimista cuando el backend confirma la descarga.
+  useEffect(() => {
+    if (starting && models.find((m) => m.modelId === starting)?.downloading) {
+      setStarting(null);
+    }
+  }, [starting, models]);
+
+  // Sondea mientras haya alguna descarga en curso, para pintar el avance.
+  useEffect(() => {
+    if (anyDownloading && pollRef.current === null) {
+      pollRef.current = window.setInterval(() => void load(), 800);
+    } else if (!anyDownloading && pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    return () => {
+      if (pollRef.current !== null) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [anyDownloading, load]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function download(modelId: string) {
+    const current = models.find((m) => m.modelId === modelId);
+    if (starting || current?.downloading) return;
+    setError("");
+    setStarting(modelId);
+    try {
+      await call("download_diarization_model", { modelId });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setStarting(null);
+      await load();
+    }
+  }
+
+  const allReady = models.length > 0 && models.every((m) => m.present);
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Separacion de voces (medico y paciente)</h2>
+        <p>
+          Opcional: separa la transcripcion en turnos de medico y paciente. Corre en
+          esta computadora (sin enviar audio a la nube). Sin estos modelos, la
+          consulta se transcribe igual, solo sin la separacion automatica.
+        </p>
+      </div>
+
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+
+      {allReady && (
+        <p className="form-success" role="status">
+          Modelos de separacion de voces listos: la transcripcion se dividira en
+          turnos de medico y paciente para tu revision.
+        </p>
+      )}
+
+      <div className="stack">
+        {models.map((model) => {
+          const downloading = starting === model.modelId || model.downloading;
+          const pct =
+            model.expectedSizeBytes > 0
+              ? Math.min(100, Math.round((model.downloadedBytes / model.expectedSizeBytes) * 100))
+              : 0;
+          return (
+            <div className="model-download" key={model.modelId}>
+              <strong>{DIARIZATION_LABELS[model.modelId] ?? model.fileName}</strong>
+              {model.present ? (
+                <p className="form-success" role="status">
+                  Descargado y listo{model.verified ? " (verificado)." : "."}
+                </p>
+              ) : downloading ? (
+                <div className="stack">
+                  <div
+                    className="model-progress"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={model.expectedSizeBytes}
+                    aria-valuenow={model.downloadedBytes}
+                  >
+                    <span className="model-progress-bar" style={{ width: `${pct}%` }} />
+                  </div>
+                  <p className="meta">
+                    Descargando… {bytesToMb(model.downloadedBytes)} de{" "}
+                    {bytesToMb(model.expectedSizeBytes)}
+                  </p>
+                </div>
+              ) : (
+                <button
+                  className="action-button"
+                  onClick={() => void download(model.modelId)}
+                  disabled={starting !== null}
+                >
+                  Descargar ({bytesToMb(model.expectedSizeBytes)})
+                </button>
+              )}
+              {model.error && (
+                <p className="form-error" role="alert">
+                  {model.error}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }

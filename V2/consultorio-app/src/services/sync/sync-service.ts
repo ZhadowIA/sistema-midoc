@@ -47,6 +47,7 @@ const aiUsageReportSchema = z
       "CLINICAL_GAPS",
       "TRANSCRIPTION",
       "CONSULTATION_STRUCTURING",
+      "CLINICAL_AID",
       "VALIDATION",
       "OTHER"
     ]),
@@ -423,6 +424,7 @@ function mapAiUsageType(usageType: AiUsageReport["usageType"]): AiUsageType {
     CLINICAL_GAPS: AiUsageType.CLINICAL_GAP,
     TRANSCRIPTION: AiUsageType.TRANSCRIPTION,
     CONSULTATION_STRUCTURING: AiUsageType.OTHER,
+    CLINICAL_AID: AiUsageType.OTHER,
     VALIDATION: AiUsageType.VALIDATION,
     OTHER: AiUsageType.OTHER
   };

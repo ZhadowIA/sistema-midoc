@@ -164,6 +164,64 @@ describe("public booking flow", () => {
     }
   });
 
+  it("never offers same-day slots whose start time already passed (no minAdvanceHours)", async () => {
+    const email = uniqueEmail("doctor-pastslots");
+    const slug = uniqueSlug("dra-pastslots");
+    // Hoy en UTC: la regla cubre todo el dia, asi que de madrugada hay horarios
+    // ya pasados y horarios futuros sin importar a que hora corra el test.
+    const timeZone = "UTC";
+    const today = new Date().toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Nora",
+        lastName: "Vega",
+        professionalName: "Dra. Nora Vega",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        professionalName: "Dra. Nora Vega",
+        specialty: ClinicalProfile.GENERAL_MEDICINE,
+        isPublic: true,
+        timeZone
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta general",
+        priceCents: 90000,
+        durationMinutes: 30
+      });
+
+      // Regla solo para hoy, de 00:00 a 23:30 y SIN anticipacion minima: sin el
+      // filtro de "ya empezo", los horarios de la manana seguirian visibles por
+      // la tarde.
+      await createAvailabilityRule(account.user.id, {
+        specificDate: today,
+        startTime: "00:00",
+        endTime: "23:30",
+        slotInterval: 30
+      });
+
+      const before = Date.now();
+      const availability = await listPublicAvailability({ slug, serviceId: service.id, dateFrom: today, days: 1 });
+
+      for (const slot of availability.slots) {
+        expect(new Date(slot.slotStart).getTime()).toBeGreaterThan(before);
+      }
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
   it("lets the same session change its hold without self-blocking (paso 19, rebanada 3)", async () => {
     const email = uniqueEmail("doctor-session-hold");
     const slug = uniqueSlug("dra-session");
@@ -355,6 +413,91 @@ describe("public booking flow", () => {
       expect(details?.appointment.status).toBe("CONFIRMED");
       expect(details?.precheckin?.status).toBe("SUBMITTED");
       expect(details?.patient.firstName).toBe("Mario");
+    } finally {
+      await cleanupUserByEmail(email);
+    }
+  });
+
+  it("captures apellido paterno/materno separately and combines them into lastName (paso 19)", async () => {
+    const email = uniqueEmail("doctor-apellidos");
+    const slug = uniqueSlug("dra-apellidos");
+    const slotDate = nextWeekdayDate(2);
+    const dateFrom = slotDate.toISOString().slice(0, 10);
+
+    try {
+      const account = await createDoctorAccount({
+        email,
+        password: "Str0ngPass!123",
+        firstName: "Iris",
+        lastName: "Nava",
+        professionalName: "Dra. Iris Nava",
+        licenseNumber: "1234567",
+        specialty: "GENERAL_MEDICINE",
+        termsVersion: "2026-05",
+        privacyVersion: "2026-05"
+      });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
+
+      await updateDoctorProfile(account.user.id, {
+        publicSlug: slug,
+        professionalName: "Dra. Iris Nava",
+        specialty: ClinicalProfile.GENERAL_MEDICINE,
+        isPublic: true
+      });
+
+      const service = await createDoctorService(account.user.id, {
+        name: "Consulta general",
+        priceCents: 90000,
+        durationMinutes: 30
+      });
+
+      await createAvailabilityRule(account.user.id, {
+        dayOfWeek: slotDate.getUTCDay(),
+        startTime: "09:00",
+        endTime: "11:00",
+        slotInterval: 30
+      });
+
+      const availability = await listPublicAvailability({ slug, serviceId: service.id, dateFrom, days: 1 });
+
+      const holdWith = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: availability.slots[0]!.slotStart
+      });
+
+      // Con apellido materno: lastName queda combinado y los apellidos separados
+      // se conservan para prellenar los antecedentes.
+      const withMaterno = await bookPublicAppointment({
+        holdToken: holdWith.token,
+        patient: { firstName: "Sebastian", apellidoPaterno: "Palos", apellidoMaterno: "Apodaca", phone: "6141112233" },
+        legal: { acceptedTerms: true, acceptedPrivacy: true }
+      });
+
+      expect(withMaterno.patient.lastName).toBe("Palos Apodaca");
+      expect(withMaterno.patient.apellidoPaterno).toBe("Palos");
+      expect(withMaterno.patient.apellidoMaterno).toBe("Apodaca");
+
+      const detailsWith = await getPublicAppointmentByToken(withMaterno.confirmationToken);
+      expect(detailsWith?.patient.apellidoPaterno).toBe("Palos");
+      expect(detailsWith?.patient.apellidoMaterno).toBe("Apodaca");
+
+      // Sin apellido materno: lastName es solo el paterno; el materno queda nulo.
+      const holdWithout = await createAppointmentHold({
+        slug,
+        serviceId: service.id,
+        slotStart: availability.slots[1]!.slotStart
+      });
+      const withoutMaterno = await bookPublicAppointment({
+        holdToken: holdWithout.token,
+        patient: { firstName: "Ana", apellidoPaterno: "Ruiz", phone: "6141112244" },
+        legal: { acceptedTerms: true, acceptedPrivacy: true }
+      });
+
+      expect(withoutMaterno.patient.lastName).toBe("Ruiz");
+      expect(withoutMaterno.patient.apellidoPaterno).toBe("Ruiz");
+      expect(withoutMaterno.patient.apellidoMaterno).toBeNull();
     } finally {
       await cleanupUserByEmail(email);
     }

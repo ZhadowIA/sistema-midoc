@@ -307,9 +307,27 @@ select {
     box-shadow var(--speed) var(--ease);
 }
 
+/* Las casillas y radios no deben estirarse con el width:100% de arriba:
+   eso empuja la etiqueta al extremo opuesto (ver heredo-familiares). */
+input[type="checkbox"],
+input[type="radio"] {
+  width: auto;
+  flex: none;
+  padding: 0;
+  accent-color: var(--primary);
+}
+
 input::placeholder,
 textarea::placeholder {
   color: var(--muted);
+}
+
+/* Textarea que crece con su contenido: sin scroll interno ni redimension manual
+   (el alto lo controla AutoGrowTextarea). min-height conserva un tamano usable. */
+textarea.autogrow {
+  overflow-y: hidden;
+  resize: none;
+  min-height: 3.4em;
 }
 
 input:focus-visible,
@@ -974,6 +992,33 @@ textarea:disabled {
   font-size: 0.92rem;
 }
 
+/* Modo Foco (Paso 4): mientras se dicta (body.dictating), el chrome de
+   navegación se atenúa para concentrar la atención en la nota y la
+   transcripción en vivo. El panel de contexto y las alergias NO se atenúan
+   (seguridad del paciente). Se recupera el chrome al pasar el cursor. */
+body.dictating .app-topbar,
+body.dictating .patient-banner,
+body.dictating .encounter-modes {
+  opacity: 0.4;
+  transition: opacity var(--speed) var(--ease);
+}
+
+body.dictating .app-topbar:hover,
+body.dictating .patient-banner:hover,
+body.dictating .encounter-modes:hover,
+body.dictating .app-topbar:focus-within,
+body.dictating .encounter-modes:focus-within {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.dictating .app-topbar,
+  body.dictating .patient-banner,
+  body.dictating .encounter-modes {
+    transition: none;
+  }
+}
+
 /* Nav vertical lateral (usada por el Expediente). */
 .encounter-nav {
   position: sticky;
@@ -1066,6 +1111,297 @@ textarea:disabled {
 
 .precheckin-list dd {
   margin: 2px 0 0;
+}
+
+.questionnaire-history {
+  display: grid;
+  gap: 18px;
+}
+
+.clinical-response-groups {
+  display: grid;
+  gap: 24px;
+}
+
+.clinical-response-group {
+  min-width: 0;
+  border-top: 2px solid var(--primary);
+}
+
+.clinical-response-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 0 9px;
+}
+
+.clinical-response-heading h4 {
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.clinical-response-heading span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.clinical-field-list,
+.clinical-question-list {
+  display: grid;
+  margin: 0;
+}
+
+.clinical-field-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(0, 1.4fr);
+  gap: 18px;
+  align-items: baseline;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+}
+
+.clinical-field-row dt,
+.clinical-question-row dt {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.clinical-field-row dd,
+.clinical-question-row dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.clinical-question-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 11px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+
+.clinical-question-row > div {
+  display: grid;
+  gap: 4px;
+}
+
+.clinical-question-number {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: var(--radius-control);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 0.72rem;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.medical-history-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.medical-history-section-header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.history-pending-notice,
+.history-auto-merge {
+  padding: 12px 14px;
+  border-left: 3px solid var(--primary);
+  background: var(--primary-soft);
+}
+
+.history-pending-notice {
+  display: grid;
+  gap: 3px;
+}
+
+.history-pending-notice p,
+.history-auto-merge {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.medical-history-workflow {
+  display: grid;
+  gap: 20px;
+}
+
+.history-reconciliation-progress {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.history-conflict-list {
+  display: grid;
+  gap: 22px;
+}
+
+.history-conflict {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 2px solid var(--primary);
+}
+
+.history-conflict-title {
+  display: grid;
+  gap: 2px;
+}
+
+.history-conflict-title > span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.history-conflict-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.history-choice {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  text-align: left;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  cursor: pointer;
+  transition:
+    border-color var(--speed) var(--ease),
+    background var(--speed) var(--ease),
+    transform var(--speed) var(--ease);
+}
+
+.history-choice:hover {
+  border-color: var(--primary);
+}
+
+.history-choice:active {
+  transform: translateY(1px);
+}
+
+.history-choice-selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.history-choice small {
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.history-choice span {
+  min-height: 44px;
+  overflow-wrap: anywhere;
+}
+
+.history-choice b {
+  color: var(--primary);
+  font-size: 0.82rem;
+}
+
+.medical-history-edit-group {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 2px solid var(--primary);
+}
+
+.medical-history-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.medical-history-edit-grid .field-full {
+  grid-column: 1 / -1;
+}
+
+.medical-history-family-edit {
+  display: grid;
+  gap: 10px;
+}
+
+.medical-history-family-row {
+  display: grid;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.medical-history-family-check,
+.medical-history-relative-grid label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.medical-history-family-check {
+  font-weight: 650;
+}
+
+.medical-history-family-detail {
+  display: grid;
+  gap: 10px;
+  padding-left: 26px;
+}
+
+.medical-history-relative-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 12px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+@media (max-width: 760px) {
+  .clinical-response-heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+
+  .clinical-field-row {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .medical-history-section-header,
+  .history-conflict-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .medical-history-section-header {
+    display: grid;
+  }
+
+  .medical-history-edit-grid,
+  .medical-history-relative-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .history-list {
@@ -1443,6 +1779,162 @@ textarea:disabled {
   flex-wrap: wrap;
   align-items: end;
   gap: 8px;
+}
+
+.clinical-aid-launch {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in oklch, var(--primary) 32%, var(--line));
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+}
+
+.clinical-aid-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.clinical-aid-results {
+  display: grid;
+  gap: 4px;
+}
+
+.clinical-aid-result {
+  display: grid;
+  gap: 7px;
+  padding-block: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.clinical-aid-result p {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.clinical-aid-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.compatibility-high { color: var(--success); }
+.compatibility-medium { color: oklch(0.48 0.11 70); }
+.compatibility-low { color: var(--muted); }
+
+.transcription-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 12px;
+}
+
+.transcription-capture,
+.transcription-settings,
+.transcription-review {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+}
+
+.transcription-capture {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  text-align: center;
+  background: color-mix(in oklch, var(--surface) 70%, var(--bg));
+}
+
+.transcription-settings,
+.transcription-review {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.transcription-review {
+  grid-column: 1 / -1;
+}
+
+.transcription-mic {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--bg);
+  background: var(--primary);
+}
+
+.transcription-facts {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.transcription-facts div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.transcription-facts dt {
+  color: var(--muted);
+}
+
+.transcription-facts dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.transcription-empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.transcription-loading {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.transcription-spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid color-mix(in oklch, var(--primary) 25%, transparent);
+  border-top-color: var(--primary);
+  animation: transcription-spin 0.8s linear infinite;
+}
+
+@keyframes transcription-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcription-spinner {
+    animation-duration: 2s;
+  }
+}
+
+@media (max-width: 1180px) {
+  .transcription-workspace {
+    grid-template-columns: 1fr;
+  }
 }
 
 .recording-button {

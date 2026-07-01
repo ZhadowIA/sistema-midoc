@@ -200,7 +200,7 @@ pub fn apply_event(conn: &Connection, event: &InboxEvent) -> Result<(), SyncErro
             conn.execute(
                 "INSERT INTO precheckins (appointment_id, responses_json, received_at)
                  VALUES (?1, ?2, ?3)
-                 ON CONFLICT(appointment_id) DO UPDATE SET
+                 ON CONFLICT(appointment_id, kind) DO UPDATE SET
                     responses_json = excluded.responses_json,
                     received_at = excluded.received_at",
                 params![text(payload, "appointmentId"), responses, now],
@@ -619,8 +619,9 @@ pub fn store_mailbox_document(
 /// Guarda los antecedentes (historia clinica) ya descifrados en la base local.
 /// El sobre lleva en el meta `{kind:"medical-history"}` (antecedentes) o
 /// `{kind:"ai-preconsulta"}` (resultado de la IA), y el JSON de respuestas como
-/// contenido. Idempotente por appointment_id (re-entrega no duplica; reenvio del
-/// paciente actualiza). CLINICO: vive solo aqui.
+/// contenido. Idempotente por (appointment_id, kind): reenvio del mismo tipo
+/// actualiza; los antecedentes y la preconsulta IA coexisten para una misma cita
+/// sin pisarse. CLINICO: vive solo aqui.
 pub fn store_mailbox_precheckin(
     conn: &Connection,
     appointment_id: &str,
@@ -632,9 +633,8 @@ pub fn store_mailbox_precheckin(
     conn.execute(
         "INSERT INTO precheckins (appointment_id, responses_json, kind, received_at)
          VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(appointment_id) DO UPDATE SET
+         ON CONFLICT(appointment_id, kind) DO UPDATE SET
             responses_json = excluded.responses_json,
-            kind = excluded.kind,
             received_at = excluded.received_at",
         params![appointment_id, responses_json, kind, chrono_now()],
     )?;
@@ -915,7 +915,7 @@ mod tests {
         let plaintext = precheckin_envelope(json.as_bytes());
 
         store_mailbox_precheckin(&conn, "appt-1", &plaintext).unwrap();
-        // Reenvio del paciente: actualiza, no duplica (PK por appointment_id).
+        // Reenvio del mismo tipo: actualiza, no duplica (PK por appointment_id+kind).
         let json2 = r#"{"sex":"F","allergies":"ninguna"}"#;
         store_mailbox_precheckin(&conn, "appt-1", &precheckin_envelope(json2.as_bytes())).unwrap();
 
@@ -950,6 +950,50 @@ mod tests {
             .unwrap();
         assert_eq!(kind, "ai-preconsulta");
         assert_eq!(responses, json);
+    }
+
+    #[test]
+    fn medical_history_and_ai_preconsulta_coexist_for_same_appointment() {
+        let conn = test_conn("precheckin-both");
+        let mh = r#"{"sex":"M","pathological":{"diabetico":"si"}}"#;
+        let ai = r#"{"motivo":"tos","conversation":[{"question":"q","answer":"a"}]}"#;
+
+        // El paciente envia los dos sobres para la misma cita: no deben pisarse.
+        store_mailbox_precheckin(&conn, "appt-both", &precheckin_envelope(mh.as_bytes())).unwrap();
+        store_mailbox_precheckin(
+            &conn,
+            "appt-both",
+            &precheckin_envelope_kind("ai-preconsulta", ai.as_bytes()),
+        )
+        .unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM precheckins WHERE appointment_id = 'appt-both'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2, "ambos kinds coexisten");
+
+        let mh_stored: String = conn
+            .query_row(
+                "SELECT responses_json FROM precheckins
+                 WHERE appointment_id = 'appt-both' AND kind = 'medical-history'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let ai_stored: String = conn
+            .query_row(
+                "SELECT responses_json FROM precheckins
+                 WHERE appointment_id = 'appt-both' AND kind = 'ai-preconsulta'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(mh_stored, mh);
+        assert_eq!(ai_stored, ai);
     }
 
     #[test]

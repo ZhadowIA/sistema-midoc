@@ -739,6 +739,37 @@ Verificacion (rebanada 3): 130 pruebas de Rust en verde (+3: parseo de transcrip
 
 Con esto la compuerta de push del paso 15 queda cubierta: descarga de modelo verificada, transcripcion local real (binding compilado y con inferencia real verificada) y respaldo en nube gobernado, todo con pruebas y residencia local por defecto.
 
+### Extension (2026-06-21): optimizacion de transcripcion para CPU (rebanadas 4-6)
+
+Motivacion: el paso 15 se diseno descargando pesos fp16 y tratando la GPU como binario *dedicada si/no*. El sistema es para **medicos**, que rara vez tienen GPU dedicada (lo normal es CPU-only, GPU integrada o Apple Silicon). Se reorienta a maxima eficiencia/velocidad/precision en equipos sin GPU dedicada, sin abandonar a quien si la tiene. Decisiones de producto (2026-06-21): reemplazar fp16 por **cuantizados Q5** en todos los modelos, y empaquetar backend **Vulkan universal + Metal + CPU/OpenBLAS**, con la deteccion razonando por backend. Detalle en `11_recomendaciones_ia_medica.md` (seccion "Optimizacion para CPU").
+
+Entregado (rebanada 4 — modelos cuantizados Q5):
+
+- **Pesos Q5 (`transcription.rs`, `transcription_model.rs`).** `WhisperModel::file_name` apunta a las variantes cuantizadas (`ggml-small-q5_1.bin`, `ggml-medium-q5_0.bin`, `ggml-large-v3-turbo-q5_0.bin`, `ggml-large-v3-q5_0.bin`); RAM/disco aproximados y tamanos exactos de descarga (Content-Length verificado) actualizados a Q5. La URL por defecto al repo publico de whisper.cpp sirve sin cambios.
+- **Impacto.** El modelo recomendado en CPU (turbo-q5) baja de ~1.6 GB a ~575 MB en disco y de ~6 GB a ~2 GB en RAM, con perdida de precision minima.
+
+Entregado (rebanada 5 — backends de aceleracion + deteccion por backend):
+
+- **Features de Cargo (`Cargo.toml`).** `whisper-openblas`, `whisper-vulkan`, `whisper-metal` (ademas del ya existente `whisper-cuda`), compile-time y verificados en staging (regla 5). El build por defecto y las pruebas no necesitan cadena nativa.
+- **Deteccion por backend (`transcription.rs`).** El clasificador booleano `looks_like_accelerable_gpu` se reemplaza por `classify_adapter -> AdapterClass {Dedicated, Integrated, Apple, None}` y `detect_backend_from_names -> AccelBackend {Cpu, VulkanIntegrated, VulkanDedicated, Metal}`. Las GPU integradas (Intel UHD/Iris, APU Radeon) ya **no** se descartan: aceleran via Vulkan. Apple Silicon -> Metal.
+- **Politica `recommend()` CPU-first.** turbo-q5 como base en CPU (>=6 GB); large-v3-q5 para GPU dedicada y Apple con >=16 GB; small-q5 + nube solo para CPU con <6 GB. `TranscriptionRecommendation` expone `accel`/`accelLabel` ademas de `hasGpu` (compat). El frontend (`TranscriptionSetup.tsx`) muestra el backend detectado.
+
+Entregado (rebanada 6 — VAD para saltar silencios):
+
+- **Asset VAD (`transcription_model.rs`).** Modelo Silero (`vad-silero`, `ggml-silero-v5.1.2.bin`, ~865 KB) anadido al catalogo; reusa el gestor de descarga (reanudacion/checksum/estado) y vive en `models/` (referencia publica, no PHI).
+- **Cableado (`lib.rs`, `whisper_provider.rs`).** `WhisperLocalProvider` acepta una ruta VAD opcional; si el modelo esta descargado, `FullParams` activa el VAD (`enable_vad` + `set_vad_model_path` + `set_vad_params`, silencio minimo 200 ms para no cortar habla clinica) y whisper.cpp procesa solo los tramos con voz. Si no esta, degrada a procesar todo el audio.
+- **UI (`TranscriptionSetup.tsx`).** Descarga opcional del detector de voz con su propio estado/progreso, junto al modelo principal.
+
+Entregado (rebanada 7 — matriz de empaque por SO + reconciliacion con el backend compilado):
+
+- **Reconciliacion deteccion/compilacion (`transcription.rs`).** `BackendCaps::compiled()` lee los features de Cargo activos (`cfg!(feature = ...)`) y `effective_backend(detected, caps)` reduce el backend detectado por hardware al que el binario realmente puede usar; si la aceleracion no se compilo, cae a CPU. `detect_specs` aplica esta reduccion. Cierra el acoplamiento: un instalador CPU-only en una maquina con GPU recomienda turbo-q5 (CPU), no large-v3 que correria lento.
+- **Matriz de distribucion (`package.json`).** Scripts por SO: `tauri:build:vulkan` (Windows/Linux: Vulkan universal + OpenBLAS + diarizacion), `tauri:build:metal` (macOS: Metal), `tauri:build:cuda` (NVIDIA), y `tauri:build` como respaldo CPU-only. Equivalentes `tauri:dev:*` en `--release` (evita mezclar CRT Debug/Release con libs nativas). Se elimino la duplicacion `cuda:diarize` (identica a `cuda`).
+- **Pendiente de empaque (staging, regla 5).** Cada build nativo se compila/firma en su SO con la cadena correspondiente (Vulkan SDK / Xcode-Metal / CUDA toolkit); aqui se definen los comandos y la reconciliacion, la compilacion real se valida en staging como el binding de Whisper.
+
+Verificacion (rebanada 7): `effective_backend` cubierto por pruebas puras (degrada a CPU sin features; conserva backend con su feature; CUDA acelera dedicada pero no integrada; regresion del acoplamiento CPU-only+GPU -> turbo-q5) y `buildScripts.test.ts` valida la matriz por SO y que los dev nativos usan `--release`.
+
+Verificacion (rebanadas 4-6): **187 pruebas de Rust en verde** (politica por backend, clasificacion dedicada/integrada/Apple/ninguna, agregador por prioridad, assets Q5 con tamanos exactos, catalogo con VAD resoluble bajo `models/`), `cargo clippy --lib` sin advertencias nuevas, `tsc + vite build` ok. La inferencia real con VAD (`enable_vad` + modelo Silero) y la compilacion de los backends (`whisper-vulkan`/`whisper-metal`/`whisper-openblas`) se validan en staging con la cadena nativa (regla 5), igual que el binding de Whisper.
+
 ## Paso 16 - Proveedores de IA reales en staging (BAA)
 
 | Campo | Definicion |
@@ -865,7 +896,21 @@ Rebanadas:
 - **Rebanada 9 (portal) — Recordatorio 24 h con cancelacion.** Job que envia SMS/correo 24 h antes de la cita (sobre el paso 7), con enlace corto de cancelacion (expiracion y un solo uso) que reusa el flujo de cancelacion existente.
 - **Rebanada 10 (app del medico) — Sync automatica al abrir + aviso de cambios.** Sincronizar la agenda en automatico al abrir/desbloquear la app; mostrar un badge (circulito rojo) en la esquina del boton "Sincronizar" cuando haya cambios pendientes por bajar/subir, y limpiarlo tras sincronizar.
 
-Estado: ✅ COMPLETADO (rebanadas 1-10 entregadas y verificadas). Construido sobre los pasos 2, 3, 6, 7 y 11.
+Extension — Historia clinica completa (cuestionario ampliado) + separacion de preconsulta:
+
+- **Rebanada 11 (app del medico) — Separar preconsulta IA de antecedentes.** El sobre de antecedentes (kind `medical-history`/`generic`) y el de la preconsulta guiada por IA (kind `ai-preconsulta`) ya no se pisan: la tabla local `precheckins` pasa a PK compuesta `(appointment_id, kind)` para que coexistan. El detalle del encuentro expone dos campos (`medical_history`, `preconsulta`) y el desktop los muestra en secciones distintas ("Preconsulta" = solo IA; "Antecedentes" = cuestionario). CLINICO: todo sigue en la base cifrada local.
+- **Rebanada 12 (app del medico) — Espejo de la historia clinica en el desktop.** Reescritura del formateo del desktop (`medicalHistoryFormat.ts`) para la nueva estructura (ficha de identificacion, contacto de emergencia, heredo-familiares por padecimiento con parientes, no patologicos con sub-bloques, gineco-obstetricos, patologicos con sub-preguntas, e interrogatorio por aparatos y sistemas como seccion del medico) y de la extraccion a los buckets editables (`precheckinBackground.ts`): patologicos -> antecedentes, heredo-familiares -> familiares, alergias. El resultado de la preconsulta IA ya no alimenta los antecedentes.
+- **Rebanada 13 (contrato + portal) — Contrato nuevo + formulario del paciente.** Reescritura desde cero del contrato compartido `medical-history.ts` (fuente de verdad) y del formulario publico: tipos de campo (numero/fecha/seleccion/si-no), revelados condicionales, secciones por sexo y el widget de heredo-familiares por padecimiento; omite las secciones de audiencia "doctor". El esquema nuevo reemplaza al anterior (el blob es transitorio en el buzon, no hay datos persistidos que migrar). Se recomienda enormemente al paciente pero nunca es obligatorio; viaja sellado E2E.
+
+Estado: ✅ COMPLETADO (rebanadas 1-10 + extension 11-13). Construido sobre los pasos 2, 3, 6, 7 y 11.
+
+Entregado (extension historia clinica + separacion de preconsulta, 2026-06-18):
+
+- **Separacion (r11).** `precheckins` con PK compuesta `(appointment_id, kind)`; el detalle del encuentro expone `medical_history` y `preconsulta` por separado; el desktop muestra "Preconsulta" (solo IA) y "Antecedentes" (cuestionario) sin cruzarse.
+- **Contrato y vistas (r12-r13).** Contrato `medical-history.ts` reescrito (fuente de verdad) con tipos de campo (texto/numero/fecha/seleccion/si-no), sub-bloques, revelados condicionales (`showWhen`), heredo-familiares por padecimiento (parientes + tipo) y el interrogatorio por aparatos y sistemas como seccion de audiencia "doctor" (omitida en el formulario del paciente). Espejo en el formateo y la extraccion del desktop; formulario publico reescrito sobre el contrato.
+- **Residencia.** Todo el cuestionario es CLINICO transitorio: viaja sellado E2E, vive en la base cifrada local y se purga del buzon tras el ACK. La nube nunca lo ve.
+
+Verificacion (extension): Rust `cargo test` 148 en verde (+1: coexistencia de ambos sobres) y `cargo clippy` sin warnings nuevos; desktop `tsc` + `vite build` ok y pruebas de formato/extraccion reescritas; portal `eslint`/`vitest` (124 + 6 nuevas del contrato) y `next build` ok. Verificacion en navegador del formulario (ruta de prueba temporal, ya eliminada): renderiza sin errores de consola; el interrogatorio por aparatos y sistemas (audiencia medico) no aparece; gineco solo con sexo F; los revelados condicionales (`showWhen`) y el widget heredo-familiar por padecimiento (parientes + tipo de cancer) funcionan.
 
 Entregado (rebanada 1 — perfil publico: foto y ubicacion, 2026-06-15):
 
@@ -1031,6 +1076,42 @@ Rebanadas:
 - **Rebanada 3 — Acomodo IA gobernado.** Nuevo uso de IA `CONSULTATION_STRUCTURING` bajo consentimiento `CONSULTATION_SCRIBE`; prompt versionado; fake determinista para pruebas; Gemini directo desde desktop en staging/produccion con seudonimizacion local y fallback configurado.
 - **Rebanada 4 — Vista de revision y aplicacion manual.** Mostrar segmentos, confianza, fuentes y advertencias; permitir aplicar por segmento o descartar; nunca guardar ni firmar automaticamente. Al aprobar, cerrar la traza de IA como `APPROVED`; al descartar, `DISCARDED`.
 - **Rebanada 5 — Editor de plantillas personalizadas.** Permitir que cada medico cree/edite plantillas locales con segmentos ordenados, obligatorios/opcionales e instrucciones para IA. Guardar localmente cifrado; no sincronizar contenido clinico ni estructura personalizada a la nube salvo decision futura explicita.
+
+## Paso 22 - Diarizacion local (separacion de hablantes)
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Separar la transcripcion de consulta en turnos de Medico y Paciente con un motor real de diarizacion local (sherpa-onnx), reemplazando la heuristica de alternancia del paso 21, sin enviar audio a la nube y sin quitar control al medico (los turnos siguen siendo corregibles a mano). |
+| Requisitos relacionados | RF40, RNF06, RNF07, RNF12, RNF15. Extiende los pasos 15 (Whisper local) y 21 (escriba clinico). |
+| Entrada necesaria | Transcripcion local real (paso 15) y dialogo revisable Medico/Paciente del escriba (paso 21 rebanada 2). |
+| Skills IA recomendadas | `superpowers:writing-plans`, `superpowers:test-driven-development`, `superpowers:verification-before-completion` |
+| Se construye | Motor de diarizacion local con sherpa-onnx (crate `sherpa-rs`) tras el feature `diarization-local`: dos modelos ONNX (segmentacion derivada de pyannote-3.0 + embedding WeSpeaker CAM++) con descarga gestionada (checksum, progreso, reanudacion) hacia `app_data_dir/models/`; nucleo puro de fusion por solape temporal entre los segmentos de Whisper (con marcas de tiempo) y los tramos de hablante; comando gobernado `ai_diarize_consultation` que transcribe + diariza + fusiona y devuelve el dialogo en turnos; cableado en la pantalla de Atencion con control "Intercambiar medico/paciente"; degradacion sin bloqueo a la heuristica de turnos cuando faltan modelos o el motor nativo. |
+| Se valida con | El medico descarga los modelos de separacion de voces, graba o carga una consulta de dos voces y obtiene el dialogo separado en turnos Medico/Paciente **offline**, los corrige si hace falta (o invierte roles con un clic) y los usa como entrada del acomodo. El audio sigue siendo transitorio (no se persiste). |
+| Compuerta de avance | La diarizacion corre offline por defecto; el audio se decodifica en memoria y se descarta; sin los modelos o el feature nativo la consulta se transcribe igual (degradacion, no bloqueo); licencias de los modelos verificadas para distribucion comercial (rehospedaje de los `.onnx` y cadena de licencias) antes de empaquetar; `num_speakers` fijo en 2 (Medico/Paciente), el acompanante se corrige a mano. |
+| Push recomendado | Hacer push por rebanada cerrada y verificada; la compilacion nativa real (`--features diarization-local`) se valida en staging con la cadena nativa instalada, igual que el binding de Whisper en el paso 15. |
+
+Clasificacion de datos: audio, transcript, tramos de hablante y turnos son CLINICO y viven como bytes transitorios o en la base local cifrada. Los modelos ONNX son REFERENCIA publica (no PHI) y se comparten entre perfiles en `app_data_dir/models/`. Las trazas de proveedor/costo son OPERATIVO local (se reusa el uso `TRANSCRIPTION`).
+
+sherpa-onnx trabaja **aparte** de Whisper (segundo motor paralelo, no un plugin): Whisper responde "que se dijo" (texto + marcas de tiempo) y sherpa-onnx "quien hablo cuando" (tramos de hablante); el pegamento es la fusion por solape temporal en Rust.
+
+Rebanadas:
+
+- **Rebanada 1 — Nucleo de fusion + gestor de descarga.** Nucleo puro y testeable de fusion (solape temporal, fusion de turnos contiguos, asignacion de roles: el primer hablante es el Medico) y gestor de descarga de los dos modelos ONNX (catalogo, checksum, reanudacion, holgura de disco), con comandos `diarization_model_status`/`download_diarization_model` y UI de descarga. Sin inferencia real.
+- **Rebanada 2 — Provider sherpa-rs + fusion de extremo a extremo.** `sherpa-rs` opcional tras el feature `diarization-local` (real) con stub que degrada sin el feature; Whisper local extendido para exponer segmentos con marcas de tiempo; funcion gobernada `diarize_consultation` (consentimiento de voz, presupuesto, traza DRAFT, audio transitorio) que inyecta el diarizador; comando `ai_diarize_consultation`; cableado en Atencion con el control "Intercambiar medico/paciente"; degradacion sin bloqueo.
+
+Estado (2026-06-18): Rebanada 1 y la parte no-nativa de la Rebanada 2 implementadas en `desktop-app`. Nucleo de fusion y gestor de descarga con pruebas (Rust por defecto en verde, clippy sin avisos nuevos); `tsc + vite build` limpio. La compilacion del binding nativo (`--features diarization-local`) y su verificacion de extremo a extremo con audio real de dos voces queda para staging con la cadena nativa (CMake/ONNX Runtime) instalada, igual que el binding real de Whisper en el paso 15. Pendiente antes de empaquetar: fijar checksums (`MIDOC_DIARIZE_*_SHA256`) y rehospedar los `.onnx` con verificacion de licencias para distribucion comercial.
+
+Extension de UX (2026-06-19): la antigua seccion `Asistencia de IA` se separa
+en `Transcripcion consulta`, dedicada solo a captura, transcripcion, correccion
+de hablantes y revision. La transcripcion corregida se conserva como dato
+CLINICO en SQLite cifrado, sin audio. `Ayuda IA` vive en la columna derecha
+permanente de la Estacion Clinica y solo se habilita con una transcripcion
+revisada; combina esa fuente con antecedentes, preconsulta y plantilla activa
+para devolver SOAP, segmentos, posibilidades clinicas con compatibilidad
+Alta/Media/Baja, estudios y tratamientos revisables. No usa porcentajes, no
+aplica contenido automaticamente y no presenta `realtime_capable` como
+streaming: mientras no exista un contrato incremental, el texto aparece al
+finalizar la grabacion.
 
 ## MVP recomendado
 

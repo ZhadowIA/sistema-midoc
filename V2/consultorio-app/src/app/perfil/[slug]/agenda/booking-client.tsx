@@ -10,6 +10,8 @@ type PublicProfile = {
   doctor: {
     publicSlug: string;
     professionalName: string;
+    /** Zona horaria del consultorio: los horarios se muestran en ella, no en la del paciente. */
+    timeZone: string;
   };
   services: Array<{
     id: string;
@@ -56,7 +58,8 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
   const [bookingFor, setBookingFor] = useState<"self" | "other">("self");
   const [patient, setPatient] = useState({
     firstName: "",
-    lastName: "",
+    apellidoPaterno: "",
+    apellidoMaterno: "",
     phone: "",
     email: "",
     birthDate: "",
@@ -245,7 +248,8 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
           holdToken,
           patient: {
             firstName: patient.firstName,
-            lastName: patient.lastName,
+            apellidoPaterno: patient.apellidoPaterno,
+            apellidoMaterno: patient.apellidoMaterno || undefined,
             phone: patient.phone ? formatFullPhone(patientCountry, patient.phone) : undefined,
             email: patient.email || undefined,
             birthDate: patient.birthDate || undefined
@@ -345,7 +349,10 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
                 >
                   {new Intl.DateTimeFormat("es-MX", {
                     hour: "2-digit",
-                    minute: "2-digit"
+                    minute: "2-digit",
+                    // En la zona del consultorio: el slot viaja en UTC pero
+                    // representa la hora de pared del medico, no la del paciente.
+                    timeZone: profile.doctor.timeZone
                   }).format(new Date(slot.slotStart))}
                 </button>
               ))}
@@ -395,12 +402,21 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
           </label>
 
           <label className="field">
-            <span>{bookingFor === "other" ? "Apellidos del paciente*" : "Apellidos*"}</span>
+            <span>{bookingFor === "other" ? "Apellido paterno del paciente*" : "Apellido paterno*"}</span>
             <input
               required
-              placeholder={bookingFor === "other" ? "Apellidos del paciente" : "Tus apellidos"}
-              value={patient.lastName}
-              onChange={(event) => setPatient((current) => ({ ...current, lastName: event.target.value }))}
+              placeholder={bookingFor === "other" ? "Apellido paterno del paciente" : "Tu apellido paterno"}
+              value={patient.apellidoPaterno}
+              onChange={(event) => setPatient((current) => ({ ...current, apellidoPaterno: event.target.value }))}
+            />
+          </label>
+
+          <label className="field">
+            <span>{bookingFor === "other" ? "Apellido materno del paciente" : "Apellido materno"}</span>
+            <input
+              placeholder="Opcional"
+              value={patient.apellidoMaterno}
+              onChange={(event) => setPatient((current) => ({ ...current, apellidoMaterno: event.target.value }))}
             />
           </label>
 

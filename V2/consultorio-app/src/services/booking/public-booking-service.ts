@@ -197,6 +197,13 @@ function getRuleSlots(input: {
     const advanceHours = (slotStart.getTime() - now.getTime()) / 3_600_000;
     const advanceDays = advanceHours / 24;
 
+    // Un horario que ya empezo nunca esta disponible, aunque la regla no fije
+    // anticipacion minima: sin esto, los slots pasados del propio dia (manana)
+    // seguian apareciendo por la tarde.
+    if (slotStart <= now) {
+      continue;
+    }
+
     if (input.minAdvanceHours !== null && input.minAdvanceHours !== undefined && advanceHours < input.minAdvanceHours) {
       continue;
     }
@@ -496,11 +503,32 @@ export async function createAppointmentHold(input: {
   return hold;
 }
 
+/**
+ * Normaliza los apellidos del paciente. La captura nueva trae `apellidoPaterno`
+ * y `apellidoMaterno` por separado; la legada (y los tests) traen `lastName`
+ * combinado. `lastName` siempre queda como la forma combinada (display + dedup);
+ * los apellidos separados se conservan para prellenar la ficha de antecedentes.
+ */
+function resolveApellidos(patient: {
+  lastName?: string;
+  apellidoPaterno?: string;
+  apellidoMaterno?: string;
+}) {
+  const apellidoPaterno = patient.apellidoPaterno?.trim() || undefined;
+  const apellidoMaterno = patient.apellidoMaterno?.trim() || undefined;
+  const combined = apellidoPaterno
+    ? [apellidoPaterno, apellidoMaterno].filter(Boolean).join(" ")
+    : patient.lastName?.trim() ?? "";
+  return { lastName: combined, apellidoPaterno, apellidoMaterno };
+}
+
 async function findOrCreatePatient(input: {
   doctorId: string;
   patient: {
     firstName: string;
-    lastName: string;
+    lastName?: string;
+    apellidoPaterno?: string;
+    apellidoMaterno?: string;
     phone?: string;
     email?: string;
     birthDate?: string;
@@ -511,7 +539,7 @@ async function findOrCreatePatient(input: {
   };
 }) {
   const firstName = input.patient.firstName.trim();
-  const lastName = input.patient.lastName.trim();
+  const { lastName, apellidoPaterno, apellidoMaterno } = resolveApellidos(input.patient);
   const email = input.patient.email?.trim().toLowerCase();
   const phone = input.patient.phone?.trim();
   const guardianEmail = input.contact?.email?.trim().toLowerCase();
@@ -562,6 +590,10 @@ async function findOrCreatePatient(input: {
       },
       data: {
         phone: phone ?? existingPatient.phone,
+        // Solo se rellenan los apellidos separados si aun faltan: no se pisa lo ya
+        // guardado con un envio que venga sin desglose (captura legada).
+        apellidoPaterno: apellidoPaterno ?? existingPatient.apellidoPaterno,
+        apellidoMaterno: apellidoMaterno ?? existingPatient.apellidoMaterno,
         birthDate: input.patient.birthDate ? new Date(input.patient.birthDate) : existingPatient.birthDate
       }
     });
@@ -588,6 +620,8 @@ async function findOrCreatePatient(input: {
       ownerDoctorId: input.doctorId,
       firstName,
       lastName,
+      apellidoPaterno,
+      apellidoMaterno,
       phone,
       email: patientEmail,
       birthDate: input.patient.birthDate ? new Date(input.patient.birthDate) : null,
@@ -683,7 +717,11 @@ export async function bookPublicAppointment(input: {
   holdToken: string;
   patient: {
     firstName: string;
-    lastName: string;
+    /** Forma combinada (captura legada / tests). Si vienen los apellidos por
+     *  separado se ignora y se recompone a partir de ellos. */
+    lastName?: string;
+    apellidoPaterno?: string;
+    apellidoMaterno?: string;
     phone?: string;
     email?: string;
     birthDate?: string;
@@ -1444,15 +1482,46 @@ async function submitSealedPrecheckin(input: {
     submittedAt: new Date()
   };
 
-  const submission = existing
-    ? await prisma.precheckinSubmission.update({ where: { id: existing.id }, data })
-    : await prisma.precheckinSubmission.create({
+  // Antecedentes: upsert atomico para permitir que el paciente los actualice.
+  // Preconsulta IA: create estricto para que dos envios simultaneos compitan por
+  // el indice unico; el perdedor recibe P2002 y se traduce a 409. Usar upsert
+  // aqui aceptaria silenciosamente el segundo envio como una actualizacion.
+  let submission;
+  if (input.kind === PrecheckinKind.AI_PRECONSULTA) {
+    try {
+      submission = await prisma.precheckinSubmission.create({
         data: {
           appointmentId: appointment.id,
           patientId: appointment.patientId,
           ...data
         }
       });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new PublicBookingServiceError("La preconsulta ya fue enviada para esta cita.", 409);
+      }
+      throw error;
+    }
+  } else {
+    submission = await prisma.precheckinSubmission.upsert({
+      where: {
+        appointmentId_patientId_kind: {
+          appointmentId: appointment.id,
+          patientId: appointment.patientId,
+          kind: input.kind
+        }
+      },
+      create: {
+        appointmentId: appointment.id,
+        patientId: appointment.patientId,
+        ...data
+      },
+      update: data
+    });
+  }
 
   // El evento NO lleva respuestas: solo el id para que la app descargue el
   // sealed box. La nube no puede leer el contenido.

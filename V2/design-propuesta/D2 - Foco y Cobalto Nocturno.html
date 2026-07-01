@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>D2 · Modo Foco + Cobalto Nocturno — MiDoc escritorio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+<style>
+  /* claro = tokens reales App.css · oscuro = misma identidad recalibrada (variante explícita) */
+  :root{
+    --bg:oklch(1 0 0);--surface:oklch(0.974 0.004 250);--ink:oklch(0.24 0.022 250);--muted:oklch(0.49 0.02 250);--line:oklch(0.9 0.008 250);
+    --primary:oklch(0.49 0.143 250);--primary-soft:oklch(0.95 0.025 250);
+    --accent:oklch(0.58 0.105 195);--accent-soft:oklch(0.96 0.018 195);
+    --danger:oklch(0.51 0.17 25);--danger-soft:oklch(0.96 0.02 25);
+    --success:oklch(0.55 0.12 155);--success-soft:oklch(0.96 0.02 155);
+  }
+  .night{
+    --bg:oklch(0.22 0.018 255);--surface:oklch(0.27 0.02 255);--ink:oklch(0.94 0.01 255);--muted:oklch(0.72 0.02 255);--line:oklch(0.36 0.02 255);
+    --primary:oklch(0.7 0.13 250);--primary-soft:oklch(0.34 0.06 255);
+    --accent:oklch(0.72 0.1 195);--accent-soft:oklch(0.32 0.05 195);
+    --danger:oklch(0.72 0.13 25);--danger-soft:oklch(0.32 0.06 25);
+    --success:oklch(0.72 0.12 155);--success-soft:oklch(0.32 0.05 155);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:oklch(0.95 0.005 255);color:oklch(0.24 0.022 250);font-family:"Public Sans",system-ui,sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1260px;margin:0 auto;padding:18px 18px 60px}
+  .caption h1{font-size:1.15rem;font-weight:700;margin:0}
+  .caption p{font-size:.86rem;color:oklch(0.49 0.02 250);margin:4px 0 16px;max-width:92ch}
+  button{font-family:inherit}
+  .controls{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+  .ctl{display:inline-flex;align-items:center;gap:9px;background:#fff;border:1px solid oklch(0.9 0.008 250);border-radius:999px;padding:7px 14px;font-size:.85rem;font-weight:600;cursor:pointer;color:oklch(0.24 0.022 250)}
+  .ctl .sw{width:34px;height:20px;border-radius:999px;background:oklch(0.9 0.008 250);position:relative;transition:background .16s}
+  .ctl .sw i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:999px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .16s}
+  .ctl.on .sw{background:oklch(0.49 0.143 250)}.ctl.on .sw i{left:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="caption">
+    <h1>D2 · Modo Foco + Cobalto Nocturno</h1>
+    <p>Prioridad 3 — complementa a D1, no lo reemplaza. <b>Cobalto Nocturno:</b> tema oscuro clínico (mismo cobalto recalibrado, contraste AA) para poca luz y jornadas largas. <b>Modo Foco:</b> al dictar, todo lo accesorio se atenúa y queda solo el campo activo + la transcripción en vivo. Activa los interruptores para verlos.</p>
+  </div>
+  <div id="root"></div>
+</div>
+
+<script type="text/babel" data-presets="react">
+const { useState } = React;
+const v=(n)=>`var(--${n})`;
+
+const LIVE=["…y se calma cuando me siento a descansar.","A veces siento como un peso al subir escaleras.","No, fiebre no he tenido."];
+
+function Toggle({on,onClick,children}){
+  return <button className={"ctl"+(on?" on":"")} onClick={onClick}><span className="sw"><i/></span>{children}</button>;
+}
+
+function Workspace({night, focus, setFocus}){
+  const [li,setLi]=React.useState(0);
+  React.useEffect(()=>{const t=setInterval(()=>setLi(i=>(i+1)%LIVE.length),2400);return()=>clearInterval(t);},[]);
+  const dim = focus ? .28 : 1;   // atenuación de lo accesorio en modo foco
+  return (
+    <div className={night?"night":""} style={{background:v("bg"),color:v("ink"),border:`1px solid ${v("line")}`,borderRadius:14,overflow:"hidden",boxShadow:"0 30px 70px -34px rgba(20,30,60,.5)",transition:"background .2s,color .2s"}}>
+      {/* topbar */}
+      <div style={{display:"flex",alignItems:"center",gap:12,height:54,padding:"0 18px",borderBottom:`1px solid ${v("line")}`,opacity:dim,transition:"opacity .25s"}}>
+        <span style={{fontWeight:700,color:v("primary"),fontSize:"1.05rem"}}>MiDoc</span>
+        <nav style={{display:"flex",gap:2,marginLeft:6}}>
+          {["Agenda","Atención","Expediente"].map((x,i)=><span key={x} style={{fontSize:".9rem",padding:"6px 12px",borderRadius:6,color:i===1?v("primary"):v("muted"),background:i===1?v("primary-soft"):"transparent",fontWeight:i===1?600:500}}>{x}</span>)}
+        </nav>
+        <span style={{marginLeft:"auto",fontSize:".74rem",fontWeight:600,padding:"3px 9px",borderRadius:999,background:v("success-soft"),color:v("success")}}>● Sincronizado</span>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"216px 1fr 288px"}}>
+        {/* riel (se atenúa en foco) */}
+        <aside style={{background:v("surface"),borderRight:`1px solid ${v("line")}`,padding:"14px 12px",opacity:dim,transition:"opacity .25s",minHeight:430}}>
+          <div style={{fontSize:".7rem",fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",color:v("muted"),marginBottom:10}}>Hoy · jueves 19 jun</div>
+          <div style={{display:"grid",gap:6}}>
+            <div style={{padding:"9px 11px",borderRadius:8,background:v("primary"),color:night?"oklch(0.18 0.02 255)":"#fff"}}><div style={{fontWeight:600,fontSize:".9rem"}}>10:30 · Jorge P.</div><div style={{fontSize:".76rem",opacity:.85}}>Dolor torácico · en curso</div></div>
+            {["09:00 · María G.","12:00 · Lucía D.","16:00 · Roberto S."].map(x=><div key={x} style={{padding:"9px 11px",borderRadius:8,border:`1px solid ${v("line")}`,background:v("bg")}}><div style={{fontWeight:600,fontSize:".9rem"}}>{x}</div></div>)}
+          </div>
+        </aside>
+
+        {/* centro: campo activo (siempre nítido) */}
+        <main style={{padding:"18px 24px",minHeight:430}}>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",opacity:focus?1:1}}>
+            <div><div style={{fontWeight:700,fontSize:"1.1rem"}}>Jorge Pérez · 54 a · M</div><div style={{fontSize:".82rem",color:v("muted")}}>Consulta abierta 10:34 · sin firmar</div></div>
+            <span style={{fontSize:".82rem",fontWeight:600,padding:"7px 13px",borderRadius:6,background:v("danger-soft"),color:v("danger")}}>● Grabando 04:12</span>
+          </div>
+
+          {/* pestañas (se atenúan en foco; el campo activo no) */}
+          <div style={{display:"flex",gap:4,margin:"18px 0 0",borderBottom:`1px solid ${v("line")}`,opacity:dim,transition:"opacity .25s"}}>
+            {["S Subjetivo","O Objetivo","A Análisis","P Plan"].map((x,i)=><span key={x} style={{padding:"8px 14px 9px",fontSize:".88rem",borderBottom:i===0?`2px solid ${v("primary")}`:"2px solid transparent",color:i===0?v("ink"):v("muted"),fontWeight:i===0?700:500}}>{x}</span>)}
+          </div>
+          <div style={{marginTop:14}}>
+            <label style={{fontSize:".72rem",fontWeight:600,letterSpacing:".06em",textTransform:"uppercase",color:v("muted")}}>Subjetivo — lo que refiere el paciente</label>
+            <div style={{marginTop:6,minHeight:120,border:`1px solid ${focus?v("primary"):v("line")}`,borderRadius:8,padding:"12px 14px",fontSize:".94rem",lineHeight:1.6,background:v("bg"),boxShadow:focus?`0 0 0 3px ${v("primary-soft")}`:"none",transition:"box-shadow .25s,border-color .25s"}}>
+              Refiere dolor opresivo retroesternal de 2 días, irradiado a brazo izquierdo, aparece con el esfuerzo y <span style={{background:v("primary-soft"),borderRadius:3,padding:"0 3px"}}>cede en reposo</span>.
+            </div>
+          </div>
+
+          {/* transcripción en vivo: protagonista en foco */}
+          <div style={{marginTop:14,background:v("surface"),border:`1px solid ${focus?v("primary"):v("line")}`,borderRadius:10,padding:"13px 15px",transition:"border-color .25s"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:".72rem",fontWeight:600,padding:"3px 9px",borderRadius:999,background:v("danger-soft"),color:v("danger")}}>● 04:12</span><span style={{fontSize:".78rem",color:v("muted")}}>Transcripción en vivo</span></div>
+            <p style={{fontSize:".92rem",margin:"9px 0 12px",fontStyle:"italic"}}>«{LIVE[li]}»</p>
+            <button style={{border:"none",background:v("primary"),color:night?"oklch(0.18 0.02 255)":"#fff",borderRadius:6,padding:"8px 14px",fontWeight:600,fontSize:".84rem",cursor:"pointer"}}>▸ Convertir en nota</button>
+          </div>
+
+          <div style={{marginTop:16,opacity:dim,transition:"opacity .25s"}}>
+            <button onClick={()=>setFocus(false)} style={{border:`1px solid ${v("line")}`,background:v("bg"),color:v("ink"),borderRadius:6,padding:"8px 14px",fontWeight:600,fontSize:".84rem",cursor:"pointer"}}>{focus?"Salir de foco (Esc)":"Firmar y cerrar"}</button>
+          </div>
+        </main>
+
+        {/* contexto (se atenúa en foco) */}
+        <aside style={{background:v("surface"),borderLeft:`1px solid ${v("line")}`,padding:"16px",opacity:dim,transition:"opacity .25s",minHeight:430}}>
+          <div style={{background:v("danger-soft"),borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+            <div style={{fontSize:".7rem",fontWeight:700,color:v("danger"),letterSpacing:".06em",textTransform:"uppercase"}}>⚠ Alergias</div>
+            <div style={{fontSize:".88rem",color:v("danger"),marginTop:2}}>Penicilina · AINEs</div>
+          </div>
+          <div style={{fontSize:".7rem",fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",color:v("muted"),marginBottom:7}}>Precheck-in</div>
+          <p style={{fontSize:".85rem",margin:"0 0 16px"}}>Dolor en el pecho hace 2 días. Tabaquismo 20/día · padre con IAM a los 60.</p>
+          <div style={{fontSize:".7rem",fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",color:v("muted"),marginBottom:7}}>Últimas consultas</div>
+          {["12 mar · Chequeo · TA 140/90","04 ene · Gripe estacional"].map(x=><div key={x} style={{borderLeft:`2px solid ${v("line")}`,paddingLeft:9,fontSize:".83rem",marginBottom:6}}>{x}</div>)}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function App(){
+  const [night,setNight]=useState(false);
+  const [focus,setFocus]=useState(false);
+  return (
+    <>
+      <div className="controls">
+        <Toggle on={night} onClick={()=>setNight(n=>!n)}>🌙 Cobalto Nocturno</Toggle>
+        <Toggle on={focus} onClick={()=>setFocus(f=>!f)}>◎ Modo Foco (dictado)</Toggle>
+      </div>
+      <Workspace night={night} focus={focus} setFocus={setFocus}/>
+    </>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

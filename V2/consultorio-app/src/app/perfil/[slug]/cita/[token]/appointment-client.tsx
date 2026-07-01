@@ -13,12 +13,18 @@ type AppointmentDetails = {
     scheduledStart: string | Date;
     scheduledEnd: string | Date;
     reason: string | null;
+    /** Zona horaria del consultorio: la cita se muestra en ella, no en la del paciente. */
+    timeZone: string;
   };
   patient: {
     firstName: string;
     lastName: string;
+    /** Apellidos por separado capturados al agendar (para prellenar antecedentes). */
+    apellidoPaterno: string | null;
+    apellidoMaterno: string | null;
     email: string | null;
     phone: string | null;
+    birthDate: string | Date | null;
   };
   service: {
     name: string;
@@ -52,21 +58,22 @@ type SlotOption = {
   slotEnd: string;
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  PENDING: "Pendiente de confirmar",
-  CONFIRMED: "Confirmada",
-  CANCELLED: "Cancelada",
-  COMPLETED: "Atendida"
-};
+// Las horas se formatean en la zona del consultorio: los instantes viajan en
+// UTC pero representan la hora de pared del medico, no la del paciente.
+function makeDateTimeFormatter(timeZone: string) {
+  return new Intl.DateTimeFormat("es-MX", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone
+  });
+}
 
-const dateTimeFormatter = new Intl.DateTimeFormat("es-MX", {
-  dateStyle: "medium",
-  timeStyle: "short"
-});
-
-const timeFormatter = new Intl.DateTimeFormat("es-MX", {
-  timeStyle: "short"
-});
+function makeTimeFormatter(timeZone: string) {
+  return new Intl.DateTimeFormat("es-MX", {
+    timeStyle: "short",
+    timeZone
+  });
+}
 
 function tomorrowString() {
   return addDaysLocalDateString(1);
@@ -84,6 +91,22 @@ export function AppointmentClient({
     details.precheckin?.responses && typeof details.precheckin.responses === "object"
       ? (details.precheckin.responses as Record<string, unknown>)
       : {};
+  const timeZone = details.appointment.timeZone;
+  const dateTimeFormatter = makeDateTimeFormatter(timeZone);
+  const timeFormatter = makeTimeFormatter(timeZone);
+
+  // Datos ya capturados al agendar que prellenan la ficha de identificacion de
+  // los antecedentes (claves del grupo `identification`), para no pedirlos otra
+  // vez. Solo se incluye lo que realmente exista.
+  const birthDateValue = details.patient.birthDate
+    ? new Date(details.patient.birthDate).toISOString().slice(0, 10)
+    : "";
+  const identificationPrefill: Record<string, string> = {};
+  if (details.patient.firstName) identificationPrefill.nombre = details.patient.firstName;
+  if (details.patient.apellidoPaterno) identificationPrefill.apellidoPaterno = details.patient.apellidoPaterno;
+  if (details.patient.apellidoMaterno) identificationPrefill.apellidoMaterno = details.patient.apellidoMaterno;
+  if (details.patient.phone) identificationPrefill.telefono = details.patient.phone;
+  if (birthDateValue) identificationPrefill.fechaNacimiento = birthDateValue;
   const [status, setStatus] = useState(details.appointment.status);
   const [scheduledStart, setScheduledStart] = useState(
     new Date(details.appointment.scheduledStart)
@@ -288,13 +311,52 @@ export function AppointmentClient({
   }
 
   return (
-    <section className="booking-shell">
-      <article className="panel">
-        <div className="panel-header">
-          <span className="section-kicker">Tu cita</span>
-          <h2>
-            {details.patient.firstName} {details.patient.lastName}
-          </h2>
+    <section className="appointment-view">
+      <article className="appointment-banner">
+        <div className="appointment-banner-row">
+          <div className="appointment-identity">
+            <span className="section-kicker">Tu cita</span>
+            <h2>
+              {details.patient.firstName} {details.patient.lastName}
+            </h2>
+          </div>
+
+          <div className="appointment-meta">
+            <div className="meta-chip">
+              <small>Servicio</small>
+              {details.service?.name ?? "Consulta"}
+            </div>
+            <div className="meta-chip">
+              <small>Horario</small>
+              {dateTimeFormatter.format(scheduledStart)}
+            </div>
+            <div className="meta-chip">
+              <small>Motivo</small>
+              {details.appointment.reason || "Sin motivo capturado."}
+            </div>
+          </div>
+
+          {!isFinal ? (
+            <div className="appointment-actions">
+              <button
+                className="action-button"
+                disabled={busy || status === "CONFIRMED"}
+                onClick={() => void confirmAppointment()}
+              >
+                {status === "CONFIRMED" ? "Cita confirmada" : busy ? "Confirmando…" : "Confirmar cita"}
+              </button>
+              <button
+                className="ghost-button"
+                disabled={busy || !serviceId}
+                onClick={toggleReschedule}
+              >
+                {rescheduleOpen ? "Cerrar cambio de horario" : "Cambiar horario"}
+              </button>
+              <button className="danger-button" disabled={busy} onClick={() => void cancelAppointment()}>
+                Cancelar cita
+              </button>
+            </div>
+          ) : null}
         </div>
 
         {showCancelPrompt && !isFinal ? (
@@ -315,21 +377,6 @@ export function AppointmentClient({
           </div>
         ) : null}
 
-        <div className="appointment-summary">
-          <p>
-            <strong>Estado:</strong> {STATUS_LABELS[status] ?? status}
-          </p>
-          <p>
-            <strong>Servicio:</strong> {details.service?.name ?? "Consulta"}
-          </p>
-          <p>
-            <strong>Horario:</strong> {dateTimeFormatter.format(scheduledStart)}
-          </p>
-          <p>
-            <strong>Motivo:</strong> {details.appointment.reason || "Sin motivo capturado."}
-          </p>
-        </div>
-
         {message ? (
           <p className="form-success" role="status">
             {message}
@@ -339,28 +386,6 @@ export function AppointmentClient({
           <p className="form-error" role="alert">
             {error}
           </p>
-        ) : null}
-
-        {!isFinal ? (
-          <div className="button-row" style={{ marginTop: 14 }}>
-            <button
-              className="action-button"
-              disabled={busy || status === "CONFIRMED"}
-              onClick={() => void confirmAppointment()}
-            >
-              {status === "CONFIRMED" ? "Cita confirmada" : busy ? "Confirmando…" : "Confirmar cita"}
-            </button>
-            <button
-              className="ghost-button"
-              disabled={busy || !serviceId}
-              onClick={toggleReschedule}
-            >
-              {rescheduleOpen ? "Cerrar cambio de horario" : "Cambiar horario"}
-            </button>
-            <button className="danger-button" disabled={busy} onClick={() => void cancelAppointment()}>
-              Cancelar cita
-            </button>
-          </div>
         ) : null}
 
         {rescheduleOpen && !isFinal ? (
@@ -408,9 +433,9 @@ export function AppointmentClient({
       </article>
 
       {!isFinal && documentPublicKey ? (
-        <article className="panel">
+        <article className="appointment-antecedentes">
           <div className="panel-header">
-            <span className="section-kicker">Preconsulta</span>
+            <span className="section-kicker">Antecedentes</span>
             <h2>Comparte contexto clinico basico</h2>
           </div>
 
@@ -464,6 +489,7 @@ export function AppointmentClient({
                 <MedicalHistoryForm
                   token={token}
                   publicKey={documentPublicKey}
+                  prefillIdentification={identificationPrefill}
                   onSaved={handleMedicalHistorySaved}
                 />
               )}

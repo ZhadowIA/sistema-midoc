@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portal · Perfil (P1) y Reserva (P2) — MiDoc</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+<style>
+  :root{
+    --bg:oklch(1 0 0);--surface:oklch(0.974 0.004 250);--ink:oklch(0.24 0.022 250);--muted:oklch(0.49 0.02 250);--line:oklch(0.9 0.008 250);
+    --primary:oklch(0.49 0.143 250);--primary-hover:oklch(0.43 0.143 250);--primary-soft:oklch(0.95 0.025 250);
+    --accent:oklch(0.58 0.105 195);--accent-soft:oklch(0.96 0.018 195);
+    --success:oklch(0.55 0.12 155);--success-soft:oklch(0.96 0.02 155);
+    --gold:oklch(0.78 0.13 78);
+    --serif:"Spectral",Georgia,serif;--sans:"Public Sans",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:oklch(0.95 0.005 255);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px 18px 60px}
+  h1,h2,h3{margin:0;line-height:1.18}
+  button,input,select{font-family:inherit}
+  .caption h1{font-size:1.15rem;font-weight:700}
+  .caption p{font-size:.86rem;color:var(--muted);margin:4px 0 16px;max-width:92ch}
+  .toggle{display:inline-flex;gap:4px;background:var(--surface);border:1px solid var(--line);padding:4px;border-radius:999px;margin-bottom:20px}
+  .toggle button{border:none;border-radius:999px;padding:7px 16px;font-size:.86rem;font-weight:600;cursor:pointer;background:transparent;color:var(--muted)}
+  .toggle button.on{background:var(--primary);color:#fff}
+  .browser{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--bg);box-shadow:0 26px 56px -30px rgba(20,30,60,.4)}
+  .b-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--line)}
+  .b-dots{display:flex;gap:6px}.b-dots i{width:11px;height:11px;border-radius:999px;background:var(--line);display:block}
+  .b-url{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:999px;font-size:.78rem;color:var(--muted);padding:4px 12px;text-align:center;max-width:360px;margin:0 auto}
+  .stars{color:var(--gold);letter-spacing:2px}
+  .chip{font-size:.74rem;font-weight:600;padding:3px 9px;border-radius:999px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="caption">
+    <h1>Portal · Perfil público (P1) y Reserva directa (P2)</h1>
+    <p>Prioridad 2. Alterna entre las dos direcciones. P1: perfil editorial (Spectral + dorado) con tarjeta de reserva fija — elige servicio y horario. P2: reserva móvil de 3 pasos, el botón nombra la hora. Flujo real: servicio → día → horario (se aparta 10 min) → datos → confirmar. Tokens reales de DESIGN.md.</p>
+  </div>
+  <div id="root"></div>
+</div>
+
+<script type="text/babel" data-presets="react">
+const { useState } = React;
+const v=(n)=>`var(--${n})`;
+
+const DOCTOR = { name:"Dra. Ana Rivera", initials:"AR", specialty:"Medicina general", city:"Guadalajara, Jal.", rating:4.9, reviews:128,
+  bio:"Acompaño a mis pacientes en el control de enfermedades crónicas con un trato cercano y tiempo real de consulta.",
+  tags:["Hipertensión","Diabetes","Chequeo anual"] };
+const SERVICES = [
+  { id:"s1", name:"Consulta general", priceCents:60000, durationMinutes:30 },
+  { id:"s2", name:"Control de crónicos", priceCents:50000, durationMinutes:30 },
+  { id:"s3", name:"Chequeo anual", priceCents:90000, durationMinutes:45 },
+];
+const SLOTS = ["09:00","10:30","12:00","16:00","17:00","18:30"];
+const TAKEN = new Set(["18:30"]);
+const REVIEWS = [
+  { who:"María G.", text:"Explica con calma y nunca te apura. La cita empezó a tiempo." },
+  { who:"Jorge P.", text:"Llevo dos años de control y mi presión por fin está estable." },
+  { who:"Lucía D.", text:"Muy clara con las indicaciones. Salí entendiendo mi tratamiento." },
+];
+const money = (c)=> new Intl.NumberFormat("es-MX",{style:"currency",currency:"MXN"}).format(c/100);
+
+/* ===================== P1 · PERFIL EDITORIAL ===================== */
+function P1(){
+  const [serviceId,setServiceId]=useState("s1");
+  const [slot,setSlot]=useState("10:30");
+  const svc=SERVICES.find(s=>s.id===serviceId);
+  return (
+    <div className="browser">
+      <div className="b-bar"><span className="b-dots"><i></i><i></i><i></i></span><span className="b-url">midoc.app/perfil/dra-ana-rivera</span></div>
+      <div style={{display:"grid",gridTemplateColumns:"1.7fr 1fr"}}>
+        {/* perfil */}
+        <div style={{padding:"38px 40px",borderRight:`1px solid ${v("line")}`}}>
+          <div style={{display:"flex",gap:18,alignItems:"center"}}>
+            <div style={{width:78,height:78,borderRadius:999,background:v("primary-soft"),display:"grid",placeItems:"center",color:v("primary"),fontWeight:700,fontSize:"1.6rem"}}>{DOCTOR.initials}</div>
+            <div>
+              <h1 style={{fontFamily:v("serif"),fontSize:"1.85rem",fontWeight:600,letterSpacing:"-.01em"}}>{DOCTOR.name}</h1>
+              <div style={{color:v("muted"),fontSize:".95rem"}}>{DOCTOR.specialty} · {DOCTOR.city}</div>
+              <div style={{marginTop:6,display:"flex",alignItems:"center",gap:8}}><span className="stars">★★★★★</span><span style={{color:v("muted"),fontSize:".85rem"}}>{DOCTOR.rating} · {DOCTOR.reviews} valoraciones</span></div>
+            </div>
+          </div>
+          <p style={{fontFamily:v("serif"),fontSize:"1.15rem",lineHeight:1.6,marginTop:26,maxWidth:"60ch"}}>«{DOCTOR.bio}»</p>
+          <div style={{display:"flex",gap:10,marginTop:22,flexWrap:"wrap"}}>
+            {DOCTOR.tags.map(t=><span key={t} className="chip" style={{background:v("accent-soft"),color:v("accent")}}>{t}</span>)}
+          </div>
+          <hr style={{border:"none",borderTop:`1px solid ${v("line")}`,margin:"30px 0"}}/>
+          <h2 style={{fontFamily:v("serif"),fontSize:"1.25rem",fontWeight:600,marginBottom:16}}>Lo que dicen sus pacientes</h2>
+          <div style={{display:"grid",gap:18}}>
+            {REVIEWS.map(r=><div key={r.who}><div className="stars">★★★★★</div><p style={{fontFamily:v("serif"),fontSize:"1.02rem",margin:"5px 0 3px",maxWidth:"58ch"}}>«{r.text}»</p><div style={{fontSize:".82rem",color:v("muted")}}>— {r.who}</div></div>)}
+          </div>
+        </div>
+        {/* tarjeta de reserva sticky */}
+        <div style={{padding:"30px 28px",background:v("surface")}}>
+          <div style={{position:"sticky",top:20}}>
+            <div style={{background:v("bg"),border:`1px solid ${v("line")}`,borderRadius:12,padding:22}}>
+              <div style={{fontWeight:700,fontSize:"1.08rem",marginBottom:14}}>Agendar consulta</div>
+              <label style={{fontSize:".72rem",fontWeight:600,letterSpacing:".05em",textTransform:"uppercase",color:v("muted")}}>Servicio</label>
+              <select value={serviceId} onChange={e=>setServiceId(e.target.value)} style={{width:"100%",margin:"5px 0 14px",border:`1px solid ${v("line")}`,borderRadius:6,padding:"8px 10px",fontSize:".9rem",color:v("ink"),background:v("bg")}}>
+                {SERVICES.map(s=><option key={s.id} value={s.id}>{s.name} — {money(s.priceCents)} · {s.durationMinutes} min</option>)}
+              </select>
+              <div style={{fontSize:".72rem",fontWeight:600,letterSpacing:".05em",textTransform:"uppercase",color:v("muted")}}>Jueves 19 jun</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,margin:"10px 0 16px"}}>
+                {SLOTS.map(t=>{const taken=TAKEN.has(t),on=t===slot;
+                  return <button key={t} disabled={taken} onClick={()=>setSlot(t)} style={{padding:"8px 0",borderRadius:6,fontSize:".84rem",fontWeight:600,cursor:taken?"not-allowed":"pointer",
+                    border:on?"none":`1px solid ${v("line")}`,background:on?v("primary"):v("bg"),color:on?"#fff":taken?v("muted"):v("ink"),opacity:taken?.45:1}}>{t}</button>;})}
+              </div>
+              <button style={{width:"100%",padding:"11px",borderRadius:6,border:"none",background:v("primary"),color:"#fff",fontWeight:600,fontSize:".92rem",cursor:"pointer"}}>Continuar · {slot} · {money(svc.priceCents)}</button>
+              <div style={{fontSize:".76rem",color:v("muted"),textAlign:"center",marginTop:10}}>El horario se aparta 10 min mientras completas tus datos · cancelación gratuita 24 h antes</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===================== P2 · RESERVA DIRECTA (móvil) ===================== */
+function P2(){
+  const [step,setStep]=useState(1);            // 1 hora · 2 datos · 3 confirmado
+  const [serviceId,setServiceId]=useState("s1");
+  const [slot,setSlot]=useState("10:30");
+  const [name,setName]=useState(""); const [phone,setPhone]=useState("");
+  const svc=SERVICES.find(s=>s.id===serviceId);
+  return (
+    <div style={{display:"grid",gridTemplateColumns:"320px 1fr",gap:22,alignItems:"start"}}>
+      <div style={{border:`1px solid ${v("line")}`,borderRadius:30,overflow:"hidden",background:v("bg"),boxShadow:"0 26px 56px -30px rgba(20,30,60,.42)"}}>
+        <div style={{height:30,background:v("surface"),display:"grid",placeItems:"center"}}><div style={{width:84,height:6,borderRadius:999,background:v("line")}}/></div>
+        <div style={{padding:"20px 18px 28px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+            <div style={{width:42,height:42,borderRadius:999,background:v("primary-soft"),color:v("primary"),fontWeight:700,display:"grid",placeItems:"center"}}>{DOCTOR.initials}</div>
+            <div><div style={{fontWeight:700,fontSize:".95rem"}}>{DOCTOR.name}</div><div style={{fontSize:".78rem",color:v("muted")}}>{DOCTOR.specialty} · <span className="stars">★</span> {DOCTOR.rating}</div></div>
+          </div>
+          {/* progreso */}
+          <div style={{display:"flex",gap:6,marginBottom:16}}>
+            {[1,2,3].map(n=><div key={n} style={{flex:1,height:4,borderRadius:999,background:n<=step?v("primary"):v("line")}}/>)}
+          </div>
+
+          {step===1 && <>
+            <div style={{fontWeight:700,fontSize:"1.02rem"}}>Elige tu hora</div>
+            <select value={serviceId} onChange={e=>setServiceId(e.target.value)} style={{width:"100%",margin:"8px 0 10px",border:`1px solid ${v("line")}`,borderRadius:6,padding:"8px 10px",fontSize:".86rem",background:v("bg"),color:v("ink")}}>
+              {SERVICES.map(s=><option key={s.id} value={s.id}>{s.name} — {money(s.priceCents)}</option>)}
+            </select>
+            <div style={{fontSize:".78rem",color:v("muted"),marginBottom:10}}>Jueves 19 de junio · {svc.durationMinutes} min</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {SLOTS.map(t=>{const taken=TAKEN.has(t),on=t===slot;
+                return <button key={t} disabled={taken} onClick={()=>setSlot(t)} style={{padding:"10px 0",borderRadius:6,fontSize:".88rem",fontWeight:600,cursor:taken?"not-allowed":"pointer",border:on?"none":`1px solid ${v("line")}`,background:on?v("primary"):v("bg"),color:on?"#fff":taken?v("muted"):v("ink"),opacity:taken?.45:1}}>{t}</button>;})}
+            </div>
+            <button onClick={()=>setStep(2)} style={{width:"100%",marginTop:16,padding:"12px",borderRadius:6,border:"none",background:v("primary"),color:"#fff",fontWeight:600,cursor:"pointer"}}>Confirmar {slot} →</button>
+            <div style={{textAlign:"center",marginTop:10}}><span className="chip" style={{background:v("success-soft"),color:v("success")}}>✓ Sin pago anticipado</span></div>
+          </>}
+
+          {step===2 && <>
+            <button onClick={()=>setStep(1)} style={{border:"none",background:"transparent",color:v("muted"),fontSize:".82rem",cursor:"pointer",padding:0,marginBottom:8}}>← {slot} · {svc.name}</button>
+            <div style={{fontWeight:700,fontSize:"1.02rem",marginBottom:4}}>Tus datos</div>
+            <div style={{fontSize:".76rem",color:v("muted"),marginBottom:12}}>Horario apartado por 10 minutos.</div>
+            <input value={name} onChange={e=>setName(e.target.value)} placeholder="Nombre completo" style={{width:"100%",marginBottom:8,border:`1px solid ${v("line")}`,borderRadius:6,padding:"10px 11px",fontSize:".9rem",background:v("bg"),color:v("ink")}}/>
+            <div style={{display:"flex",gap:6,marginBottom:14}}>
+              <span style={{border:`1px solid ${v("line")}`,borderRadius:6,padding:"10px 10px",fontSize:".9rem",color:v("muted")}}>🇲🇽 +52</span>
+              <input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="Teléfono (WhatsApp)" style={{flex:1,border:`1px solid ${v("line")}`,borderRadius:6,padding:"10px 11px",fontSize:".9rem",background:v("bg"),color:v("ink")}}/>
+            </div>
+            <button onClick={()=>setStep(3)} disabled={!name||!phone} style={{width:"100%",padding:"12px",borderRadius:6,border:"none",background:v("primary"),color:"#fff",fontWeight:600,cursor:name&&phone?"pointer":"not-allowed",opacity:name&&phone?1:.5}}>Confirmar cita</button>
+          </>}
+
+          {step===3 && <div style={{textAlign:"center",padding:"14px 0"}}>
+            <div style={{width:56,height:56,borderRadius:999,background:v("success-soft"),color:v("success"),display:"grid",placeItems:"center",fontSize:"1.6rem",margin:"0 auto 14px"}}>✓</div>
+            <div style={{fontWeight:700,fontSize:"1.05rem"}}>Cita confirmada</div>
+            <p style={{fontSize:".88rem",color:v("muted"),margin:"6px auto 0",maxWidth:"30ch"}}>{name||"Tu cita"} · jueves 19 jun, {slot} con {DOCTOR.name}. Te enviamos los detalles por SMS y correo.</p>
+            <button onClick={()=>setStep(1)} style={{marginTop:16,border:`1px solid ${v("line")}`,background:v("bg"),borderRadius:6,padding:"9px 16px",fontWeight:600,cursor:"pointer",color:v("ink")}}>Ver mi cita</button>
+          </div>}
+        </div>
+      </div>
+
+      <div style={{border:`1px solid ${v("line")}`,borderRadius:12,background:v("bg"),padding:"22px 24px"}}>
+        <div style={{fontSize:".72rem",fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",color:v("muted"),marginBottom:10}}>Decisiones de P2</div>
+        <ul style={{margin:0,paddingLeft:18,color:v("muted"),fontSize:".92rem",lineHeight:1.7}}>
+          <li><b style={{color:v("ink")}}>El botón nombra la hora</b> («Confirmar 10:30»), no un genérico «Continuar».</li>
+          <li><b style={{color:v("ink")}}>3 pasos visibles</b>: hora → datos → confirmado, con barra de progreso.</li>
+          <li><b style={{color:v("ink")}}>«Horario apartado 10 min»</b> — el hold real del backend, comunicado al paciente.</li>
+          <li><b style={{color:v("ink")}}>Sin pago anticipado</b> como chip de éxito: reduce el abandono.</li>
+          <li><b style={{color:v("ink")}}>Public Sans puro</b>, mismo cobalto. P2 no introduce ningún token nuevo.</li>
+        </ul>
+        <p style={{fontSize:".84rem",color:v("muted"),marginTop:16}}>Recomendación: P1 para el perfil (SEO, confianza, escritorio); P2 cuando se llega por enlace de SMS/WhatsApp. Comparten tokens.</p>
+      </div>
+    </div>
+  );
+}
+
+function App(){
+  const [dir,setDir]=useState("p1");
+  return (
+    <>
+      <div className="toggle">
+        <button className={dir==="p1"?"on":""} onClick={()=>setDir("p1")}>P1 · Perfil editorial</button>
+        <button className={dir==="p2"?"on":""} onClick={()=>setDir("p2")}>P2 · Reserva directa</button>
+      </div>
+      {dir==="p1"?<P1/>:<P2/>}
+    </>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

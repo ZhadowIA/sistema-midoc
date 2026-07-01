@@ -210,7 +210,7 @@ class GeminiPreconsultaProvider implements PreconsultaAiProvider {
       throw new Error("GEMINI_API_KEY no esta configurada.");
     }
 
-    const model = env.AI_MODEL ?? "gemini-3.5-flash";
+    const model = env.AI_MODEL ?? "gemini-2.5-flash";
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     const body = JSON.stringify({
       systemInstruction: {

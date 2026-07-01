@@ -5,7 +5,7 @@ const ids = (modes) => modes.map((m) => m.id);
 
 // Caso completo, sin firmar, con preconsulta e historial.
 const full = buildEncounterModes({
-  hasPrecheckin: true,
+  hasPreconsulta: true,
   hasHistory: true,
   signed: false,
   moduleLabel: "Modulo odontologico"
@@ -23,7 +23,7 @@ assert.equal(full.find((m) => m.id === "modulo").label, "Modulo odontologico");
 
 // Sin preconsulta ni historial: esos modos no aparecen.
 const lean = buildEncounterModes({
-  hasPrecheckin: false,
+  hasPreconsulta: false,
   hasHistory: false,
   signed: false,
   moduleLabel: "Modulo general"
@@ -32,7 +32,7 @@ assert.deepEqual(ids(lean), ["antecedentes", "ia", "nota", "modulo", "receta"]);
 
 // Firmada: desaparece la asistencia de IA.
 const signed = buildEncounterModes({
-  hasPrecheckin: true,
+  hasPreconsulta: true,
   hasHistory: false,
   signed: true,
   moduleLabel: "Modulo general"
