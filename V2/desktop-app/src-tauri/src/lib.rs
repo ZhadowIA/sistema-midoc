@@ -1357,10 +1357,18 @@ fn ai_transcribe_audio(
     encounter_id: String,
     audio: AudioTranscriptionPayload,
     use_cloud: Option<bool>,
+    mode: Option<String>,
 ) -> Result<ai::TranscriptionDraft, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(audio.audio_base64.as_bytes())
         .map_err(|_| "audio invalido".to_string())?;
+
+    // Modo de la via en nube: estandar (default) o diarizado (separa hablantes).
+    let cloud_mode = match mode.as_deref() {
+        None | Some("standard") => "standard",
+        Some("diarized") => "diarized",
+        Some(other) => return Err(format!("modo de transcripcion no valido: {other}")),
+    };
 
     let provider: Box<dyn ai::TranscriptionProvider> = if use_cloud.unwrap_or(false) {
         // Via en nube gobernada: el desktop NO conoce la clave del proveedor;
@@ -1379,14 +1387,14 @@ fn ai_transcribe_audio(
             (server_url, token)
         };
         // `runId` operativo por transcripcion: hace idempotente el credito en el
-        // portal. F3 cubre el modo estandar; la diarizacion en nube es F4.
+        // portal. El modo (estandar/diarizado) lo elige el medico en la UI.
         let run_id = uuid::Uuid::new_v4().to_string();
         Box::new(
             cloud_transcription::PortalTranscriptionProvider::new(
                 server_url,
                 device_token,
                 run_id,
-                "standard",
+                cloud_mode,
             )
             .map_err(|e| e.to_string())?,
         )

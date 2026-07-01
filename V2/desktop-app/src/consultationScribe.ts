@@ -94,6 +94,105 @@ export function transcriptToTurns(transcript: string | null | undefined): Consul
   return turns;
 }
 
+// --- Diarizacion en nube (Ruta B, F4) --------------------------------------
+// El portal (OpenAI) devuelve hablantes ANONIMOS (speaker_0, speaker_1). MiDoc
+// no presume que la primera voz sea el medico: los presenta como "Hablante N"
+// con rol UNASSIGNED y el medico confirma el rol localmente antes de acomodar.
+
+export type DiarizedSpeakerRole =
+  | "UNASSIGNED"
+  | "MEDICO"
+  | "PACIENTE"
+  | "ACOMPANANTE"
+  | "OTRO";
+
+export interface DiarizedSegment {
+  speaker: string;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
+export interface DiarizedSpeaker {
+  id: string;
+  label: string;
+  role: DiarizedSpeakerRole;
+}
+
+export interface DiarizedTurn {
+  id: string;
+  speakerId: string;
+  speakerRole: DiarizedSpeakerRole;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
+export interface DiarizedReview {
+  speakers: DiarizedSpeaker[];
+  turns: DiarizedTurn[];
+}
+
+/// Agrupa los segmentos del portal por etiqueta de hablante (en orden de
+/// aparicion) y los presenta como "Hablante N" sin asumir roles. Los turnos
+/// conservan el orden y el tiempo; el rol arranca en UNASSIGNED.
+export function diarizedSegmentsToTurns(segments: DiarizedSegment[]): DiarizedReview {
+  const order: string[] = [];
+  const seen = new Set<string>();
+  for (const segment of segments) {
+    if (!seen.has(segment.speaker)) {
+      seen.add(segment.speaker);
+      order.push(segment.speaker);
+    }
+  }
+
+  const speakers: DiarizedSpeaker[] = order.map((id, index) => ({
+    id,
+    label: `Hablante ${index + 1}`,
+    role: "UNASSIGNED"
+  }));
+
+  const turns: DiarizedTurn[] = segments.map((segment, index) => ({
+    id: `turn-${index + 1}`,
+    speakerId: segment.speaker,
+    speakerRole: "UNASSIGNED",
+    startSeconds: segment.startSeconds,
+    endSeconds: segment.endSeconds,
+    text: segment.text
+  }));
+
+  return { speakers, turns };
+}
+
+/// Asigna (inmutablemente) un rol a un hablante y lo propaga a sus turnos.
+export function assignDiarizedRole(
+  review: DiarizedReview,
+  speakerId: string,
+  role: DiarizedSpeakerRole
+): DiarizedReview {
+  return {
+    speakers: review.speakers.map((speaker) =>
+      speaker.id === speakerId ? { ...speaker, role } : speaker
+    ),
+    turns: review.turns.map((turn) =>
+      turn.speakerId === speakerId ? { ...turn, speakerRole: role } : turn
+    )
+  };
+}
+
+/// Gate previo al acomodo en plantilla: todo hablante que aporta texto debe
+/// tener un rol asignado. Un hablante sin turnos con texto no bloquea; una
+/// revision sin texto tampoco esta lista (nada que acomodar).
+export function diarizedRolesResolved(review: DiarizedReview): boolean {
+  const usedSpeakerIds = new Set(
+    review.turns.filter((turn) => turn.text.trim() !== "").map((turn) => turn.speakerId)
+  );
+  if (usedSpeakerIds.size === 0) return false;
+  return review.speakers
+    .filter((speaker) => usedSpeakerIds.has(speaker.id))
+    .every((speaker) => speaker.role !== "UNASSIGNED");
+}
+
 function speakerLabel(speaker: ScribeSpeaker): string {
   return speaker === "MEDICO" ? "Medico" : "Paciente";
 }
