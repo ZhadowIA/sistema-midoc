@@ -88,6 +88,25 @@ pub struct AiResponse {
     pub model_version: String,
     pub estimated_cost_cents: i64,
     pub latency_ms: i64,
+    /// Metadata de transcripcion en nube gobernada por el portal (Ruta B). `None`
+    /// para proveedores locales/LLM; la provee el `PortalTranscriptionProvider`.
+    pub cloud_transcription: Option<CloudTranscriptionMeta>,
+}
+
+/// Metadata autoritativa que devuelve el portal para una transcripcion en nube.
+/// Se persiste en el borrador local cifrado (nunca sube de vuelta al portal).
+pub struct CloudTranscriptionMeta {
+    /// `runId` operativo generado por el desktop y usado por el portal como llave
+    /// idempotente del uso. El borrador local reusa este id (no genera uno nuevo).
+    pub run_id: String,
+    /// Modo de la transcripcion: "standard" | "diarized".
+    pub mode: String,
+    /// Duracion autoritativa (segundos) con la que el portal calculo el credito.
+    pub duration_seconds: i64,
+    /// Credito comercial autoritativo cobrado por el portal.
+    pub credit_cost: i64,
+    /// Turnos anonimos crudos (JSON) en modo diarizado; `None` en modo estandar.
+    pub segments_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,6 +296,7 @@ impl AiProvider for FakeProvider {
             model_version: "fake-1".into(),
             estimated_cost_cents,
             latency_ms: start.elapsed().as_millis() as i64,
+            cloud_transcription: None,
         })
     }
 }
@@ -466,6 +486,7 @@ impl AiProvider for GeminiProvider {
             model_version: self.model.clone(),
             estimated_cost_cents: 1 + (request.redacted_input.len() as i64 / 4000),
             latency_ms: start.elapsed().as_millis() as i64,
+            cloud_transcription: None,
         })
     }
 }
@@ -540,6 +561,7 @@ impl TranscriptionProvider for FakeTranscriptionProvider {
             model_version: "fake-transcription-1".into(),
             estimated_cost_cents: 1 + (request.byte_len as i64 / 1_000_000),
             latency_ms: start.elapsed().as_millis() as i64,
+            cloud_transcription: None,
         })
     }
 }
@@ -1886,13 +1908,25 @@ fn record_transcription_run(
     input_metadata: &str,
     consent_id: &str,
 ) -> Result<String, AiError> {
-    let run_id = uuid::Uuid::new_v4().to_string();
+    // En nube, el borrador reusa el runId autoritativo del portal (idempotencia
+    // con el uso reportado) y persiste modo/duracion/credito/segmentos. En local,
+    // se genera un uuid y esas columnas quedan NULL.
+    let cloud = response.cloud_transcription.as_ref();
+    let run_id = cloud
+        .map(|meta| meta.run_id.clone())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let transcription_mode = cloud.map(|meta| meta.mode.clone());
+    let duration_seconds = cloud.map(|meta| meta.duration_seconds);
+    let credit_cost = cloud.map(|meta| meta.credit_cost);
+    let segments_json = cloud.and_then(|meta| meta.segments_json.clone());
     conn.execute(
         "INSERT INTO ai_runs
             (id, encounter_id, patient_id, usage_type, provider, model_version,
              prompt_version, status, input_redacted, output, estimated_cost_cents,
-             latency_ms, consent_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'DRAFT', ?8, ?9, ?10, ?11, ?12, ?13)",
+             latency_ms, consent_id, created_at,
+             transcription_mode, duration_seconds, credit_cost, segments_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'DRAFT', ?8, ?9, ?10, ?11, ?12, ?13,
+                 ?14, ?15, ?16, ?17)",
         params![
             run_id,
             encounter_id,
@@ -1906,7 +1940,11 @@ fn record_transcription_run(
             response.estimated_cost_cents,
             response.latency_ms,
             consent_id,
-            now()
+            now(),
+            transcription_mode,
+            duration_seconds,
+            credit_cost,
+            segments_json
         ],
     )?;
     audit(
@@ -2334,6 +2372,7 @@ mod tests {
                 model_version: "raw-1".into(),
                 estimated_cost_cents: 3,
                 latency_ms: 4,
+                cloud_transcription: None,
             })
         }
     }
@@ -2894,6 +2933,83 @@ mod tests {
         assert_eq!(draft.usage_type, USAGE_TRANSCRIPTION);
     }
 
+    /// Proveedor fake que devuelve metadata de transcripcion en nube (como el
+    /// PortalTranscriptionProvider), para probar la persistencia del borrador.
+    struct CloudFakeProvider {
+        run_id: String,
+    }
+
+    impl TranscriptionProvider for CloudFakeProvider {
+        fn name(&self) -> &str {
+            "portal-standard"
+        }
+
+        fn transcribe(
+            &self,
+            _request: &TranscriptionRequest,
+            _audio: &AudioInput,
+        ) -> Result<AiResponse, AiError> {
+            Ok(AiResponse {
+                output: "texto transcrito en nube".into(),
+                model_version: "gpt-4o-mini-transcribe".into(),
+                estimated_cost_cents: 0,
+                latency_ms: 5,
+                cloud_transcription: Some(CloudTranscriptionMeta {
+                    run_id: self.run_id.clone(),
+                    mode: "standard".into(),
+                    duration_seconds: 900,
+                    credit_cost: 1,
+                    segments_json: None,
+                }),
+            })
+        }
+    }
+
+    #[test]
+    fn cloud_transcription_uses_portal_run_id_and_persists_metadata() {
+        let conn = test_conn("cloud-draft");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = CloudFakeProvider {
+            run_id: "portal-run-xyz".into(),
+        };
+
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: b"raw audio should never be stored".to_vec(),
+                duration_seconds: Some(900),
+            },
+            &provider,
+        )
+        .unwrap();
+
+        // El borrador local usa el runId autoritativo del portal (idempotencia con
+        // el uso reportado), no un uuid nuevo.
+        assert_eq!(draft.run_id, "portal-run-xyz");
+
+        let (mode, duration, credit, segments): (
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT transcription_mode, duration_seconds, credit_cost, segments_json
+                 FROM ai_runs WHERE id = ?1",
+                params![draft.run_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(mode.as_deref(), Some("standard"));
+        assert_eq!(duration, Some(900));
+        assert_eq!(credit, Some(1));
+        assert_eq!(segments, None);
+    }
+
     #[test]
     fn transcription_discards_audio_and_stores_reviewable_draft() {
         let conn = test_conn("voice-draft");
@@ -3110,6 +3226,7 @@ mod tests {
                 model_version: "fake-1".into(),
                 estimated_cost_cents: 0,
                 latency_ms: 1,
+                cloud_transcription: None,
             })
         }
         fn transcribe_detailed(
