@@ -14,10 +14,17 @@ import {
 import { createRecordedWavFile } from "./consultationRecorder";
 import {
   appendSegmentToNote,
+  assignDiarizedRole,
   buildTemplateSegments,
+  diarizedReviewToConsultationTurns,
+  diarizedRolesResolved,
+  diarizedSegmentsToTurns,
   normalizeTemplateDefinition,
   transcriptToTurns,
   type ConsultationTurn,
+  type DiarizedReview,
+  type DiarizedSegment,
+  type DiarizedSpeakerRole,
   type SegmentDraft,
   type TemplateDefinition
 } from "./consultationScribe";
@@ -41,7 +48,11 @@ import { MedicalHistoryConflictReview } from "./MedicalHistoryConflictReview";
 import { MedicalHistoryGroups } from "./MedicalHistoryGroups";
 import { TranscriptionWorkspace } from "./ConsultationTranscriptionPanel";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
-import { DEFAULT_SPEAKER_COUNT } from "./transcriptionWorkspace";
+import {
+  DEFAULT_SPEAKER_COUNT,
+  DEFAULT_TRANSCRIPTION_MODE,
+  type TranscriptionMode
+} from "./transcriptionWorkspace";
 import { ClinicalAidRail } from "./ClinicalAidRail";
 import type { ClinicalAidDraft } from "./clinicalAid";
 import {
@@ -127,6 +138,10 @@ interface TranscriptionDraft {
   latency_ms: number;
   transcript_text: string;
   audio_retention_policy: string;
+  /** Turnos anonimos crudos (JSON) en modo diarizado en nube; ausente en los
+   * demas modos. Se mapea con `diarizedSegmentsToTurns` para la asignacion de
+   * roles por hablante (Ruta B, F4). */
+  segments_json?: string | null;
 }
 
 // Borrador de transcripcion + separacion de hablantes (diarizacion local). Si
@@ -283,6 +298,7 @@ export function Atencion({
   const [aiScribeConsent, setAiScribeConsent] = useState(false);
   const [aiTranscription, setAiTranscription] = useState<TranscriptionDraft | null>(null);
   const [scribeTurns, setScribeTurns] = useState<ConsultationTurn[]>([]);
+  const [diarizedReview, setDiarizedReview] = useState<DiarizedReview | null>(null);
   const [reviewedTranscription, setReviewedTranscription] =
     useState<ReviewedTranscription | null>(null);
   const [clinicalAidDraft, setClinicalAidDraft] = useState<ClinicalAidDraft | null>(null);
@@ -291,7 +307,8 @@ export function Atencion({
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingError, setRecordingError] = useState("");
-  const [useCloudTranscription, setUseCloudTranscription] = useState(false);
+  const [transcriptionMode, setTranscriptionMode] =
+    useState<TranscriptionMode>(DEFAULT_TRANSCRIPTION_MODE);
   const [numSpeakers, setNumSpeakers] = useState(DEFAULT_SPEAKER_COUNT);
   const [transcribing, setTranscribing] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionId>("nota");
@@ -410,6 +427,15 @@ export function Atencion({
   }, [recordingState]);
 
   useEffect(() => () => cleanupRecording(), []);
+
+  // En cuanto la nube diarizada tiene rol para todo hablante con texto, vuelca
+  // el borrador a scribeTurns: la pantalla pasa del asignador de roles al
+  // editor de turnos comun (mismo camino que local/nube estandar) (Ruta B, F4).
+  useEffect(() => {
+    if (diarizedReview && diarizedRolesResolved(diarizedReview)) {
+      setScribeTurns(diarizedReviewToConsultationTurns(diarizedReview));
+    }
+  }, [diarizedReview]);
 
   if (!detail) {
     return (
@@ -614,6 +640,7 @@ export function Atencion({
     setMessage("");
     setError("");
     setAiTranscription(null);
+    setDiarizedReview(null);
     fileToBase64(file)
       .then(async (audioBase64) => {
         const audio = {
@@ -622,9 +649,11 @@ export function Atencion({
           audioBase64,
           durationSeconds: null
         };
-        // Via local (por defecto): separa hablantes con diarizacion local. Via
-        // nube: transcripcion simple (sin marcas de tiempo, no se puede diarizar).
-        if (!useCloudTranscription) {
+        // Local (por defecto): separa hablantes con diarizacion local. Nube
+        // estandar: transcripcion simple (sin marcas de tiempo). Nube con
+        // hablantes: el portal (OpenAI) diariza pero no asume roles; el medico
+        // los confirma antes de acomodar (Ruta B, F4).
+        if (transcriptionMode === "local") {
           const draft = await call<DiarizationDraft>("ai_diarize_consultation", {
             encounterId,
             audio,
@@ -645,11 +674,21 @@ export function Atencion({
           const draft = await call<TranscriptionDraft>("ai_transcribe_audio", {
             encounterId,
             audio,
-            useCloud: true
+            useCloud: true,
+            mode: transcriptionMode === "cloud_diarized" ? "diarized" : "standard"
           });
           setAiTranscription(draft);
-          setScribeTurns(transcriptToTurns(draft.transcript_text));
-          setMessage("Transcripcion generada. Revisala antes de usarla.");
+          if (transcriptionMode === "cloud_diarized" && draft.segments_json) {
+            const segments = JSON.parse(draft.segments_json) as DiarizedSegment[];
+            setDiarizedReview(diarizedSegmentsToTurns(segments));
+            setScribeTurns([]);
+            setMessage(
+              "Transcripcion con hablantes anonimos generada. Asigna el rol de cada hablante antes de continuar."
+            );
+          } else {
+            setScribeTurns(transcriptToTurns(draft.transcript_text));
+            setMessage("Transcripcion generada. Revisala antes de usarla.");
+          }
         }
       })
       .catch((e: unknown) => setError(String(e)))
@@ -674,6 +713,7 @@ export function Atencion({
       setAiTranscription(null);
       setReviewedTranscription(null);
       setScribeTurns([]);
+      setDiarizedReview(null);
       setClinicalAidDraft(null);
       setMessage("Transcripción descartada.");
     } catch (cause) {
@@ -689,14 +729,23 @@ export function Atencion({
     );
   }
 
+  // Asigna el rol de un hablante anonimo de la nube diarizada. En cuanto todo
+  // hablante con texto tiene rol, un efecto abajo vuelca el borrador a
+  // scribeTurns y la pantalla pasa al editor de turnos comun (Ruta B, F4).
+  function assignScribeDiarizedRole(speakerId: string, role: DiarizedSpeakerRole) {
+    setDiarizedReview((current) => (current ? assignDiarizedRole(current, speakerId, role) : current));
+  }
+
   // Intercambia los roles del dialogo cuando la separacion automatica asigno
   // medico/paciente al reves (la heuristica supone que el medico abre la consulta).
+  // Acompañante/Otro no se ven afectados: solo alterna Medico<->Paciente.
   function swapScribeRoles() {
     setScribeTurns((current) =>
-      current.map((turn) => ({
-        ...turn,
-        speaker: turn.speaker === "MEDICO" ? "PACIENTE" : "MEDICO"
-      }))
+      current.map((turn) =>
+        turn.speaker === "MEDICO" || turn.speaker === "PACIENTE"
+          ? { ...turn, speaker: turn.speaker === "MEDICO" ? "PACIENTE" : "MEDICO" }
+          : turn
+      )
     );
   }
 
@@ -1153,10 +1202,12 @@ export function Atencion({
                   recordingState={recordingState}
                   recordingSeconds={recordingSeconds}
                   recordingError={recordingError}
-                  useCloud={useCloudTranscription}
+                  mode={transcriptionMode}
                   numSpeakers={numSpeakers}
                   transcribing={transcribing}
                   turns={scribeTurns}
+                  diarizedReview={diarizedReview}
+                  rolesResolved={!diarizedReview || diarizedRolesResolved(diarizedReview)}
                   reviewed={Boolean(reviewedTranscription)}
                   provider={aiTranscription?.provider ?? reviewedTranscription?.run_id ?? null}
                   onToggleConsent={() => void toggleVoiceConsent()}
@@ -1165,9 +1216,10 @@ export function Atencion({
                   onResume={() => void resumeConsultationRecording()}
                   onStop={stopConsultationRecording}
                   onFile={transcribeAudioFile}
-                  onCloudChange={setUseCloudTranscription}
+                  onModeChange={setTranscriptionMode}
                   onNumSpeakersChange={setNumSpeakers}
                   onTurnChange={updateScribeTurn}
+                  onAssignDiarizedRole={assignScribeDiarizedRole}
                   onSwapRoles={swapScribeRoles}
                   onMarkReviewed={markTranscriptionReviewed}
                   onDiscard={discardAiTranscription}

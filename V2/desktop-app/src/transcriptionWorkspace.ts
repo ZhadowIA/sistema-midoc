@@ -8,6 +8,10 @@ export interface TranscriptionWorkspaceInput {
   reviewed: boolean;
   streamingSupported: boolean;
   realtimeCapable: boolean;
+  /** `false` bloquea "Marcar como revisada" mientras falten roles por asignar
+   * (diarizacion en nube, Ruta B F4). Por defecto `true`: no aplica a
+   * transcripcion local ni a nube estandar, donde no hay hablantes que asignar. */
+  rolesResolved?: boolean;
 }
 
 // Numero de voces que el medico le indica a la diarizacion. 0 = Auto (el motor lo
@@ -31,6 +35,25 @@ export function speakerCountLabel(value: number): string {
   return SPEAKER_COUNT_OPTIONS.find((option) => option.value === value)?.label ?? `${value}`;
 }
 
+// Via de transcripcion (Ruta B, F4). "local" separa hablantes con Whisper +
+// sherpa-onnx en el equipo; las dos vias en nube las gobierna el portal
+// (nunca conoce la clave del proveedor real). Solo "cloud_diarized" identifica
+// hablantes anonimos que el medico debe confirmar antes de acomodar.
+export type TranscriptionMode = "local" | "cloud_standard" | "cloud_diarized";
+
+export interface TranscriptionModeOption {
+  value: TranscriptionMode;
+  label: string;
+}
+
+export const TRANSCRIPTION_MODE_OPTIONS: TranscriptionModeOption[] = [
+  { value: "local", label: "Local (con separación de voces)" },
+  { value: "cloud_standard", label: "Nube · estándar" },
+  { value: "cloud_diarized", label: "Nube · con hablantes" }
+];
+
+export const DEFAULT_TRANSCRIPTION_MODE: TranscriptionMode = "local";
+
 export function deriveTranscriptionView(input: TranscriptionWorkspaceInput) {
   const hasTranscript = input.hasTranscript;
   return {
@@ -38,7 +61,8 @@ export function deriveTranscriptionView(input: TranscriptionWorkspaceInput) {
     canPause: input.recordingState === "recording",
     canResume: input.recordingState === "paused",
     canStop: input.recordingState === "recording" || input.recordingState === "paused",
-    canMarkReviewed: hasTranscript && !input.reviewed && !input.processing,
+    canMarkReviewed:
+      hasTranscript && !input.reviewed && !input.processing && (input.rolesResolved ?? true),
     canUseClinicalAid: hasTranscript && input.reviewed,
     transcriptStatus: input.reviewed
       ? "Revisada"

@@ -6,8 +6,10 @@ import { buildEncounterModes } from "./encounterModes.ts";
 import {
   deriveTranscriptionView,
   DEFAULT_SPEAKER_COUNT,
+  DEFAULT_TRANSCRIPTION_MODE,
   speakerCountLabel,
   SPEAKER_COUNT_OPTIONS,
+  TRANSCRIPTION_MODE_OPTIONS,
   type TranscriptionWorkspaceInput
 } from "./transcriptionWorkspace.ts";
 
@@ -40,6 +42,24 @@ test("no presenta capacidad casi en vivo como streaming real", () => {
   );
 });
 
+test("bloquea Marcar como revisada mientras falten roles por asignar (diarizacion en nube)", () => {
+  // rolesResolved por defecto true (transcripcion local o nube estandar, sin
+  // asignacion pendiente); solo la nube diarizada lo pasa en false hasta que
+  // el medico asigne todos los hablantes con texto.
+  assert.equal(
+    deriveTranscriptionView({ ...base, hasTranscript: true, rolesResolved: false }).canMarkReviewed,
+    false
+  );
+  assert.equal(
+    deriveTranscriptionView({ ...base, hasTranscript: true, rolesResolved: true }).canMarkReviewed,
+    true
+  );
+  assert.equal(
+    deriveTranscriptionView({ ...base, hasTranscript: true }).canMarkReviewed,
+    true
+  );
+});
+
 test("habilita Ayuda IA únicamente después de revisar el texto", () => {
   assert.equal(
     deriveTranscriptionView({ ...base, hasTranscript: true }).canUseClinicalAid,
@@ -61,6 +81,14 @@ test("ofrece Auto/1/2/3 voces con default en 2 (consulta típica)", () => {
   assert.equal(speakerCountLabel(0), "Auto (detectar)");
   assert.equal(speakerCountLabel(1), "1 · dictado");
   assert.equal(speakerCountLabel(2), "2 · médico y paciente");
+});
+
+test("ofrece 3 vias de transcripcion con local como default", () => {
+  assert.equal(DEFAULT_TRANSCRIPTION_MODE, "local");
+  assert.deepEqual(
+    TRANSCRIPTION_MODE_OPTIONS.map((option) => option.value),
+    ["local", "cloud_standard", "cloud_diarized"]
+  );
 });
 
 test("descartar una transcripción revisada la elimina del almacenamiento y de la pantalla", () => {

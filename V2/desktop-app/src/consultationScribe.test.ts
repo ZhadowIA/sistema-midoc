@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   assignDiarizedRole,
+  diarizedReviewToConsultationTurns,
   diarizedRolesResolved,
   diarizedSegmentsToTurns,
   transcriptToTurns
@@ -63,6 +64,49 @@ test("mapea segmentos anonimos del portal a hablantes etiquetados sin asumir rol
   assert.equal(review.turns[0].speakerRole, "UNASSIGNED");
   assert.equal(review.turns[1].text, "Tengo dolor");
   assert.equal(review.turns[2].speakerId, "speaker_0");
+});
+
+test("convierte un DiarizedReview resuelto a ConsultationTurn con los 4 roles", () => {
+  // ACOMPANANTE/OTRO se preservan (no colapsan a PACIENTE): el pipeline de
+  // estructuracion SOAP y guardado ya acepta los 4 roles (Ruta B, F4).
+  const review = diarizedSegmentsToTurns([
+    { speaker: "speaker_0", startSeconds: 0, endSeconds: 1, text: "Buenos dias" },
+    { speaker: "speaker_1", startSeconds: 1, endSeconds: 2, text: "Me duele" },
+    { speaker: "speaker_2", startSeconds: 2, endSeconds: 3, text: "Soy su hija" }
+  ]);
+  const resolved = assignDiarizedRole(
+    assignDiarizedRole(assignDiarizedRole(review, "speaker_0", "MEDICO"), "speaker_1", "PACIENTE"),
+    "speaker_2",
+    "ACOMPANANTE"
+  );
+
+  const turns = diarizedReviewToConsultationTurns(resolved);
+
+  assert.deepEqual(
+    turns.map((t) => [t.speaker, t.text]),
+    [
+      ["MEDICO", "Buenos dias"],
+      ["PACIENTE", "Me duele"],
+      ["ACOMPANANTE", "Soy su hija"]
+    ]
+  );
+  assert.deepEqual(
+    turns.map((t) => t.id),
+    resolved.turns.map((t) => t.id)
+  );
+});
+
+test("descarta del acomodo los turnos con texto vacio y los hablantes sin rol", () => {
+  const review = diarizedSegmentsToTurns([
+    { speaker: "speaker_0", startSeconds: 0, endSeconds: 1, text: "Buenos dias" },
+    { speaker: "speaker_1", startSeconds: 1, endSeconds: 2, text: "   " }
+  ]);
+  const resolved = assignDiarizedRole(review, "speaker_0", "MEDICO");
+
+  const turns = diarizedReviewToConsultationTurns(resolved);
+
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].speaker, "MEDICO");
 });
 
 test("no genera hablantes ni turnos con una lista de segmentos vacia", () => {

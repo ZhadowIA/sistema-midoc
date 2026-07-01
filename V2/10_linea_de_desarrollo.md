@@ -1113,6 +1113,20 @@ aplica contenido automaticamente y no presenta `realtime_capable` como
 streaming: mientras no exista un contrato incremental, el texto aparece al
 finalizar la grabacion.
 
+Extension (Ruta B, 2026-06-30 a 2026-07-01): la rebanada 3 del paso 15 (`CloudTranscriptionProvider` estilo Deepgram, `CloudConfig::from_env`, `MIDOC_CLOUD_STT_*`) queda **reemplazada** por la transcripcion en nube gobernada por el portal (plan detallado en `docs/superpowers/plans/2026-06-30-ruta-b-faseado.md`). El desktop ya no conoce ninguna clave de proveedor: el portal media la llamada (OpenAI), cobra por duracion autoritativa del WAV y devuelve texto (modo estandar) o turnos anonimos por hablante (modo diarizado). Selector de 3 vias en `Transcripcion consulta`: local (Whisper + sherpa-onnx, gratis), nube estandar y nube con hablantes. En nube con hablantes, el medico confirma el rol (Medico/Paciente/Acompanante/Otro) de cada hablante anonimo antes de continuar — el gate de roles bloquea "Marcar como revisada" hasta que todo hablante con texto tenga rol asignado. `ConsultationTurn` admite los 4 roles en toda la canalizacion (guardado, estructuracion SOAP, ayuda clinica), en TS y Rust.
+
+Costo en creditos por transcripcion (autoritativo, lo fija el portal):
+
+| Via | Formula | Ejemplo (15 min = 900s) |
+|---|---|---|
+| Local (Whisper + sherpa-onnx) | `0` creditos | `0` |
+| Nube estandar | `ceil(duracion_segundos / 900)` | `1` credito |
+| Nube con hablantes (diarizado) | `ceil(duracion_segundos / 600)` | `2` creditos |
+
+El resto de usos de IA (SOAP asistido, ayuda clinica, preconsulta, etc.) sigue tarifado sobre el LLM base (Gemini): `+1` credito por invocacion, sin cambios.
+
+Estado: F1 (portal, #28) + F2 (portal, #29) + F3 (desktop, cliente del portal, #31) + F4 (diarizacion: logica pura + Rust + UI de 3 modos y asignacion de roles) completas y con pruebas verdes (cargo + node). Pendiente, no bloqueante para el codigo: activacion del proveedor real con BAA firmado y ZDR verificado en staging (paso 16) — el gate `OPENAI_TRANSCRIPTION_ZDR_APPROVED` es auto-declarado (evita activacion accidental) y no verifica nada con OpenAI; la barrera real es legal/administrativa, no tecnica.
+
 ## MVP recomendado
 
 El MVP debe cerrar los pasos 0 a 7 y dejar odontologia como paso 8 si el tiempo no permite incluirla desde el primer piloto. El MVP incluye necesariamente las piezas local-first: app de escritorio instalable con base cifrada, sincronizacion con purga de buzon y respaldo con restauracion probada — sin ellas la promesa de residencia de datos no se cumple. El MVP recomendado contiene:

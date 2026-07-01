@@ -1,7 +1,7 @@
 # Ruta B — Plan de implementación faseado (transcripción OpenAI gobernada por el portal)
 
 Fecha: 2026-06-30
-Estado: faseo aprobado, en ejecución (F1 iniciada)
+Estado: F1+F2+F3 completas y mergeadas a dev; F4 casi completa (lógica + UI listas, PR #32 draft en `v2/paso15-diarizacion-nube`), falta solo la activación externa (BAA/ZDR en staging)
 Superficies: `V2/desktop-app`, `V2/consultorio-app`
 Pasos línea de desarrollo: 15 ext. (respaldo nube gobernado) → 16 (activación staging con BAA/ZDR)
 
@@ -104,10 +104,12 @@ terceros; solo F4 depende del BAA.
   - [x] Migración forward-only en `db.rs`: `ai_runs` + `transcription_mode`/`duration_seconds`/`credit_cost`/`segments_json`.
   - [x] Flujo de metadata: `AiResponse`+`CloudTranscriptionMeta`; `record_transcription_run` reusa el `runId` autoritativo del portal y persiste el borrador cifrado.
   - Nota: F3 cubre el modo estándar; el toggle local/nube ya existía y rutea al portal. Selector de 3 modos + estimación de créditos + deshabilitar-sin-vínculo van en F4/polish.
-- [~] F4 EN CURSO — lógica pura + plumbing Rust listos (8 node + 195 cargo tests verde; clippy limpio en tocados). Falta la UI + docs + activación externa.
+- [~] F4 CASI COMPLETA — lógica pura + plumbing Rust + UI listos (12 node + 198 cargo tests verde; clippy limpio en tocados). Falta solo la activación externa.
   - [x] `diarizedSegmentsToTurns` (consultationScribe.ts): hablantes anónimos del portal (`speaker_0`) → "Hablante N" con rol `UNASSIGNED`, sin asumir roles. Tipos `DiarizedSpeakerRole`/`DiarizedSegment`/`DiarizedSpeaker`/`DiarizedTurn`/`DiarizedReview`.
   - [x] Gate de roles: `assignDiarizedRole` (inmutable) + `diarizedRolesResolved` (todo hablante con texto debe tener rol; ignora hablantes vacíos).
   - [x] Rust: `ai_transcribe_audio` acepta `mode: Option<String>` (`standard`/`diarized`, default standard) y lo pasa al `PortalTranscriptionProvider`.
-  - [ ] **UI (ciclo 4, pendiente)**: tercer modo del selector (local / nube estándar / nube con hablantes) en `ConsultationTranscriptionPanel.tsx`/`Atencion.tsx`; mapear `segments_json` del borrador a `DiarizedReview`; render de asignación de roles por hablante; deshabilitar "Acomodar en plantilla" hasta `diarizedRolesResolved`; pasar `mode:"diarized"` al comando; mock `ipc.ts` diarizado.
-  - [ ] Docs: `10_linea_de_desarrollo.md` + `catalogo-comercial-planes-ia-2026-06.md` (créditos: local 0, estándar ceil/900, diarizado ceil/600, Gemini +1).
+  - [x] **Decisión de producto (2026-07-01):** Acompañante/Otro NO colapsan a Paciente — `ConsultationTurn`/`ScribeSpeaker` se extendieron a los 4 roles en TS y Rust (antes solo Medico/Paciente). Tocado: `validate_consultation_turns` (ai.rs, usado por `save_reviewed_transcription` y `structure_consultation`), `ScribeSpeaker` type + `diarizedReviewToConsultationTurns` (consultationScribe.ts), selects de rol por turno (4 opciones), y se corrigió `swapScribeRoles` (antes mapeaba cualquier turno no-MEDICO a MEDICO, lo que habría corrompido turnos de Acompañante/Otro).
+  - [x] Rust: `TranscriptionDraft` ahora expone `segments_json` en la respuesta de `ai_transcribe_audio` (antes solo se persistía en `ai_runs`, no viajaba al frontend); poblado desde `CloudTranscriptionMeta` en `transcribe_audio`.
+  - [x] **UI (ciclo 4)**: selector de 3 modos (`local`/`cloud_standard`/`cloud_diarized`, `TranscriptionMode` en `transcriptionWorkspace.ts`) en `ConsultationTranscriptionPanel.tsx`/`Atencion.tsx`; `segments_json` del borrador se mapea a `DiarizedReview` (`diarizedSegmentsToTurns`); render de asignación de roles por hablante (select por hablante, propaga a sus turnos); "Marcar como revisada" bloqueado (`rolesResolved` en `deriveTranscriptionView`) hasta `diarizedRolesResolved`, lo que gatea indirectamente "Acomodar en plantilla" (ya dependía de `reviewedTranscription`); `mode:"diarized"` se pasa al comando; mock `ipc.ts` diarizado con diálogo de demostración para browser-dev. Verificado en navegador (vite dev + mock): flujo completo audio→2 hablantes anónimos→asignación Medico/Paciente→auto-transición al editor de turnos→"Marcar como revisada"→"Ayuda IA" pasa de "pendiente" a "lista", sin errores de consola.
+  - [x] Docs: `10_linea_de_desarrollo.md` (sección "Extension (Ruta B)" reemplaza la narrativa obsoleta de la rebanada 3) + `catalogo-comercial-planes-ia-2026-06.md` (nota técnica con las fórmulas de crédito; se dejó explícitamente pendiente de decisión de negocio si "transcripción local: 1 crédito" se mantiene como cobro comercial pese a costar `0` técnicamente).
   - [ ] ⚠️ Externo (no código): activación real con BAA firmado + ZDR verificado en staging. NOTA: el gate `OPENAI_TRANSCRIPTION_ZDR_APPROVED` es auto-declarado (evita activación accidental); no hay verificación técnica con OpenAI — la barrera es legal (BAA) + config de la cuenta OpenAI (ZDR).

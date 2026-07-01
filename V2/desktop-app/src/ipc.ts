@@ -1046,18 +1046,34 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       });
       const audio = args?.audio as { mediaType?: string; fileName?: string } | undefined;
       // La via en nube ahora la gobierna el portal (Ruta B): el proveedor real es
-      // `portal-standard` (modo estandar). El costo comercial autoritativo lo fija
-      // el portal; en local no consume creditos.
+      // `portal-standard` o `portal-diarized` segun el modo. El costo comercial
+      // autoritativo lo fija el portal; en local no consume creditos.
       const viaCloud = args?.useCloud === true;
+      const cloudMode = String(args?.mode ?? "standard");
+      const diarized = viaCloud && cloudMode === "diarized";
       return {
         run_id: voiceRunId,
         usage_type: "TRANSCRIPTION",
-        provider: viaCloud ? "portal-standard" : "whisper-local-medium",
-        model_version: viaCloud ? "gpt-4o-mini-transcribe" : "whisper-local-medium",
+        provider: !viaCloud ? "whisper-local-medium" : diarized ? "portal-diarized" : "portal-standard",
+        model_version: !viaCloud
+          ? "whisper-local-medium"
+          : diarized
+            ? "gpt-4o-transcribe-diarize"
+            : "gpt-4o-mini-transcribe",
         estimated_cost_cents: 0,
         latency_ms: 2,
         transcript_text: `Transcripcion (borrador, ${viaCloud ? "nube" : "local"}): audio ${audio?.mediaType ?? "audio/wav"}. Revise terminos clinicos, medicamentos, dosis y hablantes antes de usarla.`,
-        audio_retention_policy: "discarded_after_transcription"
+        audio_retention_policy: "discarded_after_transcription",
+        // Turnos anonimos de demostracion para el flujo de asignacion de roles
+        // en el navegador de desarrollo (browser-dev, sin backend nativo).
+        segments_json: diarized
+          ? JSON.stringify([
+              { speaker: "speaker_0", startSeconds: 0, endSeconds: 3, text: "Buenos dias, que lo trae a consulta?" },
+              { speaker: "speaker_1", startSeconds: 3, endSeconds: 7, text: "Me duele la cabeza desde hace tres dias." },
+              { speaker: "speaker_0", startSeconds: 7, endSeconds: 9, text: "Tiene fiebre o nauseas?" },
+              { speaker: "speaker_1", startSeconds: 9, endSeconds: 12, text: "No, solo el dolor y algo de sensibilidad a la luz." }
+            ])
+          : null
       } as T;
     }
     case "ai_diarize_consultation": {
@@ -1113,7 +1129,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       const runId = String(args?.runId ?? "");
       const turns = (args?.turns ?? []) as Array<{
         id: string;
-        speaker: "MEDICO" | "PACIENTE";
+        speaker: "MEDICO" | "PACIENTE" | "ACOMPANANTE" | "OTRO";
         text: string;
       }>;
       if (!encounterId || !runId || turns.every((turn) => !turn.text.trim())) {

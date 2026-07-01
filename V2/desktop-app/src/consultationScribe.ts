@@ -6,7 +6,10 @@ import {
   type GeneralMedicinePayload
 } from "./clinicalProfiles.ts";
 
-export type ScribeSpeaker = "MEDICO" | "PACIENTE";
+// Ruta B (F4): la diarizacion en nube puede identificar hasta 4 roles.
+// ACOMPANANTE/OTRO solo llegan via DiarizedReview (nunca por la heuristica
+// local de transcriptToTurns, que solo alterna MEDICO/PACIENTE).
+export type ScribeSpeaker = "MEDICO" | "PACIENTE" | "ACOMPANANTE" | "OTRO";
 export type ScribeConfidence = "high" | "medium" | "low";
 
 export interface ConsultationTurn {
@@ -193,8 +196,32 @@ export function diarizedRolesResolved(review: DiarizedReview): boolean {
     .every((speaker) => speaker.role !== "UNASSIGNED");
 }
 
+/// Convierte una revision de diarizacion en nube YA resuelta (todo hablante con
+/// texto tiene rol asignado) al formato compartido `ConsultationTurn` que usa el
+/// resto de la canalizacion (guardado, estructuracion SOAP, ayuda clinica). Los
+/// 4 roles se preservan (no colapsan a MEDICO/PACIENTE); los turnos sin texto se
+/// descartan, igual que hace `diarizedRolesResolved` al evaluar el gate.
+export function diarizedReviewToConsultationTurns(review: DiarizedReview): ConsultationTurn[] {
+  return review.turns
+    .filter((turn) => turn.text.trim() !== "" && turn.speakerRole !== "UNASSIGNED")
+    .map((turn) => ({
+      id: turn.id,
+      speaker: turn.speakerRole as ScribeSpeaker,
+      text: turn.text
+    }));
+}
+
 function speakerLabel(speaker: ScribeSpeaker): string {
-  return speaker === "MEDICO" ? "Medico" : "Paciente";
+  switch (speaker) {
+    case "MEDICO":
+      return "Medico";
+    case "PACIENTE":
+      return "Paciente";
+    case "ACOMPANANTE":
+      return "Acompanante";
+    default:
+      return "Otro";
+  }
 }
 
 export function formatSourceTurnReferences(

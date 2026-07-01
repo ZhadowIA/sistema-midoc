@@ -1,9 +1,11 @@
-import type { ConsultationTurn, ScribeSpeaker } from "./consultationScribe";
+import type { DiarizedReview, DiarizedSpeakerRole, ConsultationTurn, ScribeSpeaker } from "./consultationScribe";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import {
   deriveTranscriptionView,
   SPEAKER_COUNT_OPTIONS,
-  type RecordingState
+  TRANSCRIPTION_MODE_OPTIONS,
+  type RecordingState,
+  type TranscriptionMode
 } from "./transcriptionWorkspace";
 
 interface Props {
@@ -12,10 +14,14 @@ interface Props {
   recordingState: RecordingState;
   recordingSeconds: number;
   recordingError: string;
-  useCloud: boolean;
+  mode: TranscriptionMode;
   numSpeakers: number;
   transcribing: boolean;
   turns: ConsultationTurn[];
+  /** Hablantes anonimos de la nube diarizada pendientes de asignar rol (Ruta B, F4). */
+  diarizedReview: DiarizedReview | null;
+  /** `false` mientras falte asignar el rol de algun hablante con texto. */
+  rolesResolved: boolean;
   reviewed: boolean;
   provider: string | null;
   onToggleConsent(): void;
@@ -24,9 +30,10 @@ interface Props {
   onResume(): void;
   onStop(): void;
   onFile(file: File | null): void;
-  onCloudChange(value: boolean): void;
+  onModeChange(value: TranscriptionMode): void;
   onNumSpeakersChange(value: number): void;
   onTurnChange(id: string, patch: Partial<Pick<ConsultationTurn, "speaker" | "text">>): void;
+  onAssignDiarizedRole(speakerId: string, role: DiarizedSpeakerRole): void;
   onSwapRoles(): void;
   onMarkReviewed(): void;
   onDiscard(): void;
@@ -46,7 +53,8 @@ export function TranscriptionWorkspace(props: Props) {
     hasTranscript: props.turns.some((turn) => turn.text.trim()),
     reviewed: props.reviewed,
     streamingSupported: false,
-    realtimeCapable: true
+    realtimeCapable: true,
+    rolesResolved: props.rolesResolved
   });
 
   return (
@@ -88,20 +96,25 @@ export function TranscriptionWorkspace(props: Props) {
             }}
           />
         </label>
-        <label className="week-cancelled-toggle">
-          <input
-            type="checkbox"
-            checked={props.useCloud}
+        <label className="field compact-field">
+          <span>Método de transcripción</span>
+          <select
+            value={props.mode}
             disabled={props.busy || !props.voiceConsent}
-            onChange={(event) => props.onCloudChange(event.currentTarget.checked)}
-          />
-          <span>Usar respaldo en nube</span>
+            onChange={(event) => props.onModeChange(event.currentTarget.value as TranscriptionMode)}
+          >
+            {TRANSCRIPTION_MODE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="field compact-field">
           <span>Número de voces</span>
           <select
             value={props.numSpeakers}
-            disabled={props.busy || !props.voiceConsent || props.useCloud}
+            disabled={props.busy || !props.voiceConsent || props.mode !== "local"}
             onChange={(event) => props.onNumSpeakersChange(Number(event.currentTarget.value))}
           >
             {SPEAKER_COUNT_OPTIONS.map((option) => (
@@ -111,11 +124,26 @@ export function TranscriptionWorkspace(props: Props) {
             ))}
           </select>
         </label>
-        {props.useCloud ? (
-          <p className="meta">La separación de voces solo está disponible en modo local.</p>
+        {props.mode !== "local" ? (
+          <p className="meta">La separación de voces por Auto/1/2/3 solo está disponible en modo local.</p>
+        ) : null}
+        {props.mode === "cloud_diarized" ? (
+          <p className="meta">
+            La nube devuelve hablantes anónimos (Hablante 1, Hablante 2…); confirma el rol de cada
+            uno antes de marcar la transcripción como revisada.
+          </p>
         ) : null}
         <dl className="transcription-facts">
-          <div><dt>Método</dt><dd>{props.useCloud ? "Nube" : "Local"}</dd></div>
+          <div>
+            <dt>Método</dt>
+            <dd>
+              {props.mode === "local"
+                ? "Local"
+                : props.mode === "cloud_diarized"
+                  ? "Nube (con hablantes)"
+                  : "Nube (estándar)"}
+            </dd>
+          </div>
           <div><dt>Proveedor</dt><dd>{props.provider ?? "Pendiente"}</dd></div>
           <div><dt>Texto</dt><dd>{view.transcriptStatus}</dd></div>
         </dl>
@@ -134,9 +162,9 @@ export function TranscriptionWorkspace(props: Props) {
             <span className="transcription-spinner" aria-hidden="true" />
             <strong>Transcribiendo audio…</strong>
             <p className="meta">
-              {props.useCloud
-                ? "Enviando el audio al proveedor de respaldo."
-                : "Whisper y la separación de voces corren localmente; en audios largos puede tardar."}
+              {props.mode === "local"
+                ? "Whisper y la separación de voces corren localmente; en audios largos puede tardar."
+                : "Enviando el audio al proveedor de respaldo."}
             </p>
           </div>
         ) : props.turns.length ? (
@@ -160,6 +188,8 @@ export function TranscriptionWorkspace(props: Props) {
                     >
                       <option value="MEDICO">Médico</option>
                       <option value="PACIENTE">Paciente</option>
+                      <option value="ACOMPANANTE">Acompañante</option>
+                      <option value="OTRO">Otro</option>
                     </select>
                   </label>
                   <label className="field">
@@ -178,6 +208,57 @@ export function TranscriptionWorkspace(props: Props) {
               <button className="action-button" onClick={props.onMarkReviewed} disabled={!view.canMarkReviewed}>
                 {props.reviewed ? "Transcripción revisada" : "Marcar como revisada"}
               </button>
+              <button className="ghost-button danger-link" onClick={props.onDiscard} disabled={props.busy}>
+                Descartar
+              </button>
+            </div>
+          </>
+        ) : props.diarizedReview ? (
+          <>
+            <p className="meta">
+              La nube separó hablantes anónimos sin asumir quién es el médico o el paciente. Asigna
+              el rol de cada uno para continuar.
+            </p>
+            <div className="scribe-speaker-list">
+              {props.diarizedReview.speakers.map((speaker) => (
+                <label className="field compact-field" key={speaker.id}>
+                  <span>{speaker.label}</span>
+                  <select
+                    value={speaker.role}
+                    disabled={props.busy}
+                    onChange={(event) =>
+                      props.onAssignDiarizedRole(
+                        speaker.id,
+                        event.currentTarget.value as DiarizedSpeakerRole
+                      )
+                    }
+                  >
+                    <option value="UNASSIGNED">Sin asignar</option>
+                    <option value="MEDICO">Médico</option>
+                    <option value="PACIENTE">Paciente</option>
+                    <option value="ACOMPANANTE">Acompañante</option>
+                    <option value="OTRO">Otro</option>
+                  </select>
+                </label>
+              ))}
+            </div>
+            <div className="scribe-turn-list">
+              {props.diarizedReview.turns.map((turn) => {
+                const speaker = props.diarizedReview?.speakers.find((s) => s.id === turn.speakerId);
+                return (
+                  <div className="scribe-turn" key={turn.id}>
+                    <span className="meta">{speaker?.label ?? turn.speakerId}</span>
+                    <p>{turn.text}</p>
+                  </div>
+                );
+              })}
+            </div>
+            {!props.rolesResolved ? (
+              <p className="form-error" role="alert">
+                Asigna un rol a cada hablante con texto antes de continuar.
+              </p>
+            ) : null}
+            <div className="button-row">
               <button className="ghost-button danger-link" onClick={props.onDiscard} disabled={props.busy}>
                 Descartar
               </button>
