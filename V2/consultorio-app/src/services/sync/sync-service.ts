@@ -479,10 +479,38 @@ export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
     const provider = await getOrCreateAiProvider(report);
     const status = mapAiUsageStatus(report.status);
     const usageType = mapAiUsageType(report.usageType);
-    const creditCost = getAiCreditCost(report.usageType);
+    // El contexto de proveedor hace gratuita la transcripcion local (whisper-local).
+    const creditCost = getAiCreditCost(report.usageType, { providerName: report.providerName });
     const reviewedAt = status === AiUsageStatus.REVIEWED || status === AiUsageStatus.REJECTED
       ? now
       : null;
+
+    // El portal es la autoridad del cobro de transcripcion en nube. Si la fila ya
+    // fue gobernada por el portal (transcriptionMode presente), un reporte posterior
+    // del desktop solo actualiza el estado de revision: no reemplaza credito,
+    // duracion, modo, proveedor ni modelo autoritativos.
+    const existing = await prisma.aiUsageLog.findUnique({
+      where: {
+        doctorId_externalRunId: {
+          doctorId: device.doctorId,
+          externalRunId: report.externalRunId
+        }
+      }
+    });
+
+    if (existing && existing.transcriptionMode !== null) {
+      await prisma.aiUsageLog.update({
+        where: { id: existing.id },
+        data: {
+          status,
+          inputReference: report.inputReference,
+          outputReference: report.outputReference,
+          reviewedAt,
+          reportedAt: now
+        }
+      });
+      continue;
+    }
 
     await prisma.aiUsageLog.upsert({
       where: {
