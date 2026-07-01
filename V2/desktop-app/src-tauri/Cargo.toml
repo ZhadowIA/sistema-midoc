@@ -22,7 +22,13 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher-vendored-openssl"] }
+# En Windows, `bundled-sqlcipher-vendored-openssl` recompila OpenSSL completo
+# durante el arranque y puede dejar `tauri dev` (y `cargo test` en builds
+# frescos) aparentemente "colgado" varios minutos en `openssl-sys`, o fallar si
+# la maquina no tiene un perl apto para compilar OpenSSL. Usamos SQLCipher
+# bundlado enlazando contra un OpenSSL MSVC ya instalado via OPENSSL_DIR (ver
+# `.cargo/config.toml`, local por maquina).
+rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher"] }
 thiserror = "2.0.18"
 reqwest = { version = "0.13.4", features = ["json", "cookies", "blocking"] }
 uuid = { version = "1.23.3", features = ["v4"] }
