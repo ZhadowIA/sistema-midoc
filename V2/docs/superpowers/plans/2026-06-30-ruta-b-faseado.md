@@ -92,6 +92,10 @@ terceros; solo F4 depende del BAA.
 - [x] F1 · Tarea 3 — parser WAV autoritativo (6/6 tests verde; `audio-duration.ts` puro, recorre sub-chunks RIFF, rechaza no-PCM/vacío/truncado)
 - [x] F1 · Tarea 4 — contrato del proveedor (7/7 tests verde; interfaz pluggable `CloudTranscriptionProvider` + `OpenAiTranscriptionProvider` con transporte inyectable)
 - [x] **F1 COMPLETA** — 25/25 tests verde, 0 errores de tipos en `src`. Decisión aplicada: multi-proveedor pluggable en el portal desde el día uno.
-- [ ] F2 — servicio gobernado + endpoint multipart + sync
+- [x] **F2 COMPLETA** — 10/10 integración + 4 unit del factory verde; `tsc` 0 errores en `src`; lint limpio.
+  - [x] Servicio gobernado `cloud-transcription-service.ts`: gate de capacidad (403), duración autoritativa WAV (422), reserva idempotente `(doctorId, runId)` PENDING→COMPLETED/FAILED, mismo runId otro modo→409, retry sin doble cobro, sin persistir texto/audio.
+  - [x] Route handler `POST /api/sync/ai/transcriptions` (Next 16 `request.formData()`, `runtime=nodejs`, `maxDuration=120`, límites 25 MiB/WAV) + factory `resolveOpenAiTranscriptionProvider` env-gated (403 sin ZDR/key).
+  - [x] Protección de crédito autoritativo en `recordAiUsageBatch`: fila con `transcriptionMode` solo actualiza revisión; `whisper-local*`→0 créditos.
+  - Nota: 1 test preexistente de sync (`charges plan credits...`) falla solo por frontera de mes UTC (hardcodea junio 2026); ajeno a F2.
 - [ ] F3 — cliente del portal en desktop + borrador cifrado
 - [ ] F4 — diarización UI + activación staging

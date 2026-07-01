@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   OpenAiTranscriptionProvider,
+  resolveOpenAiTranscriptionProvider,
   type TranscriptionTransport
 } from "../../src/services/ai/openai-transcription-provider";
 
@@ -146,5 +147,38 @@ describe("OpenAiTranscriptionProvider response parsing", () => {
     const provider = new OpenAiTranscriptionProvider(CONFIG, transport);
 
     await expect(provider.transcribe({ audio, mode: "standard" })).rejects.toThrow();
+  });
+});
+
+describe("resolveOpenAiTranscriptionProvider (env gate)", () => {
+  const enabled = {
+    enabled: true,
+    apiKey: "sk-test",
+    standardModel: "gpt-4o-mini-transcribe",
+    diarizationModel: "gpt-4o-transcribe-diarize",
+    zdrApproved: true
+  };
+
+  it("builds a provider when enabled, keyed and ZDR-approved", () => {
+    const provider = resolveOpenAiTranscriptionProvider(enabled);
+    expect(provider.name).toBe("openai");
+  });
+
+  it("refuses (403) when the feature is disabled", () => {
+    expect(() => resolveOpenAiTranscriptionProvider({ ...enabled, enabled: false })).toThrow(
+      expect.objectContaining({ status: 403 })
+    );
+  });
+
+  it("refuses (403) without an API key", () => {
+    expect(() => resolveOpenAiTranscriptionProvider({ ...enabled, apiKey: "" })).toThrow(
+      expect.objectContaining({ status: 403 })
+    );
+  });
+
+  it("refuses (403) without verified Zero Data Retention", () => {
+    expect(() => resolveOpenAiTranscriptionProvider({ ...enabled, zdrApproved: false })).toThrow(
+      expect.objectContaining({ status: 403 })
+    );
   });
 });

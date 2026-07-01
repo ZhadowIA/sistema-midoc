@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { ServiceError } from "../../lib/errors";
 import type {
   CloudTranscriptionProvider,
   CloudTranscriptionRequest,
@@ -72,7 +73,10 @@ export class OpenAiTranscriptionProvider implements CloudTranscriptionProvider {
 
     const form = new FormData();
     // Bytes + nombre neutro: nunca el nombre original ni identificadores del paciente.
-    form.append("file", new Blob([request.audio], { type: "audio/wav" }), NEUTRAL_FILENAME);
+    // Copia a un ArrayBuffer propio para satisfacer el tipo BlobPart (Uint8Array
+    // generico sobre ArrayBufferLike no es asignable directo).
+    const audioPart = new Uint8Array(request.audio).buffer;
+    form.append("file", new Blob([audioPart], { type: "audio/wav" }), NEUTRAL_FILENAME);
     form.append("model", model);
     form.append("response_format", diarized ? "diarized_json" : "json");
     if (diarized) {
@@ -139,4 +143,49 @@ export class OpenAiTranscriptionProvider implements CloudTranscriptionProvider {
       latencyMs
     };
   }
+}
+
+/** Transporte real basado en `fetch` (produccion). Los tests inyectan un fake. */
+export const fetchTransport: TranscriptionTransport = async (url, init) => {
+  const response = await fetch(url, {
+    method: init.method,
+    headers: init.headers,
+    body: init.body
+  });
+  return {
+    ok: response.ok,
+    status: response.status,
+    json: () => response.json()
+  };
+};
+
+export interface CloudTranscriptionEnv {
+  enabled: boolean;
+  apiKey: string;
+  standardModel: string;
+  diarizationModel: string;
+  zdrApproved: boolean;
+}
+
+/**
+ * Construye el proveedor OpenAI solo cuando la funcion esta habilitada, con
+ * clave y con Zero Data Retention verificado. En cualquier otro caso rechaza con
+ * `403`: el audio es contenido CLINICO y no debe salir del equipo sin estos
+ * controles. El BAA real se verifica fuera de banda (paso 16).
+ */
+export function resolveOpenAiTranscriptionProvider(
+  config: CloudTranscriptionEnv,
+  transport: TranscriptionTransport = fetchTransport
+): OpenAiTranscriptionProvider {
+  if (!config.enabled || !config.zdrApproved || !config.apiKey) {
+    throw new ServiceError("La transcripcion en nube no esta habilitada.", 403);
+  }
+  return new OpenAiTranscriptionProvider(
+    {
+      apiKey: config.apiKey,
+      standardModel: config.standardModel,
+      diarizationModel: config.diarizationModel
+    },
+    transport
+  );
 }
