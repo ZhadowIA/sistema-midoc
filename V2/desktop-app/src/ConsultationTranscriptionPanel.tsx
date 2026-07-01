@@ -33,7 +33,10 @@ interface Props {
   onModeChange(value: TranscriptionMode): void;
   onNumSpeakersChange(value: number): void;
   onTurnChange(id: string, patch: Partial<Pick<ConsultationTurn, "speaker" | "text">>): void;
+  /** Asigna rol a un hablante anonimo aun sin resolver (pantalla previa, Ruta B F4). */
   onAssignDiarizedRole(speakerId: string, role: DiarizedSpeakerRole): void;
+  /** Aplica retroactivamente un rol a todos los turnos de la misma voz ya resuelta. */
+  onSpeakerRoleChange(speakerId: string, speaker: ScribeSpeaker): void;
   onSwapRoles(): void;
   onMarkReviewed(): void;
   onDiscard(): void;
@@ -60,16 +63,21 @@ export function TranscriptionWorkspace(props: Props) {
   return (
     <div className="transcription-workspace">
       <section className="transcription-capture" aria-label="Captura de audio">
-        <span className="transcription-mic" aria-hidden="true">●</span>
-        <strong>
-          {props.recordingState === "recording"
-            ? `Grabando · ${durationLabel(props.recordingSeconds)}`
-            : props.recordingState === "paused"
-              ? `Grabación pausada · ${durationLabel(props.recordingSeconds)}`
-              : "Grabadora lista"}
-        </strong>
-        <p className="meta">El audio permanece en memoria y se descarta al terminar.</p>
-        <div className="button-row">
+        <div className="transcription-card-label">Captura</div>
+        <div className="transcription-recorder-face">
+          <span className="transcription-mic" aria-hidden="true">●</span>
+          <div>
+            <strong>
+              {props.recordingState === "recording"
+                ? `Grabando · ${durationLabel(props.recordingSeconds)}`
+                : props.recordingState === "paused"
+                  ? `Grabación pausada · ${durationLabel(props.recordingSeconds)}`
+                  : "Grabadora lista"}
+            </strong>
+            <p className="meta">El audio permanece en memoria y se descarta al terminar.</p>
+          </div>
+        </div>
+        <div className="button-row transcription-actions">
           {props.recordingState === "idle" ? (
             <button className="action-button" onClick={props.onStart} disabled={!view.canStart}>
               Iniciar grabación
@@ -83,12 +91,20 @@ export function TranscriptionWorkspace(props: Props) {
       </section>
 
       <section className="transcription-settings" aria-label="Configuración de transcripción">
-        <strong>Configuración</strong>
+        <div className="transcription-settings-head">
+          <div>
+            <span className="transcription-card-label">Preparación</span>
+            <strong>Configuración</strong>
+          </div>
+          <span className={props.voiceConsent ? "status-pill success" : "status-pill"}>
+            {props.voiceConsent ? "Voz autorizada" : "Sin autorización"}
+          </span>
+        </div>
         <label className="field">
-          <span>Archivo WAV</span>
+          <span>Archivo de audio (WAV, MP3, M4A)</span>
           <input
             type="file"
-            accept=".wav,audio/wav,audio/x-wav"
+            accept=".wav,.mp3,.m4a,.aac,audio/wav,audio/x-wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/aac"
             disabled={props.busy || !props.voiceConsent}
             onChange={(event) => {
               props.onFile(event.currentTarget.files?.[0] ?? null);
@@ -153,9 +169,15 @@ export function TranscriptionWorkspace(props: Props) {
       </section>
 
       <section className="transcription-review" aria-label="Transcripción de consulta">
-        <div className="panel-header">
-          <h4>Transcripción</h4>
-          <p>{props.transcribing ? "Procesando el audio en este equipo…" : view.transcriptMessage}</p>
+        <div className="transcription-review-head">
+          <div>
+            <span className="transcription-card-label">Revisión</span>
+            <h3>Texto separado por hablantes</h3>
+            <p>{props.transcribing ? "Procesando el audio en este equipo…" : view.transcriptMessage}</p>
+          </div>
+          <span className={props.reviewed ? "status-pill success" : "status-pill"}>
+            {props.reviewed ? "Revisada" : view.transcriptStatus}
+          </span>
         </div>
         {props.transcribing ? (
           <div className="transcription-loading" role="status" aria-live="polite">
@@ -169,17 +191,21 @@ export function TranscriptionWorkspace(props: Props) {
           </div>
         ) : props.turns.length ? (
           <>
-            <button className="ghost-button" onClick={props.onSwapRoles} disabled={props.busy || props.reviewed}>
-              Intercambiar médico/paciente
-            </button>
+            <div className="transcription-review-toolbar">
+              <button className="ghost-button" onClick={props.onSwapRoles} disabled={props.busy || props.reviewed}>
+                Intercambiar médico/paciente
+              </button>
+              <p className="meta">Ajusta los roles antes de marcar la transcripción como revisada.</p>
+            </div>
             <div className="scribe-turn-list">
               {props.turns.map((turn) => (
-                <div className="scribe-turn" key={turn.id}>
-                  <label className="field compact-field">
-                    <span>Hablante</span>
+                <div className={`scribe-turn ${turn.speaker === "MEDICO" ? "doctor-turn" : "patient-turn"}`} key={turn.id}>
+                  <div className="scribe-turn-head">
                     <select
+                      className="scribe-turn-role"
                       value={turn.speaker}
                       disabled={props.busy || props.reviewed}
+                      aria-label={`Hablante del fragmento ${turn.id}`}
                       onChange={(event) =>
                         props.onTurnChange(turn.id, {
                           speaker: event.currentTarget.value as ScribeSpeaker
@@ -191,16 +217,28 @@ export function TranscriptionWorkspace(props: Props) {
                       <option value="ACOMPANANTE">Acompañante</option>
                       <option value="OTRO">Otro</option>
                     </select>
-                  </label>
-                  <label className="field">
-                    <span>{turn.id}</span>
-                    <AutoGrowTextarea
-                      rows={3}
-                      value={turn.text}
-                      disabled={props.busy || props.reviewed}
-                      onChange={(event) => props.onTurnChange(turn.id, { text: event.currentTarget.value })}
-                    />
-                  </label>
+                    {turn.speakerId ? (
+                      <span className="scribe-turn-voice">
+                        <small className="meta">{turn.speakerId}</small>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          disabled={props.busy || props.reviewed}
+                          onClick={() => props.onSpeakerRoleChange(turn.speakerId!, turn.speaker)}
+                        >
+                          Aplicar a esta voz
+                        </button>
+                      </span>
+                    ) : null}
+                  </div>
+                  <AutoGrowTextarea
+                    className="scribe-turn-text"
+                    rows={3}
+                    value={turn.text}
+                    disabled={props.busy || props.reviewed}
+                    aria-label={`Texto del fragmento ${turn.id}`}
+                    onChange={(event) => props.onTurnChange(turn.id, { text: event.currentTarget.value })}
+                  />
                 </div>
               ))}
             </div>

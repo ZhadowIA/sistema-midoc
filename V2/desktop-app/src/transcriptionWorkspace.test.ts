@@ -79,8 +79,8 @@ test("ofrece Auto/1/2/3 voces con default en 2 (consulta típica)", () => {
     [0, 1, 2, 3]
   );
   assert.equal(speakerCountLabel(0), "Auto (detectar)");
-  assert.equal(speakerCountLabel(1), "1 · dictado");
-  assert.equal(speakerCountLabel(2), "2 · médico y paciente");
+  assert.equal(speakerCountLabel(1), "1 - dictado");
+  assert.equal(speakerCountLabel(2), "2 - médico y paciente");
 });
 
 test("ofrece 3 vias de transcripcion con local como default", () => {

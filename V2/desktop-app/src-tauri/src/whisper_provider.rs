@@ -138,8 +138,10 @@ impl TranscriptionProvider for WhisperLocalProvider {
     ) -> Result<(AiResponse, Vec<WhisperSegment>), AiError> {
         let start = Instant::now();
 
-        // Decodifica el WAV a muestras mono f32 a 16 kHz en memoria (sin tocar disco).
-        let decoded = audio::decode_wav_pcm16_to_whisper(&audio.bytes).map_err(AiError::Invalid)?;
+        // Decodifica el audio (WAV de cualquier tasa/bit depth, MP3 o M4A/AAC) a
+        // muestras mono f32 a 16 kHz en memoria (sin tocar disco).
+        let decoded = audio::decode_audio_to_whisper(&audio.bytes, &audio.media_type)
+            .map_err(AiError::Invalid)?;
 
         // El contexto contiene los pesos (cientos de MB o varios GB). Se conserva
         // por ruta durante la vida del proceso para no releer el modelo ni volver

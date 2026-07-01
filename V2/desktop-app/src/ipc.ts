@@ -1101,15 +1101,16 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
           ? [
               {
                 id: "turn-1",
-                speaker: "MEDICO",
+                speakerId: "speaker-0",
+                role: "MEDICO",
                 text: "Paciente masculino de 45 anos, refiere cefalea de tres dias, sin fiebre, con fotofobia leve."
               }
             ]
           : [
-              { id: "turn-1", speaker: "MEDICO", text: "Buenos dias, que lo trae a consulta?" },
-              { id: "turn-2", speaker: "PACIENTE", text: "Me duele la cabeza desde hace tres dias." },
-              { id: "turn-3", speaker: "MEDICO", text: "Tiene fiebre o nauseas?" },
-              { id: "turn-4", speaker: "PACIENTE", text: "No, solo el dolor y algo de sensibilidad a la luz." }
+              { id: "turn-1", speakerId: "speaker-0", role: "MEDICO", text: "Buenos dias, que lo trae a consulta?" },
+              { id: "turn-2", speakerId: "speaker-1", role: "PACIENTE", text: "Me duele la cabeza desde hace tres dias." },
+              { id: "turn-3", speakerId: "speaker-0", role: "MEDICO", text: "Tiene fiebre o nauseas?" },
+              { id: "turn-4", speakerId: "speaker-1", role: "PACIENTE", text: "No, solo el dolor y algo de sensibilidad a la luz." }
             ];
       return {
         run_id: diarRunId,

@@ -2007,10 +2007,11 @@ pub fn diarize_consultation(
     // Separacion de hablantes sobre las muestras decodificadas en memoria (16 kHz
     // mono). El audio nunca se persiste. Si no se puede decodificar o no hay
     // motor/modelos, se degrada a transcripcion sin separacion.
-    let speaker_segments = match crate::audio::decode_wav_pcm16_to_whisper(&audio.bytes) {
-        Ok(decoded) => diarizer(&decoded.samples, 16_000).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    };
+    let speaker_segments =
+        match crate::audio::decode_audio_to_whisper(&audio.bytes, &audio.media_type) {
+            Ok(decoded) => diarizer(&decoded.samples, 16_000).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
     let diarized = !speaker_segments.is_empty() && !whisper_segments.is_empty();
     let turns =
         crate::diarization::merge_segments_with_speakers(&whisper_segments, &speaker_segments);
@@ -3434,8 +3435,10 @@ mod tests {
 
         assert!(draft.diarized, "hubo separacion de hablantes");
         assert_eq!(draft.turns.len(), 2);
-        assert_eq!(draft.turns[0].speaker, crate::diarization::ScribeRole::Medico);
-        assert_eq!(draft.turns[1].speaker, crate::diarization::ScribeRole::Paciente);
+        assert_eq!(draft.turns[0].speaker_id, "speaker-0");
+        assert_eq!(draft.turns[0].role, crate::diarization::ScribeRole::Medico);
+        assert_eq!(draft.turns[1].speaker_id, "speaker-1");
+        assert_eq!(draft.turns[1].role, crate::diarization::ScribeRole::Paciente);
         assert_eq!(draft.usage_type, USAGE_TRANSCRIPTION);
         assert_eq!(draft.audio_retention_policy, AUDIO_RETENTION_DISCARD);
 

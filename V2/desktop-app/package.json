@@ -9,7 +9,7 @@
     "test": "node --test src/*.test.ts",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev --features whisper-local",
+    "tauri:dev": "node ./scripts/tauri-dev.mjs --features whisper-local",
     "tauri:build": "tauri build --features whisper-local",
     "tauri:dev:diarize": "tauri dev --release --features \"whisper-local diarization-local\"",
     "tauri:build:diarize": "tauri build --features \"whisper-local diarization-local\"",

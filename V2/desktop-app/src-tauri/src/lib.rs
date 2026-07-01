@@ -2178,6 +2178,11 @@ fn arco_fulfill_cancellation(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Carga `src-tauri/.env` (si existe) antes de cualquier lectura de env vars
+    // como `MIDOC_GEMINI_API_KEY`. `.ok()` ignora el error cuando el archivo no
+    // existe (build de distribucion, CI, o quien prefiera exportarla a mano).
+    dotenvy::dotenv().ok();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppDb(Mutex::new(None)))

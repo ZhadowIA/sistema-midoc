@@ -24,9 +24,9 @@ export interface SpeakerCountOption {
 
 export const SPEAKER_COUNT_OPTIONS: SpeakerCountOption[] = [
   { value: 0, label: "Auto (detectar)" },
-  { value: 1, label: "1 · dictado" },
-  { value: 2, label: "2 · médico y paciente" },
-  { value: 3, label: "3 · con acompañante" }
+  { value: 1, label: "1 - dictado" },
+  { value: 2, label: "2 - médico y paciente" },
+  { value: 3, label: "3 - con acompañante" }
 ];
 
 export const DEFAULT_SPEAKER_COUNT = 2;
