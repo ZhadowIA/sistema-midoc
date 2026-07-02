@@ -1382,7 +1382,9 @@ fn ai_transcribe_audio(
         Some(other) => return Err(format!("modo de transcripcion no valido: {other}")),
     };
 
-    let provider: Box<dyn ai::TranscriptionProvider> = if use_cloud.unwrap_or(false) {
+    let use_cloud = use_cloud.unwrap_or(false);
+
+    let provider: Box<dyn ai::TranscriptionProvider> = if use_cloud {
         // Via en nube gobernada: el desktop NO conoce la clave del proveedor;
         // envia el audio al portal con el token del dispositivo vinculado. El
         // server_url y el device_token viven en el estado de sync cifrado.
@@ -1414,13 +1416,26 @@ fn ai_transcribe_audio(
         resolve_local_transcription_provider(&app)?
     };
 
+    // El portal calcula la duracion autoritativa del cobro con un parser que solo
+    // acepta WAV PCM, asi que la vía nube normaliza el audio a PCM 16-bit mono
+    // antes de enviarlo (reutiliza el decodificador del importador: acepta WAV a
+    // cualquier tasa/bit depth, MP3 y M4A/AAC). La vía local recibe el archivo
+    // original: Whisper lo decodifica internamente.
+    let (bytes, media_type) = if use_cloud {
+        let wav = audio::transcode_to_pcm16_wav(&bytes, &audio.media_type)
+            .map_err(|e| format!("no se pudo preparar el audio para la nube: {e}"))?;
+        (wav, "audio/wav".to_string())
+    } else {
+        (bytes, audio.media_type)
+    };
+
     with_ai(&state, |conn| {
         ai::transcribe_audio(
             conn,
             &encounter_id,
             ai::AudioInput {
                 file_name: audio.file_name,
-                media_type: audio.media_type,
+                media_type,
                 bytes,
                 duration_seconds: audio.duration_seconds,
             },

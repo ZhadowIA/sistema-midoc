@@ -61,6 +61,51 @@ pub fn decode_audio_to_whisper(bytes: &[u8], media_type: &str) -> Result<Decoded
     })
 }
 
+/// Normaliza cualquier audio soportado (WAV a cualquier tasa/bit depth, MP3,
+/// M4A/AAC) a WAV PCM 16-bit mono a 16 kHz. Es el formato que exige el respaldo
+/// en nube: el portal calcula la duracion autoritativa del cobro con un parser
+/// que SOLO acepta WAV PCM, asi que la vía nube debe enviar siempre PCM (no el
+/// archivo original, que podria ser MP3 o WAV float). Reutiliza el decodificador
+/// del importador y ocurre en memoria, sin tocar disco (audio transitorio, regla
+/// de residencia).
+pub fn transcode_to_pcm16_wav(bytes: &[u8], media_type: &str) -> Result<Vec<u8>, String> {
+    let decoded = decode_audio_to_whisper(bytes, media_type)?;
+    Ok(encode_pcm16_wav_mono(&decoded.samples, decoded.sample_rate))
+}
+
+/// Serializa muestras mono f32 (rango [-1.0, 1.0]) como WAV PCM 16-bit mono con
+/// el encabezado canonico de 44 bytes (`format_tag = 1`), justo lo que admite el
+/// parser estricto del portal. Las muestras se recortan a [-1.0, 1.0] antes de
+/// escalar para evitar desbordar el rango de `i16`.
+fn encode_pcm16_wav_mono(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+    const BITS_PER_SAMPLE: u16 = 16;
+    const CHANNELS: u16 = 1;
+
+    let data_len = (samples.len() * 2) as u32;
+    let byte_rate = sample_rate * CHANNELS as u32 * (BITS_PER_SAMPLE as u32 / 8);
+    let block_align = CHANNELS * (BITS_PER_SAMPLE / 8);
+
+    let mut out = Vec::with_capacity(44 + data_len as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data_len).to_le_bytes());
+    out.extend_from_slice(b"WAVE");
+    out.extend_from_slice(b"fmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM entero
+    out.extend_from_slice(&CHANNELS.to_le_bytes());
+    out.extend_from_slice(&sample_rate.to_le_bytes());
+    out.extend_from_slice(&byte_rate.to_le_bytes());
+    out.extend_from_slice(&block_align.to_le_bytes());
+    out.extend_from_slice(&BITS_PER_SAMPLE.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_len.to_le_bytes());
+    for &sample in samples {
+        let scaled = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+        out.extend_from_slice(&scaled.to_le_bytes());
+    }
+    out
+}
+
 struct MonoAudio {
     samples: Vec<f32>,
     sample_rate: u32,
@@ -280,6 +325,55 @@ mod tests {
         let decoded_float = decode_audio_to_whisper(&bytes_float, "audio/wav").unwrap();
         assert_eq!(decoded_float.samples.len(), 1);
         assert!((decoded_float.samples[0] - 0.5).abs() < 1e-3);
+    }
+
+    /// Lee los campos del encabezado WAV canonico (44 bytes) que produce el
+    /// transcodificador, para verificar que la vía nube envie siempre PCM.
+    fn wav_header(bytes: &[u8]) -> (u16, u16, u32, u16) {
+        let format_tag = u16::from_le_bytes([bytes[20], bytes[21]]);
+        let channels = u16::from_le_bytes([bytes[22], bytes[23]]);
+        let sample_rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
+        let bits = u16::from_le_bytes([bytes[34], bytes[35]]);
+        (format_tag, channels, sample_rate, bits)
+    }
+
+    #[test]
+    fn transcodes_to_canonical_pcm16_mono_16k_wav() {
+        // Entrada valida pero no canonica para la nube: mono a 44.1 kHz (0.1 s),
+        // suficiente para ejercitar el resampleo sinc a 16 kHz.
+        let input = wav(1, 44_100, 16, false, &pcm16_samples(&vec![1_000i16; 4_410]));
+        let out = transcode_to_pcm16_wav(&input, "audio/wav").unwrap();
+
+        assert_eq!(&out[0..4], b"RIFF");
+        assert_eq!(&out[8..12], b"WAVE");
+        let (format_tag, channels, sample_rate, bits) = wav_header(&out);
+        assert_eq!(format_tag, 1, "el portal solo acepta PCM entero (format 1)");
+        assert_eq!(channels, 1, "mono");
+        assert_eq!(sample_rate, WHISPER_SAMPLE_RATE);
+        assert_eq!(bits, 16);
+
+        // La salida vuelve a decodificar sin error (WAV PCM valido).
+        let re = decode_audio_to_whisper(&out, "audio/wav").unwrap();
+        assert_eq!(re.sample_rate, WHISPER_SAMPLE_RATE);
+        assert!(!re.samples.is_empty());
+    }
+
+    #[test]
+    fn transcodes_non_pcm_float_wav_into_pcm() {
+        // WAV IEEE float (format 3): el portal lo rechazaria; debe salir PCM.
+        let input = wav(1, 16_000, 32, true, &0.5f32.to_le_bytes());
+        let out = transcode_to_pcm16_wav(&input, "audio/wav").unwrap();
+
+        let (format_tag, _, _, bits) = wav_header(&out);
+        assert_eq!(format_tag, 1);
+        assert_eq!(bits, 16);
+        let re = decode_audio_to_whisper(&out, "audio/wav").unwrap();
+        assert!((re.samples[0] - 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn transcode_rejects_unrecognizable_audio() {
+        assert!(transcode_to_pcm16_wav(b"esto no es audio ------------", "audio/wav").is_err());
     }
 
     #[test]
