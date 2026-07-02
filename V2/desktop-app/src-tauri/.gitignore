@@ -9,3 +9,6 @@
 # Variables de entorno locales (MIDOC_GEMINI_API_KEY, etc.) — nunca se commitean.
 .env
 .env.local
+
+# Configuracion local de Cargo (rutas especificas de la maquina, p.ej. OPENSSL_DIR)
+/.cargo/
