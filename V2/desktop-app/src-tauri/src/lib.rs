@@ -246,6 +246,20 @@ fn create_doctor_profile(
     Ok(profile)
 }
 
+/// Politica de passphrase: los expedientes NUEVOS exigen 12+ caracteres (la
+/// passphrase es la unica barrera si roban el archivo .db). Las bases ya
+/// existentes siguen aceptando 8+ para no dejar fuera a medicos con
+/// passphrases creadas bajo la politica anterior.
+fn validate_passphrase(passphrase: &str, is_new_database: bool) -> Result<(), String> {
+    let minimum = if is_new_database { 12 } else { 8 };
+    if passphrase.chars().count() < minimum {
+        return Err(format!(
+            "la frase de seguridad debe tener al menos {minimum} caracteres"
+        ));
+    }
+    Ok(())
+}
+
 /// Opens (or creates) the encrypted clinical database with the doctor's
 /// passphrase. The passphrase only lives in memory for the duration of the
 /// call; SQLCipher keeps the derived key inside the connection.
@@ -256,12 +270,11 @@ fn unlock_database(
     profile_id: Option<String>,
     passphrase: String,
 ) -> Result<UnlockResult, String> {
-    if passphrase.len() < 8 {
-        return Err("la frase de seguridad debe tener al menos 8 caracteres".into());
-    }
     let base_dir = app_data_dir(&app)?;
     let selected_profile_id = profile_id.unwrap_or_else(|| DEFAULT_PROFILE_ID.into());
     validate_profile_id(&selected_profile_id)?;
+    let path = profile_database_path(&base_dir, &selected_profile_id)?;
+    validate_passphrase(&passphrase, !path.exists())?;
     let mut profiles = load_profiles_from_dir(&base_dir)?;
     let profile_index = profiles
         .iter()
@@ -271,7 +284,6 @@ fn unlock_database(
     let profile = profiles[profile_index].clone();
     save_profiles_to_dir(&base_dir, &profiles)?;
 
-    let path = profile_database_path(&base_dir, &profile.id)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -2301,6 +2313,21 @@ mod tests {
             profile_database_path(base, "dr-ana").unwrap(),
             profile_database_path(base, "dr-luis").unwrap()
         );
+    }
+
+    #[test]
+    fn new_databases_require_twelve_char_passphrase() {
+        assert!(validate_passphrase("corta", true).is_err());
+        assert!(validate_passphrase("ochochars", true).is_err());
+        assert!(validate_passphrase("doce-caracteres!", true).is_ok());
+        // Cuenta caracteres, no bytes: passphrases con acentos no se penalizan.
+        assert!(validate_passphrase("ñañañañañaña", true).is_ok());
+    }
+
+    #[test]
+    fn existing_databases_keep_accepting_legacy_minimum() {
+        assert!(validate_passphrase("ochochars", false).is_ok());
+        assert!(validate_passphrase("corta", false).is_err());
     }
 
     #[test]

@@ -20,7 +20,7 @@ export async function POST(
   try {
     const ip = requestIpFrom(request);
     if (ip) {
-      assertRateLimit({ key: `public-hold-ip:${ip}`, limit: 30, windowMs: 1000 * 60 * 15 });
+      await assertRateLimit({ key: `public-hold-ip:${ip}`, limit: 30, windowMs: 1000 * 60 * 15 });
     }
 
     const { slug } = await context.params;

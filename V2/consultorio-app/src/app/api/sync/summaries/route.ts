@@ -19,7 +19,7 @@ const publishSchema = z.object({
 export async function POST(request: Request) {
   try {
     const device = await authenticateSyncDevice(request);
-    assertRateLimit({ key: `sync-summary:${device.id}`, limit: 120, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `sync-summary:${device.id}`, limit: 120, windowMs: 1000 * 60 * 15 });
 
     const payload = publishSchema.parse(await request.json());
     const result = await publishAuthorizedSummary(device, {

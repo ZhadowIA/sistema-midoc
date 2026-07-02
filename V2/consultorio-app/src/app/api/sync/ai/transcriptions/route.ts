@@ -26,7 +26,7 @@ const modeSchema = z.enum(["standard", "diarized"]);
 export async function POST(request: Request) {
   try {
     const device = await authenticateSyncDevice(request);
-    assertRateLimit({
+    await assertRateLimit({
       key: `sync-transcription:${device.id}`,
       limit: 30,
       windowMs: 1000 * 60 * 15

@@ -12,7 +12,7 @@ const ackSchema = z.object({
 export async function POST(request: Request) {
   try {
     const device = await authenticateSyncDevice(request);
-    assertRateLimit({ key: `sync-ack:${device.id}`, limit: 120, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `sync-ack:${device.id}`, limit: 120, windowMs: 1000 * 60 * 15 });
 
     const payload = ackSchema.parse(await request.json());
     const result = await ackSyncEvents(device, payload.cursor);

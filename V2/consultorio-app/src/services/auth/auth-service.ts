@@ -29,7 +29,7 @@ import {
 } from "../../lib/identity-validation";
 import { prisma } from "../../lib/prisma";
 import { assertRateLimit } from "../../lib/rate-limit";
-import { hashPassword, verifyPassword } from "../../lib/security/password";
+import { hashPassword, passwordNeedsRehash, verifyPassword } from "../../lib/security/password";
 import { generateOpaqueToken, hashOpaqueToken } from "../../lib/security/token";
 import { queueNotification } from "../notifications/notification-service";
 import {
@@ -146,13 +146,13 @@ export async function createDoctorAccount(input: {
   requestIp?: string;
   requestUserAgent?: string;
 }) {
-  assertRateLimit({
+  await assertRateLimit({
     key: `register:${input.email.toLowerCase()}`,
     limit: 5,
     windowMs: 1000 * 60 * 15
   });
   if (input.requestIp) {
-    assertRateLimit({
+    await assertRateLimit({
       key: `register-ip:${input.requestIp}`,
       limit: 10,
       windowMs: 1000 * 60 * 15
@@ -270,13 +270,13 @@ export async function signInDoctor(input: {
   password: string;
   requestIp?: string;
 }) {
-  assertRateLimit({
+  await assertRateLimit({
     key: `login:${input.email.toLowerCase()}`,
     limit: 10,
     windowMs: 1000 * 60 * 15
   });
   if (input.requestIp) {
-    assertRateLimit({
+    await assertRateLimit({
       key: `login-ip:${input.requestIp}`,
       limit: 30,
       windowMs: 1000 * 60 * 15
@@ -296,6 +296,15 @@ export async function signInDoctor(input: {
 
   if (!isValid) {
     throw new AuthServiceError("Credenciales invalidas.", 401);
+  }
+
+  // Re-hash transparente: los hashes legados migran a los parametros actuales
+  // aprovechando que aqui tenemos la contrasena en claro y ya verificada.
+  if (passwordNeedsRehash(user.passwordHash)) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash: await hashPassword(input.password) }
+    });
   }
 
   // Si el 2FA esta activo, no se crea sesion: se emite un desafio de segundo factor.
@@ -545,13 +554,13 @@ export async function requestPasswordReset(input: {
   requestIp?: string;
   requestUserAgent?: string;
 }) {
-  assertRateLimit({
+  await assertRateLimit({
     key: `password-reset:${input.email.toLowerCase()}`,
     limit: 5,
     windowMs: 1000 * 60 * 15
   });
   if (input.requestIp) {
-    assertRateLimit({
+    await assertRateLimit({
       key: `password-reset-ip:${input.requestIp}`,
       limit: 15,
       windowMs: 1000 * 60 * 15

@@ -1345,3 +1345,13 @@ model AuthorizedSummary {
   @@index([doctorId, status])
   @@index([patientId, status])
 }
+
+// Contador de rate limiting compartido entre instancias (OPERATIVO: solo
+// llaves tecnicas — email/IP/dispositivo — nunca contenido clinico).
+model RateLimitCounter {
+  key       String   @id
+  count     Int
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}

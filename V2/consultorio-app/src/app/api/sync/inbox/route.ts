@@ -7,7 +7,7 @@ import { authenticateSyncDevice, getSyncInbox } from "../../../../services/sync/
 export async function GET(request: Request) {
   try {
     const device = await authenticateSyncDevice(request);
-    assertRateLimit({ key: `sync-inbox:${device.id}`, limit: 120, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `sync-inbox:${device.id}`, limit: 120, windowMs: 1000 * 60 * 15 });
 
     const url = new URL(request.url);
     const cursorParam = url.searchParams.get("cursor");

@@ -11,7 +11,7 @@ export async function GET(
   try {
     const { token } = await context.params;
     const ipAddress = requestIpFrom(request);
-    assertRateLimit({ key: `summary-download:${ipAddress ?? token}`, limit: 60, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `summary-download:${ipAddress ?? token}`, limit: 60, windowMs: 1000 * 60 * 15 });
 
     const summary = await getAuthorizedSummaryForDownload(token, { ipAddress });
     return NextResponse.json(summary);

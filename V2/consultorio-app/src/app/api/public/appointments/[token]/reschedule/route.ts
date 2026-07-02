@@ -16,7 +16,7 @@ export async function POST(
   try {
     const ip = requestIpFrom(request);
     if (ip) {
-      assertRateLimit({ key: `public-reschedule-ip:${ip}`, limit: 10, windowMs: 1000 * 60 * 15 });
+      await assertRateLimit({ key: `public-reschedule-ip:${ip}`, limit: 10, windowMs: 1000 * 60 * 15 });
     }
 
     const { token } = await context.params;
