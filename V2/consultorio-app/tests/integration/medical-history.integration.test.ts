@@ -269,17 +269,20 @@ describe("medical history sealed precheckin (paso 19, rebanada 7)", () => {
     const bothReadsFinished = new Promise<void>((resolve) => {
       releaseReads = resolve;
     });
+    // Prisma tipa findFirst como un client "thenable" con metodos extra; bajo
+    // `await` esta funcion async es equivalente, de ahi el cast del mock.
+    const delayedFindFirst = (async (args: Parameters<typeof originalFindFirst>[0]) => {
+      const result = await originalFindFirst(args);
+      reads += 1;
+      if (reads === 2) {
+        releaseReads?.();
+      }
+      await bothReadsFinished;
+      return result;
+    }) as unknown as typeof servicePrisma.precheckinSubmission.findFirst;
     const findFirstSpy = vi
       .spyOn(servicePrisma.precheckinSubmission, "findFirst")
-      .mockImplementation(async (args) => {
-        const result = await originalFindFirst(args);
-        reads += 1;
-        if (reads === 2) {
-          releaseReads?.();
-        }
-        await bothReadsFinished;
-        return result;
-      });
+      .mockImplementation(delayedFindFirst);
 
     try {
       await _sodium.ready;
