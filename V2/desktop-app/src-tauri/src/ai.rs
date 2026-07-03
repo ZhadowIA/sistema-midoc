@@ -56,7 +56,7 @@ const PROMPT_VERSION_INSTRUCTIONS: &str = "instructions/v1";
 const PROMPT_VERSION_GAPS: &str = "gaps/v1";
 const PROMPT_VERSION_TRANSCRIPTION: &str = "transcription/v1";
 pub const PROMPT_VERSION_CONSULTATION_STRUCTURING: &str = "consultation-structuring/v1";
-pub const PROMPT_VERSION_CLINICAL_AID: &str = "clinical-aid/v1";
+pub const PROMPT_VERSION_CLINICAL_AID: &str = "clinical-aid/v2";
 const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
 
 fn prompt_version_for(usage_type: &str) -> &'static str {
@@ -1090,7 +1090,7 @@ pub struct TranscriptionDraft {
 fn clinical_aid_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
-        "required": ["soap", "template_segments", "possibilities", "studies", "treatments", "warnings"],
+        "required": ["soap", "template_segments", "possibilities", "exam_suggestions", "question_suggestions", "studies", "treatments", "prescription_draft", "background_updates", "warnings"],
         "properties": {
             "soap": {
                 "type": "object",
@@ -1118,8 +1118,12 @@ fn clinical_aid_schema() -> serde_json::Value {
                     }
                 }
             },
+            "exam_suggestions": {"type":"array","items":{"type":"object","required":["name","reason"],"properties":{"name":{"type":"string"},"reason":{"type":"string"}}}},
+            "question_suggestions": {"type":"array","items":{"type":"object","required":["question","reason"],"properties":{"question":{"type":"string"},"reason":{"type":"string"}}}},
             "studies": {"type":"array","items":{"type":"object","required":["name","reason","priority"],"properties":{"name":{"type":"string"},"reason":{"type":"string"},"priority":{"type":"string","enum":["ROUTINE","SOON","URGENT"]}}}},
             "treatments": {"type":"array","items":{"type":"object","required":["name","reason","precautions"],"properties":{"name":{"type":"string"},"reason":{"type":"string"},"precautions":{"type":"array","items":{"type":"string"}}}}},
+            "prescription_draft": {"type":"string"},
+            "background_updates": {"type":"array","items":{"type":"object","required":["field","content"],"properties":{"field":{"type":"string","enum":["allergies","medical_background","family_background"]},"content":{"type":"string"}}}},
             "warnings":{"type":"array","items":{"type":"string"}}
         }
     })
@@ -1167,6 +1171,14 @@ fn fake_clinical_aid_output(context: &str) -> Result<String, AiError> {
             conflicting_findings: Vec::new(),
             missing_data: vec!["Exploración física".into(), "Signos vitales".into()],
         }],
+        exam_suggestions: vec![ExamSuggestion {
+            name: "Signos vitales y estado general".into(),
+            reason: "La transcripción no registra exploración física.".into(),
+        }],
+        question_suggestions: vec![QuestionSuggestion {
+            question: "¿Desde cuándo presenta el síntoma y cómo ha evolucionado?".into(),
+            reason: "Precisar cronología ayuda a acotar posibilidades.".into(),
+        }],
         studies: vec![StudySuggestion {
             name: "Biometría hemática".into(),
             reason: "Valorar causas frecuentes de fatiga si el criterio médico lo indica.".into(),
@@ -1176,6 +1188,11 @@ fn fake_clinical_aid_output(context: &str) -> Result<String, AiError> {
             name: "Medidas de higiene del sueño".into(),
             reason: "La preconsulta refiere insomnio.".into(),
             precautions: vec!["Confirmar causas secundarias.".into()],
+        }],
+        prescription_draft: "Medidas de higiene del sueño según lo comentado en consulta.".into(),
+        background_updates: vec![BackgroundUpdate {
+            field: "medical_background".into(),
+            content: "Refiere insomnio de larga evolución (mencionado en consulta).".into(),
         }],
         warnings: vec!["Todas las propuestas requieren revisión médica.".into()],
     })
@@ -1190,6 +1207,30 @@ pub struct ClinicalPossibility {
     pub supporting_findings: Vec<String>,
     pub conflicting_findings: Vec<String>,
     pub missing_data: Vec<String>,
+}
+
+/// Factor de exploracion fisica que la IA sugiere revisar. Es una propuesta
+/// para el criterio del medico, nunca una indicacion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExamSuggestion {
+    pub name: String,
+    pub reason: String,
+}
+
+/// Pregunta sugerida para completar la anamnesis con el paciente.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionSuggestion {
+    pub question: String,
+    pub reason: String,
+}
+
+/// Antecedente que el paciente respondio durante la conversacion y que la IA
+/// propone volcar al expediente. `field` esta acotado a los campos de texto
+/// libre editables por el medico en consulta.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackgroundUpdate {
+    pub field: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1211,8 +1252,18 @@ struct ClinicalAidOutput {
     soap: NoteContent,
     template_segments: Vec<SegmentDraft>,
     possibilities: Vec<ClinicalPossibility>,
+    // `default` tolera respuestas de la version de prompt anterior (v1) que
+    // no incluian estas secciones.
+    #[serde(default)]
+    exam_suggestions: Vec<ExamSuggestion>,
+    #[serde(default)]
+    question_suggestions: Vec<QuestionSuggestion>,
     studies: Vec<StudySuggestion>,
     treatments: Vec<TreatmentSuggestion>,
+    #[serde(default)]
+    prescription_draft: String,
+    #[serde(default)]
+    background_updates: Vec<BackgroundUpdate>,
     warnings: Vec<String>,
 }
 
@@ -1227,8 +1278,12 @@ pub struct ClinicalAidDraft {
     pub soap: NoteContent,
     pub template_segments: Vec<SegmentDraft>,
     pub possibilities: Vec<ClinicalPossibility>,
+    pub exam_suggestions: Vec<ExamSuggestion>,
+    pub question_suggestions: Vec<QuestionSuggestion>,
     pub studies: Vec<StudySuggestion>,
     pub treatments: Vec<TreatmentSuggestion>,
+    pub prescription_draft: String,
+    pub background_updates: Vec<BackgroundUpdate>,
     pub warnings: Vec<String>,
 }
 
@@ -1723,12 +1778,32 @@ fn parse_clinical_aid_output(
             ));
         }
     }
+    for exam in &output.exam_suggestions {
+        if exam.name.trim().is_empty() || exam.reason.trim().is_empty() {
+            return Err(AiError::Invalid("sugerencia de exploracion invalida".into()));
+        }
+    }
+    for question in &output.question_suggestions {
+        if question.question.trim().is_empty() || question.reason.trim().is_empty() {
+            return Err(AiError::Invalid("pregunta sugerida invalida".into()));
+        }
+    }
     for study in &output.studies {
         if study.name.trim().is_empty()
             || study.reason.trim().is_empty()
             || !matches!(study.priority.as_str(), "ROUTINE" | "SOON" | "URGENT")
         {
             return Err(AiError::Invalid("estudio sugerido invalido".into()));
+        }
+    }
+    for update in &output.background_updates {
+        if update.content.trim().is_empty()
+            || !matches!(
+                update.field.as_str(),
+                "allergies" | "medical_background" | "family_background"
+            )
+        {
+            return Err(AiError::Invalid("antecedente propuesto invalido".into()));
         }
     }
     let allowed: std::collections::HashSet<&str> = template_segments
@@ -1769,6 +1844,9 @@ pub fn generate_clinical_aid(
             "Usa HIGH, MEDIUM o LOW como compatibilidad.",
             "Explica hallazgos a favor, en contra y faltantes.",
             "No inventes datos.",
+            "En exam_suggestions propone factores de exploracion fisica que convendria revisar segun los sintomas referidos; en question_suggestions, preguntas para completar la anamnesis. Ambas son sugerencias para el criterio del medico, nunca indicaciones.",
+            "En prescription_draft redacta un borrador de receta SOLO con medicamentos o indicaciones que el medico menciono o acordo explicitamente en la conversacion, con la dosis, frecuencia y duracion tal como se dijeron; si no se menciono ningun tratamiento, deja el campo vacio.",
+            "En background_updates vuelca antecedentes que el paciente respondio durante la conversacion (alergias, antecedentes personales, antecedentes familiares) usando los campos allergies, medical_background o family_background; solo informacion dicha por el paciente, sin inferencias.",
             "En cada template_segment cita en source_turns los ids de turnos que lo sustentan; si la conversacion no cubre ese segmento, deja source_turns vacio y agrega una advertencia."
         ],
         "template_segments": &template_segments,
@@ -1824,8 +1902,12 @@ pub fn generate_clinical_aid(
         soap: output.soap,
         template_segments: output.template_segments,
         possibilities: output.possibilities,
+        exam_suggestions: output.exam_suggestions,
+        question_suggestions: output.question_suggestions,
         studies: output.studies,
         treatments: output.treatments,
+        prescription_draft: output.prescription_draft,
+        background_updates: output.background_updates,
         warnings: output.warnings,
     })
 }
@@ -3409,6 +3491,43 @@ mod tests {
     }
 
     #[test]
+    fn clinical_aid_rejects_empty_exam_or_question_suggestions() {
+        let base = r#"{
+          "soap":{"subjective":"","objective":"","assessment":"","plan":"","diagnosis":"","instructions":"","specialty":null},
+          "template_segments":[],
+          "possibilities":[],
+          "exam_suggestions":EXAMS,
+          "question_suggestions":QUESTIONS,
+          "studies":[],"treatments":[],"warnings":[]
+        }"#;
+        let bad_exam = base
+            .replace("EXAMS", r#"[{"name":"  ","reason":"Sin datos"}]"#)
+            .replace("QUESTIONS", "[]");
+        assert!(parse_clinical_aid_output(&bad_exam, &scribe_segments(), &scribe_turns()).is_err());
+        let bad_question = base
+            .replace("EXAMS", "[]")
+            .replace("QUESTIONS", r#"[{"question":"¿Desde cuándo?","reason":""}]"#);
+        assert!(
+            parse_clinical_aid_output(&bad_question, &scribe_segments(), &scribe_turns()).is_err()
+        );
+    }
+
+    #[test]
+    fn clinical_aid_rejects_background_update_with_unknown_field() {
+        let raw = r#"{
+          "soap":{"subjective":"","objective":"","assessment":"","plan":"","diagnosis":"","instructions":"","specialty":null},
+          "template_segments":[],
+          "possibilities":[],
+          "studies":[],"treatments":[],
+          "background_updates":[{"field":"blood_type","content":"O+"}],
+          "warnings":[]
+        }"#;
+        assert!(parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns()).is_err());
+        let valid = raw.replace("blood_type", "allergies");
+        assert!(parse_clinical_aid_output(&valid, &scribe_segments(), &scribe_turns()).is_ok());
+    }
+
+    #[test]
     fn clinical_aid_requires_reviewed_transcription_and_returns_levels() {
         let conn = test_conn("clinical-aid-flow");
         let (encounter_id, patient_id) = seed_encounter(&conn);
@@ -3446,6 +3565,8 @@ mod tests {
             .possibilities
             .iter()
             .all(|item| matches!(item.compatibility.as_str(), "HIGH" | "MEDIUM" | "LOW")));
+        assert!(!draft.exam_suggestions.is_empty());
+        assert!(!draft.question_suggestions.is_empty());
     }
 
     /// WAV PCM16 mono 16 kHz de silencio, para que la decodificacion de audio de

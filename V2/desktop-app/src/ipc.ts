@@ -1247,6 +1247,14 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
           conflicting_findings: [],
           missing_data: ["Exploración física", "Signos vitales"]
         }],
+        exam_suggestions: [{
+          name: "Signos vitales y estado general",
+          reason: "La transcripción no registra exploración física."
+        }],
+        question_suggestions: [{
+          question: "¿Desde cuándo presenta el síntoma y cómo ha evolucionado?",
+          reason: "Precisar cronología ayuda a acotar posibilidades."
+        }],
         studies: [{
           name: "Biometría hemática",
           reason: "Valorar causas frecuentes de fatiga si el criterio médico lo indica.",
@@ -1256,6 +1264,11 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
           name: "Medidas de higiene del sueño",
           reason: "La preconsulta refiere insomnio.",
           precautions: ["Confirmar causas secundarias."]
+        }],
+        prescription_draft: "Medidas de higiene del sueño según lo comentado en consulta.",
+        background_updates: [{
+          field: "medical_background",
+          content: "Refiere insomnio de larga evolución (mencionado en consulta)."
         }],
         warnings: ["Todas las propuestas requieren revisión médica."]
       } as T;

@@ -1,4 +1,9 @@
-import { compatibilityLabel, type ClinicalAidDraft } from "./clinicalAid";
+import {
+  backgroundFieldLabel,
+  compatibilityLabel,
+  type BackgroundUpdate,
+  type ClinicalAidDraft
+} from "./clinicalAid";
 import type { SegmentDraft } from "./consultationScribe";
 
 interface Props {
@@ -15,6 +20,8 @@ interface Props {
   onGenerate(): void;
   onApplySoap(): void;
   onApplySegment(segment: SegmentDraft): void;
+  onApplyPrescription(text: string): void;
+  onApplyBackground(update: BackgroundUpdate): void;
   onDiscard(): void;
 }
 
@@ -100,6 +107,26 @@ export function ClinicalAidRail(props: Props) {
             ))}
           </div>
           <div className="clinical-aid-result">
+            <strong>Exploración física sugerida</strong>
+            {props.draft.exam_suggestions.length === 0 ? (
+              <p className="meta">Sin sugerencias para esta consulta.</p>
+            ) : (
+              props.draft.exam_suggestions.map((item) => (
+                <p key={item.name}><b>{item.name}:</b> {item.reason}</p>
+              ))
+            )}
+          </div>
+          <div className="clinical-aid-result">
+            <strong>Preguntas para el paciente</strong>
+            {props.draft.question_suggestions.length === 0 ? (
+              <p className="meta">Sin preguntas sugeridas.</p>
+            ) : (
+              props.draft.question_suggestions.map((item) => (
+                <p key={item.question}><b>{item.question}</b> — {item.reason}</p>
+              ))
+            )}
+          </div>
+          <div className="clinical-aid-result">
             <strong>Estudios sugeridos</strong>
             {props.draft.studies.map((item) => <p key={item.name}><b>{item.name}:</b> {item.reason}</p>)}
           </div>
@@ -107,6 +134,32 @@ export function ClinicalAidRail(props: Props) {
             <strong>Opciones de tratamiento</strong>
             {props.draft.treatments.map((item) => <p key={item.name}><b>{item.name}:</b> {item.reason}</p>)}
           </div>
+          {props.draft.prescription_draft.trim() ? (
+            <article className="clinical-aid-result">
+              <strong>Receta sugerida</strong>
+              <p>{props.draft.prescription_draft}</p>
+              <p className="meta">Solo tratamientos mencionados en la conversación.</p>
+              <button
+                className="ghost-button"
+                onClick={() => props.onApplyPrescription(props.draft!.prescription_draft)}
+              >
+                Aplicar a receta
+              </button>
+            </article>
+          ) : null}
+          {props.draft.background_updates.length > 0 ? (
+            <div className="clinical-aid-result">
+              <strong>Antecedentes detectados en la conversación</strong>
+              {props.draft.background_updates.map((update) => (
+                <article key={`${update.field}:${update.content}`}>
+                  <p><b>{backgroundFieldLabel(update.field)}:</b> {update.content}</p>
+                  <button className="ghost-button" onClick={() => props.onApplyBackground(update)}>
+                    Aplicar a antecedentes
+                  </button>
+                </article>
+              ))}
+            </div>
+          ) : null}
           <button className="ghost-button danger-link" onClick={props.onDiscard}>Descartar ayuda</button>
         </div>
       ) : null}

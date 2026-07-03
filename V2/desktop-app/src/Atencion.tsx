@@ -60,7 +60,7 @@ import {
   type TranscriptionMode
 } from "./transcriptionWorkspace";
 import { ClinicalAidRail } from "./ClinicalAidRail";
-import type { ClinicalAidDraft } from "./clinicalAid";
+import type { BackgroundUpdate, ClinicalAidDraft } from "./clinicalAid";
 import {
   applyConflictDecisions,
   reconcileMedicalHistories,
@@ -904,6 +904,26 @@ export function Atencion({
     setMessage("SOAP aplicado al editor. Revisa y guarda manualmente.");
   }
 
+  // Las propuestas de IA se ANEXAN a lo que el medico ya escribio; nunca
+  // sobrescriben. El medico revisa el resultado en el editor antes de guardar.
+  function applyClinicalAidPrescription(text: string) {
+    setPrescription((current) => (current.trim() ? `${current.trimEnd()}\n${text}` : text));
+    setMessage("Receta sugerida aplicada al editor. Revisa y guarda manualmente.");
+  }
+
+  function applyClinicalAidBackground(update: BackgroundUpdate) {
+    setBackground((current) => {
+      const existing = current[update.field] ?? "";
+      return {
+        ...current,
+        [update.field]: existing.trim()
+          ? `${existing.trimEnd()}\n${update.content}`
+          : update.content
+      };
+    });
+    setMessage("Antecedente aplicado. Revisa y guarda manualmente.");
+  }
+
   function discardClinicalAid() {
     if (!clinicalAidDraft) return;
     const runId = clinicalAidDraft.run_id;
@@ -1400,6 +1420,8 @@ export function Atencion({
                 onGenerate={generateClinicalAid}
                 onApplySoap={applyClinicalAidSoap}
                 onApplySegment={applyScribeSegment}
+                onApplyPrescription={applyClinicalAidPrescription}
+                onApplyBackground={applyClinicalAidBackground}
                 onDiscard={discardClinicalAid}
               />
             ) : null}
