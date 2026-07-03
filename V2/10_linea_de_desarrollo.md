@@ -79,13 +79,15 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | ✅ DONE |
 | 13 | Directorio y expediente longitudinal | `impeccable` | Directorio de pacientes y linea del tiempo clinica editable. | ✅ DONE |
 | 14 | Seguridad de medicacion determinista | `codex-security:security-scan` | Interacciones, alergias cruzadas y duplicidad sin IA, con fuente citada. | ✅ DONE |
-| 15 | Transcripcion local real (Whisper) | `superpowers:writing-plans` | whisper.cpp real, descarga de modelo y respaldo en nube gobernado. | 🔜 PLANEADO |
+| 15 | Transcripcion local real (Whisper) | `superpowers:writing-plans` | whisper.cpp real, descarga de modelo y respaldo en nube gobernado. | ✅ DONE (backends nativos se validan en staging) |
 | 16 | Proveedores de IA reales en staging (BAA) | `codex-security:security-scan` | Adaptadores reales de LLM/transcripcion con gobernanza intacta. | 🔜 PLANEADO |
 | 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
 | 18 | Agendado con responsable/tutor | `superpowers:test-driven-development` | El sistema distingue paciente con tutor de paciente sin tutor. | ✅ DONE |
 | 19 | Pulido del flujo publico, preconsulta y sincronizacion | `impeccable` | Perfil/agenda fieles, preconsulta diferida (antecedentes o guiada por IA), recordatorio con cancelacion y sync con aviso. | 🔜 PLANEADO |
 | 20 | App del medico: multi-perfil y agenda dia/semana | `impeccable` | Varios medicos comparten una computadora con bases cifradas independientes y agenda dia/semana. | ✅ DONE |
 | 21 | Plantillas clinicas asistidas por conversacion | `superpowers:writing-plans` | Consulta grabada/transcrita se acomoda en segmentos revisables de la plantilla activa. | 🧪 EN REVISION (PR #18) |
+| 22 | Diarizacion local (separacion de hablantes) | `superpowers:writing-plans` | Dialogo Medico/Paciente separado offline con sherpa-onnx; Ruta B anade transcripcion en nube gobernada por el portal. | 🚧 IN PROGRESS (nativo pendiente de staging) |
+| 23 | Anamnesis asistida (cuestionario desde conversacion) | `superpowers:writing-plans` | Antecedentes estructurados propuestos por IA desde la consulta hablada, reconciliados campo por campo y confirmados por el medico. | 🔜 PLANEADO |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -1128,6 +1130,22 @@ Costo en creditos por transcripcion (autoritativo, lo fija el portal):
 El resto de usos de IA (SOAP asistido, ayuda clinica, preconsulta, etc.) sigue tarifado sobre el LLM base (Gemini): `+1` credito por invocacion, sin cambios.
 
 Estado: F1 (portal, #28) + F2 (portal, #29) + F3 (desktop, cliente del portal, #31) + F4 (diarizacion: logica pura + Rust + UI de 3 modos y asignacion de roles) completas y con pruebas verdes (cargo + node). Pendiente, no bloqueante para el codigo: activacion del proveedor real con BAA firmado y ZDR verificado en staging (paso 16) — el gate `OPENAI_TRANSCRIPTION_ZDR_APPROVED` es auto-declarado (evita activacion accidental) y no verifica nada con OpenAI; la barrera real es legal/administrativa, no tecnica.
+
+## Paso 23 - Anamnesis asistida: cuestionario de antecedentes desde la conversacion
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Cuando el paciente no contesto (o contesto parcialmente) el cuestionario estructurado de antecedentes, el medico hace las preguntas durante la consulta y la IA propone las respuestas mapeadas al cuestionario (`patient_medical_history_versions`), campo por campo, para que el medico las revise, corrija y confirme — sin re-transcribir y sin romper la inmutabilidad por versiones ni el contrato compartido con el portal. |
+| Requisitos relacionados | Extiende el paso 11 (IA gobernada), el paso 19 (preconsulta/reconciliacion) y la Ayuda IA del paso 22. Antecedente directo: `background_updates` de la Ayuda IA (2026-07-03), que solo cubre los 3 campos de texto libre (`allergies`, `medical_background`, `family_background`). |
+| Entrada necesaria | Transcripcion revisada de la consulta (paso 21/22); contrato del cuestionario (`medicalHistoryFormat.ts`, espejo de `consultorio-app/src/lib/medical-history.ts`); flujo de reconciliacion existente (`reconcileMedicalHistories` / `applyConflictDecisions`). |
+| Se construye | Extraccion gobernada (uso `CLINICAL_AID` o uso nuevo dedicado) que devuelve respuestas propuestas restringidas por esquema a las claves reales del cuestionario (`GroupDef`/`FieldDef`, incluidos `yesno`, `select` y estructuras como heredo-familiares), con cita del turno de conversacion que sustenta cada respuesta; UI de reconciliacion campo por campo que reusa el patron de conflictos de la preconsulta (valor actual vs. propuesto, aceptar/editar/descartar); guardado como nueva version con `source = DOCTOR_EDIT` (la IA NUNCA es fuente directa de una version) y trazabilidad del `run_id` de IA en la auditoria. |
+| Se valida con | Un paciente sin cuestionario contestado llega a consulta; el medico le hace las preguntas hablando, genera la propuesta, revisa cada campo (acepta unos, corrige otros, descarta los no dichos), confirma, y el expediente queda con una version nueva correcta y auditada — sin haber tecleado las respuestas. |
+| Compuerta de avance | Ninguna respuesta se guarda sin confirmacion explicita del medico; el esquema JSON rechaza claves fuera del contrato del cuestionario; cada respuesta propuesta cita el turno que la sustenta (sin cita, se marca como no confiable); la version guardada registra `source = DOCTOR_EDIT` y referencia al run de IA; los cambios de contrato del cuestionario se replican en ambas apps (regla existente del espejo). |
+| Push recomendado | Por rebanada cerrada: (1) contrato de extraccion + validacion por esquema con pruebas puras, (2) UI de reconciliacion campo por campo, (3) guardado versionado + auditoria de extremo a extremo. |
+
+Clasificacion de datos: las respuestas propuestas y confirmadas son CLINICO (solo base local cifrada); el contrato del cuestionario es REFERENCIA; la traza del run (costo, latencia, version de prompt) es OPERATIVO local, sin contenido clinico.
+
+Decision de alcance que motiva este paso (2026-07-03): la Ayuda IA ya vuelca antecedentes dichos en conversacion a los 3 campos de texto libre del paciente, pero el cuestionario estructurado quedo deliberadamente fuera: tiene contrato compartido con el portal, tipado por campo y versionado inmutable con reconciliacion propia, y merece este diseno dedicado en lugar de un atajo.
 
 ## MVP recomendado
 
