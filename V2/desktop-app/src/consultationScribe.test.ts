@@ -69,6 +69,62 @@ test("mapea segmentos anonimos del portal a hablantes etiquetados sin asumir rol
   assert.equal(review.turns[2].speakerId, "speaker_0");
 });
 
+test("comprime segmentos consecutivos del mismo hablante en un solo turno (nube)", () => {
+  const review = diarizedSegmentsToTurns([
+    { speaker: "speaker_0", startSeconds: 0, endSeconds: 2, text: "Paciente masculino de 20 años" },
+    { speaker: "speaker_0", startSeconds: 2, endSeconds: 4, text: "con una lesión necrótica," },
+    { speaker: "speaker_0", startSeconds: 4, endSeconds: 6, text: "3 semanas después de salmonelosis" },
+    { speaker: "speaker_1", startSeconds: 6, endSeconds: 8, text: "Entiendo" },
+    { speaker: "speaker_0", startSeconds: 8, endSeconds: 9, text: "¿Qué opina?" }
+  ]);
+
+  // 5 segmentos → 3 turnos: los 3 primeros del mismo hablante se fusionan; la
+  // intervencion de otro hablante corta la fusion (no se agrupa globalmente).
+  assert.deepEqual(
+    review.turns.map((t) => [t.speakerId, t.text]),
+    [
+      ["speaker_0", "Paciente masculino de 20 años con una lesión necrótica, 3 semanas después de salmonelosis"],
+      ["speaker_1", "Entiendo"],
+      ["speaker_0", "¿Qué opina?"]
+    ]
+  );
+  // El rango de tiempo del turno fusionado abarca del primero al ultimo corte.
+  assert.equal(review.turns[0].startSeconds, 0);
+  assert.equal(review.turns[0].endSeconds, 6);
+  assert.equal(review.speakers.length, 2);
+});
+
+test("comprime turnos consecutivos de la misma voz en la diarizacion local", () => {
+  const turns = diarizedTurnsToConsultationTurns([
+    { id: "turn-1", speakerId: "speaker-0", role: "MEDICO", text: "Paciente que inició", startCs: 0, endCs: 100 },
+    { id: "turn-2", speakerId: "speaker-0", role: "MEDICO", text: "con una lesión.", startCs: 100, endCs: 200 },
+    { id: "turn-3", speakerId: "speaker-1", role: "PACIENTE", text: "Sí, doctor.", startCs: 200, endCs: 300 },
+    { id: "turn-4", speakerId: "speaker-0", role: "MEDICO", text: "Continúo.", startCs: 300, endCs: 400 }
+  ]);
+
+  assert.deepEqual(
+    turns.map((turn) => ({ id: turn.id, speaker: turn.speaker, text: turn.text })),
+    [
+      { id: "turn-1", speaker: "MEDICO", text: "Paciente que inició con una lesión." },
+      { id: "turn-3", speaker: "PACIENTE", text: "Sí, doctor." },
+      { id: "turn-4", speaker: "MEDICO", text: "Continúo." }
+    ]
+  );
+});
+
+test("los turnos vacios intermedios no rompen la fusion de la misma voz", () => {
+  const turns = diarizedTurnsToConsultationTurns([
+    { id: "turn-1", speakerId: "speaker-0", role: "MEDICO", text: "Primera parte", startCs: 0, endCs: 100 },
+    { id: "turn-2", speakerId: "speaker-0", role: "MEDICO", text: "   ", startCs: 100, endCs: 150 },
+    { id: "turn-3", speakerId: "speaker-0", role: "MEDICO", text: "segunda parte.", startCs: 150, endCs: 200 }
+  ]);
+
+  assert.deepEqual(
+    turns.map((turn) => turn.text),
+    ["Primera parte segunda parte."]
+  );
+});
+
 test("convierte un DiarizedReview resuelto a ConsultationTurn con los 4 roles", () => {
   // ACOMPANANTE/OTRO se preservan (no colapsan a PACIENTE): el pipeline de
   // estructuracion SOAP y guardado ya acepta los 4 roles (Ruta B, F4).

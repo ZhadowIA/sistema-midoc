@@ -53,8 +53,10 @@ import { MedicalHistoryGroups } from "./MedicalHistoryGroups";
 import { TranscriptionWorkspace } from "./ConsultationTranscriptionPanel";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import {
+  DEFAULT_CLOUD_TRANSCRIPTION_PROVIDER,
   DEFAULT_SPEAKER_COUNT,
   DEFAULT_TRANSCRIPTION_MODE,
+  type CloudTranscriptionProviderId,
   type TranscriptionMode
 } from "./transcriptionWorkspace";
 import { ClinicalAidRail } from "./ClinicalAidRail";
@@ -313,6 +315,9 @@ export function Atencion({
   const [recordingError, setRecordingError] = useState("");
   const [transcriptionMode, setTranscriptionMode] =
     useState<TranscriptionMode>(DEFAULT_TRANSCRIPTION_MODE);
+  const [cloudProvider, setCloudProvider] = useState<CloudTranscriptionProviderId>(
+    DEFAULT_CLOUD_TRANSCRIPTION_PROVIDER
+  );
   const [numSpeakers, setNumSpeakers] = useState(DEFAULT_SPEAKER_COUNT);
   const [transcribing, setTranscribing] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionId>("nota");
@@ -668,7 +673,8 @@ export function Atencion({
             encounterId,
             audio,
             useCloud: true,
-            mode: transcriptionMode === "cloud_diarized" ? "diarized" : "standard"
+            mode: transcriptionMode === "cloud_diarized" ? "diarized" : "standard",
+            provider: cloudProvider
           });
           setAiTranscription(draft);
           if (transcriptionMode === "cloud_diarized" && draft.segments_json) {
@@ -1227,6 +1233,7 @@ export function Atencion({
                   recordingSeconds={recordingSeconds}
                   recordingError={recordingError}
                   mode={transcriptionMode}
+                  cloudProvider={cloudProvider}
                   numSpeakers={numSpeakers}
                   transcribing={transcribing}
                   turns={scribeTurns}
@@ -1241,6 +1248,7 @@ export function Atencion({
                   onStop={stopConsultationRecording}
                   onFile={transcribeAudioFile}
                   onModeChange={setTranscriptionMode}
+                  onCloudProviderChange={setCloudProvider}
                   onNumSpeakersChange={setNumSpeakers}
                   onTurnChange={updateScribeTurn}
                   onAssignDiarizedRole={assignScribeDiarizedRole}

@@ -1370,6 +1370,7 @@ fn ai_transcribe_audio(
     audio: AudioTranscriptionPayload,
     use_cloud: Option<bool>,
     mode: Option<String>,
+    provider: Option<String>,
 ) -> Result<ai::TranscriptionDraft, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(audio.audio_base64.as_bytes())
@@ -1380,6 +1381,15 @@ fn ai_transcribe_audio(
         None | Some("standard") => "standard",
         Some("diarized") => "diarized",
         Some(other) => return Err(format!("modo de transcripcion no valido: {other}")),
+    };
+
+    // Proveedor real de la via en nube, elegido por el medico en la UI. El
+    // desktop solo transmite la eleccion (nunca conoce claves); el portal la
+    // valida contra su propio gate de entorno. Default: openai (compatibilidad).
+    let cloud_provider = match provider.as_deref() {
+        None | Some("openai") => "openai",
+        Some("deepgram") => "deepgram",
+        Some(other) => return Err(format!("proveedor de transcripcion no valido: {other}")),
     };
 
     let use_cloud = use_cloud.unwrap_or(false);
@@ -1409,6 +1419,7 @@ fn ai_transcribe_audio(
                 device_token,
                 run_id,
                 cloud_mode,
+                cloud_provider,
             )
             .map_err(|e| e.to_string())?,
         )

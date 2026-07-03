@@ -153,13 +153,42 @@ export interface DiarizedReview {
   turns: DiarizedTurn[];
 }
 
+/// Une dos fragmentos de un mismo turno con un solo espacio, ignorando vacios.
+function joinTurnText(current: string, next: string): string {
+  const previous = current.trim();
+  const text = next.trim();
+  if (!text) return previous;
+  return previous ? `${previous} ${text}` : text;
+}
+
+/// Comprime segmentos CONSECUTIVOS del mismo hablante en uno solo: los
+/// proveedores de diarizacion cortan por pausas o frases, y presentar cada
+/// corte como bloque separado obliga al medico a revisar de mas. El rango de
+/// tiempo se conserva (inicio del primero, fin del ultimo).
+function mergeConsecutiveSegments(segments: DiarizedSegment[]): DiarizedSegment[] {
+  const merged: DiarizedSegment[] = [];
+  for (const segment of segments) {
+    const last = merged[merged.length - 1];
+    if (last && last.speaker === segment.speaker) {
+      last.text = joinTurnText(last.text, segment.text);
+      last.endSeconds = segment.endSeconds;
+    } else {
+      merged.push({ ...segment });
+    }
+  }
+  return merged;
+}
+
 /// Agrupa los segmentos del portal por etiqueta de hablante (en orden de
-/// aparicion) y los presenta como "Hablante N" sin asumir roles. Los turnos
-/// conservan el orden y el tiempo; el rol arranca en UNASSIGNED.
+/// aparicion) y los presenta como "Hablante N" sin asumir roles. Los segmentos
+/// consecutivos del mismo hablante se comprimen en un solo turno; el orden y el
+/// tiempo se conservan y el rol arranca en UNASSIGNED.
 export function diarizedSegmentsToTurns(segments: DiarizedSegment[]): DiarizedReview {
+  const compact = mergeConsecutiveSegments(segments);
+
   const order: string[] = [];
   const seen = new Set<string>();
-  for (const segment of segments) {
+  for (const segment of compact) {
     if (!seen.has(segment.speaker)) {
       seen.add(segment.speaker);
       order.push(segment.speaker);
@@ -172,7 +201,7 @@ export function diarizedSegmentsToTurns(segments: DiarizedSegment[]): DiarizedRe
     role: "UNASSIGNED"
   }));
 
-  const turns: DiarizedTurn[] = segments.map((segment, index) => ({
+  const turns: DiarizedTurn[] = compact.map((segment, index) => ({
     id: `turn-${index + 1}`,
     speakerId: segment.speaker,
     speakerRole: "UNASSIGNED",
@@ -234,16 +263,28 @@ export function diarizedReviewToConsultationTurns(review: DiarizedReview): Consu
 // el acompanante se corrige a mano en el selector de turno).
 
 /// Convierte los turnos crudos de diarizacion local (con `speakerId`) al
-/// formato compartido `ConsultationTurn`, descartando los turnos sin texto.
+/// formato compartido `ConsultationTurn`, descartando los turnos sin texto y
+/// comprimiendo turnos consecutivos de la misma voz en un solo bloque (el
+/// motor corta por pausas; cada corte no es un turno clinico distinto). El
+/// bloque fusionado conserva el id del primer turno.
 export function diarizedTurnsToConsultationTurns(turns: LocalDiarizedTurn[]): ConsultationTurn[] {
-  return turns
-    .map((turn) => ({
-      id: turn.id,
-      speaker: turn.role,
-      speakerId: turn.speakerId,
-      text: turn.text.trim()
-    }))
-    .filter((turn) => turn.text);
+  const result: ConsultationTurn[] = [];
+  for (const turn of turns) {
+    const text = turn.text.trim();
+    if (!text) continue;
+    const last = result[result.length - 1];
+    if (last && last.speakerId === turn.speakerId) {
+      last.text = `${last.text} ${text}`;
+    } else {
+      result.push({
+        id: turn.id,
+        speaker: turn.role,
+        speakerId: turn.speakerId,
+        text
+      });
+    }
+  }
+  return result;
 }
 
 export function assignRoleToSpeaker(

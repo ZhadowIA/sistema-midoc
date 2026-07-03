@@ -4,6 +4,8 @@ import { test } from "node:test";
 
 import { buildEncounterModes } from "./encounterModes.ts";
 import {
+  CLOUD_TRANSCRIPTION_PROVIDER_OPTIONS,
+  DEFAULT_CLOUD_TRANSCRIPTION_PROVIDER,
   deriveTranscriptionView,
   DEFAULT_SPEAKER_COUNT,
   DEFAULT_TRANSCRIPTION_MODE,
@@ -89,6 +91,20 @@ test("ofrece 3 vias de transcripcion con local como default", () => {
     TRANSCRIPTION_MODE_OPTIONS.map((option) => option.value),
     ["local", "cloud_standard", "cloud_diarized"]
   );
+});
+
+test("ofrece OpenAI y Deepgram como proveedores de nube con OpenAI por default", () => {
+  assert.equal(DEFAULT_CLOUD_TRANSCRIPTION_PROVIDER, "openai");
+  assert.deepEqual(
+    CLOUD_TRANSCRIPTION_PROVIDER_OPTIONS.map((option) => option.value),
+    ["openai", "deepgram"]
+  );
+});
+
+test("la eleccion de proveedor de nube viaja al comando de transcripcion", () => {
+  // El desktop solo transmite la eleccion; el portal media con la clave real.
+  const source = readFileSync(new URL("./Atencion.tsx", import.meta.url), "utf8");
+  assert.match(source, /provider: cloudProvider/);
 });
 
 test("descartar una transcripción revisada la elimina del almacenamiento y de la pantalla", () => {

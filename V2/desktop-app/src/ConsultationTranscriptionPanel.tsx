@@ -1,9 +1,11 @@
 import type { DiarizedReview, DiarizedSpeakerRole, ConsultationTurn, ScribeSpeaker } from "./consultationScribe";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import {
+  CLOUD_TRANSCRIPTION_PROVIDER_OPTIONS,
   deriveTranscriptionView,
   SPEAKER_COUNT_OPTIONS,
   TRANSCRIPTION_MODE_OPTIONS,
+  type CloudTranscriptionProviderId,
   type RecordingState,
   type TranscriptionMode
 } from "./transcriptionWorkspace";
@@ -15,6 +17,8 @@ interface Props {
   recordingSeconds: number;
   recordingError: string;
   mode: TranscriptionMode;
+  /** Proveedor real de la via en nube elegido por el medico (solo modos nube). */
+  cloudProvider: CloudTranscriptionProviderId;
   numSpeakers: number;
   transcribing: boolean;
   turns: ConsultationTurn[];
@@ -31,6 +35,7 @@ interface Props {
   onStop(): void;
   onFile(file: File | null): void;
   onModeChange(value: TranscriptionMode): void;
+  onCloudProviderChange(value: CloudTranscriptionProviderId): void;
   onNumSpeakersChange(value: number): void;
   onTurnChange(id: string, patch: Partial<Pick<ConsultationTurn, "speaker" | "text">>): void;
   /** Asigna rol a un hablante anonimo aun sin resolver (pantalla previa, Ruta B F4). */
@@ -126,6 +131,26 @@ export function TranscriptionWorkspace(props: Props) {
             ))}
           </select>
         </label>
+        {props.mode !== "local" ? (
+          <label className="field compact-field">
+            <span>Proveedor de nube</span>
+            <select
+              value={props.cloudProvider}
+              disabled={props.busy || !props.voiceConsent}
+              onChange={(event) =>
+                props.onCloudProviderChange(
+                  event.currentTarget.value as CloudTranscriptionProviderId
+                )
+              }
+            >
+              {CLOUD_TRANSCRIPTION_PROVIDER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label className="field compact-field">
           <span>Número de voces</span>
           <select

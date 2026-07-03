@@ -54,6 +54,23 @@ export const TRANSCRIPTION_MODE_OPTIONS: TranscriptionModeOption[] = [
 
 export const DEFAULT_TRANSCRIPTION_MODE: TranscriptionMode = "local";
 
+// Proveedor real de la via en nube (RF41: contrato agnostico). El medico lo
+// elige en la UI; el desktop solo transmite la eleccion al portal, que valida
+// su gate de entorno y media con la clave (el desktop nunca la conoce).
+export type CloudTranscriptionProviderId = "openai" | "deepgram";
+
+export interface CloudTranscriptionProviderOption {
+  value: CloudTranscriptionProviderId;
+  label: string;
+}
+
+export const CLOUD_TRANSCRIPTION_PROVIDER_OPTIONS: CloudTranscriptionProviderOption[] = [
+  { value: "openai", label: "OpenAI" },
+  { value: "deepgram", label: "Deepgram" }
+];
+
+export const DEFAULT_CLOUD_TRANSCRIPTION_PROVIDER: CloudTranscriptionProviderId = "openai";
+
 export function deriveTranscriptionView(input: TranscriptionWorkspaceInput) {
   const hasTranscript = input.hasTranscript;
   return {
