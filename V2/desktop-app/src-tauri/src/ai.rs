@@ -569,14 +569,64 @@ impl TranscriptionProvider for FakeTranscriptionProvider {
 /// Seudonimiza el contexto antes de enviarlo a un proveedor: reemplaza el
 /// nombre del paciente por un marcador. Minimo viable; se endurece cuando se
 /// cablee un proveedor real.
+/// Normaliza un caracter para comparar nombres: minusculas y sin acentos. El
+/// texto viene de ASR (capitalizacion y acentos no confiables) y el expediente
+/// lo escribio el medico: ambos lados se comparan ya normalizados.
+fn normalize_name_char(c: char) -> char {
+    match c {
+        'á' | 'à' | 'ä' | 'â' | 'Á' | 'À' | 'Ä' | 'Â' => 'a',
+        'é' | 'è' | 'ë' | 'ê' | 'É' | 'È' | 'Ë' | 'Ê' => 'e',
+        'í' | 'ì' | 'ï' | 'î' | 'Í' | 'Ì' | 'Ï' | 'Î' => 'i',
+        'ó' | 'ò' | 'ö' | 'ô' | 'Ó' | 'Ò' | 'Ö' | 'Ô' => 'o',
+        'ú' | 'ù' | 'ü' | 'û' | 'Ú' | 'Ù' | 'Ü' | 'Û' => 'u',
+        'ñ' | 'Ñ' => 'n',
+        _ => c.to_ascii_lowercase(),
+    }
+}
+
+fn normalize_name_word(word: &str) -> String {
+    word.chars().map(normalize_name_char).collect()
+}
+
+/// Redacta el nombre del paciente antes de que el texto salga a un proveedor de
+/// IA (seudonimizacion del prompt). Cada PALABRA del nombre y apellido (nombres
+/// compuestos incluidos) se compara con frontera de palabra, sin distinguir
+/// mayusculas ni acentos, y se reemplaza por `[PACIENTE]`. Las palabras de menos
+/// de 3 caracteres (particulas como "de", "la") no se redactan: son lexico comun
+/// y borrarlas corromperia el texto clinico.
 pub fn redact(context: &str, first_name: &str, last_name: &str) -> String {
-    let mut out = context.to_string();
-    for token in [first_name, last_name] {
-        let token = token.trim();
-        if token.len() >= 3 {
-            out = out.replace(token, "[PACIENTE]");
+    let tokens: std::collections::HashSet<String> = [first_name, last_name]
+        .iter()
+        .flat_map(|name| name.split_whitespace())
+        .filter(|word| word.chars().count() >= 3)
+        .map(normalize_name_word)
+        .collect();
+    if tokens.is_empty() {
+        return context.to_string();
+    }
+
+    let mut out = String::with_capacity(context.len());
+    let mut word = String::new();
+    let flush = |out: &mut String, word: &mut String| {
+        if !word.is_empty() {
+            if tokens.contains(&normalize_name_word(word)) {
+                out.push_str("[PACIENTE]");
+            } else {
+                out.push_str(word);
+            }
+            word.clear();
+        }
+    };
+
+    for c in context.chars() {
+        if c.is_alphabetic() {
+            word.push(c);
+        } else {
+            flush(&mut out, &mut word);
+            out.push(c);
         }
     }
+    flush(&mut out, &mut word);
     out
 }
 
@@ -2429,6 +2479,64 @@ mod tests {
         assert!(!redacted.contains("Hugo"));
         assert!(!redacted.contains("Paz"));
         assert!(redacted.contains("[PACIENTE]"));
+    }
+
+    #[test]
+    fn redaction_is_case_insensitive() {
+        // El texto viene de ASR: la capitalizacion no es confiable.
+        let redacted = redact("hugo refiere tos. HUGO niega fiebre.", "Hugo", "Paz");
+        assert!(!redacted.to_lowercase().contains("hugo"));
+        assert!(redacted.contains("[PACIENTE]"));
+    }
+
+    #[test]
+    fn redaction_ignores_accent_mismatches() {
+        // Expediente con acento, transcripcion sin el (o al reves): mismo nombre.
+        let redacted = redact("El paciente Perez y tambien Pérez.", "José", "Pérez");
+        assert!(!redacted.contains("Perez"));
+        assert!(!redacted.contains("Pérez"));
+        // Y en la otra direccion: expediente sin acento, audio con acento.
+        let redacted = redact("Habla José sobre su tos.", "Jose", "Paz");
+        assert!(!redacted.contains("José"));
+    }
+
+    #[test]
+    fn redaction_matches_each_word_of_compound_names() {
+        // "Juan Carlos" en el expediente; en el audio solo dicen "Carlos".
+        let redacted = redact(
+            "Carlos refiere dolor. Juan asiente. Firma Juan de la Rosa.",
+            "Juan Carlos",
+            "de la Rosa",
+        );
+        assert!(!redacted.contains("Carlos"));
+        assert!(!redacted.contains("Juan"));
+        assert!(!redacted.contains("Rosa"));
+        // Las particulas cortas de apellidos compuestos ("de", "la") no se
+        // redactan: son palabras comunes y borrarlas corromperia el texto.
+        assert!(redacted.contains("de la [PACIENTE]"));
+    }
+
+    #[test]
+    fn redaction_respects_word_boundaries() {
+        // "Sol" como apellido no debe mutilar "Soledad" ni "solucion".
+        let redacted = redact("Soledad propone una solucion. Sol asiente.", "Ana", "Sol");
+        assert!(redacted.contains("Soledad"));
+        assert!(redacted.contains("solucion"));
+        assert!(!redacted.contains("Sol asiente"));
+        assert!(redacted.contains("[PACIENTE] asiente"));
+        // "Ana" dentro de "sanar" o "anatomia" tampoco se toca.
+        let redacted = redact("Va a sanar; revisar anatomia. Ana pregunta.", "Ana", "Sol");
+        assert!(redacted.contains("sanar"));
+        assert!(redacted.contains("anatomia"));
+        assert!(redacted.contains("[PACIENTE] pregunta"));
+    }
+
+    #[test]
+    fn redaction_keeps_json_structure_intact() {
+        // `redact` corre sobre el JSON serializado del prompt: los nombres entre
+        // comillas deben redactarse sin romper la estructura.
+        let redacted = redact(r#"{"turns":[{"text":"Hugo Paz refiere tos"}]}"#, "Hugo", "Paz");
+        assert!(redacted.contains(r#"{"turns":[{"text":"[PACIENTE] [PACIENTE] refiere tos"}]}"#));
     }
 
     #[test]
