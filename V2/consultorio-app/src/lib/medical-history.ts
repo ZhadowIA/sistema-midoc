@@ -478,22 +478,33 @@ const familyHistorySchema = z
   )
   .partial();
 
-function schemaForGroup(group: GroupDef): z.ZodTypeAny {
-  if (group.key === "familyHistory") return familyHistorySchema.optional();
-  return groupSchema(group).optional();
+function groupByKey(key: string): GroupDef {
+  const group = MEDICAL_HISTORY_GROUPS.find((candidate) => candidate.key === key);
+  if (!group) {
+    throw new Error(`grupo de historia clinica desconocido: ${key}`);
+  }
+  return group;
 }
 
 /**
  * Esquema Zod del payload. Se valida en el cliente antes de sellar y en la app
  * del medico al descifrar; la nube nunca lo ve. Cada grupo es opcional.
+ *
+ * Los grupos se declaran con llaves explicitas (no `Object.fromEntries`) para
+ * que el tipo inferido las conozca; una prueba unitaria garantiza que ningun
+ * grupo de MEDICAL_HISTORY_GROUPS quede fuera.
  */
 export const medicalHistorySchema = z.object({
   sex: z.enum(BIOLOGICAL_SEX).optional(),
   allergies: freeText,
   currentMedications: freeText,
-  ...Object.fromEntries(
-    MEDICAL_HISTORY_GROUPS.map((group) => [group.key, schemaForGroup(group)])
-  )
+  identification: groupSchema(groupByKey("identification")).optional(),
+  emergencyContact: groupSchema(groupByKey("emergencyContact")).optional(),
+  familyHistory: familyHistorySchema.optional(),
+  nonPathological: groupSchema(groupByKey("nonPathological")).optional(),
+  gyneco: groupSchema(groupByKey("gyneco")).optional(),
+  pathological: groupSchema(groupByKey("pathological")).optional(),
+  systemsReview: groupSchema(groupByKey("systemsReview")).optional()
 });
 
 export type MedicalHistoryPayload = z.infer<typeof medicalHistorySchema>;

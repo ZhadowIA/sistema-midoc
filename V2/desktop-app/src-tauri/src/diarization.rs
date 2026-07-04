@@ -7,13 +7,13 @@
 //! Whisper responde "que se dijo": entrega segmentos de texto con marcas de
 //! tiempo. Este modulo es el PEGAMENTO entre ambos motores: asigna a cada segmento
 //! de texto el hablante cuyo tramo solapa mas en el tiempo, fusiona segmentos
-//! contiguos del mismo hablante y mapea los indices de hablante (0/1) a los roles
-//! Medico/Paciente que consume el escriba clinico.
+//! contiguos del mismo hablante, conserva el speaker tecnico (`speaker-0`,
+//! `speaker-1`, ...) y sugiere un rol clinico revisable por separado.
 //!
 //! Todo aqui es logica PURA y determinista (sin audio, sin red, sin la base
-//! cifrada): la fusion y la asignacion de roles se prueban sin hardware. El escriba
-//! ya permite corregir hablante/texto a mano, asi que esta separacion automatica es
-//! una ayuda revisable, no una fuente de verdad.
+//! cifrada): la fusion y la inferencia inicial de roles se prueban sin hardware.
+//! El escriba ya permite corregir hablante/texto a mano, asi que esta separacion
+//! automatica es una ayuda revisable, no una fuente de verdad.
 
 use serde::Serialize;
 
@@ -80,13 +80,19 @@ pub enum ScribeRole {
     Paciente,
 }
 
-/// Turno de dialogo listo para el frontend: hablante con rol, texto y marcas de
-/// tiempo. El `id` sigue el formato `turn-N` que ya usa el escriba.
+fn speaker_id(idx: u8) -> String {
+    format!("speaker-{idx}")
+}
+
+/// Turno de dialogo listo para el frontend: speaker tecnico, rol clinico sugerido,
+/// texto y marcas de tiempo. `speaker_id` conserva la identidad acustica; `role`
+/// es solo una sugerencia editable para compatibilidad con el escriba clinico.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiarizedTurn {
     pub id: String,
-    pub speaker: ScribeRole,
+    pub speaker_id: String,
+    pub role: ScribeRole,
     pub text: String,
     pub start_cs: i64,
     pub end_cs: i64,
@@ -113,7 +119,9 @@ pub fn dominant_speaker(segment: &WhisperSegment, speakers: &[SpeakerSegment]) -
         let better = match best {
             None => true,
             // Mayor solape gana; ante empate, el indice menor (estable).
-            Some((best_idx, best_ov)) => ov > best_ov || (ov == best_ov && sp.speaker_idx < best_idx),
+            Some((best_idx, best_ov)) => {
+                ov > best_ov || (ov == best_ov && sp.speaker_idx < best_idx)
+            }
         };
         if better {
             best = Some((sp.speaker_idx, ov));
@@ -163,10 +171,9 @@ fn segments_to_indexed_turns(
     turns
 }
 
-/// Mapea indices de hablante a roles clinicos por orden de aparicion: el primero
-/// que habla es el Medico (abre la consulta), el resto Paciente. La UI permite
-/// intercambiar si la heuristica se equivoca. Con `num_speakers = 2` solo hay dos
-/// indices; cualquier indice extra (no esperado) cae en Paciente.
+/// Sugiere roles clinicos por orden de aparicion: el primer speaker tecnico se
+/// propone como Medico y los demas como Paciente. IMPORTANTE: esto no borra la
+/// identidad tecnica; la UI puede reasignar todos los turnos de un `speaker_id`.
 fn role_for(idx: u8, medico_idx: u8) -> ScribeRole {
     if idx == medico_idx {
         ScribeRole::Medico
@@ -176,7 +183,8 @@ fn role_for(idx: u8, medico_idx: u8) -> ScribeRole {
 }
 
 /// Fusiona la transcripcion con los tramos de hablante y produce el dialogo
-/// Medico/Paciente revisable. Punto de entrada del modulo.
+/// revisable conservando speaker tecnico + rol clinico sugerido. Punto de entrada
+/// del modulo.
 pub fn merge_segments_with_speakers(
     whisper: &[WhisperSegment],
     speakers: &[SpeakerSegment],
@@ -191,7 +199,8 @@ pub fn merge_segments_with_speakers(
         .enumerate()
         .map(|(i, (idx, seg))| DiarizedTurn {
             id: format!("turn-{}", i + 1),
-            speaker: role_for(idx, medico_idx),
+            speaker_id: speaker_id(idx),
+            role: role_for(idx, medico_idx),
             text: seg.text,
             start_cs: seg.start_cs,
             end_cs: seg.end_cs,
@@ -238,9 +247,10 @@ mod tests {
     }
 
     #[test]
-    fn three_speakers_map_first_to_doctor_rest_to_patient() {
-        // Con acompanante: idx 0 (primer hablante) = Medico; idx 1 y 2 = Paciente.
-        // El medico corrige a mano si hace falta (la UI lo permite).
+    fn three_speakers_preserve_technical_identity_before_clinical_role() {
+        // La diarizacion tecnica NO debe colapsar identidades: speaker-1 y
+        // speaker-2 pueden mapearse despues a roles clinicos, pero primero deben
+        // llegar separados a la UI.
         let whisper = [
             ws(0, 100, "Buenos dias."),
             ws(100, 200, "Me duele la cabeza."),
@@ -249,15 +259,22 @@ mod tests {
         let speakers = [sp(0, 100, 0), sp(100, 200, 1), sp(200, 300, 2)];
         let turns = merge_segments_with_speakers(&whisper, &speakers);
         assert_eq!(turns.len(), 3);
-        assert_eq!(turns[0].speaker, ScribeRole::Medico);
-        assert_eq!(turns[1].speaker, ScribeRole::Paciente);
-        assert_eq!(turns[2].speaker, ScribeRole::Paciente);
+        assert_eq!(turns[0].speaker_id, "speaker-0");
+        assert_eq!(turns[1].speaker_id, "speaker-1");
+        assert_eq!(turns[2].speaker_id, "speaker-2");
+        assert_eq!(turns[0].role, ScribeRole::Medico);
+        assert_eq!(turns[1].role, ScribeRole::Paciente);
+        assert_eq!(turns[2].role, ScribeRole::Paciente);
     }
 
     #[test]
     fn overlap_is_intersection_or_zero() {
         assert_eq!(overlap_cs(0, 100, 50, 150), 50);
-        assert_eq!(overlap_cs(0, 100, 100, 200), 0, "se tocan en el borde, no solapan");
+        assert_eq!(
+            overlap_cs(0, 100, 100, 200),
+            0,
+            "se tocan en el borde, no solapan"
+        );
         assert_eq!(overlap_cs(0, 100, 200, 300), 0, "disjuntos");
         assert_eq!(overlap_cs(0, 100, 10, 40), 30, "uno contiene al otro");
     }
@@ -294,9 +311,9 @@ mod tests {
         let turns = merge_segments_with_speakers(&whisper, &speakers);
 
         assert_eq!(turns.len(), 2);
-        assert_eq!(turns[0].speaker, ScribeRole::Medico);
+        assert_eq!(turns[0].role, ScribeRole::Medico);
         assert_eq!(turns[0].id, "turn-1");
-        assert_eq!(turns[1].speaker, ScribeRole::Paciente);
+        assert_eq!(turns[1].role, ScribeRole::Paciente);
         assert!(turns[1].text.contains("duele la cabeza"));
     }
 
@@ -315,17 +332,20 @@ mod tests {
         assert_eq!(turns[0].text, "Buenos dias. Soy el doctor.");
         assert_eq!(turns[0].start_cs, 0);
         assert_eq!(turns[0].end_cs, 200);
-        assert_eq!(turns[0].speaker, ScribeRole::Medico);
-        assert_eq!(turns[1].speaker, ScribeRole::Paciente);
+        assert_eq!(turns[0].role, ScribeRole::Medico);
+        assert_eq!(turns[1].role, ScribeRole::Paciente);
     }
 
     #[test]
     fn single_speaker_yields_one_role() {
-        let whisper = [ws(0, 100, "Solo una voz."), ws(100, 200, "Sin interlocutor.")];
+        let whisper = [
+            ws(0, 100, "Solo una voz."),
+            ws(100, 200, "Sin interlocutor."),
+        ];
         let speakers = [sp(0, 200, 0)];
         let turns = merge_segments_with_speakers(&whisper, &speakers);
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].speaker, ScribeRole::Medico);
+        assert_eq!(turns[0].role, ScribeRole::Medico);
     }
 
     #[test]
@@ -340,9 +360,12 @@ mod tests {
         let turns = merge_segments_with_speakers(&whisper, &speakers);
 
         assert_eq!(turns.len(), 2);
-        assert_eq!(turns[0].text, "Hola. Sigo yo.", "el segmento sin hablante hereda el previo");
-        assert_eq!(turns[0].speaker, ScribeRole::Medico);
-        assert_eq!(turns[1].speaker, ScribeRole::Paciente);
+        assert_eq!(
+            turns[0].text, "Hola. Sigo yo.",
+            "el segmento sin hablante hereda el previo"
+        );
+        assert_eq!(turns[0].role, ScribeRole::Medico);
+        assert_eq!(turns[1].role, ScribeRole::Paciente);
     }
 
     #[test]
@@ -357,10 +380,13 @@ mod tests {
     #[test]
     fn no_speakers_falls_back_to_index_zero_as_doctor() {
         // Diarizacion no disponible: todo cae en un solo turno del Medico.
-        let whisper = [ws(0, 100, "Texto sin diarizar."), ws(100, 200, "Mas texto.")];
+        let whisper = [
+            ws(0, 100, "Texto sin diarizar."),
+            ws(100, 200, "Mas texto."),
+        ];
         let turns = merge_segments_with_speakers(&whisper, &[]);
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].speaker, ScribeRole::Medico);
+        assert_eq!(turns[0].role, ScribeRole::Medico);
     }
 
     #[test]
@@ -369,16 +395,19 @@ mod tests {
     }
 
     #[test]
-    fn role_serializes_with_frontend_labels() {
+    fn role_serializes_with_frontend_labels_and_speaker_id() {
         let turn = DiarizedTurn {
             id: "turn-1".into(),
-            speaker: ScribeRole::Medico,
+            speaker_id: "speaker-0".into(),
+            role: ScribeRole::Medico,
             text: "hola".into(),
             start_cs: 0,
             end_cs: 100,
         };
         let json = serde_json::to_string(&turn).unwrap();
-        assert!(json.contains("\"speaker\":\"MEDICO\""));
+        assert!(json.contains("\"speakerId\":\"speaker-0\""));
+        assert!(json.contains("\"role\":\"MEDICO\""));
+        assert!(!json.contains("\"speaker\":\"MEDICO\""));
         assert!(json.contains("\"startCs\":0"));
         assert!(json.contains("\"endCs\":100"));
     }

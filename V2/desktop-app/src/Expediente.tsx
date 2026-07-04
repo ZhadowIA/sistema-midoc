@@ -104,6 +104,10 @@ const dateTimeFormatter = new Intl.DateTimeFormat("es-MX", {
 
 const dateFormatter = new Intl.DateTimeFormat("es-MX", { dateStyle: "long" });
 
+function patientInitials(patient: PatientRecord): string {
+  return `${patient.first_name.charAt(0)}${patient.last_name.charAt(0)}`.toUpperCase();
+}
+
 function formatEventDate(value: string): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : dateFormatter.format(parsed);
@@ -137,11 +141,13 @@ interface BackgroundForm {
 export function Expediente({
   patientId,
   onBack,
-  onOpenEncounter
+  onOpenEncounter,
+  embedded = false
 }: {
   patientId: string;
   onBack: () => void;
   onOpenEncounter: (encounterId: string) => void;
+  embedded?: boolean;
 }) {
   const [profile, setProfile] = useState<PatientProfile | null>(null);
   const [patientMedicalHistory, setPatientMedicalHistory] =
@@ -319,29 +325,25 @@ export function Expediente({
   ];
 
   return (
-    <>
-      <header className="app-topbar">
-        <button className="ghost-button" onClick={onBack}>
-          ← Directorio
-        </button>
-        <span className="topbar-context">Expediente longitudinal</span>
-      </header>
+    <section className={embedded ? "expediente-screen" : "content expediente-screen"}>
+      <button type="button" className="ghost-button expediente-back" onClick={onBack}>
+        ‹ Directorio
+      </button>
 
-      <div className="content encounter-content">
-        <section className="panel patient-banner">
-          <div className="panel-header">
-            <h2>
-              {p.first_name} {p.last_name}
-              {p.is_minor ? (
-                <span className="pill pill-primary patient-minor-pill">Menor con tutor</span>
-              ) : null}
-            </h2>
-            <p>
-              {p.phone ? `Tel: ${p.phone}` : "Sin telefono"}
-              {p.email ? ` · ${p.email}` : ""}
-              {p.birth_date ? ` · Nac: ${formatEventDate(p.birth_date)}` : ""}
-            </p>
-          </div>
+      <div className="expediente-hero">
+        <span className="expediente-avatar" aria-hidden="true">{patientInitials(p)}</span>
+        <div className="expediente-identity">
+          <h1>
+            {p.first_name} {p.last_name}
+            {p.is_minor ? (
+              <span className="pill pill-primary patient-minor-pill">Menor con tutor</span>
+            ) : null}
+          </h1>
+          <p>
+            {p.phone ? `Tel: ${p.phone}` : "Sin teléfono"}
+            {p.email ? ` · ${p.email}` : ""}
+            {p.birth_date ? ` · Nac: ${formatEventDate(p.birth_date)}` : ""}
+          </p>
           {p.guardian ? (
             <p className="meta patient-guardian">
               Responsable: <strong>{p.guardian.name}</strong>
@@ -350,25 +352,30 @@ export function Expediente({
               {guardianContactLine(p.guardian)}
             </p>
           ) : null}
-          {p.allergies ? <p className="alert-allergies">Alergias: {p.allergies}</p> : null}
-        </section>
+          {p.allergies ? (
+            <p className="expediente-allergy">
+              <span aria-hidden="true" />
+              Alergias: {p.allergies}
+            </p>
+          ) : null}
+        </div>
+      </div>
 
-        <div className="encounter-layout">
-          <nav className="encounter-nav" aria-label="Secciones del expediente">
-            {navItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={section === item.id ? "nav-item nav-item-active" : "nav-item"}
-                aria-current={section === item.id ? "page" : undefined}
-                onClick={() => setSection(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </nav>
+      <nav className="expediente-tabs" aria-label="Secciones del expediente">
+        {navItems.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={section === item.id ? "expediente-tab expediente-tab-active" : "expediente-tab"}
+            aria-current={section === item.id ? "page" : undefined}
+            onClick={() => setSection(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
 
-          <div className="encounter-main">
+      <div className="expediente-main">
             {message && (
               <p className="form-success" role="status">
                 {message}
@@ -671,9 +678,7 @@ export function Expediente({
                 )}
               </section>
             ) : null}
-          </div>
-        </div>
       </div>
-    </>
+    </section>
   );
 }

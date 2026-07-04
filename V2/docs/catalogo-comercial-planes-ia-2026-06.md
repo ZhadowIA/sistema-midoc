@@ -43,6 +43,26 @@ Por lo tanto, una **consulta asistida estandar** consume normalmente:
 
 La referencia de cobertura comercial debe basarse en `3 creditos por consulta asistida`, porque es el flujo que realmente hace sentir al medico que "la IA si le ayudo".
 
+> **Nota tecnica (Ruta B, 2026-07-01) — pendiente de decision comercial.** El
+> backend actual **no cobra credito por transcripcion local** (Whisper +
+> sherpa-onnx corren en el equipo del medico, `0 creditos`); el supuesto de
+> `1 credito` para "transcripcion local" en esta seccion es la politica
+> comercial deseada, no el costo tecnico real, y las dos vias nuevas en nube
+> tampoco estan reflejadas aqui todavia. El portal ya cobra estas dos vias de
+> forma autoritativa por duracion del audio:
+>
+> | Via | Formula | Ejemplo (15 min = 900s) |
+> |---|---|---|
+> | Nube estandar | `ceil(duracion_segundos / 900)` | `1 credito` |
+> | Nube con hablantes (diarizado) | `ceil(duracion_segundos / 600)` | `2 creditos` |
+>
+> Falta decidir: (a) si "transcripcion local: 1 credito" se mantiene como
+> cobro comercial aunque el costo tecnico sea `0` (para sostener el
+> `3 creditos por consulta` de esta seccion), y (b) como entran las dos vias
+> en nube en el modelo de "creditos por consulta asistida". No se ha
+> modificado el resto de esta seccion para no tomar esa decision de precio
+> sin validacion del negocio.
+
 ## Catalogo recomendado
 
 ### 1. Agenda

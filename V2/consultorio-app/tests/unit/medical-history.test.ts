@@ -57,6 +57,15 @@ describe("contrato de historia clinica (paso 19, rebanada 13)", () => {
     }
   });
 
+  it("el esquema cubre todos los grupos del cuestionario (guardia anti-drift)", () => {
+    // El esquema declara los grupos con llaves explicitas para que el tipo
+    // inferido las conozca; esta prueba evita que un grupo nuevo quede fuera.
+    const schemaKeys = Object.keys(medicalHistorySchema.shape);
+    for (const group of MEDICAL_HISTORY_GROUPS) {
+      expect(schemaKeys).toContain(group.key);
+    }
+  });
+
   it("define cancer como padecimiento con tipo en heredo-familiares", () => {
     const cancer = FAMILY_CONDITIONS.find((condition) => condition.key === "cancer");
     expect(cancer?.hasType).toBe(true);

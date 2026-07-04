@@ -71,6 +71,9 @@ pub struct PortalTranscriptionProvider {
     device_token: String,
     run_id: String,
     mode: String,
+    /// Proveedor real elegido por el medico (`openai` | `deepgram`). El desktop
+    /// solo transmite la eleccion; el portal la valida y media con la clave.
+    provider: String,
     name: String,
 }
 
@@ -82,6 +85,7 @@ impl PortalTranscriptionProvider {
         device_token: impl Into<String>,
         run_id: impl Into<String>,
         mode: impl Into<String>,
+        provider: impl Into<String>,
     ) -> Result<Self, AiError> {
         let server_url = server_url.into();
         let device_token = device_token.into();
@@ -91,12 +95,14 @@ impl PortalTranscriptionProvider {
             ));
         }
         let mode = mode.into();
+        let provider = provider.into();
         Ok(Self {
-            name: format!("portal-{mode}"),
+            name: format!("portal-{provider}-{mode}"),
             server_url: server_url.trim_end_matches('/').to_string(),
             device_token,
             run_id: run_id.into(),
             mode,
+            provider,
         })
     }
 
@@ -126,6 +132,7 @@ impl TranscriptionProvider for PortalTranscriptionProvider {
         let form = reqwest::blocking::multipart::Form::new()
             .text("runId", self.run_id.clone())
             .text("mode", self.mode.clone())
+            .text("provider", self.provider.clone())
             .part("audio", part);
 
         // Frontera de red sincrona (corre en un hilo de trabajo de Tauri).
@@ -239,21 +246,34 @@ mod tests {
     #[test]
     fn portal_provider_requires_linked_server_and_token() {
         // La via en nube solo existe con portal y dispositivo vinculados.
-        assert!(PortalTranscriptionProvider::new("", "tok", "run-1", "standard").is_err());
-        assert!(PortalTranscriptionProvider::new("https://midoc.test", "", "run-1", "standard").is_err());
-        assert!(PortalTranscriptionProvider::new("https://midoc.test", "tok", "run-1", "standard").is_ok());
+        assert!(PortalTranscriptionProvider::new("", "tok", "run-1", "standard", "openai").is_err());
+        assert!(
+            PortalTranscriptionProvider::new("https://midoc.test", "", "run-1", "standard", "openai")
+                .is_err()
+        );
+        assert!(
+            PortalTranscriptionProvider::new("https://midoc.test", "tok", "run-1", "standard", "openai")
+                .is_ok()
+        );
     }
 
     #[test]
     fn portal_provider_builds_endpoint_and_name() {
-        let provider =
-            PortalTranscriptionProvider::new("https://midoc.test/", "tok", "run-1", "diarized")
-                .unwrap();
+        let provider = PortalTranscriptionProvider::new(
+            "https://midoc.test/",
+            "tok",
+            "run-1",
+            "diarized",
+            "deepgram",
+        )
+        .unwrap();
         // Normaliza la barra final y apunta al endpoint gobernado de F2.
         assert_eq!(
             provider.endpoint(),
             "https://midoc.test/api/sync/ai/transcriptions"
         );
-        assert_eq!(provider.name(), "portal-diarized");
+        // El nombre local identifica proveedor y modo para la traza (regla 4:
+        // metadata operativa, nunca contenido clinico).
+        assert_eq!(provider.name(), "portal-deepgram-diarized");
     }
 }

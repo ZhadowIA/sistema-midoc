@@ -117,7 +117,7 @@ export function MedicationSafety({
   }
 
   return (
-    <section className="panel">
+    <section className="panel-plain">
       <h3>Seguridad de la prescripcion</h3>
       <p className="meta">
         Revision determinista (sin IA) de interacciones, alergias cruzadas y duplicidad. Escribe un

@@ -13,7 +13,7 @@ export async function GET(
 ) {
   try {
     const device = await authenticateSyncDevice(request);
-    assertRateLimit({ key: `sync-doc:${device.id}`, limit: 240, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `sync-doc:${device.id}`, limit: 240, windowMs: 1000 * 60 * 15 });
 
     const { id } = await context.params;
     const document = await getMailboxDocumentForDevice(device, id);

@@ -20,7 +20,7 @@ export async function GET(
 ) {
   try {
     const { token } = await context.params;
-    assertRateLimit({ key: `upload-info:${requestIpFrom(request) ?? token}`, limit: 60, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `upload-info:${requestIpFrom(request) ?? token}`, limit: 60, windowMs: 1000 * 60 * 15 });
     const info = await getUploadLinkForUpload(token);
     return NextResponse.json(info);
   } catch (error) {
@@ -34,7 +34,7 @@ export async function POST(
 ) {
   try {
     const { token } = await context.params;
-    assertRateLimit({ key: `upload-submit:${requestIpFrom(request) ?? token}`, limit: 30, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `upload-submit:${requestIpFrom(request) ?? token}`, limit: 30, windowMs: 1000 * 60 * 15 });
 
     const payload = uploadSchema.parse(await request.json());
     const ciphertext = Buffer.from(payload.ciphertext, "base64");

@@ -89,3 +89,54 @@ describe("env schema OpenAI transcription gate", () => {
     }
   });
 });
+
+describe("env schema Deepgram transcription gate", () => {
+  it("rejects enabling Deepgram transcription without an API key", () => {
+    const result = envSchema.safeParse(
+      baseEnv({
+        DEEPGRAM_TRANSCRIPTION_ENABLED: "true",
+        DEEPGRAM_TRANSCRIPTION_BAA_APPROVED: "true"
+        // DEEPGRAM_API_KEY ausente a proposito
+      })
+    );
+
+    expect(result.success).toBe(false);
+    expect(issuePaths(result)).toContain("DEEPGRAM_API_KEY");
+  });
+
+  it("rejects enabling Deepgram transcription without verified BAA / no-retention", () => {
+    const result = envSchema.safeParse(
+      baseEnv({
+        DEEPGRAM_TRANSCRIPTION_ENABLED: "true",
+        DEEPGRAM_API_KEY: "dg-test-key",
+        DEEPGRAM_TRANSCRIPTION_BAA_APPROVED: "false"
+      })
+    );
+
+    expect(result.success).toBe(false);
+    expect(issuePaths(result)).toContain("DEEPGRAM_TRANSCRIPTION_BAA_APPROVED");
+  });
+
+  it("accepts a fully configured Deepgram environment", () => {
+    const result = envSchema.safeParse(
+      baseEnv({
+        DEEPGRAM_TRANSCRIPTION_ENABLED: "true",
+        DEEPGRAM_API_KEY: "dg-test-key",
+        DEEPGRAM_TRANSCRIPTION_BAA_APPROVED: "true"
+      })
+    );
+
+    expect(result.success).toBe(true);
+  });
+
+  it("applies safe defaults (disabled, nova-3, multi)", () => {
+    const result = envSchema.safeParse(baseEnv());
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.DEEPGRAM_TRANSCRIPTION_ENABLED).toBe(false);
+      expect(result.data.DEEPGRAM_TRANSCRIPTION_MODEL).toBe("nova-3");
+      expect(result.data.DEEPGRAM_TRANSCRIPTION_LANGUAGE).toBe("multi");
+      expect(result.data.DEEPGRAM_TRANSCRIPTION_BAA_APPROVED).toBe(false);
+    }
+  });
+});

@@ -569,14 +569,64 @@ impl TranscriptionProvider for FakeTranscriptionProvider {
 /// Seudonimiza el contexto antes de enviarlo a un proveedor: reemplaza el
 /// nombre del paciente por un marcador. Minimo viable; se endurece cuando se
 /// cablee un proveedor real.
+/// Normaliza un caracter para comparar nombres: minusculas y sin acentos. El
+/// texto viene de ASR (capitalizacion y acentos no confiables) y el expediente
+/// lo escribio el medico: ambos lados se comparan ya normalizados.
+fn normalize_name_char(c: char) -> char {
+    match c {
+        'á' | 'à' | 'ä' | 'â' | 'Á' | 'À' | 'Ä' | 'Â' => 'a',
+        'é' | 'è' | 'ë' | 'ê' | 'É' | 'È' | 'Ë' | 'Ê' => 'e',
+        'í' | 'ì' | 'ï' | 'î' | 'Í' | 'Ì' | 'Ï' | 'Î' => 'i',
+        'ó' | 'ò' | 'ö' | 'ô' | 'Ó' | 'Ò' | 'Ö' | 'Ô' => 'o',
+        'ú' | 'ù' | 'ü' | 'û' | 'Ú' | 'Ù' | 'Ü' | 'Û' => 'u',
+        'ñ' | 'Ñ' => 'n',
+        _ => c.to_ascii_lowercase(),
+    }
+}
+
+fn normalize_name_word(word: &str) -> String {
+    word.chars().map(normalize_name_char).collect()
+}
+
+/// Redacta el nombre del paciente antes de que el texto salga a un proveedor de
+/// IA (seudonimizacion del prompt). Cada PALABRA del nombre y apellido (nombres
+/// compuestos incluidos) se compara con frontera de palabra, sin distinguir
+/// mayusculas ni acentos, y se reemplaza por `[PACIENTE]`. Las palabras de menos
+/// de 3 caracteres (particulas como "de", "la") no se redactan: son lexico comun
+/// y borrarlas corromperia el texto clinico.
 pub fn redact(context: &str, first_name: &str, last_name: &str) -> String {
-    let mut out = context.to_string();
-    for token in [first_name, last_name] {
-        let token = token.trim();
-        if token.len() >= 3 {
-            out = out.replace(token, "[PACIENTE]");
+    let tokens: std::collections::HashSet<String> = [first_name, last_name]
+        .iter()
+        .flat_map(|name| name.split_whitespace())
+        .filter(|word| word.chars().count() >= 3)
+        .map(normalize_name_word)
+        .collect();
+    if tokens.is_empty() {
+        return context.to_string();
+    }
+
+    let mut out = String::with_capacity(context.len());
+    let mut word = String::new();
+    let flush = |out: &mut String, word: &mut String| {
+        if !word.is_empty() {
+            if tokens.contains(&normalize_name_word(word)) {
+                out.push_str("[PACIENTE]");
+            } else {
+                out.push_str(word);
+            }
+            word.clear();
+        }
+    };
+
+    for c in context.chars() {
+        if c.is_alphabetic() {
+            word.push(c);
+        } else {
+            flush(&mut out, &mut word);
+            out.push(c);
         }
     }
+    flush(&mut out, &mut word);
     out
 }
 
@@ -1031,6 +1081,10 @@ pub struct TranscriptionDraft {
     pub latency_ms: i64,
     pub transcript_text: String,
     pub audio_retention_policy: String,
+    /// Turnos anonimos crudos (JSON) en modo diarizado en nube; `None` en modo
+    /// estandar o transcripcion local. El frontend los mapea con
+    /// `diarizedSegmentsToTurns` para la asignacion de roles por hablante.
+    pub segments_json: Option<String>,
 }
 
 fn clinical_aid_schema() -> serde_json::Value {
@@ -1335,8 +1389,10 @@ fn validate_consultation_turns(turns: &[ConsultationTurn]) -> Result<Vec<Consult
             if text.is_empty() {
                 return None;
             }
+            // La diarizacion en nube (Ruta B, F4) puede identificar hasta 4 roles;
+            // el medico los confirma en la UI antes de guardar o acomodar.
             let speaker = turn.speaker.trim().to_uppercase();
-            if speaker != "MEDICO" && speaker != "PACIENTE" {
+            if !matches!(speaker.as_str(), "MEDICO" | "PACIENTE" | "ACOMPANANTE" | "OTRO") {
                 return None;
             }
             Some(ConsultationTurn {
@@ -1621,6 +1677,10 @@ pub fn transcribe_audio(
     };
     let input_metadata = audio_input_metadata(&audio)?;
     let response = provider.transcribe(&request, &audio)?;
+    let segments_json = response
+        .cloud_transcription
+        .as_ref()
+        .and_then(|meta| meta.segments_json.clone());
 
     let run_id = record_transcription_run(
         conn,
@@ -1641,6 +1701,7 @@ pub fn transcribe_audio(
         latency_ms: response.latency_ms,
         transcript_text: response.output,
         audio_retention_policy: AUDIO_RETENTION_DISCARD.into(),
+        segments_json,
     })
 }
 
@@ -1996,10 +2057,11 @@ pub fn diarize_consultation(
     // Separacion de hablantes sobre las muestras decodificadas en memoria (16 kHz
     // mono). El audio nunca se persiste. Si no se puede decodificar o no hay
     // motor/modelos, se degrada a transcripcion sin separacion.
-    let speaker_segments = match crate::audio::decode_wav_pcm16_to_whisper(&audio.bytes) {
-        Ok(decoded) => diarizer(&decoded.samples, 16_000).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    };
+    let speaker_segments =
+        match crate::audio::decode_audio_to_whisper(&audio.bytes, &audio.media_type) {
+            Ok(decoded) => diarizer(&decoded.samples, 16_000).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
     let diarized = !speaker_segments.is_empty() && !whisper_segments.is_empty();
     let turns =
         crate::diarization::merge_segments_with_speakers(&whisper_segments, &speaker_segments);
@@ -2417,6 +2479,64 @@ mod tests {
         assert!(!redacted.contains("Hugo"));
         assert!(!redacted.contains("Paz"));
         assert!(redacted.contains("[PACIENTE]"));
+    }
+
+    #[test]
+    fn redaction_is_case_insensitive() {
+        // El texto viene de ASR: la capitalizacion no es confiable.
+        let redacted = redact("hugo refiere tos. HUGO niega fiebre.", "Hugo", "Paz");
+        assert!(!redacted.to_lowercase().contains("hugo"));
+        assert!(redacted.contains("[PACIENTE]"));
+    }
+
+    #[test]
+    fn redaction_ignores_accent_mismatches() {
+        // Expediente con acento, transcripcion sin el (o al reves): mismo nombre.
+        let redacted = redact("El paciente Perez y tambien Pérez.", "José", "Pérez");
+        assert!(!redacted.contains("Perez"));
+        assert!(!redacted.contains("Pérez"));
+        // Y en la otra direccion: expediente sin acento, audio con acento.
+        let redacted = redact("Habla José sobre su tos.", "Jose", "Paz");
+        assert!(!redacted.contains("José"));
+    }
+
+    #[test]
+    fn redaction_matches_each_word_of_compound_names() {
+        // "Juan Carlos" en el expediente; en el audio solo dicen "Carlos".
+        let redacted = redact(
+            "Carlos refiere dolor. Juan asiente. Firma Juan de la Rosa.",
+            "Juan Carlos",
+            "de la Rosa",
+        );
+        assert!(!redacted.contains("Carlos"));
+        assert!(!redacted.contains("Juan"));
+        assert!(!redacted.contains("Rosa"));
+        // Las particulas cortas de apellidos compuestos ("de", "la") no se
+        // redactan: son palabras comunes y borrarlas corromperia el texto.
+        assert!(redacted.contains("de la [PACIENTE]"));
+    }
+
+    #[test]
+    fn redaction_respects_word_boundaries() {
+        // "Sol" como apellido no debe mutilar "Soledad" ni "solucion".
+        let redacted = redact("Soledad propone una solucion. Sol asiente.", "Ana", "Sol");
+        assert!(redacted.contains("Soledad"));
+        assert!(redacted.contains("solucion"));
+        assert!(!redacted.contains("Sol asiente"));
+        assert!(redacted.contains("[PACIENTE] asiente"));
+        // "Ana" dentro de "sanar" o "anatomia" tampoco se toca.
+        let redacted = redact("Va a sanar; revisar anatomia. Ana pregunta.", "Ana", "Sol");
+        assert!(redacted.contains("sanar"));
+        assert!(redacted.contains("anatomia"));
+        assert!(redacted.contains("[PACIENTE] pregunta"));
+    }
+
+    #[test]
+    fn redaction_keeps_json_structure_intact() {
+        // `redact` corre sobre el JSON serializado del prompt: los nombres entre
+        // comillas deben redactarse sin romper la estructura.
+        let redacted = redact(r#"{"turns":[{"text":"Hugo Paz refiere tos"}]}"#, "Hugo", "Paz");
+        assert!(redacted.contains(r#"{"turns":[{"text":"[PACIENTE] [PACIENTE] refiere tos"}]}"#));
     }
 
     #[test]
@@ -3010,6 +3130,68 @@ mod tests {
         assert_eq!(segments, None);
     }
 
+    /// Proveedor fake que simula el modo diarizado del portal: ademas del texto,
+    /// devuelve los turnos anonimos crudos (`segments_json`) que la UI necesita
+    /// para presentar la asignacion de roles por hablante.
+    struct CloudDiarizedFakeProvider;
+
+    impl TranscriptionProvider for CloudDiarizedFakeProvider {
+        fn name(&self) -> &str {
+            "portal-diarized"
+        }
+
+        fn transcribe(
+            &self,
+            _request: &TranscriptionRequest,
+            _audio: &AudioInput,
+        ) -> Result<AiResponse, AiError> {
+            Ok(AiResponse {
+                output: "dialogo diarizado en nube".into(),
+                model_version: "gpt-4o-transcribe-diarize".into(),
+                estimated_cost_cents: 0,
+                latency_ms: 5,
+                cloud_transcription: Some(CloudTranscriptionMeta {
+                    run_id: "portal-run-diarized".into(),
+                    mode: "diarized".into(),
+                    duration_seconds: 600,
+                    credit_cost: 1,
+                    segments_json: Some(
+                        r#"[{"speaker":"speaker_0","startSeconds":0.0,"endSeconds":1.5,"text":"hola"}]"#
+                            .into(),
+                    ),
+                }),
+            })
+        }
+    }
+
+    #[test]
+    fn transcribe_audio_returns_segments_json_for_diarized_cloud_mode() {
+        // El borrador de transcripcion en nube diarizada debe traer `segments_json`
+        // en la respuesta al frontend (no solo persistido en `ai_runs`), para que
+        // la UI pueda mapearlo a hablantes con `diarizedSegmentsToTurns`.
+        let conn = test_conn("cloud-diarized-draft");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = CloudDiarizedFakeProvider;
+
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: b"raw audio should never be stored".to_vec(),
+                duration_seconds: Some(600),
+            },
+            &provider,
+        )
+        .unwrap();
+
+        let segments_json = draft.segments_json.expect("segments_json presente");
+        assert!(segments_json.contains("speaker_0"));
+        assert!(segments_json.contains("hola"));
+    }
+
     #[test]
     fn transcription_discards_audio_and_stores_reviewable_draft() {
         let conn = test_conn("voice-draft");
@@ -3095,6 +3277,86 @@ mod tests {
             draft.run_id
         );
         assert!(!reviewed.transcript_text.contains("audio"));
+    }
+
+    #[test]
+    fn accepts_acompanante_and_otro_roles_from_diarizacion_en_nube() {
+        // La diarizacion en nube (Ruta B, F4) puede identificar hasta 4 roles;
+        // el medico los confirma en la UI antes de guardar la revision.
+        let conn = test_conn("reviewed-transcription-4-roles");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: vec![1, 2, 3],
+                duration_seconds: Some(20),
+            },
+            &provider,
+        )
+        .unwrap();
+        let reviewed = save_reviewed_transcription(
+            &conn,
+            &encounter_id,
+            &draft.run_id,
+            vec![
+                ConsultationTurn {
+                    id: "turn-1".into(),
+                    speaker: "MEDICO".into(),
+                    text: "¿Quién la acompaña hoy?".into(),
+                },
+                ConsultationTurn {
+                    id: "turn-2".into(),
+                    speaker: "ACOMPANANTE".into(),
+                    text: "Soy su hija.".into(),
+                },
+                ConsultationTurn {
+                    id: "turn-3".into(),
+                    speaker: "OTRO".into(),
+                    text: "Traigo los estudios previos.".into(),
+                },
+            ],
+        )
+        .unwrap();
+        assert!(reviewed.transcript_text.contains("ACOMPANANTE: Soy su hija."));
+        assert!(reviewed
+            .transcript_text
+            .contains("OTRO: Traigo los estudios previos."));
+    }
+
+    #[test]
+    fn rejects_unknown_speaker_roles() {
+        let conn = test_conn("reviewed-transcription-unknown-role");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: vec![1, 2, 3],
+                duration_seconds: Some(20),
+            },
+            &provider,
+        )
+        .unwrap();
+        let result = save_reviewed_transcription(
+            &conn,
+            &encounter_id,
+            &draft.run_id,
+            vec![ConsultationTurn {
+                id: "turn-1".into(),
+                speaker: "OBSERVADOR".into(),
+                text: "Nota no valida.".into(),
+            }],
+        );
+        assert!(result.is_err());
     }
 
     #[test]
@@ -3281,8 +3543,10 @@ mod tests {
 
         assert!(draft.diarized, "hubo separacion de hablantes");
         assert_eq!(draft.turns.len(), 2);
-        assert_eq!(draft.turns[0].speaker, crate::diarization::ScribeRole::Medico);
-        assert_eq!(draft.turns[1].speaker, crate::diarization::ScribeRole::Paciente);
+        assert_eq!(draft.turns[0].speaker_id, "speaker-0");
+        assert_eq!(draft.turns[0].role, crate::diarization::ScribeRole::Medico);
+        assert_eq!(draft.turns[1].speaker_id, "speaker-1");
+        assert_eq!(draft.turns[1].role, crate::diarization::ScribeRole::Paciente);
         assert_eq!(draft.usage_type, USAGE_TRANSCRIPTION);
         assert_eq!(draft.audio_retention_policy, AUDIO_RETENTION_DISCARD);
 

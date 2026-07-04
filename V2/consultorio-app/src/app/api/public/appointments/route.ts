@@ -49,7 +49,7 @@ export async function POST(request: Request) {
   try {
     const ip = requestIpFrom(request);
     if (ip) {
-      assertRateLimit({ key: `public-book-ip:${ip}`, limit: 10, windowMs: 1000 * 60 * 15 });
+      await assertRateLimit({ key: `public-book-ip:${ip}`, limit: 10, windowMs: 1000 * 60 * 15 });
     }
 
     const payload = appointmentSchema.parse(await request.json());

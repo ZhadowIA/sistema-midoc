@@ -10,7 +10,7 @@ import {
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const device = await authenticateSyncDevice(request);
-    assertRateLimit({ key: `sync-precheckin:${device.id}`, limit: 240, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `sync-precheckin:${device.id}`, limit: 240, windowMs: 1000 * 60 * 15 });
 
     const { id } = await context.params;
     const precheckin = await getMailboxPrecheckinForDevice(device, id);

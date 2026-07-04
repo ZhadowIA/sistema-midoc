@@ -11,7 +11,7 @@ import { writeAuditLog } from "../../lib/audit";
 import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { assertRateLimit } from "../../lib/rate-limit";
-import { hashPassword, verifyPassword } from "../../lib/security/password";
+import { hashPassword, passwordNeedsRehash, verifyPassword } from "../../lib/security/password";
 import { generateOpaqueToken, hashOpaqueToken } from "../../lib/security/token";
 import { ensureStrongPassword } from "../auth/auth-service";
 
@@ -41,9 +41,9 @@ export async function registerPatientAccount(input: {
   privacyVersion: string;
   requestIp?: string;
 }) {
-  assertRateLimit({ key: `patient-register:${input.email.toLowerCase()}`, limit: 5, windowMs: 1000 * 60 * 15 });
+  await assertRateLimit({ key: `patient-register:${input.email.toLowerCase()}`, limit: 5, windowMs: 1000 * 60 * 15 });
   if (input.requestIp) {
-    assertRateLimit({ key: `patient-register-ip:${input.requestIp}`, limit: 10, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `patient-register-ip:${input.requestIp}`, limit: 10, windowMs: 1000 * 60 * 15 });
   }
 
   ensureStrongPassword(input.password);
@@ -89,9 +89,9 @@ export async function registerPatientAccount(input: {
 }
 
 export async function signInPatient(input: { email: string; password: string; requestIp?: string }) {
-  assertRateLimit({ key: `patient-login:${input.email.toLowerCase()}`, limit: 10, windowMs: 1000 * 60 * 15 });
+  await assertRateLimit({ key: `patient-login:${input.email.toLowerCase()}`, limit: 10, windowMs: 1000 * 60 * 15 });
   if (input.requestIp) {
-    assertRateLimit({ key: `patient-login-ip:${input.requestIp}`, limit: 30, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `patient-login-ip:${input.requestIp}`, limit: 30, windowMs: 1000 * 60 * 15 });
   }
 
   const email = input.email.trim().toLowerCase();
@@ -104,6 +104,14 @@ export async function signInPatient(input: { email: string; password: string; re
   const isValid = await verifyPassword(input.password, user.passwordHash);
   if (!isValid) {
     throw new PatientAuthError("Credenciales invalidas.", 401);
+  }
+
+  // Re-hash transparente hacia los parametros actuales de scrypt.
+  if (passwordNeedsRehash(user.passwordHash)) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash: await hashPassword(input.password) }
+    });
   }
 
   // Re-enlaza por si agendo con un correo nuevo despues de crear la cuenta.

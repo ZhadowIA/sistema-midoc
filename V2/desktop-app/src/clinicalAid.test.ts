@@ -9,12 +9,16 @@ test("traduce niveles de compatibilidad sin porcentajes", () => {
   assert.equal(compatibilityLabel("LOW"), "Baja");
 });
 
-test("el riel derecho termina en Ayuda IA y no repite información del paciente debajo", () => {
+test("la Ayuda IA es una ruta de la consulta, no un riel lateral", () => {
   const source = readFileSync(new URL("./Atencion.tsx", import.meta.url), "utf8");
-  const aside = source.match(
-    /<aside className="encounter-context"[\s\S]*?<\/aside>/
-  )?.[0];
 
-  assert.ok(aside, "debe existir el riel derecho de consulta");
-  assert.doesNotMatch(aside, /alert-allergies|context-block|Consultas previas|Preconsulta \(IA\)/);
+  // Ya no debe existir el riel de contexto a la derecha: la asistencia migró a
+  // una ruta más dentro del centro de la consulta.
+  assert.doesNotMatch(source, /consultation-context-rail/);
+
+  // El ClinicalAidRail se renderiza cuando la ruta activa es "ayuda".
+  assert.match(
+    source,
+    /resolvedSection === "ayuda" \?[\s\S]*?<ClinicalAidRail/
+  );
 });

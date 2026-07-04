@@ -6,6 +6,7 @@ import { env } from "../../../../../lib/env";
 import { ServiceError } from "../../../../../lib/errors";
 import { assertRateLimit } from "../../../../../lib/rate-limit";
 import { transcribeCloudAudio } from "../../../../../services/ai/cloud-transcription-service";
+import { resolveDeepgramTranscriptionProvider } from "../../../../../services/ai/deepgram-transcription-provider";
 import { resolveOpenAiTranscriptionProvider } from "../../../../../services/ai/openai-transcription-provider";
 import { authenticateSyncDevice } from "../../../../../services/sync/sync-service";
 
@@ -22,11 +23,14 @@ const ACCEPTED_AUDIO_TYPES = ["audio/wav", "audio/x-wav"];
 
 const runIdSchema = z.uuid();
 const modeSchema = z.enum(["standard", "diarized"]);
+// Proveedor elegido por el medico en el desktop. Opcional con default `openai`
+// para no romper dispositivos con versiones previas que no envian el campo.
+const providerSchema = z.enum(["openai", "deepgram"]).default("openai");
 
 export async function POST(request: Request) {
   try {
     const device = await authenticateSyncDevice(request);
-    assertRateLimit({
+    await assertRateLimit({
       key: `sync-transcription:${device.id}`,
       limit: 30,
       windowMs: 1000 * 60 * 15
@@ -35,6 +39,7 @@ export async function POST(request: Request) {
     const form = await request.formData();
     const runId = runIdSchema.parse(form.get("runId"));
     const mode = modeSchema.parse(form.get("mode"));
+    const providerName = providerSchema.parse(form.get("provider") ?? undefined);
 
     const audio = form.get("audio");
     if (!(audio instanceof File)) {
@@ -48,14 +53,24 @@ export async function POST(request: Request) {
     }
 
     // El proveedor solo se construye si la funcion esta habilitada con BAA/ZDR;
-    // de lo contrario resuelve un 403 antes de tocar el audio.
-    const provider = resolveOpenAiTranscriptionProvider({
-      enabled: env.OPENAI_TRANSCRIPTION_ENABLED,
-      apiKey: env.OPENAI_API_KEY ?? "",
-      standardModel: env.OPENAI_TRANSCRIPTION_MODEL,
-      diarizationModel: env.OPENAI_DIARIZATION_MODEL,
-      zdrApproved: env.OPENAI_TRANSCRIPTION_ZDR_APPROVED
-    });
+    // de lo contrario resuelve un 403 antes de tocar el audio. Cada proveedor
+    // tiene su propio gate de entorno (RF41: contrato agnostico).
+    const provider =
+      providerName === "deepgram"
+        ? resolveDeepgramTranscriptionProvider({
+            enabled: env.DEEPGRAM_TRANSCRIPTION_ENABLED,
+            apiKey: env.DEEPGRAM_API_KEY ?? "",
+            model: env.DEEPGRAM_TRANSCRIPTION_MODEL,
+            language: env.DEEPGRAM_TRANSCRIPTION_LANGUAGE,
+            baaApproved: env.DEEPGRAM_TRANSCRIPTION_BAA_APPROVED
+          })
+        : resolveOpenAiTranscriptionProvider({
+            enabled: env.OPENAI_TRANSCRIPTION_ENABLED,
+            apiKey: env.OPENAI_API_KEY ?? "",
+            standardModel: env.OPENAI_TRANSCRIPTION_MODEL,
+            diarizationModel: env.OPENAI_DIARIZATION_MODEL,
+            zdrApproved: env.OPENAI_TRANSCRIPTION_ZDR_APPROVED
+          });
 
     const bytes = new Uint8Array(await audio.arrayBuffer());
     const result = await transcribeCloudAudio({ device, runId, mode, audio: bytes }, provider);

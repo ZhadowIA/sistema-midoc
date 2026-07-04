@@ -727,6 +727,8 @@ Entregado (rebanada 2 — `WhisperLocalProvider` + decode de audio + cableado, 2
 
 Verificacion (rebanada 2): 127 pruebas de Rust en verde por defecto (+3: decode de WAV mono 16k, downmix de estereo a mono, rechazo de no-WAV / 44.1 kHz / 8 bits), `cargo clippy --lib` sin advertencias nuevas (persisten las 2 preexistentes), `tsc + vite build` ok. **Binding real verificado de extremo a extremo** en Windows MSVC tras instalar LLVM: `cargo build --features whisper-local` compila y enlaza whisper.cpp + bindings + provider; `cargo clippy --features whisper-local` sin advertencias nuevas; y un test de integracion (`transcribes_real_audio_without_error`, ignorado por defecto) corre **inferencia real** con el modelo `ggml-tiny` descargado (whisper.cpp carga el modelo, decodifica el WAV y emite segmentos), pasando en verde. La cadena nativa (CMake + LLVM) solo se requiere para la build de distribucion con el feature.
 
+Ampliacion (rebanada 2, 2026-06-29 — mas formatos en el importador de archivos): `decode_wav_pcm16_to_whisper` se reemplaza por `decode_audio_to_whisper(bytes, media_type)`, que sigue decodificando todo **en memoria** pero ya no exige WAV PCM16 a 16 kHz exacto. Usa Symphonia (decodificacion, puro Rust, MPL-2.0, sin cadena nativa adicional — a diferencia de whisper-rs/sherpa-rs compila en el build y los tests por defecto) para WAV (cualquier bit depth/tasa), MP3 y M4A/AAC, y Rubato (resampleo sinc, MIT) para llevar cualquier tasa a 16 kHz. Fuera de alcance a proposito: Opus/OGG y FLAC (decision tomada con el medico: el unico formato sin licencia/dependencia nativa limpia para Opus es FFmpeg, descartado por riesgo de licencia LGPL/GPL en distribucion comercial). La grabacion en vivo (microfono) no cambia: sigue siendo WAV PCM16 16 kHz. El selector de archivo en `ConsultationTranscriptionPanel.tsx` ahora acepta `.wav/.mp3/.m4a/.aac`. Pruebas: WAV mono 16k sin resampleo, downmix estereo, resampleo 44.1k→16k, WAV 24-bit y float, rechazo de bytes irreconocibles/vacios, mas un test de integracion ignorado por defecto (`decodes_real_compressed_audio_file`, vía `MIDOC_TEST_AUDIO_FILE`) para verificar MP3/M4A reales manualmente. 194 pruebas de Rust en verde por defecto (2 ignoradas, las de audio real e inferencia real).
+
 Entregado (rebanada 3 — respaldo de transcripcion en nube gobernado, 2026-06-15):
 
 - **Proveedor en nube (`cloud_transcription.rs`).** `CloudTranscriptionProvider` implementa el trait con un POST sincrono del audio (estilo Deepgram: un request que devuelve el texto), usando `reqwest::blocking` (el comando `ai_transcribe_audio` es sincrono, corre en un hilo de Tauri). `parse_transcript` extrae el texto de la respuesta (`results.channels[].alternatives[].transcript`) — funcion pura y testeable. `estimate_cost_cents` estima el costo por duracion.
@@ -1112,6 +1114,20 @@ Alta/Media/Baja, estudios y tratamientos revisables. No usa porcentajes, no
 aplica contenido automaticamente y no presenta `realtime_capable` como
 streaming: mientras no exista un contrato incremental, el texto aparece al
 finalizar la grabacion.
+
+Extension (Ruta B, 2026-06-30 a 2026-07-01): la rebanada 3 del paso 15 (`CloudTranscriptionProvider` estilo Deepgram, `CloudConfig::from_env`, `MIDOC_CLOUD_STT_*`) queda **reemplazada** por la transcripcion en nube gobernada por el portal (plan detallado en `docs/superpowers/plans/2026-06-30-ruta-b-faseado.md`). El desktop ya no conoce ninguna clave de proveedor: el portal media la llamada (OpenAI), cobra por duracion autoritativa del WAV y devuelve texto (modo estandar) o turnos anonimos por hablante (modo diarizado). Selector de 3 vias en `Transcripcion consulta`: local (Whisper + sherpa-onnx, gratis), nube estandar y nube con hablantes. En nube con hablantes, el medico confirma el rol (Medico/Paciente/Acompanante/Otro) de cada hablante anonimo antes de continuar — el gate de roles bloquea "Marcar como revisada" hasta que todo hablante con texto tenga rol asignado. `ConsultationTurn` admite los 4 roles en toda la canalizacion (guardado, estructuracion SOAP, ayuda clinica), en TS y Rust.
+
+Costo en creditos por transcripcion (autoritativo, lo fija el portal):
+
+| Via | Formula | Ejemplo (15 min = 900s) |
+|---|---|---|
+| Local (Whisper + sherpa-onnx) | `0` creditos | `0` |
+| Nube estandar | `ceil(duracion_segundos / 900)` | `1` credito |
+| Nube con hablantes (diarizado) | `ceil(duracion_segundos / 600)` | `2` creditos |
+
+El resto de usos de IA (SOAP asistido, ayuda clinica, preconsulta, etc.) sigue tarifado sobre el LLM base (Gemini): `+1` credito por invocacion, sin cambios.
+
+Estado: F1 (portal, #28) + F2 (portal, #29) + F3 (desktop, cliente del portal, #31) + F4 (diarizacion: logica pura + Rust + UI de 3 modos y asignacion de roles) completas y con pruebas verdes (cargo + node). Pendiente, no bloqueante para el codigo: activacion del proveedor real con BAA firmado y ZDR verificado en staging (paso 16) — el gate `OPENAI_TRANSCRIPTION_ZDR_APPROVED` es auto-declarado (evita activacion accidental) y no verifica nada con OpenAI; la barrera real es legal/administrativa, no tecnica.
 
 ## MVP recomendado
 

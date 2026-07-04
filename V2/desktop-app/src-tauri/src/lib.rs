@@ -246,6 +246,20 @@ fn create_doctor_profile(
     Ok(profile)
 }
 
+/// Politica de passphrase: los expedientes NUEVOS exigen 12+ caracteres (la
+/// passphrase es la unica barrera si roban el archivo .db). Las bases ya
+/// existentes siguen aceptando 8+ para no dejar fuera a medicos con
+/// passphrases creadas bajo la politica anterior.
+fn validate_passphrase(passphrase: &str, is_new_database: bool) -> Result<(), String> {
+    let minimum = if is_new_database { 12 } else { 8 };
+    if passphrase.chars().count() < minimum {
+        return Err(format!(
+            "la frase de seguridad debe tener al menos {minimum} caracteres"
+        ));
+    }
+    Ok(())
+}
+
 /// Opens (or creates) the encrypted clinical database with the doctor's
 /// passphrase. The passphrase only lives in memory for the duration of the
 /// call; SQLCipher keeps the derived key inside the connection.
@@ -256,12 +270,11 @@ fn unlock_database(
     profile_id: Option<String>,
     passphrase: String,
 ) -> Result<UnlockResult, String> {
-    if passphrase.len() < 8 {
-        return Err("la frase de seguridad debe tener al menos 8 caracteres".into());
-    }
     let base_dir = app_data_dir(&app)?;
     let selected_profile_id = profile_id.unwrap_or_else(|| DEFAULT_PROFILE_ID.into());
     validate_profile_id(&selected_profile_id)?;
+    let path = profile_database_path(&base_dir, &selected_profile_id)?;
+    validate_passphrase(&passphrase, !path.exists())?;
     let mut profiles = load_profiles_from_dir(&base_dir)?;
     let profile_index = profiles
         .iter()
@@ -271,7 +284,6 @@ fn unlock_database(
     let profile = profiles[profile_index].clone();
     save_profiles_to_dir(&base_dir, &profiles)?;
 
-    let path = profile_database_path(&base_dir, &profile.id)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -1357,12 +1369,32 @@ fn ai_transcribe_audio(
     encounter_id: String,
     audio: AudioTranscriptionPayload,
     use_cloud: Option<bool>,
+    mode: Option<String>,
+    provider: Option<String>,
 ) -> Result<ai::TranscriptionDraft, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(audio.audio_base64.as_bytes())
         .map_err(|_| "audio invalido".to_string())?;
 
-    let provider: Box<dyn ai::TranscriptionProvider> = if use_cloud.unwrap_or(false) {
+    // Modo de la via en nube: estandar (default) o diarizado (separa hablantes).
+    let cloud_mode = match mode.as_deref() {
+        None | Some("standard") => "standard",
+        Some("diarized") => "diarized",
+        Some(other) => return Err(format!("modo de transcripcion no valido: {other}")),
+    };
+
+    // Proveedor real de la via en nube, elegido por el medico en la UI. El
+    // desktop solo transmite la eleccion (nunca conoce claves); el portal la
+    // valida contra su propio gate de entorno. Default: openai (compatibilidad).
+    let cloud_provider = match provider.as_deref() {
+        None | Some("openai") => "openai",
+        Some("deepgram") => "deepgram",
+        Some(other) => return Err(format!("proveedor de transcripcion no valido: {other}")),
+    };
+
+    let use_cloud = use_cloud.unwrap_or(false);
+
+    let provider: Box<dyn ai::TranscriptionProvider> = if use_cloud {
         // Via en nube gobernada: el desktop NO conoce la clave del proveedor;
         // envia el audio al portal con el token del dispositivo vinculado. El
         // server_url y el device_token viven en el estado de sync cifrado.
@@ -1379,19 +1411,33 @@ fn ai_transcribe_audio(
             (server_url, token)
         };
         // `runId` operativo por transcripcion: hace idempotente el credito en el
-        // portal. F3 cubre el modo estandar; la diarizacion en nube es F4.
+        // portal. El modo (estandar/diarizado) lo elige el medico en la UI.
         let run_id = uuid::Uuid::new_v4().to_string();
         Box::new(
             cloud_transcription::PortalTranscriptionProvider::new(
                 server_url,
                 device_token,
                 run_id,
-                "standard",
+                cloud_mode,
+                cloud_provider,
             )
             .map_err(|e| e.to_string())?,
         )
     } else {
         resolve_local_transcription_provider(&app)?
+    };
+
+    // El portal calcula la duracion autoritativa del cobro con un parser que solo
+    // acepta WAV PCM, asi que la vía nube normaliza el audio a PCM 16-bit mono
+    // antes de enviarlo (reutiliza el decodificador del importador: acepta WAV a
+    // cualquier tasa/bit depth, MP3 y M4A/AAC). La vía local recibe el archivo
+    // original: Whisper lo decodifica internamente.
+    let (bytes, media_type) = if use_cloud {
+        let wav = audio::transcode_to_pcm16_wav(&bytes, &audio.media_type)
+            .map_err(|e| format!("no se pudo preparar el audio para la nube: {e}"))?;
+        (wav, "audio/wav".to_string())
+    } else {
+        (bytes, audio.media_type)
     };
 
     with_ai(&state, |conn| {
@@ -1400,7 +1446,7 @@ fn ai_transcribe_audio(
             &encounter_id,
             ai::AudioInput {
                 file_name: audio.file_name,
-                media_type: audio.media_type,
+                media_type,
                 bytes,
                 duration_seconds: audio.duration_seconds,
             },
@@ -2170,6 +2216,11 @@ fn arco_fulfill_cancellation(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Carga `src-tauri/.env` (si existe) antes de cualquier lectura de env vars
+    // como `MIDOC_GEMINI_API_KEY`. `.ok()` ignora el error cuando el archivo no
+    // existe (build de distribucion, CI, o quien prefiera exportarla a mano).
+    dotenvy::dotenv().ok();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppDb(Mutex::new(None)))
@@ -2288,6 +2339,21 @@ mod tests {
             profile_database_path(base, "dr-ana").unwrap(),
             profile_database_path(base, "dr-luis").unwrap()
         );
+    }
+
+    #[test]
+    fn new_databases_require_twelve_char_passphrase() {
+        assert!(validate_passphrase("corta", true).is_err());
+        assert!(validate_passphrase("ochochars", true).is_err());
+        assert!(validate_passphrase("doce-caracteres!", true).is_ok());
+        // Cuenta caracteres, no bytes: passphrases con acentos no se penalizan.
+        assert!(validate_passphrase("ñañañañañaña", true).is_ok());
+    }
+
+    #[test]
+    fn existing_databases_keep_accepting_legacy_minimum() {
+        assert!(validate_passphrase("ochochars", false).is_ok());
+        assert!(validate_passphrase("corta", false).is_err());
     }
 
     #[test]

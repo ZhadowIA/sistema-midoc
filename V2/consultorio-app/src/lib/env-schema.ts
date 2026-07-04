@@ -70,7 +70,15 @@ export const envSchema = z
     OPENAI_TRANSCRIPTION_ENABLED: z.stringbool().default(false),
     OPENAI_TRANSCRIPTION_MODEL: z.string().min(1).default("gpt-4o-mini-transcribe"),
     OPENAI_DIARIZATION_MODEL: z.string().min(1).default("gpt-4o-transcribe-diarize"),
-    OPENAI_TRANSCRIPTION_ZDR_APPROVED: z.stringbool().default(false)
+    OPENAI_TRANSCRIPTION_ZDR_APPROVED: z.stringbool().default(false),
+    // Segundo proveedor de transcripcion en nube (RF41: contrato agnostico).
+    // Mismo gate que OpenAI: deshabilitado por defecto; al habilitarlo exige la
+    // clave y la confirmacion de BAA/no-retencion verificada fuera de banda.
+    DEEPGRAM_API_KEY: optionalNonEmptyString,
+    DEEPGRAM_TRANSCRIPTION_ENABLED: z.stringbool().default(false),
+    DEEPGRAM_TRANSCRIPTION_MODEL: z.string().min(1).default("nova-3"),
+    DEEPGRAM_TRANSCRIPTION_LANGUAGE: z.string().min(1).default("multi"),
+    DEEPGRAM_TRANSCRIPTION_BAA_APPROVED: z.stringbool().default(false)
   })
   .superRefine((value, ctx) => {
     if (value.SMS_PROVIDER.toLowerCase() !== "twilio") {
@@ -152,6 +160,26 @@ export const envSchema = z
           path: ["OPENAI_TRANSCRIPTION_ZDR_APPROVED"],
           message:
             "OPENAI_TRANSCRIPTION_ZDR_APPROVED must be true (Zero Data Retention verified) when OPENAI_TRANSCRIPTION_ENABLED=true"
+        });
+      }
+    }
+
+    // Mismo gate para Deepgram: clave y BAA/no-retencion aprobados o no se activa.
+    if (value.DEEPGRAM_TRANSCRIPTION_ENABLED) {
+      if (!value.DEEPGRAM_API_KEY) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["DEEPGRAM_API_KEY"],
+          message: "Required when DEEPGRAM_TRANSCRIPTION_ENABLED=true"
+        });
+      }
+
+      if (!value.DEEPGRAM_TRANSCRIPTION_BAA_APPROVED) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["DEEPGRAM_TRANSCRIPTION_BAA_APPROVED"],
+          message:
+            "DEEPGRAM_TRANSCRIPTION_BAA_APPROVED must be true (BAA / no-retention verified) when DEEPGRAM_TRANSCRIPTION_ENABLED=true"
         });
       }
     }
