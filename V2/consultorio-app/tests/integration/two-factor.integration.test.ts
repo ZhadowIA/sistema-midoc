@@ -42,6 +42,7 @@ async function registerDoctor(label: string) {
     firstName: "Iris",
     lastName: "Mena",
     professionalName: "Dra. Iris Mena",
+    licenseNumber: "1234567",
     specialty: "GENERAL_MEDICINE",
     termsVersion: "2026-05",
     privacyVersion: "2026-05"

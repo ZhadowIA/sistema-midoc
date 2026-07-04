@@ -16,7 +16,7 @@ on:
           - production
 
 env:
-  APP_DIR: consultorio-app
+  APP_DIR: V2/consultorio-app
   IMAGE_NAME: midoc/consultorio-app
   NODE_VERSION: "22.x"
 
@@ -51,6 +51,14 @@ jobs:
       QUESTIONNAIRE_TOKEN_SECRET: ci_questionnaire_secret_min_32_chars
       TERMS_VERSION: v1
       PRIVACY_VERSION: v1
+      SMS_PROVIDER: mock
+      SMS_BASE_URL: https://sms.example.com
+      SMS_API_KEY: ci_sms_api_key_min_16_chars
+      EMAIL_PROVIDER: mock
+      EMAIL_BASE_URL: https://email.example.com
+      EMAIL_API_KEY: ci_email_api_key_min_16_chars
+      EMAIL_FROM: no-reply@example.com
+      TWO_FACTOR_ENCRYPTION_KEY: ci_two_factor_encryption_key_32_chars
       PAYMENTS_PROVIDER: STRIPE
       PAYMENTS_WEBHOOK_SECRET: ci_payments_webhook_secret
       STRIPE_SECRET_KEY: sk_test_ci_placeholder_1234567890
@@ -84,10 +92,10 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Unit tests
-        run: npm run test:unit
+        run: npm test
 
       - name: Integration tests
-        run: npm run test:integration
+        run: npm run test:e2e
 
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high

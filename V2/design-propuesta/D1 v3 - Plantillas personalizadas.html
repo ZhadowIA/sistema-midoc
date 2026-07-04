@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>D1 v3 · Plantillas personalizadas — MiDoc escritorio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+<style>
+  :root{
+    --bg:oklch(1 0 0);--surface:oklch(0.974 0.004 250);--ink:oklch(0.24 0.022 250);--muted:oklch(0.49 0.02 250);--line:oklch(0.9 0.008 250);
+    --primary:oklch(0.49 0.143 250);--primary-hover:oklch(0.43 0.143 250);--primary-soft:oklch(0.95 0.025 250);
+    --accent:oklch(0.58 0.105 195);--accent-soft:oklch(0.96 0.018 195);
+    --success:oklch(0.55 0.12 155);--success-soft:oklch(0.96 0.02 155);
+    --warning:oklch(0.66 0.13 70);--warning-soft:oklch(0.97 0.025 70);
+    --danger:oklch(0.51 0.17 25);--danger-soft:oklch(0.96 0.02 25);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:oklch(0.95 0.005 255);color:var(--ink);font-family:"Public Sans",system-ui,sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;min-height:100vh}
+  .caption{max-width:1320px;margin:18px auto 0;padding:0 18px;width:100%}
+  .caption h1{font-size:1.15rem;font-weight:700;margin:0}
+  .caption p{font-size:.86rem;color:var(--muted);margin:4px 0 0;max-width:96ch}
+  #root{flex:1;display:flex;align-items:flex-start;justify-content:center;padding:16px 18px 40px}
+  button,input,textarea,select{font-family:inherit}
+  textarea{resize:vertical}
+  select{appearance:auto}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <h1>D1 v3 · Editor de nota dirigido por plantilla + constructor de plantillas</h1>
+    <p>Responde: «¿y si el médico no usa SOAP, sino su propia plantilla?» — Cambia la plantilla activa (arriba), edita una plantilla con «Editar plantilla», o entra a Dictado para ver que los destinos del scribe siguen a la plantilla. Cada sección personalizada mapea a un campo clínico fijo (subjetivo/objetivo/análisis/diagnóstico/plan/indicaciones/especialidad) — la plantilla renombra y reordena, no inventa campos.</p>
+  </div>
+  <div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState } = React;
+const v = (n)=>`var(--${n})`;
+
+/* ===== Campos clínicos CANÓNICOS (safeTargetSet del perfil general) =====
+   Una plantilla solo puede mapear a uno de estos targets. */
+const CANONICAL = [
+  { target:"subjective",  short:"Subjetivo" },
+  { target:"objective",   short:"Objetivo" },
+  { target:"assessment",  short:"Análisis" },
+  { target:"diagnosis",   short:"Diagnóstico" },
+  { target:"plan",        short:"Plan" },
+  { target:"instructions",short:"Indicaciones" },
+  { target:"specialty.riskFactors", short:"Factores de riesgo" },
+  { target:"specialty.physicalExam", short:"Exploración física" },
+  { target:"specialty.followUp", short:"Seguimiento" },
+];
+const shortOf = (t)=> CANONICAL.find(c=>c.target===t)?.short ?? t;
+
+/* ===== Plantillas (TemplateDefinition: segments[{id,label,target,instructions,required}]) ===== */
+const SOAP_GENERAL = {
+  id:"soap-general", name:"SOAP general", custom:false,
+  segments:[
+    {id:"subjective", label:"S · Subjetivo", target:"subjective", required:true, instructions:"Resume lo que refiere el paciente sin inventar hechos."},
+    {id:"objective", label:"O · Objetivo", target:"objective", required:true, instructions:"Extrae hallazgos de exploración y signos vitales mencionados."},
+    {id:"assessment", label:"A · Análisis", target:"assessment", required:true, instructions:"Ordena la impresión clínica mencionada."},
+    {id:"diagnosis", label:"Diagnóstico", target:"diagnosis", required:false, instructions:"Incluye diagnósticos explícitos del médico."},
+    {id:"plan", label:"P · Plan", target:"plan", required:true, instructions:"Extrae tratamientos, estudios, seguimiento y decisiones."},
+    {id:"instructions", label:"Indicaciones", target:"instructions", required:false, instructions:"Redacta indicaciones comprensibles para el paciente."},
+  ],
+};
+const DERMA = {
+  id:"derma-rivera", name:"Dermatología (Dra. Rivera)", custom:true,
+  segments:[
+    {id:"d-motivo", label:"Motivo y evolución", target:"subjective", required:true, instructions:"Tiempo de evolución, cambios de la lesión, síntomas (prurito, dolor)."},
+    {id:"d-lesion", label:"Lesión y dermatoscopía", target:"objective", required:true, instructions:"Localización, tamaño, bordes, color, patrón dermatoscópico (ABCDE)."},
+    {id:"d-foto", label:"Factores de fotoexposición", target:"specialty.riskFactors", required:false, instructions:"Fototipo, exposición solar, antecedente de cáncer de piel."},
+    {id:"d-impresion", label:"Impresión diagnóstica", target:"assessment", required:true, instructions:"Diagnóstico diferencial ordenado por probabilidad."},
+    {id:"d-dx", label:"Diagnóstico", target:"diagnosis", required:false, instructions:"Diagnóstico de certeza o presuntivo, biopsia si aplica."},
+    {id:"d-plan", label:"Procedimiento y plan", target:"plan", required:true, instructions:"Crioterapia, biopsia, tópicos, control."},
+    {id:"d-ind", label:"Indicaciones y fotoprotección", target:"instructions", required:true, instructions:"Cuidados, fotoprotector, signos de alarma."},
+  ],
+};
+const RAPIDA = {
+  id:"nota-rapida", name:"Nota rápida (seguimiento)", custom:true,
+  segments:[
+    {id:"r-evo", label:"Evolución", target:"subjective", required:true, instructions:"Cambios desde la última visita."},
+    {id:"r-hall", label:"Hallazgos", target:"objective", required:false, instructions:"Signos vitales y hallazgos relevantes."},
+    {id:"r-plan", label:"Conducta", target:"plan", required:true, instructions:"Ajustes y próximo control."},
+  ],
+};
+const ALL_TEMPLATES = [SOAP_GENERAL, DERMA, RAPIDA];
+
+/* turnos de ejemplo (scribe) */
+const TURNS = [
+  {id:"t1", speaker:"PACIENTE", text:"Me salió un lunar que cambió de color en el último mes y a veces me pica."},
+  {id:"t2", speaker:"MEDICO", text:"A la dermatoscopía: lesión de 7 mm, bordes irregulares, dos tonos de marrón."},
+  {id:"t3", speaker:"MEDICO", text:"Mi impresión es nevo atípico, hay que descartar melanoma con biopsia."},
+  {id:"t4", speaker:"MEDICO", text:"Plan: biopsia excisional y control en una semana con resultado."},
+];
+
+/* ===== helpers UI ===== */
+function Chip({kind,children}){
+  const m={ok:{bg:v("success-soft"),fg:v("success")},warn:{bg:v("warning-soft"),fg:"oklch(0.5 0.13 70)"},
+    danger:{bg:v("danger-soft"),fg:v("danger")},accent:{bg:v("accent-soft"),fg:v("accent")},muted:{bg:v("surface"),fg:v("muted")},
+    active:{bg:v("primary-soft"),fg:v("primary-hover")}};
+  const s=m[kind]||m.muted;
+  return <span style={{fontSize:".7rem",fontWeight:600,padding:"2px 8px",borderRadius:999,background:s.bg,color:s.fg,whiteSpace:"nowrap"}}>{children}</span>;
+}
+const lbl={fontSize:".7rem",fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",color:v("muted")};
+const tarea={width:"100%",border:`1px solid ${v("line")}`,borderRadius:6,padding:"9px 11px",fontSize:".92rem",color:v("ink"),background:v("bg"),lineHeight:1.5};
+const btnP={cursor:"pointer",fontSize:".84rem",fontWeight:600,padding:"8px 14px",borderRadius:6,border:"none",background:v("primary"),color:"#fff"};
+const btnG={cursor:"pointer",fontSize:".84rem",fontWeight:600,padding:"8px 14px",borderRadius:6,border:`1px solid ${v("line")}`,background:v("bg"),color:v("ink")};
+
+/* ===================== EDITOR DE NOTA dirigido por plantilla ===================== */
+function NoteEditor({template, note, setNote, onEdit}){
+  const [active, setActive] = useState(template.segments[0].id);
+  return (
+    <div style={{display:"grid",gridTemplateColumns:"190px 1fr",gap:18}}>
+      {/* outline: reemplaza las pestañas S/O/A/P, escala a cualquier N */}
+      <div>
+        <div style={{...lbl,marginBottom:8}}>Secciones · {template.segments.length}</div>
+        <div style={{display:"grid",gap:3}}>
+          {template.segments.map(s=>{
+            const on=s.id===active, filled=(note[s.id]||"").trim().length>0;
+            return <button key={s.id} onClick={()=>setActive(s.id)} style={{textAlign:"left",cursor:"pointer",border:"none",borderRadius:6,padding:"7px 9px",
+              background:on?v("primary-soft"):"transparent",color:on?v("primary-hover"):v("ink"),display:"flex",alignItems:"center",gap:7}}>
+              <span style={{width:7,height:7,borderRadius:999,background:filled?v("success"):s.required?v("warning"):v("line"),flexShrink:0}}/>
+              <span style={{fontSize:".82rem",fontWeight:on?600:500,flex:1,lineHeight:1.25}}>{s.label}</span>
+              {s.required && !filled && <span title="requerida" style={{color:v("warning"),fontSize:".8rem"}}>•</span>}
+            </button>;
+          })}
+        </div>
+        <button onClick={onEdit} style={{...btnG,marginTop:12,width:"100%",fontSize:".8rem",padding:"6px 10px"}}>Editar plantilla</button>
+      </div>
+
+      {/* secciones apiladas — solo se muestra la activa enfocada, resto compactas */}
+      <div style={{display:"grid",gap:14}}>
+        {template.segments.map(s=>{
+          const isActive=s.id===active;
+          return (
+            <div key={s.id} style={{border:`1px solid ${isActive?v("line"):"transparent"}`,borderRadius:8,padding:isActive?"12px 14px":"0",background:isActive?v("bg"):"transparent"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:isActive?8:4,cursor:isActive?"default":"pointer"}} onClick={()=>!isActive&&setActive(s.id)}>
+                <span style={{fontWeight:700,fontSize:".9rem"}}>{s.label}</span>
+                {s.required && <Chip kind="warn">requerida</Chip>}
+                {/* el target canónico, siempre visible: clave cuando el label ≠ campo */}
+                <span title="Campo clínico donde se guarda" style={{fontSize:".7rem",color:v("muted")}}>→ {shortOf(s.target)}</span>
+                {s.instructions && isActive && <span title={s.instructions} style={{marginLeft:"auto",fontSize:".7rem",color:v("accent"),cursor:"help"}}>ⓘ guía del scribe</span>}
+              </div>
+              {isActive
+                ? <textarea value={note[s.id]||""} onChange={e=>setNote(s.id,e.target.value)} placeholder={s.instructions} style={{...tarea,minHeight:120}}/>
+                : <div onClick={()=>setActive(s.id)} style={{cursor:"pointer",fontSize:".85rem",color:(note[s.id]||"").trim()?v("ink"):v("muted"),paddingLeft:2,borderLeft:`2px solid ${v("line")}`,paddingTop:2,paddingBottom:2}}>
+                    {(note[s.id]||"").trim() || "— vacío —"}
+                  </div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ===================== DICTADO con destinos dirigidos por plantilla ===================== */
+function Scribe({template, note, setNote, toNote}){
+  const [sel,setSel]=useState(null);
+  function assign(segId){
+    if(!sel) return;
+    const turn=TURNS.find(t=>t.id===sel);
+    setNote(segId,(note[segId]?note[segId]+"\n\n":"")+turn.text, [sel]);
+    setSel(null);
+  }
+  return (
+    <div style={{display:"grid",gridTemplateColumns:"1.25fr 1fr",gap:18}}>
+      <div>
+        <div style={{...lbl,marginBottom:8}}>Transcripción · {TURNS.length} turnos</div>
+        <div style={{display:"grid",gap:7}}>
+          {TURNS.map(t=>{const on=sel===t.id,mine=t.speaker==="MEDICO";
+            return <button key={t.id} onClick={()=>setSel(on?null:t.id)} style={{textAlign:"left",cursor:"pointer",border:on?`1px solid ${v("primary")}`:`1px solid ${v("line")}`,background:on?v("primary-soft"):v("bg"),borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:".67rem",fontWeight:700,textTransform:"uppercase",letterSpacing:".04em",color:mine?v("primary"):v("accent"),marginBottom:2}}>{mine?"Médico":"Paciente"} · {t.id}</div>
+              <div style={{fontSize:".85rem"}}>{t.text}</div>
+            </button>;})}
+        </div>
+      </div>
+      <div>
+        <div style={{fontSize:".78rem",color:v("muted"),marginBottom:8}}>{sel?"Envía el turno a una sección de la plantilla activa:":"Selecciona un turno para asignarlo. Los destinos son las secciones de la plantilla del médico, no S/O/A/P fijos."}</div>
+        <div style={{display:"grid",gap:6}}>
+          {template.segments.map(s=>(
+            <button key={s.id} onClick={()=>assign(s.id)} disabled={!sel} style={{...btnG,opacity:sel?1:.55,cursor:sel?"pointer":"not-allowed",fontSize:".8rem",padding:"7px 11px",display:"flex",alignItems:"center",gap:8,textAlign:"left"}}>
+              <span style={{flex:1}}>→ {s.label}</span>
+              <span style={{fontSize:".68rem",color:v("muted")}}>{shortOf(s.target)}</span>
+            </button>
+          ))}
+        </div>
+        <button onClick={toNote} style={{...btnP,marginTop:12}}>Ver nota →</button>
+      </div>
+    </div>
+  );
+}
+
+/* ===================== CONSTRUCTOR de plantilla (el caso "otra plantilla creada por él") ===================== */
+function TemplateBuilder({draft, setDraft, onSave, onCancel}){
+  function up(i,patch){ setDraft(d=>({...d,segments:d.segments.map((s,ix)=>ix===i?{...s,...patch}:s)})); }
+  function move(i,dir){ setDraft(d=>{const a=[...d.segments];const j=i+dir;if(j<0||j>=a.length)return d;[a[i],a[j]]=[a[j],a[i]];return{...d,segments:a};}); }
+  function del(i){ setDraft(d=>({...d,segments:d.segments.filter((_,ix)=>ix!==i)})); }
+  function add(){ setDraft(d=>({...d,segments:[...d.segments,{id:"seg"+Date.now(),label:"Nueva sección",target:"subjective",required:false,instructions:""}]})); }
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+        <input value={draft.name} onChange={e=>setDraft(d=>({...d,name:e.target.value}))} style={{...tarea,maxWidth:340,fontWeight:600}}/>
+        <Chip kind="muted">se guarda local · no sale del equipo</Chip>
+      </div>
+
+      <div style={{background:v("accent-soft"),borderRadius:8,padding:"10px 13px",marginBottom:14,fontSize:".82rem"}}>
+        <b>Cómo funciona:</b> cada sección guarda en un <b>campo clínico fijo</b> (columna «Guarda en»). Puedes renombrar, reordenar, marcar requeridas y escribir la guía que usará el scribe — pero no se crean campos nuevos: así la nota sigue siendo portable, auditable y compatible con la sincronización.
+      </div>
+
+      {/* cabecera tipo tabla */}
+      <div style={{display:"grid",gridTemplateColumns:"24px 1.3fr 1fr 84px 1.4fr 32px",gap:8,padding:"0 4px 6px",...lbl}}>
+        <span></span><span>Etiqueta visible</span><span>Guarda en (campo fijo)</span><span>Requerida</span><span>Guía del scribe</span><span></span>
+      </div>
+      <div style={{display:"grid",gap:6}}>
+        {draft.segments.map((s,i)=>(
+          <div key={s.id} style={{display:"grid",gridTemplateColumns:"24px 1.3fr 1fr 84px 1.4fr 32px",gap:8,alignItems:"center",border:`1px solid ${v("line")}`,borderRadius:8,padding:"8px"}}>
+            <div style={{display:"grid"}}>
+              <button onClick={()=>move(i,-1)} style={{border:"none",background:"transparent",cursor:"pointer",color:v("muted"),fontSize:".7rem",lineHeight:1}}>▲</button>
+              <button onClick={()=>move(i,1)} style={{border:"none",background:"transparent",cursor:"pointer",color:v("muted"),fontSize:".7rem",lineHeight:1}}>▼</button>
+            </div>
+            <input value={s.label} onChange={e=>up(i,{label:e.target.value})} style={{...tarea,padding:"6px 9px",fontSize:".85rem"}}/>
+            <select value={s.target} onChange={e=>up(i,{target:e.target.value})} style={{...tarea,padding:"6px 8px",fontSize:".82rem"}}>
+              {CANONICAL.map(c=><option key={c.target} value={c.target}>{c.short}</option>)}
+            </select>
+            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:".8rem",color:v("muted"),justifyContent:"center"}}>
+              <input type="checkbox" checked={s.required} onChange={e=>up(i,{required:e.target.checked})}/>
+            </label>
+            <input value={s.instructions} onChange={e=>up(i,{instructions:e.target.value})} placeholder="qué debe extraer el scribe…" style={{...tarea,padding:"6px 9px",fontSize:".8rem"}}/>
+            <button onClick={()=>del(i)} style={{border:"none",background:"transparent",cursor:"pointer",color:v("danger"),fontSize:".95rem"}}>✕</button>
+          </div>
+        ))}
+      </div>
+      <button onClick={add} style={{...btnG,marginTop:10,fontSize:".82rem"}}>+ Agregar sección</button>
+
+      <div style={{display:"flex",gap:8,marginTop:18,paddingTop:14,borderTop:`1px solid ${v("line")}`}}>
+        <button onClick={onSave} style={btnP}>Guardar plantilla</button>
+        <button onClick={onCancel} style={btnG}>Cancelar</button>
+        <span style={{alignSelf:"center",fontSize:".74rem",color:v("muted")}}>Manda tu plantilla: al firmar solo se exige lo que marques aquí como requerido. El sistema no impone campos del perfil.</span>
+      </div>
+    </div>
+  );
+}
+
+/* ===================== APP ===================== */
+function App(){
+  const [templates,setTemplates]=useState(ALL_TEMPLATES);
+  const [activeId,setActiveId]=useState("derma-rivera");
+  const [mode,setMode]=useState("nota");     // nota | dictado
+  const [editing,setEditing]=useState(false);
+  const [draft,setDraft]=useState(null);
+  const [notes,setNotes]=useState({});       // {segId: text}
+
+  const template=templates.find(t=>t.id===activeId);
+  const setNote=(segId,val)=>setNotes(n=>({...n,[segId]:val}));
+
+  function openEditor(){ setDraft(JSON.parse(JSON.stringify(template))); setEditing(true); }
+  function saveDraft(){ setTemplates(ts=>ts.map(t=>t.id===draft.id?draft:t)); setEditing(false); }
+
+  const navItem=(on)=>({fontSize:".9rem",padding:"6px 12px",borderRadius:6,cursor:"pointer",color:on?v("primary-hover"):v("muted"),background:on?v("primary-soft"):"transparent",fontWeight:on?600:500,border:"none"});
+  const modeBtn=(on)=>({cursor:"pointer",border:"none",borderRadius:6,padding:"6px 14px",fontSize:".85rem",fontWeight:on?600:500,background:on?v("bg"):"transparent",color:on?v("ink"):v("muted"),boxShadow:on?"0 1px 2px rgba(0,0,0,.08)":"none"});
+
+  return (
+    <div style={{width:"min(1320px,100%)",background:v("bg"),border:`1px solid ${v("line")}`,borderRadius:14,overflow:"hidden",boxShadow:"0 30px 70px -34px rgba(20,30,60,.45)"}}>
+      {/* topbar */}
+      <div style={{display:"flex",alignItems:"center",gap:12,height:54,padding:"0 18px",borderBottom:`1px solid ${v("line")}`}}>
+        <span style={{fontWeight:700,color:v("primary"),fontSize:"1.05rem"}}>MiDoc</span>
+        <nav style={{display:"flex",gap:2,marginLeft:6}}>
+          <button style={navItem(false)}>Agenda</button><button style={navItem(true)}>Atención</button><button style={navItem(false)}>Expediente</button>
+        </nav>
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}><Chip kind="ok">● Sincronizado</Chip><span style={{fontSize:".82rem",color:v("muted")}}>Dra. Ana Rivera</span></div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"216px 1fr 288px",minHeight:600}}>
+        {/* riel */}
+        <aside style={{background:v("surface"),borderRight:`1px solid ${v("line")}`,padding:"14px 12px"}}>
+          <div style={{...lbl,marginBottom:10}}>Hoy · jueves 19 jun</div>
+          <div style={{padding:"9px 11px",borderRadius:8,background:v("primary"),color:"#fff"}}>
+            <div style={{fontWeight:600,fontSize:".9rem"}}>10:30 · Carla R.</div>
+            <div style={{fontSize:".76rem",opacity:.9}}>Lesión pigmentada · en curso</div>
+          </div>
+        </aside>
+
+        {/* centro */}
+        <main style={{padding:"16px 24px",overflow:"auto"}}>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,marginBottom:12}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:"1.1rem"}}>Carla Ramírez · 38 a · F</div>
+              <div style={{fontSize:".82rem",color:v("muted")}}>Consulta abierta 10:34 · sin firmar</div>
+            </div>
+            {/* SELECTOR DE PLANTILLA */}
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:".78rem",color:v("muted")}}>Plantilla</span>
+              <select value={activeId} onChange={e=>{setActiveId(e.target.value);setEditing(false);}} style={{...tarea,padding:"6px 10px",fontSize:".85rem",width:"auto",fontWeight:600}}>
+                {templates.map(t=><option key={t.id} value={t.id}>{t.name}{t.custom?" ·  personalizada":""}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {!editing && (
+            <div style={{display:"flex",gap:4,marginBottom:14,background:v("surface"),padding:4,borderRadius:8,width:"fit-content"}}>
+              <button onClick={()=>setMode("nota")} style={modeBtn(mode==="nota")}>Nota</button>
+              <button onClick={()=>setMode("dictado")} style={modeBtn(mode==="dictado")}>Dictado</button>
+            </div>
+          )}
+
+          {editing
+            ? <TemplateBuilder draft={draft} setDraft={setDraft} onSave={saveDraft} onCancel={()=>setEditing(false)}/>
+            : mode==="nota"
+              ? <NoteEditor template={template} note={notes} setNote={setNote} onEdit={openEditor}/>
+              : <Scribe template={template} note={notes} setNote={setNote} toNote={()=>setMode("nota")}/>}
+        </main>
+
+        {/* contexto */}
+        <aside style={{background:v("surface"),borderLeft:`1px solid ${v("line")}`,padding:"16px"}}>
+          <div style={{background:v("surface"),border:`1px solid ${v("line")}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:".82rem",color:v("muted")}}>Sin alergias registradas</div>
+          <div style={{...lbl,marginBottom:7}}>Precheck-in</div>
+          <p style={{fontSize:".85rem",margin:"0 0 16px"}}>Lunar en espalda que cambió de color y tamaño en 1 mes. Antecedente de exposición solar intensa.</p>
+          <div style={{...lbl,marginBottom:7}}>Plantilla activa</div>
+          <p style={{fontSize:".84rem",margin:"0 0 4px"}}><b>{template.name}</b></p>
+          <p style={{fontSize:".8rem",color:v("muted"),margin:0}}>{template.segments.length} secciones · {template.segments.filter(s=>s.required).length} requeridas · {template.custom?"personalizada":"estándar del sistema"}</p>
+        </aside>
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

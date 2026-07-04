@@ -17,6 +17,14 @@ param termsVersion string = '2026-05'
 param privacyVersion string = '2026-05'
 param smsProvider string = 'mock'
 param smsBaseUrl string = 'https://sms.example.com'
+param whatsappProvider string = 'mock'
+@allowed(['SMS', 'WHATSAPP'])
+param phoneNotificationChannel string = 'SMS'
+param twilioAccountSid string = ''
+param twilioMessagingServiceSid string = ''
+param twilioFromPhoneNumber string = ''
+param twilioWhatsAppMessagingServiceSid string = ''
+param twilioWhatsAppFromPhoneNumber string = ''
 param emailProvider string = 'mock'
 param emailBaseUrl string = 'https://email.example.com'
 param emailFrom string = 'no-responder@midoc.example.com'
@@ -37,6 +45,8 @@ param notificationCronSecret string
 param paymentsWebhookSecret string
 @secure()
 param smsApiKey string
+@secure()
+param twilioAuthToken string = ''
 @secure()
 param emailApiKey string
 @secure()
@@ -66,6 +76,13 @@ module resources 'resources.bicep' = {
     privacyVersion: privacyVersion
     smsProvider: smsProvider
     smsBaseUrl: smsBaseUrl
+    whatsappProvider: whatsappProvider
+    phoneNotificationChannel: phoneNotificationChannel
+    twilioAccountSid: twilioAccountSid
+    twilioMessagingServiceSid: twilioMessagingServiceSid
+    twilioFromPhoneNumber: twilioFromPhoneNumber
+    twilioWhatsAppMessagingServiceSid: twilioWhatsAppMessagingServiceSid
+    twilioWhatsAppFromPhoneNumber: twilioWhatsAppFromPhoneNumber
     emailProvider: emailProvider
     emailBaseUrl: emailBaseUrl
     emailFrom: emailFrom
@@ -77,6 +94,7 @@ module resources 'resources.bicep' = {
     notificationCronSecret: notificationCronSecret
     paymentsWebhookSecret: paymentsWebhookSecret
     smsApiKey: smsApiKey
+    twilioAuthToken: twilioAuthToken
     emailApiKey: emailApiKey
     postgresAdminPassword: postgresAdminPassword
   }

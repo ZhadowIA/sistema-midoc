@@ -36,7 +36,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const STATUS_PILLS: Record<string, string> = {
   PENDING: "pill pill-primary",
-  CONFIRMED: "pill pill-success",
+  CONFIRMED: "pill pill-accent",
   CANCELLED: "pill pill-danger",
   COMPLETED: "pill pill-muted"
 };
@@ -84,12 +84,16 @@ function blockLabel(block: number, slot: number): string {
 }
 
 export function WeekAgenda({
+  title,
+  subtitle,
   appointments,
   slotMinutes,
   workStartMinutes,
   workEndMinutes,
   onAttend
 }: {
+  title?: string;
+  subtitle?: string;
   appointments: AgendaAppointment[];
   slotMinutes: number;
   workStartMinutes: number | null;
@@ -155,55 +159,61 @@ export function WeekAgenda({
 
   return (
     <div className="week-agenda">
-      <div className="week-nav">
-        <button
-          className="ghost-button"
-          aria-label={viewMode === "day" ? "Dia anterior" : "Semana anterior"}
-          onClick={() => setAnchorDate((date) => moveAgendaAnchorDate(date, viewMode, -1))}
-        >
-          ‹
-        </button>
-        <button className="ghost-button" onClick={() => setAnchorDate(new Date())}>
-          Hoy
-        </button>
-        <button
-          className="ghost-button"
-          aria-label={viewMode === "day" ? "Dia siguiente" : "Semana siguiente"}
-          onClick={() => setAnchorDate((date) => moveAgendaAnchorDate(date, viewMode, 1))}
-        >
-          ›
-        </button>
-        <div className="week-view-toggle" role="group" aria-label="Vista de agenda">
-          <button
-            type="button"
-            className={
-              viewMode === "day" ? "week-view-option week-view-option-active" : "week-view-option"
-            }
-            aria-pressed={viewMode === "day"}
-            onClick={() => setViewMode("day")}
-          >
-            Dia
-          </button>
-          <button
-            type="button"
-            className={
-              viewMode === "week" ? "week-view-option week-view-option-active" : "week-view-option"
-            }
-            aria-pressed={viewMode === "week"}
-            onClick={() => setViewMode("week")}
-          >
-            Semana
-          </button>
+      <div className="week-heading">
+        <div>
+          <h1>{title ?? "Agenda"}</h1>
+          {subtitle ? <p>{subtitle}</p> : null}
         </div>
-        <span className="meta week-range">{rangeLabel}</span>
-        <label className="week-cancelled-toggle">
-          <input
-            type="checkbox"
-            checked={showCancelled}
-            onChange={(event) => setShowCancelled(event.currentTarget.checked)}
-          />
-          <span>Mostrar canceladas</span>
-        </label>
+        <div className="week-nav">
+          <button
+            className="ghost-button"
+            aria-label={viewMode === "day" ? "Dia anterior" : "Semana anterior"}
+            onClick={() => setAnchorDate((date) => moveAgendaAnchorDate(date, viewMode, -1))}
+          >
+            ‹
+          </button>
+          <button className="ghost-button" onClick={() => setAnchorDate(new Date())}>
+            Hoy
+          </button>
+          <button
+            className="ghost-button"
+            aria-label={viewMode === "day" ? "Dia siguiente" : "Semana siguiente"}
+            onClick={() => setAnchorDate((date) => moveAgendaAnchorDate(date, viewMode, 1))}
+          >
+            ›
+          </button>
+          <div className="week-view-toggle" role="group" aria-label="Vista de agenda">
+            <button
+              type="button"
+              className={
+                viewMode === "day" ? "week-view-option week-view-option-active" : "week-view-option"
+              }
+              aria-pressed={viewMode === "day"}
+              onClick={() => setViewMode("day")}
+            >
+              Dia
+            </button>
+            <button
+              type="button"
+              className={
+                viewMode === "week" ? "week-view-option week-view-option-active" : "week-view-option"
+              }
+              aria-pressed={viewMode === "week"}
+              onClick={() => setViewMode("week")}
+            >
+              Semana
+            </button>
+          </div>
+          <span className="meta week-range">{rangeLabel}</span>
+          <label className="week-cancelled-toggle">
+            <input
+              type="checkbox"
+              checked={showCancelled}
+              onChange={(event) => setShowCancelled(event.currentTarget.checked)}
+            />
+            <span>Mostrar canceladas</span>
+          </label>
+        </div>
       </div>
 
       <div className="week-grid" style={gridStyle}>
@@ -259,21 +269,19 @@ export function WeekAgenda({
                               : "Atender · buscar o crear el expediente del paciente"
                           }
                         >
-                          <span className="week-appt-time">
-                            {pad(start.getHours())}:{pad(start.getMinutes())}
+                          <span className="week-appt-head">
+                            <span className="week-appt-time">
+                              {pad(start.getHours())}:{pad(start.getMinutes())}
+                            </span>
+                            <span className={STATUS_PILLS[appt.status] ?? "pill pill-muted"}>
+                              {STATUS_LABELS[appt.status] ?? appt.status}
+                            </span>
                           </span>
                           <span className="week-appt-name">{appt.patient_name}</span>
                           <span className="week-appt-meta">
                             {appt.service_name ?? "Consulta"}
                             {appt.reason ? ` · ${appt.reason}` : ""}
-                          </span>
-                          <span className="week-appt-tags">
-                            <span className={STATUS_PILLS[appt.status] ?? "pill pill-muted"}>
-                              {STATUS_LABELS[appt.status] ?? appt.status}
-                            </span>
-                            {appt.has_precheckin ? (
-                              <span className="pill pill-muted">Preconsulta</span>
-                            ) : null}
+                            {appt.has_precheckin ? " · Preconsulta" : ""}
                           </span>
                         </button>
                       );
@@ -285,6 +293,10 @@ export function WeekAgenda({
           })}
         </div>
       </div>
+
+      <p className="week-footnote">
+        Pulsa una cita para resolver el expediente del paciente e iniciar la consulta.
+      </p>
     </div>
   );
 }

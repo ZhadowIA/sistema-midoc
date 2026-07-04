@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ClinicalProfile, PrismaClient } from "@prisma/client";
+import { approveDoctorAccountForTesting } from "../helpers/doctor-accounts";
 
 import { createDoctorAccount, createDoctorSubscription } from "../../src/services/auth/auth-service";
 import {
@@ -114,6 +115,7 @@ describe("clinical encounter flow", () => {
         lastName: "Salas",
         phone: "6140000600",
         professionalName: "Dra. Miriam Salas",
+        licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
@@ -123,6 +125,8 @@ describe("clinical encounter flow", () => {
         doctorUserId: account.user.id,
         planCode: "ESSENTIAL"
       });
+
+      await approveDoctorAccountForTesting(prisma, account.user.id);
 
       await updateDoctorProfile(account.user.id, {
         publicSlug: slug,

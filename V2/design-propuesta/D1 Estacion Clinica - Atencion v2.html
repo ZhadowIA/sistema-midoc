@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>D1 v2 · Estación Clínica · Atención — MiDoc escritorio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+<style>
+  /* Tokens reales: V2/desktop-app/src/App.css */
+  :root{
+    --bg: oklch(1 0 0); --surface: oklch(0.974 0.004 250);
+    --ink: oklch(0.24 0.022 250); --muted: oklch(0.49 0.02 250);
+    --line: oklch(0.9 0.008 250);
+    --primary: oklch(0.49 0.143 250); --primary-hover: oklch(0.43 0.143 250); --primary-soft: oklch(0.95 0.025 250);
+    --accent: oklch(0.58 0.105 195); --accent-soft: oklch(0.96 0.018 195);
+    --success: oklch(0.55 0.12 155); --success-soft: oklch(0.96 0.02 155);
+    --warning: oklch(0.66 0.13 70); --warning-soft: oklch(0.97 0.025 70);
+    --danger: oklch(0.51 0.17 25); --danger-soft: oklch(0.96 0.02 25);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:oklch(0.95 0.005 255);color:var(--ink);font-family:"Public Sans",system-ui,sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;min-height:100vh}
+  .caption{max-width:1320px;margin:18px auto 0;padding:0 18px;width:100%}
+  .caption h1{font-size:1.15rem;font-weight:700;margin:0}
+  .caption p{font-size:.86rem;color:var(--muted);margin:4px 0 0;max-width:88ch}
+  #root{flex:1;display:flex;align-items:flex-start;justify-content:center;padding:16px 18px 40px}
+  button,textarea,input,select{font-family:inherit}
+  textarea{resize:vertical}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <h1>D1 v2 · Estación Clínica — Atención (con scribe, receta y odontograma)</h1>
+    <p>Prototipo interactivo. Riel de agenda (izq.) cambia de paciente · conmutador de modo en el centro: <b>Nota</b> SOAP · <b>Dictado</b> (asigna turnos a campos citando la fuente) · <b>Receta</b> (verificación determinista de interacciones/alergias) · <b>Odontograma</b> (solo Lucía). Contexto crítico siempre a la derecha.</p>
+  </div>
+  <div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useRef, useEffect } = React;
+const v = (n) => `var(--${n})`;
+
+/* ===================== DATOS (formas reales del código) ===================== */
+const PATIENTS = [
+  {
+    id:"p1", time:"09:00", name:"María Gómez", age:62, sex:"F", status:"done",
+    service:"Control crónico", reason:"Revisión de hipertensión", profile:"GENERAL",
+    allergies:["Sulfas"],
+    precheckin:[["Motivo","Control de presión, se siente bien"],["Síntomas","Ninguno nuevo"],["Adherencia","Toma losartán a diario"]],
+    meds:[{name:"Losartán 50 mg", note:"1 c/24 h"}],
+    history:[["02 may","Control · TA 138/86 · ajuste de dosis"],["10 feb","Laboratorios · perfil lipídico normal"]],
+    soap:{S:"Acude a control. Buen apego, sin cefalea ni mareo.",O:"TA 132/84. FC 72. Sin edema.",A:"Hipertensión esencial controlada.",P:"Continúa losartán 50 mg c/24 h. Control en 3 meses."},
+    turns:[], rx:["Losartán 50 mg"],
+  },
+  {
+    id:"p2", time:"10:30", name:"Jorge Pérez", age:54, sex:"M", status:"active",
+    service:"Consulta", reason:"Dolor torácico", profile:"GENERAL",
+    allergies:["Penicilina","AINEs"],
+    precheckin:[["Motivo","Dolor en el pecho desde hace 2 días"],["Factores","Tabaquismo 20/día · padre con IAM a los 60"],["Medicación actual","Ninguna"]],
+    meds:[],
+    history:[["12 mar","Chequeo · TA 140/90"],["04 ene","Gripe estacional"]],
+    soap:{S:"Refiere dolor opresivo retroesternal de 2 días, irradiado a brazo izquierdo, aparece con el esfuerzo y cede en reposo.",O:"TA 148/92. FC 88. Ruidos cardiacos rítmicos sin soplos.",A:"",P:""},
+    turns:[
+      {id:"t1", speaker:"MEDICO", text:"Buenos días Jorge, cuénteme qué lo trae.", conf:"high"},
+      {id:"t2", speaker:"PACIENTE", text:"Doctor, tengo un dolor en el pecho desde hace dos días.", conf:"high"},
+      {id:"t3", speaker:"PACIENTE", text:"Es como un peso, se va al brazo izquierdo y aparece cuando subo escaleras.", conf:"high"},
+      {id:"t4", speaker:"MEDICO", text:"¿Cede cuando descansa?", conf:"high"},
+      {id:"t5", speaker:"PACIENTE", text:"Sí, se calma cuando me siento a descansar.", conf:"medium"},
+      {id:"t6", speaker:"MEDICO", text:"¿Fuma? ¿Antecedentes en la familia?", conf:"high"},
+      {id:"t7", speaker:"PACIENTE", text:"Fumo unos veinte al día. Mi papá tuvo un infarto a los sesenta.", conf:"low"},
+    ],
+    rx:["Aspirina 100 mg","Ibuprofeno 400 mg"],
+  },
+  {
+    id:"p3", time:"12:00", name:"Lucía Díaz", age:8, sex:"F", status:"ready",
+    service:"Odontología", reason:"Revisión y dolor molar", profile:"ODONTOLOGY",
+    allergies:[],
+    precheckin:[["Motivo","Dolor al masticar lado derecho"],["Higiene","Cepillado 2×/día, sin hilo"]],
+    meds:[],
+    history:[["18 dic","Profilaxis · sin caries activas"]],
+    soap:{S:"Madre refiere dolor al masticar del lado derecho desde hace una semana.",O:"Caries oclusal en 46. Resto sin hallazgos.",A:"Caries dental en 46.",P:"Obturación de 46. Higiene e hilo dental."},
+    turns:[
+      {id:"d1", speaker:"MEDICO", text:"Hola Lucía, ¿dónde te duele al comer?", conf:"high"},
+      {id:"d2", speaker:"PACIENTE", text:"Aquí atrás del lado derecho cuando mastico.", conf:"medium"},
+    ],
+    rx:[],
+    dental:{
+      teeth:{ "46":{status:"CARIES", surfaces:{O:"CARIES"}} },
+      perio:{ "46":{pocket:[3,2,3,3,2,3], bleeding:[false,true,false,false,false,false], mobility:0} },
+      plan:[{toothId:"46", procedure:"Obturación oclusal", priority:"ELECTIVE", status:"PLANNED"}],
+      hygiene:"Técnica de cepillado + introducir hilo dental diario.",
+      nextRevision:"6 meses",
+    },
+  },
+  {
+    id:"p4", time:"16:00", name:"Roberto Soto", age:41, sex:"M", status:"new",
+    service:"Primera vez", reason:"Chequeo general", profile:"GENERAL",
+    allergies:[],
+    precheckin:[["Motivo","Chequeo, sin molestias"]],
+    meds:[], history:[],
+    soap:{S:"",O:"",A:"",P:""}, turns:[], rx:[],
+  },
+];
+
+const STATUS = { done:"✓ atendido", active:"en curso", ready:"★ precheck-in listo", new:"Primera vez" };
+const SOAP_TABS = [
+  {key:"S", full:"Subjetivo", hint:"lo que refiere el paciente"},
+  {key:"O", full:"Objetivo", hint:"exploración y hallazgos"},
+  {key:"A", full:"Análisis", hint:"diagnóstico"},
+  {key:"P", full:"Plan", hint:"tratamiento e indicaciones"},
+];
+const LIVE_LINES = ["…y se calma cuando me siento a descansar.","A veces siento como un peso al subir escaleras.","No, fiebre no he tenido."];
+
+/* Segmentos de plantilla (buildTemplateSegments) por destino real */
+const SEGMENTS = [
+  {id:"seg-s", label:"S · Subjetivo", target:"S"},
+  {id:"seg-o", label:"O · Objetivo", target:"O"},
+  {id:"seg-a", label:"A · Análisis", target:"A"},
+  {id:"seg-p", label:"P · Plan", target:"P"},
+];
+
+/* Base de referencia local determinista (sin IA) — verificación de receta */
+const DRUG_DB = {
+  "aspirina":     {ingredient:"ácido acetilsalicílico", class:"AINE"},
+  "ibuprofeno":   {ingredient:"ibuprofeno", class:"AINE"},
+  "naproxeno":    {ingredient:"naproxeno", class:"AINE"},
+  "losartán":     {ingredient:"losartán", class:"ARA-II"},
+  "losartan":     {ingredient:"losartán", class:"ARA-II"},
+  "amoxicilina":  {ingredient:"amoxicilina", class:"Penicilina"},
+  "paracetamol":  {ingredient:"paracetamol", class:"Analgésico"},
+};
+const ALLERGY_CLASS = { "AINEs":"AINE", "Penicilina":"Penicilina" };
+const REFERENCE_VERSION = "Vademécum local v2026.1";
+
+function normalizeDrug(input){
+  const key = input.trim().toLowerCase().split(/\s+/)[0];
+  const hit = DRUG_DB[key];
+  return { input, ingredient: hit?.ingredient ?? null, drugClass: hit?.class ?? null, recognized: !!hit };
+}
+function buildSafetyReport(rxList, allergies){
+  const normalized = rxList.map(normalizeDrug);
+  const allergyAlerts = [];
+  for(const d of normalized){
+    for(const a of allergies){
+      const cls = ALLERGY_CLASS[a];
+      if(cls && d.drugClass === cls){
+        allergyAlerts.push({drug:d.input, matchedAllergy:a, viaClass:cls, source:REFERENCE_VERSION});
+      }
+    }
+  }
+  const byClass = {};
+  normalized.forEach(d=>{ if(d.drugClass){ (byClass[d.drugClass] ||= []).push(d.input); } });
+  const duplicateTherapy = Object.entries(byClass).filter(([,vv])=>vv.length>=2).map(([cls,drugs])=>({drugClass:cls, drugs}));
+  const interactions = [];
+  const hasAINE = normalized.some(d=>d.drugClass==="AINE");
+  const hasARA = normalized.some(d=>d.drugClass==="ARA-II");
+  if(hasAINE && hasARA){
+    interactions.push({drugA:"AINE", drugB:"ARA-II", severity:"MODERATE", description:"Los AINE reducen el efecto antihipertensivo de los ARA-II y pueden afectar la función renal.", source:REFERENCE_VERSION});
+  }
+  const unrecognized = normalized.filter(d=>!d.recognized).map(d=>d.input);
+  return {normalized, unrecognized, allergyAlerts, duplicateTherapy, interactions,
+    referenceVersion:REFERENCE_VERSION, hasAlerts: allergyAlerts.length+duplicateTherapy.length+interactions.length>0};
+}
+const SEV = { CONTRAINDICATED:{l:"Contraindicado",k:"danger"}, MAJOR:{l:"Grave",k:"danger"}, MODERATE:{l:"Moderada",k:"warn"}, MINOR:{l:"Leve",k:"muted"} };
+
+/* ===================== UI helpers ===================== */
+function Chip({kind, children}){
+  const map = {
+    ok:{bg:v("success-soft"),fg:v("success")}, accent:{bg:v("accent-soft"),fg:v("accent")},
+    active:{bg:v("primary-soft"),fg:v("primary-hover")}, danger:{bg:v("danger-soft"),fg:v("danger")},
+    warn:{bg:v("warning-soft"),fg:"oklch(0.5 0.13 70)"}, muted:{bg:v("surface"),fg:v("muted")},
+  };
+  const s = map[kind]||map.muted;
+  return <span style={{fontSize:".72rem",fontWeight:600,padding:"3px 9px",borderRadius:999,background:s.bg,color:s.fg,whiteSpace:"nowrap"}}>{children}</span>;
+}
+const sectLabel = {fontSize:".7rem",fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",color:v("muted"),margin:"0 0 7px"};
+const tarea = {width:"100%",border:`1px solid ${v("line")}`,borderRadius:6,padding:"8px 10px",fontSize:".9rem",color:v("ink"),background:v("bg")};
+const btnP = {cursor:"pointer",fontSize:".84rem",fontWeight:600,padding:"8px 14px",borderRadius:6,border:"none",background:v("primary"),color:"#fff"};
+const btnG = {cursor:"pointer",fontSize:".84rem",fontWeight:600,padding:"8px 14px",borderRadius:6,border:`1px solid ${v("line")}`,background:v("bg"),color:v("ink")};
+
+/* ===================== MODO: NOTA (SOAP) ===================== */
+function NotaMode({soap, setSoap, tab, setTab, recording, liveIdx}){
+  function insert(){ const add=LIVE_LINES[liveIdx]; setSoap(tab,(soap[tab]?soap[tab]+" ":"")+add); }
+  const cur = SOAP_TABS.find(t=>t.key===tab);
+  return (
+    <>
+      <div style={{display:"flex",gap:4,marginTop:4,borderBottom:`1px solid ${v("line")}`}}>
+        {SOAP_TABS.map(t=>{
+          const on=t.key===tab, filled=(soap[t.key]||"").trim().length>0;
+          return <button key={t.key} onClick={()=>setTab(t.key)} style={{cursor:"pointer",border:"none",background:"transparent",padding:"8px 14px 9px",display:"flex",alignItems:"center",gap:7,borderBottom:on?`2px solid ${v("primary")}`:"2px solid transparent",color:on?v("ink"):v("muted"),fontWeight:on?700:500,fontSize:".88rem"}}>
+            <span style={{fontWeight:700,color:on?v("primary"):v("muted")}}>{t.key}</span><span>{t.full}</span>
+            {filled && <span style={{width:6,height:6,borderRadius:999,background:v("success")}}/>}
+          </button>;
+        })}
+      </div>
+      <div style={{marginTop:14}}>
+        <label style={sectLabel}>{cur.full} — {cur.hint}</label>
+        <textarea value={soap[tab]} onChange={e=>setSoap(tab,e.target.value)} placeholder="Escribe o dicta…" style={{...tarea,minHeight:140,fontSize:".94rem",lineHeight:1.55}}/>
+      </div>
+      <div style={{display:"flex",gap:8,marginTop:18,paddingTop:16,borderTop:`1px solid ${v("line")}`}}>
+        <button onClick={insert} disabled={!recording} style={{...btnP,opacity:recording?1:.5,cursor:recording?"pointer":"not-allowed"}}>✦ Insertar transcripción en «{cur.full}»</button>
+        <button style={btnG}>Firmar y cerrar</button>
+      </div>
+      <div style={{fontSize:".74rem",color:v("muted"),marginTop:8}}>El médico revisa antes de guardar. La transcripción nunca se guarda automáticamente.</div>
+    </>
+  );
+}
+
+/* ===================== MODO: DICTADO (scribe) ===================== */
+function DictadoMode({patient, setSoap, soap, goNota}){
+  const [sel, setSel] = useState(null);
+  const [drafts, setDrafts] = useState([]);
+  if(patient.turns.length===0){
+    return <div style={{marginTop:24,color:v("muted"),fontSize:".9rem"}}>Sin dictado para este paciente. Inicia una grabación desde la nota para generar turnos.</div>;
+  }
+  function assign(target){
+    if(!sel) return;
+    const turn = patient.turns.find(t=>t.id===sel);
+    setDrafts(d=>{
+      const ix = d.findIndex(x=>x.target===target);
+      if(ix>=0){ const copy=[...d]; copy[ix]={...copy[ix], text:copy[ix].text+" "+turn.text, sources:[...copy[ix].sources, turn.id]}; return copy; }
+      return [...d, {target, text:turn.text, sources:[turn.id]}];
+    });
+    setSel(null);
+  }
+  function applyToNote(){
+    drafts.forEach(dr=> setSoap(dr.target, (soap[dr.target]?soap[dr.target]+" ":"")+dr.text));
+    goNota();
+  }
+  const confColor = {high:v("success"), medium:v("warning"), low:v("danger")};
+  return (
+    <div style={{marginTop:6}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+        <p style={{...sectLabel,margin:0}}>Transcripción · {patient.turns.length} turnos · diarización médico/paciente</p>
+        <Chip kind="muted">whisper local · no sale del equipo</Chip>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1.3fr 1fr",gap:16}}>
+        <div style={{display:"grid",gap:7,maxHeight:330,overflow:"auto",paddingRight:4}}>
+          {patient.turns.map(t=>{
+            const mine = t.speaker==="MEDICO";
+            const on = sel===t.id;
+            return <button key={t.id} onClick={()=>setSel(on?null:t.id)} style={{textAlign:"left",cursor:"pointer",border:on?`1px solid ${v("primary")}`:`1px solid ${v("line")}`,background:on?v("primary-soft"):v("bg"),borderRadius:8,padding:"8px 10px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                <span style={{fontSize:".68rem",fontWeight:700,letterSpacing:".04em",textTransform:"uppercase",color:mine?v("primary"):v("accent")}}>{mine?"Médico":"Paciente"}</span>
+                <span style={{fontSize:".64rem",color:v("muted")}}>· {t.id}</span>
+                <span title={"confianza "+t.conf} style={{marginLeft:"auto",width:8,height:8,borderRadius:999,background:confColor[t.conf]}}/>
+              </div>
+              <div style={{fontSize:".86rem"}}>{t.text}</div>
+            </button>;
+          })}
+        </div>
+        <div>
+          <div style={{fontSize:".78rem",color:v("muted"),marginBottom:8}}>{sel? "Elige a qué campo enviar el turno seleccionado:" : "Selecciona un turno de la izquierda para asignarlo."}</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+            {SEGMENTS.map(s=> <button key={s.id} onClick={()=>assign(s.target)} disabled={!sel} style={{...btnG,opacity:sel?1:.5,cursor:sel?"pointer":"not-allowed",fontSize:".8rem",padding:"6px 11px"}}>→ {s.label}</button>)}
+          </div>
+          <p style={sectLabel}>Borrador por campo (cita la fuente)</p>
+          <div style={{display:"grid",gap:8}}>
+            {drafts.length===0 && <div style={{fontSize:".82rem",color:v("muted")}}>Aún sin segmentos asignados.</div>}
+            {drafts.map(dr=>(
+              <div key={dr.target} style={{border:`1px solid ${v("line")}`,borderRadius:8,padding:"9px 11px"}}>
+                <div style={{fontSize:".7rem",fontWeight:700,color:v("primary"),textTransform:"uppercase",letterSpacing:".05em"}}>{SOAP_TABS.find(t=>t.key===dr.target).full}</div>
+                <div style={{fontSize:".85rem",margin:"3px 0 5px"}}>{dr.text}</div>
+                <div style={{fontSize:".7rem",color:v("muted")}}>Fuente: {dr.sources.map(id=>`${patient.turns.find(t=>t.id===id).speaker==="MEDICO"?"Médico":"Paciente"} · ${id}`).join(" · ")}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,marginTop:16,paddingTop:14,borderTop:`1px solid ${v("line")}`}}>
+        <button onClick={applyToNote} disabled={drafts.length===0} style={{...btnP,opacity:drafts.length?1:.5,cursor:drafts.length?"pointer":"not-allowed"}}>Convertir borrador en nota →</button>
+        <span style={{fontSize:".74rem",color:v("muted"),alignSelf:"center"}}>Cada segmento conserva la cita del turno de origen para auditoría.</span>
+      </div>
+    </div>
+  );
+}
+
+/* ===================== MODO: RECETA (medication safety) ===================== */
+function RecetaMode({patient}){
+  const [list, setList] = useState(patient.rx.length?patient.rx:[""]);
+  const [report, setReport] = useState(null);
+  function setItem(i,val){ setList(l=>l.map((x,ix)=>ix===i?val:x)); }
+  function addItem(){ setList(l=>[...l,""]); }
+  function removeItem(i){ setList(l=>l.filter((_,ix)=>ix!==i)); }
+  function review(){ setReport(buildSafetyReport(list.filter(x=>x.trim()), patient.allergies)); }
+  return (
+    <div style={{marginTop:6}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+        <p style={{...sectLabel,margin:0}}>Prescripción</p>
+        <Chip kind="muted">verificación determinista · sin IA · no sale del equipo</Chip>
+      </div>
+      <div style={{display:"grid",gap:7,maxWidth:460}}>
+        {list.map((d,i)=>(
+          <div key={i} style={{display:"flex",gap:6}}>
+            <input value={d} onChange={e=>setItem(i,e.target.value)} placeholder="p. ej. Ibuprofeno 400 mg" style={{...tarea,flex:1}}/>
+            <button onClick={()=>removeItem(i)} style={{...btnG,padding:"6px 10px"}}>✕</button>
+          </div>
+        ))}
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={addItem} style={{...btnG,padding:"6px 11px"}}>+ Agregar medicamento</button>
+          <button onClick={review} style={btnP}>Revisar seguridad</button>
+        </div>
+      </div>
+
+      {report && (
+        <div style={{marginTop:18}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+            {report.hasAlerts ? <Chip kind="danger">⚠ {report.allergyAlerts.length+report.interactions.length+report.duplicateTherapy.length} alerta(s)</Chip> : <Chip kind="ok">✓ Sin alertas</Chip>}
+            <span style={{fontSize:".74rem",color:v("muted")}}>Referencia: {report.referenceVersion}</span>
+          </div>
+
+          {report.allergyAlerts.map((a,i)=>(
+            <div key={"al"+i} style={{background:v("danger-soft"),borderRadius:8,padding:"10px 12px",marginBottom:8}}>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}><Chip kind="danger">Alergia</Chip><b style={{fontSize:".88rem",color:v("danger")}}>{a.drug}</b></div>
+              <div style={{fontSize:".84rem",color:v("danger"),marginTop:4}}>Coincide con alergia registrada «{a.matchedAllergy}»{a.viaClass?` por clase ${a.viaClass}`:""}. Fuente: {a.source}.</div>
+            </div>
+          ))}
+          {report.interactions.map((it,i)=>(
+            <div key={"in"+i} style={{background:v("warning-soft"),borderRadius:8,padding:"10px 12px",marginBottom:8}}>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}><Chip kind={SEV[it.severity].k}>Interacción · {SEV[it.severity].l}</Chip><b style={{fontSize:".88rem"}}>{it.drugA} + {it.drugB}</b></div>
+              <div style={{fontSize:".84rem",marginTop:4}}>{it.description} <span style={{color:v("muted")}}>Fuente: {it.source}.</span></div>
+            </div>
+          ))}
+          {report.duplicateTherapy.map((d,i)=>(
+            <div key={"dt"+i} style={{background:v("surface"),border:`1px solid ${v("line")}`,borderRadius:8,padding:"10px 12px",marginBottom:8}}>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}><Chip kind="warn">Duplicidad terapéutica</Chip><b style={{fontSize:".88rem"}}>Clase {d.drugClass}</b></div>
+              <div style={{fontSize:".84rem",marginTop:4}}>{d.drugs.join(" + ")} pertenecen a la misma clase.</div>
+            </div>
+          ))}
+          {report.unrecognized.length>0 && (
+            <div style={{fontSize:".8rem",color:v("muted"),marginTop:6}}>No reconocidos en la base local: {report.unrecognized.join(", ")} — se omiten de la verificación.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===================== MODO: ODONTOGRAMA ===================== */
+const UPPER = ["18","17","16","15","14","13","12","11","21","22","23","24","25","26","27","28"];
+const LOWER = ["48","47","46","45","44","43","42","41","31","32","33","34","35","36","37","38"];
+const FACES = [["M","Mesial"],["O","Oclusal"],["D","Distal"],["V","Vestibular"],["L","Lingual"]];
+const STATUS_LABEL = {HEALTHY:"Sano",CARIES:"Caries",RESTORED:"Restaurado",CROWN:"Corona",MISSING:"Ausente"};
+const PRIO = {URGENT:{l:"Urgente",k:"danger"},ELECTIVE:{l:"Electivo",k:"warn"},PREVENTIVE:{l:"Preventivo",k:"muted"}};
+const TSTATUS = {PLANNED:"Planeado",IN_PROGRESS:"En progreso",COMPLETED:"Completado"};
+
+function Tooth({id, rec, sel, onSel}){
+  const caries = rec?.status==="CARIES";
+  return <button onClick={()=>onSel(id)} style={{width:26,height:34,fontSize:".66rem",borderRadius:5,cursor:"pointer",
+    border:`1px solid ${sel?v("primary"):caries?v("danger"):v("line")}`,
+    background:sel?v("primary-soft"):caries?v("danger-soft"):v("bg"),
+    color:caries?v("danger"):v("ink"),fontWeight:caries?700:500}}>{id}</button>;
+}
+function OdontogramaMode({patient}){
+  const d = patient.dental;
+  const [sel, setSel] = useState("46");
+  const rec = d.teeth[sel];
+  return (
+    <div style={{marginTop:6}}>
+      <p style={sectLabel}>Odontograma · notación FDI</p>
+      <div style={{display:"grid",gap:5,padding:"10px 12px",border:`1px solid ${v("line")}`,borderRadius:8}}>
+        <div style={{display:"flex",gap:3,justifyContent:"center"}}>{UPPER.map(id=><Tooth key={id} id={id} rec={d.teeth[id]} sel={sel===id} onSel={setSel}/>)}</div>
+        <div style={{height:1,background:v("line"),margin:"3px 0"}}/>
+        <div style={{display:"flex",gap:3,justifyContent:"center"}}>{LOWER.map(id=><Tooth key={id} id={id} rec={d.teeth[id]} sel={sel===id} onSel={setSel}/>)}</div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginTop:14}}>
+        <div style={{border:`1px solid ${v("line")}`,borderRadius:8,padding:"11px 13px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <b style={{fontSize:".95rem"}}>Diente {sel}</b>
+            <Chip kind={rec?.status==="CARIES"?"danger":"muted"}>{STATUS_LABEL[rec?.status]||"Sano"}</Chip>
+          </div>
+          <div style={{fontSize:".72rem",color:v("muted"),marginBottom:6}}>Caras</div>
+          <div style={{display:"flex",gap:5}}>
+            {FACES.map(([f,name])=>{
+              const st = rec?.surfaces?.[f];
+              const bad = st==="CARIES";
+              return <div key={f} title={name} style={{width:34,textAlign:"center",fontSize:".68rem",borderRadius:5,padding:"7px 0",border:`1px solid ${bad?v("danger"):v("line")}`,background:bad?v("danger-soft"):v("bg"),color:bad?v("danger"):v("muted")}}>{f}</div>;
+            })}
+          </div>
+          {d.perio[sel] && (
+            <div style={{marginTop:10,fontSize:".78rem",color:v("muted")}}>
+              Periodontograma · profundidad {d.perio[sel].pocket.join("/")} mm · movilidad {d.perio[sel].mobility} · sangrado {d.perio[sel].bleeding.filter(Boolean).length}/6
+            </div>
+          )}
+        </div>
+        <div style={{border:`1px solid ${v("line")}`,borderRadius:8,padding:"11px 13px"}}>
+          <div style={sectLabel}>Plan de tratamiento</div>
+          {d.plan.map((p,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:i<d.plan.length-1?`1px solid ${v("line")}`:"none"}}>
+              <span style={{fontWeight:700,fontSize:".84rem",minWidth:28}}>{p.toothId}</span>
+              <span style={{fontSize:".84rem",flex:1}}>{p.procedure}</span>
+              <Chip kind={PRIO[p.priority].k}>{PRIO[p.priority].l}</Chip>
+              <span style={{fontSize:".74rem",color:v("muted")}}>{TSTATUS[p.status]}</span>
+            </div>
+          ))}
+          <div style={{fontSize:".8rem",marginTop:10}}><b>Higiene:</b> <span style={{color:v("muted")}}>{d.hygiene}</span></div>
+          <div style={{fontSize:".8rem",marginTop:4}}><b>Próxima revisión:</b> <span style={{color:v("muted")}}>{d.nextRevision}</span></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===================== APP ===================== */
+function App(){
+  const [activeId, setActiveId] = useState("p2");
+  const [mode, setMode] = useState("nota");
+  const [tab, setTab] = useState("S");
+  const [recording, setRecording] = useState(false);
+  const [liveIdx, setLiveIdx] = useState(0);
+  const [store, setStore] = useState(()=>Object.fromEntries(PATIENTS.map(p=>[p.id,{...p.soap}])));
+
+  const patient = PATIENTS.find(p=>p.id===activeId);
+  const soap = store[activeId];
+  const setSoap = (k,val)=> setStore(s=>({...s,[activeId]:{...s[activeId],[k]:val}}));
+
+  useEffect(()=>{ if(!recording) return; const t=setInterval(()=>setLiveIdx(i=>(i+1)%LIVE_LINES.length),2600); return ()=>clearInterval(t); },[recording]);
+
+  function selectPatient(id){ setActiveId(id); setMode("nota"); setTab("S"); setRecording(false); }
+
+  const MODES = [
+    {key:"nota", label:"Nota"},
+    {key:"dictado", label:`Dictado${patient.turns.length?` · ${patient.turns.length}`:""}`},
+    {key:"receta", label:"Receta"},
+    ...(patient.profile==="ODONTOLOGY"?[{key:"odonto", label:"Odontograma"}]:[]),
+  ];
+
+  const navItem=(on)=>({fontSize:".9rem",padding:"6px 12px",borderRadius:6,cursor:"pointer",color:on?v("primary-hover"):v("muted"),background:on?v("primary-soft"):"transparent",fontWeight:on?600:500,border:"none"});
+
+  return (
+    <div style={{width:"min(1320px,100%)",background:v("bg"),border:`1px solid ${v("line")}`,borderRadius:14,overflow:"hidden",boxShadow:"0 30px 70px -34px rgba(20,30,60,.45)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:12,height:54,padding:"0 18px",borderBottom:`1px solid ${v("line")}`}}>
+        <span style={{fontWeight:700,color:v("primary"),fontSize:"1.05rem",letterSpacing:"-.01em"}}>MiDoc</span>
+        <nav style={{display:"flex",gap:2,marginLeft:6}}>
+          <button style={navItem(false)}>Agenda</button><button style={navItem(true)}>Atención</button>
+          <button style={navItem(false)}>Expediente</button><button style={navItem(false)}>Directorio</button>
+        </nav>
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
+          <Chip kind="ok">● Sincronizado</Chip>
+          <span style={{fontSize:".82rem",color:v("muted")}}>Dra. Ana Rivera</span>
+          <span style={{width:30,height:30,borderRadius:999,background:v("primary-soft"),color:v("primary"),fontWeight:700,fontSize:".8rem",display:"grid",placeItems:"center"}}>AR</span>
+        </div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"216px 1fr 288px",height:600}}>
+        <aside style={{background:v("surface"),borderRight:`1px solid ${v("line")}`,padding:"14px 12px",overflow:"auto"}}>
+          <p style={sectLabel}>Hoy · jueves 19 jun</p>
+          <div style={{display:"grid",gap:6}}>
+            {PATIENTS.map(p=>{
+              const on=p.id===activeId;
+              return <button key={p.id} onClick={()=>selectPatient(p.id)} style={{textAlign:"left",cursor:"pointer",padding:"9px 11px",borderRadius:8,border:on?"none":`1px solid ${v("line")}`,background:on?v("primary"):v("bg"),color:on?"#fff":v("ink")}}>
+                <div style={{fontWeight:600,fontSize:".9rem"}}>{p.time} · {p.name.split(" ")[0]} {p.name.split(" ")[1]?.[0]}.</div>
+                <div style={{fontSize:".76rem",color:on?"#fff":v("muted"),opacity:on?.9:1}}>{p.reason} · {STATUS[p.status]}</div>
+              </button>;
+            })}
+          </div>
+          <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${v("line")}`}}>
+            <p style={sectLabel}>Siguiente libre</p><div style={{fontSize:".84rem",color:v("muted")}}>17:00 · sin reservar</div>
+          </div>
+        </aside>
+
+        <main style={{padding:"16px 24px",overflow:"auto",display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:"1.1rem"}}>{patient.name} · {patient.age} a · {patient.sex}</div>
+              <div style={{fontSize:".82rem",color:v("muted")}}>{patient.status==="active"?"Consulta abierta 10:34 · sin firmar":patient.status==="done"?"Consulta firmada":"Sin abrir"}{patient.profile==="ODONTOLOGY"&&" · Odontología"}</div>
+            </div>
+            <button onClick={()=>setRecording(r=>!r)} style={{display:"inline-flex",alignItems:"center",gap:7,cursor:"pointer",fontSize:".82rem",fontWeight:600,padding:"7px 13px",borderRadius:6,border:recording?"none":`1px solid ${v("line")}`,background:recording?v("danger-soft"):v("bg"),color:recording?v("danger"):v("ink")}}>{recording?"● Grabando 04:12":"◉ Dictar consulta"}</button>
+          </div>
+
+          <div style={{display:"flex",gap:4,margin:"14px 0 12px",background:v("surface"),padding:4,borderRadius:8,width:"fit-content"}}>
+            {MODES.map(m=>{
+              const on=m.key===mode;
+              return <button key={m.key} onClick={()=>setMode(m.key)} style={{cursor:"pointer",border:"none",borderRadius:6,padding:"6px 14px",fontSize:".85rem",fontWeight:on?600:500,background:on?v("bg"):"transparent",color:on?v("ink"):v("muted"),boxShadow:on?"0 1px 2px rgba(0,0,0,.08)":"none"}}>{m.label}</button>;
+            })}
+          </div>
+
+          {mode==="nota" && <NotaMode soap={soap} setSoap={setSoap} tab={tab} setTab={setTab} recording={recording} liveIdx={liveIdx}/>}
+          {mode==="dictado" && <DictadoMode patient={patient} soap={soap} setSoap={setSoap} goNota={()=>setMode("nota")}/>}
+          {mode==="receta" && <RecetaMode patient={patient}/>}
+          {mode==="odonto" && <OdontogramaMode patient={patient}/>}
+        </main>
+
+        <aside style={{background:v("surface"),borderLeft:`1px solid ${v("line")}`,padding:"16px 16px",overflow:"auto"}}>
+          {patient.allergies.length>0
+            ? <div style={{background:v("danger-soft"),borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+                <div style={{fontSize:".7rem",fontWeight:700,color:v("danger"),letterSpacing:".06em",textTransform:"uppercase"}}>⚠ Alergias</div>
+                <div style={{fontSize:".88rem",color:v("danger"),marginTop:2}}>{patient.allergies.join(" · ")}</div>
+              </div>
+            : <div style={{background:v("surface"),border:`1px solid ${v("line")}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:".82rem",color:v("muted")}}>Sin alergias registradas</div>}
+
+          {recording && <div style={{background:v("bg"),border:`1px solid ${v("danger-soft")}`,borderRadius:8,padding:"11px 12px",marginBottom:14}}>
+            <div style={{display:"flex",alignItems:"center",gap:7}}><Chip kind="danger">● 04:12</Chip><span style={{fontSize:".74rem",color:v("muted")}}>Transcripción en vivo</span></div>
+            <p style={{fontSize:".84rem",margin:"8px 0 0",fontStyle:"italic"}}>«{LIVE_LINES[liveIdx]}»</p>
+          </div>}
+
+          <p style={sectLabel}>Precheck-in del paciente</p>
+          <dl style={{margin:"0 0 16px",display:"grid",gap:7}}>
+            {patient.precheckin.map(([k,val])=><div key={k}><dt style={{fontSize:".72rem",color:v("muted"),fontWeight:600}}>{k}</dt><dd style={{margin:0,fontSize:".85rem"}}>{val}</dd></div>)}
+          </dl>
+
+          <p style={sectLabel}>Medicación actual</p>
+          <div style={{marginBottom:16}}>
+            {patient.meds.length>0 ? patient.meds.map(m=><div key={m.name} style={{fontSize:".85rem",display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:`1px solid ${v("line")}`}}><span>{m.name}</span><span style={{color:v("muted")}}>{m.note}</span></div>) : <div style={{fontSize:".82rem",color:v("muted")}}>Ninguna</div>}
+            {patient.allergies.length>0 && <div style={{marginTop:8}}><Chip kind="warn">Verificar interacciones antes de prescribir</Chip></div>}
+          </div>
+
+          <p style={sectLabel}>Últimas consultas</p>
+          {patient.history.length>0 ? <div style={{display:"grid",gap:7}}>{patient.history.map(([d,txt])=><div key={d} style={{borderLeft:`2px solid ${v("line")}`,paddingLeft:9}}><div style={{fontSize:".74rem",color:v("muted"),fontWeight:600}}>{d}</div><div style={{fontSize:".83rem"}}>{txt}</div></div>)}</div> : <div style={{fontSize:".82rem",color:v("muted")}}>Sin consultas previas — primera vez</div>}
+        </aside>
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

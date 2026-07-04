@@ -28,10 +28,12 @@ export function AiPreconsultaChat({ token, publicKey, initialMotivo, onSaved }: 
   const [question, setQuestion] = useState<string | null>(null);
   const [answer, setAnswer] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState("");
   const [error, setError] = useState("");
 
   async function askNext(currentTurns: Turn[]): Promise<void> {
     setBusy(true);
+    setBusyLabel(currentTurns.length === 0 ? "Preparando la primera pregunta" : "Preparando la siguiente pregunta");
     setError("");
     try {
       const response = await fetch(`/api/public/appointments/${token}/preconsulta-ai`, {
@@ -53,11 +55,13 @@ export function AiPreconsultaChat({ token, publicKey, initialMotivo, onSaved }: 
       setError(askError instanceof Error ? askError.message : "No se pudo continuar la preconsulta.");
     } finally {
       setBusy(false);
+      setBusyLabel("");
     }
   }
 
   async function sealAndSubmit(finalTurns: Turn[]): Promise<void> {
     setBusy(true);
+    setBusyLabel("Cifrando y enviando la preconsulta");
     setError("");
     try {
       const result = { motivo, conversation: finalTurns };
@@ -79,6 +83,7 @@ export function AiPreconsultaChat({ token, publicKey, initialMotivo, onSaved }: 
       setError(submitError instanceof Error ? submitError.message : "No fue posible guardar la preconsulta.");
     } finally {
       setBusy(false);
+      setBusyLabel("");
     }
   }
 
@@ -94,6 +99,8 @@ export function AiPreconsultaChat({ token, publicKey, initialMotivo, onSaved }: 
     }
     const nextTurns = [...turns, { question, answer: answer.trim() }];
     setTurns(nextTurns);
+    setQuestion(null);
+    setAnswer("");
     void askNext(nextTurns);
   }
 
@@ -135,6 +142,15 @@ export function AiPreconsultaChat({ token, publicKey, initialMotivo, onSaved }: 
         </p>
       ) : null}
 
+      {busy && !question ? (
+        <div className="ai-preconsulta-thinking" role="status" aria-live="polite">
+          <span className="ai-thinking-dot" aria-hidden="true" />
+          <span className="ai-thinking-dot" aria-hidden="true" />
+          <span className="ai-thinking-dot" aria-hidden="true" />
+          <span>{busyLabel || "Preparando la siguiente pregunta"}</span>
+        </div>
+      ) : null}
+
       {question ? (
         <form className="booking-form" onSubmit={submitAnswer}>
           <label className="field field-full">
@@ -150,8 +166,12 @@ export function AiPreconsultaChat({ token, publicKey, initialMotivo, onSaved }: 
             {busy ? "Enviando…" : "Responder"}
           </button>
         </form>
+      ) : error && !busy ? (
+        <button className="ghost-button" type="button" onClick={() => void askNext(turns)}>
+          Intentar de nuevo
+        </button>
       ) : (
-        <p className="field-hint">{busy ? "Preparando preguntas…" : ""}</p>
+        <p className="field-hint" />
       )}
     </div>
   );

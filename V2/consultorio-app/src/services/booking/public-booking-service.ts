@@ -1,9 +1,11 @@
 import {
   AppointmentSource,
   AppointmentStatus,
+  ConsentType,
   HoldStatus,
   LegalDocumentType,
   NotificationKind,
+  PhoneNotificationChannel,
   PatientStatus,
   PrecheckinKind,
   PrecheckinStatus
@@ -25,7 +27,7 @@ import {
   type LocalDate
 } from "../../lib/timezone";
 import { emitSyncEvent, getActiveDeviceDocumentKey } from "../sync/sync-service";
-import { queueNotification } from "../notifications/notification-service";
+import { phoneNotificationChannel, queueNotification } from "../notifications/notification-service";
 
 const HOLD_TTL_MS = 1000 * 60 * 10;
 const SLOT_TAKEN_MESSAGE = "El horario seleccionado ya no esta disponible.";
@@ -194,6 +196,13 @@ function getRuleSlots(input: {
     const slotEnd = addMinutes(slotStart, input.durationMinutes);
     const advanceHours = (slotStart.getTime() - now.getTime()) / 3_600_000;
     const advanceDays = advanceHours / 24;
+
+    // Un horario que ya empezo nunca esta disponible, aunque la regla no fije
+    // anticipacion minima: sin esto, los slots pasados del propio dia (manana)
+    // seguian apareciendo por la tarde.
+    if (slotStart <= now) {
+      continue;
+    }
 
     if (input.minAdvanceHours !== null && input.minAdvanceHours !== undefined && advanceHours < input.minAdvanceHours) {
       continue;
@@ -494,11 +503,32 @@ export async function createAppointmentHold(input: {
   return hold;
 }
 
+/**
+ * Normaliza los apellidos del paciente. La captura nueva trae `apellidoPaterno`
+ * y `apellidoMaterno` por separado; la legada (y los tests) traen `lastName`
+ * combinado. `lastName` siempre queda como la forma combinada (display + dedup);
+ * los apellidos separados se conservan para prellenar la ficha de antecedentes.
+ */
+function resolveApellidos(patient: {
+  lastName?: string;
+  apellidoPaterno?: string;
+  apellidoMaterno?: string;
+}) {
+  const apellidoPaterno = patient.apellidoPaterno?.trim() || undefined;
+  const apellidoMaterno = patient.apellidoMaterno?.trim() || undefined;
+  const combined = apellidoPaterno
+    ? [apellidoPaterno, apellidoMaterno].filter(Boolean).join(" ")
+    : patient.lastName?.trim() ?? "";
+  return { lastName: combined, apellidoPaterno, apellidoMaterno };
+}
+
 async function findOrCreatePatient(input: {
   doctorId: string;
   patient: {
     firstName: string;
-    lastName: string;
+    lastName?: string;
+    apellidoPaterno?: string;
+    apellidoMaterno?: string;
     phone?: string;
     email?: string;
     birthDate?: string;
@@ -509,7 +539,7 @@ async function findOrCreatePatient(input: {
   };
 }) {
   const firstName = input.patient.firstName.trim();
-  const lastName = input.patient.lastName.trim();
+  const { lastName, apellidoPaterno, apellidoMaterno } = resolveApellidos(input.patient);
   const email = input.patient.email?.trim().toLowerCase();
   const phone = input.patient.phone?.trim();
   const guardianEmail = input.contact?.email?.trim().toLowerCase();
@@ -560,6 +590,10 @@ async function findOrCreatePatient(input: {
       },
       data: {
         phone: phone ?? existingPatient.phone,
+        // Solo se rellenan los apellidos separados si aun faltan: no se pisa lo ya
+        // guardado con un envio que venga sin desglose (captura legada).
+        apellidoPaterno: apellidoPaterno ?? existingPatient.apellidoPaterno,
+        apellidoMaterno: apellidoMaterno ?? existingPatient.apellidoMaterno,
         birthDate: input.patient.birthDate ? new Date(input.patient.birthDate) : existingPatient.birthDate
       }
     });
@@ -586,6 +620,8 @@ async function findOrCreatePatient(input: {
       ownerDoctorId: input.doctorId,
       firstName,
       lastName,
+      apellidoPaterno,
+      apellidoMaterno,
       phone,
       email: patientEmail,
       birthDate: input.patient.birthDate ? new Date(input.patient.birthDate) : null,
@@ -594,11 +630,98 @@ async function findOrCreatePatient(input: {
   });
 }
 
+function normalizePreferredPhoneChannel(value?: "SMS" | "WHATSAPP") {
+  if (value === "SMS") {
+    return PhoneNotificationChannel.SMS;
+  }
+  if (value === "WHATSAPP") {
+    return PhoneNotificationChannel.WHATSAPP;
+  }
+  return null;
+}
+
+async function recordMessagingConsent(input: {
+  doctorId: string;
+  patientId: string;
+  consent?: {
+    sms?: boolean;
+    whatsapp?: boolean;
+    preferredPhoneChannel?: "SMS" | "WHATSAPP";
+  };
+  ipAddress?: string;
+  userAgent?: string;
+}) {
+  const consent = input.consent;
+  if (!consent) {
+    return null;
+  }
+
+  const preferredPhoneChannel = normalizePreferredPhoneChannel(consent.preferredPhoneChannel);
+
+  if (preferredPhoneChannel === PhoneNotificationChannel.WHATSAPP && consent.whatsapp !== true) {
+    throw new PublicBookingServiceError("Se requiere consentimiento de WhatsApp para usar WhatsApp.", 400);
+  }
+
+  if (preferredPhoneChannel === PhoneNotificationChannel.SMS && consent.sms === false) {
+    throw new PublicBookingServiceError("Se requiere consentimiento de SMS para usar SMS.", 400);
+  }
+
+  const rows = [
+    typeof consent.sms === "boolean"
+      ? {
+          patientId: input.patientId,
+          doctorId: input.doctorId,
+          type: ConsentType.SMS_NOTIFICATIONS,
+          version: env.PRIVACY_VERSION,
+          granted: consent.sms,
+          ipAddress: input.ipAddress,
+          evidence: {
+            source: "public-booking",
+            userAgent: input.userAgent ?? null,
+            preferredPhoneChannel: consent.preferredPhoneChannel ?? null
+          }
+        }
+      : null,
+    typeof consent.whatsapp === "boolean"
+      ? {
+          patientId: input.patientId,
+          doctorId: input.doctorId,
+          type: ConsentType.WHATSAPP_NOTIFICATIONS,
+          version: env.PRIVACY_VERSION,
+          granted: consent.whatsapp,
+          ipAddress: input.ipAddress,
+          evidence: {
+            source: "public-booking",
+            userAgent: input.userAgent ?? null,
+            preferredPhoneChannel: consent.preferredPhoneChannel ?? null
+          }
+        }
+      : null
+  ].filter((row): row is NonNullable<typeof row> => row !== null);
+
+  if (rows.length > 0) {
+    await prisma.consent.createMany({ data: rows });
+  }
+
+  if (preferredPhoneChannel) {
+    await prisma.patient.update({
+      where: { id: input.patientId },
+      data: { preferredPhoneChannel }
+    });
+  }
+
+  return preferredPhoneChannel;
+}
+
 export async function bookPublicAppointment(input: {
   holdToken: string;
   patient: {
     firstName: string;
-    lastName: string;
+    /** Forma combinada (captura legada / tests). Si vienen los apellidos por
+     *  separado se ignora y se recompone a partir de ellos. */
+    lastName?: string;
+    apellidoPaterno?: string;
+    apellidoMaterno?: string;
     phone?: string;
     email?: string;
     birthDate?: string;
@@ -615,6 +738,11 @@ export async function bookPublicAppointment(input: {
     acceptedPrivacy: boolean;
     ipAddress?: string;
     userAgent?: string;
+    notificationConsent?: {
+      sms?: boolean;
+      whatsapp?: boolean;
+      preferredPhoneChannel?: "SMS" | "WHATSAPP";
+    };
   };
 }) {
   if (!input.legal.acceptedTerms || !input.legal.acceptedPrivacy) {
@@ -771,6 +899,14 @@ export async function bookPublicAppointment(input: {
     ]
   });
 
+  const preferredPhoneChannel = await recordMessagingConsent({
+    doctorId: hold.doctorId,
+    patientId: patient.id,
+    consent: input.legal.notificationConsent,
+    ipAddress: input.legal.ipAddress,
+    userAgent: input.legal.userAgent
+  });
+
   // Enlace de accion (confirmar/cancelar/reagendar) listo para SMS y correo.
   // Los enlaces cortos para SMS llegan en paso 7 sobre esta misma URL.
   const doctorProfile = await prisma.doctorProfile.findUnique({
@@ -796,9 +932,17 @@ export async function bookPublicAppointment(input: {
     input.contact?.email?.trim().toLowerCase() ||
     patient.email ||
     null;
+  const phoneChannel = notifyPhone
+    ? await phoneNotificationChannel({
+        patientId: patient.id,
+        preferredPhoneChannel: preferredPhoneChannel ?? patient.preferredPhoneChannel
+      })
+    : null;
 
   for (const contact of [
-    notifyPhone ? { channel: "SMS" as const, destination: notifyPhone } : null,
+    notifyPhone && phoneChannel
+      ? { channel: phoneChannel, destination: notifyPhone }
+      : null,
     notifyEmail ? { channel: "EMAIL" as const, destination: notifyEmail } : null
   ]) {
     if (!contact) {
@@ -932,8 +1076,7 @@ export async function getPublicAppointmentByToken(confirmationToken: string) {
       precheckins: {
         orderBy: {
           createdAt: "desc"
-        },
-        take: 1
+        }
       }
     }
   });
@@ -952,6 +1095,18 @@ export async function getPublicAppointmentByToken(confirmationToken: string) {
     patient: appointment.patient,
     service: appointment.service,
     precheckin: appointment.precheckins[0] ?? null,
+    precheckinState: {
+      medicalHistorySubmitted: appointment.precheckins.some(
+        (precheckin) =>
+          precheckin.kind === PrecheckinKind.MEDICAL_HISTORY &&
+          precheckin.status === PrecheckinStatus.SUBMITTED
+      ),
+      aiPreconsultaSubmitted: appointment.precheckins.some(
+        (precheckin) =>
+          precheckin.kind === PrecheckinKind.AI_PRECONSULTA &&
+          precheckin.status === PrecheckinStatus.SUBMITTED
+      )
+    },
     documentPublicKey
   };
 }
@@ -1222,6 +1377,53 @@ export async function submitPrecheckin(input: {
 /** Tope del sealed box clinico (~1.4x el JSON en claro tras base64). */
 const SEALED_PRECHECKIN_CIPHERTEXT_MAX_BYTES = 64 * 1024;
 
+async function getPublicAppointmentForPreconsulta(confirmationToken: string) {
+  const appointment = await prisma.appointment.findUnique({
+    where: { confirmationToken },
+    select: {
+      id: true,
+      patientId: true
+    }
+  });
+
+  if (!appointment) {
+    throw new PublicBookingServiceError("Appointment not found.", 404);
+  }
+
+  return appointment;
+}
+
+async function hasSubmittedPrecheckin(input: {
+  appointmentId: string;
+  patientId: string;
+  kind: typeof PrecheckinKind.MEDICAL_HISTORY | typeof PrecheckinKind.AI_PRECONSULTA;
+}) {
+  const existing = await prisma.precheckinSubmission.findFirst({
+    where: {
+      appointmentId: input.appointmentId,
+      patientId: input.patientId,
+      kind: input.kind,
+      status: PrecheckinStatus.SUBMITTED
+    },
+    select: { id: true }
+  });
+
+  return Boolean(existing);
+}
+
+export async function assertAiPreconsultaNotSubmitted(confirmationToken: string) {
+  const appointment = await getPublicAppointmentForPreconsulta(confirmationToken);
+  const alreadySubmitted = await hasSubmittedPrecheckin({
+    appointmentId: appointment.id,
+    patientId: appointment.patientId,
+    kind: PrecheckinKind.AI_PRECONSULTA
+  });
+
+  if (alreadySubmitted) {
+    throw new PublicBookingServiceError("La preconsulta ya fue enviada para esta cita.", 409);
+  }
+}
+
 /**
  * Guarda contenido clinico del paciente como sealed box (X25519) y emite el
  * evento de sync SIN contenido en claro. La nube nunca ve las respuestas: solo
@@ -1264,6 +1466,10 @@ async function submitSealedPrecheckin(input: {
     orderBy: { createdAt: "desc" }
   });
 
+  if (input.kind === PrecheckinKind.AI_PRECONSULTA && existing?.status === PrecheckinStatus.SUBMITTED) {
+    throw new PublicBookingServiceError("La preconsulta ya fue enviada para esta cita.", 409);
+  }
+
   // CLINICO: `responses` queda nulo; el contenido vive solo en `ciphertext`.
   const data = {
     status: PrecheckinStatus.SUBMITTED,
@@ -1276,15 +1482,46 @@ async function submitSealedPrecheckin(input: {
     submittedAt: new Date()
   };
 
-  const submission = existing
-    ? await prisma.precheckinSubmission.update({ where: { id: existing.id }, data })
-    : await prisma.precheckinSubmission.create({
+  // Antecedentes: upsert atomico para permitir que el paciente los actualice.
+  // Preconsulta IA: create estricto para que dos envios simultaneos compitan por
+  // el indice unico; el perdedor recibe P2002 y se traduce a 409. Usar upsert
+  // aqui aceptaria silenciosamente el segundo envio como una actualizacion.
+  let submission;
+  if (input.kind === PrecheckinKind.AI_PRECONSULTA) {
+    try {
+      submission = await prisma.precheckinSubmission.create({
         data: {
           appointmentId: appointment.id,
           patientId: appointment.patientId,
           ...data
         }
       });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new PublicBookingServiceError("La preconsulta ya fue enviada para esta cita.", 409);
+      }
+      throw error;
+    }
+  } else {
+    submission = await prisma.precheckinSubmission.upsert({
+      where: {
+        appointmentId_patientId_kind: {
+          appointmentId: appointment.id,
+          patientId: appointment.patientId,
+          kind: input.kind
+        }
+      },
+      create: {
+        appointmentId: appointment.id,
+        patientId: appointment.patientId,
+        ...data
+      },
+      update: data
+    });
+  }
 
   // El evento NO lleva respuestas: solo el id para que la app descargue el
   // sealed box. La nube no puede leer el contenido.

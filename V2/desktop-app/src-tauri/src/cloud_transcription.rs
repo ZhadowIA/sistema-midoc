@@ -1,143 +1,184 @@
-//! Respaldo de transcripcion en nube gobernado (paso 15, rebanada 3).
+//! Respaldo de transcripcion en nube gobernado por el portal MiDoc (Ruta B, F3).
 //!
 //! Cuando el equipo no rinde para Whisper local (o el medico lo prefiere), la
-//! transcripcion puede delegarse a un proveedor en nube (estilo Deepgram: un solo
-//! POST con el audio que devuelve el texto). Es la unica via en la que el audio
-//! sale del equipo, asi que esta gobernada:
+//! transcripcion se delega al portal, que media con el proveedor real (OpenAI),
+//! cobra por duracion autoritativa y devuelve el texto. Es la unica via en la que
+//! el audio sale del equipo, asi que esta gobernada:
 //!
 //! - Exige consentimiento de voz vigente (lo aplica el flujo `ai::transcribe_audio`).
-//! - Solo se envian los BYTES del audio: nunca el nombre de archivo ni
-//!   identificadores del paciente (seudonimizacion del envio).
+//! - El desktop NO conoce la clave del proveedor: envia el audio al endpoint
+//!   autenticado del portal con el token del dispositivo vinculado.
+//! - Solo se envian los campos aprobados (bytes con nombre neutro, `runId`, modo):
+//!   nunca el nombre original ni identificadores del paciente.
 //! - El audio no se persiste; la traza local guarda solo metadata (regla 4).
-//! - El proveedor real se cablea solo en staging con BAA (paso 16); sin
-//!   configuracion (`MIDOC_CLOUD_STT_*`) la via en nube se rechaza con una guia.
+//! - El proveedor real se activa en staging con BAA/ZDR (paso 16).
 //!
-//! El parser de la respuesta es puro y testeable (contrato contra respuestas
-//! fake); la llamada HTTP es una frontera fina (regla 5).
+//! El parser de la respuesta es puro y testeable; la llamada HTTP es una frontera
+//! fina (regla 5).
 
 use std::time::Instant;
 
 use crate::ai::{AiError, AiResponse, AudioInput, TranscriptionProvider, TranscriptionRequest};
 
-/// Configuracion del proveedor en nube, resuelta de variables de entorno del
-/// build/instalacion. Ausente => la via en nube no esta habilitada.
-#[derive(Debug, Clone)]
-pub struct CloudConfig {
-    pub provider: String,
-    pub api_key: String,
-    pub endpoint: String,
+/// Un turno de hablante devuelto por el portal en modo diarizado. La etiqueta es
+/// anonima (`speaker_0`); el rol lo confirma el medico localmente. `Serialize`
+/// permite reserializar los turnos crudos al borrador local (`segments_json`).
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortalSegment {
+    pub speaker: String,
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    pub text: String,
 }
 
-impl CloudConfig {
-    /// Lee la configuracion del entorno. `None` si falta cualquier dato (la via en
-    /// nube queda deshabilitada: se cablea en staging con BAA).
-    pub fn from_env() -> Option<Self> {
-        let provider = non_empty(option_env!("MIDOC_CLOUD_STT_PROVIDER"))?;
-        let api_key = non_empty(option_env!("MIDOC_CLOUD_STT_API_KEY"))?;
-        let endpoint = non_empty(option_env!("MIDOC_CLOUD_STT_ENDPOINT"))?;
-        Some(Self {
+/// Respuesta del endpoint gobernado del portal (`POST /api/sync/ai/transcriptions`).
+/// El credito y la duracion son autoritativos (los fija el portal desde el WAV
+/// validado). En modo estandar `segments` es `None`.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortalTranscriptionResult {
+    pub transcript_text: String,
+    #[serde(default)]
+    pub segments: Option<Vec<PortalSegment>>,
+    pub duration_seconds: i64,
+    pub credit_cost: i64,
+    pub model_version: String,
+}
+
+/// Parsea la respuesta JSON del portal. Funcion pura y testeable contra la forma
+/// que produce el servicio de F2 (`transcriptText`/`segments`/`creditCost`/…).
+pub fn parse_portal_response(body: &str) -> Result<PortalTranscriptionResult, String> {
+    let mut result: PortalTranscriptionResult =
+        serde_json::from_str(body).map_err(|e| format!("respuesta del portal ilegible: {e}"))?;
+    result.transcript_text = result.transcript_text.trim().to_string();
+    Ok(result)
+}
+
+/// Nombre neutro del archivo enviado al portal: nunca el nombre original ni
+/// identificadores del paciente (seudonimizacion del envio).
+const NEUTRAL_FILENAME: &str = "consultation.wav";
+
+/// Proveedor de transcripcion en nube gobernado por el portal MiDoc (Ruta B, F3).
+///
+/// A diferencia del adaptador directo estilo Deepgram, el desktop NO conoce la
+/// clave del proveedor: envia el audio al endpoint autenticado del portal
+/// (`POST /api/sync/ai/transcriptions`) con el token del dispositivo vinculado.
+/// El portal media con OpenAI, cobra por duracion autoritativa y devuelve el
+/// texto (y segmentos en modo diarizado) sin persistir contenido clinico.
+pub struct PortalTranscriptionProvider {
+    server_url: String,
+    device_token: String,
+    run_id: String,
+    mode: String,
+    /// Proveedor real elegido por el medico (`openai` | `deepgram`). El desktop
+    /// solo transmite la eleccion; el portal la valida y media con la clave.
+    provider: String,
+    name: String,
+}
+
+impl PortalTranscriptionProvider {
+    /// Construye el proveedor. Exige portal y dispositivo vinculados: sin
+    /// `server_url` o `device_token` la via en nube no existe.
+    pub fn new(
+        server_url: impl Into<String>,
+        device_token: impl Into<String>,
+        run_id: impl Into<String>,
+        mode: impl Into<String>,
+        provider: impl Into<String>,
+    ) -> Result<Self, AiError> {
+        let server_url = server_url.into();
+        let device_token = device_token.into();
+        if server_url.trim().is_empty() || device_token.trim().is_empty() {
+            return Err(AiError::Invalid(
+                "El respaldo en nube requiere un portal y un dispositivo vinculados.".into(),
+            ));
+        }
+        let mode = mode.into();
+        let provider = provider.into();
+        Ok(Self {
+            name: format!("portal-{provider}-{mode}"),
+            server_url: server_url.trim_end_matches('/').to_string(),
+            device_token,
+            run_id: run_id.into(),
+            mode,
             provider,
-            api_key,
-            endpoint,
         })
     }
-}
 
-fn non_empty(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(str::to_string)
-}
-
-/// Extrae el texto de la transcripcion de la respuesta JSON del proveedor.
-/// Modela la forma de Deepgram (`results.channels[].alternatives[].transcript`),
-/// que es la forma sincrona de un solo POST. Funcion pura y testeable.
-pub fn parse_transcript(body: &str) -> Result<String, String> {
-    let json: serde_json::Value =
-        serde_json::from_str(body).map_err(|e| format!("respuesta de la nube ilegible: {e}"))?;
-
-    let transcript = json
-        .get("results")
-        .and_then(|r| r.get("channels"))
-        .and_then(|c| c.as_array())
-        .and_then(|channels| channels.first())
-        .and_then(|ch| ch.get("alternatives"))
-        .and_then(|a| a.as_array())
-        .and_then(|alts| alts.first())
-        .and_then(|alt| alt.get("transcript"))
-        .and_then(|t| t.as_str());
-
-    match transcript {
-        Some(text) => Ok(text.trim().to_string()),
-        None => Err("la respuesta de la nube no trae transcripcion".into()),
+    fn endpoint(&self) -> String {
+        format!("{}/api/sync/ai/transcriptions", self.server_url)
     }
 }
 
-/// Estima el costo en centavos de una transcripcion en nube por su duracion
-/// (referencia ~0.26 centavos/min, estilo Deepgram). Minimo 1 centavo.
-fn estimate_cost_cents(duration_seconds: Option<i64>) -> i64 {
-    let seconds = duration_seconds.unwrap_or(0).max(0);
-    let minutes = (seconds as f64 / 60.0).ceil() as i64;
-    (minutes * 26 / 100).max(1)
-}
-
-/// Proveedor de transcripcion en nube (respaldo gobernado).
-pub struct CloudTranscriptionProvider {
-    name: String,
-    config: CloudConfig,
-}
-
-impl CloudTranscriptionProvider {
-    pub fn new(config: CloudConfig) -> Self {
-        Self {
-            name: format!("cloud-{}", config.provider),
-            config,
-        }
-    }
-}
-
-impl TranscriptionProvider for CloudTranscriptionProvider {
+impl TranscriptionProvider for PortalTranscriptionProvider {
     fn name(&self) -> &str {
         &self.name
     }
 
     fn transcribe(
         &self,
-        request: &TranscriptionRequest,
+        _request: &TranscriptionRequest,
         audio: &AudioInput,
     ) -> Result<AiResponse, AiError> {
         let start = Instant::now();
 
-        // Frontera de red. El comando que llama a esto es sincrono (corre en un
-        // hilo de trabajo de Tauri), asi que un cliente bloqueante es seguro.
-        // Seudonimizacion del envio: solo van los bytes y el tipo de medio; nunca
-        // el nombre de archivo ni identificadores del paciente.
+        // Solo los campos aprobados: bytes del audio (nombre neutro), runId y modo.
+        // Nunca el nombre original ni identificadores del paciente.
+        let part = reqwest::blocking::multipart::Part::bytes(audio.bytes.clone())
+            .file_name(NEUTRAL_FILENAME)
+            .mime_str("audio/wav")
+            .map_err(|e| AiError::Invalid(format!("audio invalido: {e}")))?;
+        let form = reqwest::blocking::multipart::Form::new()
+            .text("runId", self.run_id.clone())
+            .text("mode", self.mode.clone())
+            .text("provider", self.provider.clone())
+            .part("audio", part);
+
+        // Frontera de red sincrona (corre en un hilo de trabajo de Tauri).
         let client = reqwest::blocking::Client::new();
         let response = client
-            .post(&self.config.endpoint)
-            .header("Authorization", format!("Token {}", self.config.api_key))
-            .header(reqwest::header::CONTENT_TYPE, request.media_type.clone())
-            .body(audio.bytes.clone())
+            .post(self.endpoint())
+            .bearer_auth(&self.device_token)
+            .multipart(form)
             .send()
-            .map_err(|e| AiError::Invalid(format!("no se pudo contactar la nube: {e}")))?;
+            .map_err(|e| AiError::Invalid(format!("no se pudo contactar el portal: {e}")))?;
 
         if !response.status().is_success() {
             return Err(AiError::Invalid(format!(
-                "el proveedor en nube respondio {}",
+                "el portal respondio {}",
                 response.status()
             )));
         }
         let body = response
             .text()
-            .map_err(|e| AiError::Invalid(format!("respuesta de la nube ilegible: {e}")))?;
-        let text = parse_transcript(&body).map_err(AiError::Invalid)?;
+            .map_err(|e| AiError::Invalid(format!("respuesta del portal ilegible: {e}")))?;
+        let parsed = parse_portal_response(&body).map_err(AiError::Invalid)?;
 
+        // Los turnos crudos (diarizado) se reserializan para el borrador local;
+        // en modo estandar no hay segmentos.
+        let segments_json = match &parsed.segments {
+            Some(segments) => Some(
+                serde_json::to_string(segments)
+                    .map_err(|e| AiError::Invalid(format!("segmentos ilegibles: {e}")))?,
+            ),
+            None => None,
+        };
+
+        // El credito y la duracion son autoritativos del portal; el borrador local
+        // los persiste (nunca vuelven a subir). El costo estimado en centavos es 0.
         Ok(AiResponse {
-            output: text,
-            model_version: self.name.clone(),
-            estimated_cost_cents: estimate_cost_cents(request.duration_seconds),
+            output: parsed.transcript_text,
+            model_version: parsed.model_version,
+            estimated_cost_cents: 0,
             latency_ms: start.elapsed().as_millis() as i64,
+            cloud_transcription: Some(crate::ai::CloudTranscriptionMeta {
+                run_id: self.run_id.clone(),
+                mode: self.mode.clone(),
+                duration_seconds: parsed.duration_seconds,
+                credit_cost: parsed.credit_cost,
+                segments_json,
+            }),
         })
     }
 }
@@ -147,31 +188,92 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_deepgram_style_transcript() {
+    fn parses_portal_standard_response() {
+        // Forma que devuelve el endpoint del portal (F2): metadata de cobro
+        // autoritativa + el texto. En modo estandar `segments` es null.
         let body = r#"{
-            "results": {
-                "channels": [
-                    { "alternatives": [ { "transcript": "  paciente con dolor abdominal  " } ] }
-                ]
-            }
+            "runId": "run-1",
+            "provider": "openai",
+            "modelVersion": "gpt-4o-mini-transcribe",
+            "mode": "standard",
+            "transcriptText": "  paciente con dolor  ",
+            "segments": null,
+            "durationSeconds": 900,
+            "latencyMs": 1234,
+            "estimatedCostCents": 0,
+            "creditCost": 1
         }"#;
-        assert_eq!(
-            parse_transcript(body).unwrap(),
-            "paciente con dolor abdominal"
+        let result = parse_portal_response(body).unwrap();
+        assert_eq!(result.transcript_text, "paciente con dolor");
+        assert_eq!(result.credit_cost, 1);
+        assert_eq!(result.duration_seconds, 900);
+        assert_eq!(result.model_version, "gpt-4o-mini-transcribe");
+        assert!(result.segments.is_none());
+    }
+
+    #[test]
+    fn parses_portal_diarized_segments() {
+        let body = r#"{
+            "runId": "run-2",
+            "provider": "openai",
+            "modelVersion": "gpt-4o-transcribe-diarize",
+            "mode": "diarized",
+            "transcriptText": "dialogo",
+            "segments": [
+                { "speaker": "speaker_0", "startSeconds": 0, "endSeconds": 1.5, "text": "hola" },
+                { "speaker": "speaker_1", "startSeconds": 1.5, "endSeconds": 3, "text": "buenas" }
+            ],
+            "durationSeconds": 600,
+            "latencyMs": 10,
+            "estimatedCostCents": 0,
+            "creditCost": 1
+        }"#;
+        let result = parse_portal_response(body).unwrap();
+        let segments = result.segments.expect("hay segmentos en modo diarizado");
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].speaker, "speaker_0");
+        assert_eq!(segments[0].end_seconds, 1.5);
+        assert_eq!(segments[1].text, "buenas");
+    }
+
+    #[test]
+    fn rejects_malformed_portal_response() {
+        assert!(parse_portal_response("no es json").is_err());
+        // Faltan campos obligatorios (creditCost, durationSeconds, transcriptText).
+        assert!(parse_portal_response(r#"{"runId":"x"}"#).is_err());
+    }
+
+    #[test]
+    fn portal_provider_requires_linked_server_and_token() {
+        // La via en nube solo existe con portal y dispositivo vinculados.
+        assert!(PortalTranscriptionProvider::new("", "tok", "run-1", "standard", "openai").is_err());
+        assert!(
+            PortalTranscriptionProvider::new("https://midoc.test", "", "run-1", "standard", "openai")
+                .is_err()
+        );
+        assert!(
+            PortalTranscriptionProvider::new("https://midoc.test", "tok", "run-1", "standard", "openai")
+                .is_ok()
         );
     }
 
     #[test]
-    fn rejects_missing_or_malformed_responses() {
-        assert!(parse_transcript("no es json").is_err());
-        assert!(parse_transcript(r#"{"results":{"channels":[]}}"#).is_err());
-        assert!(parse_transcript(r#"{"error":"bad key"}"#).is_err());
-    }
-
-    #[test]
-    fn cost_grows_with_duration_and_has_a_floor() {
-        assert_eq!(estimate_cost_cents(None), 1, "piso de 1 centavo");
-        assert_eq!(estimate_cost_cents(Some(30)), 1, "menos de un minuto: piso");
-        assert!(estimate_cost_cents(Some(60 * 60)) > estimate_cost_cents(Some(60)));
+    fn portal_provider_builds_endpoint_and_name() {
+        let provider = PortalTranscriptionProvider::new(
+            "https://midoc.test/",
+            "tok",
+            "run-1",
+            "diarized",
+            "deepgram",
+        )
+        .unwrap();
+        // Normaliza la barra final y apunta al endpoint gobernado de F2.
+        assert_eq!(
+            provider.endpoint(),
+            "https://midoc.test/api/sync/ai/transcriptions"
+        );
+        // El nombre local identifica proveedor y modo para la traza (regla 4:
+        // metadata operativa, nunca contenido clinico).
+        assert_eq!(provider.name(), "portal-deepgram-diarized");
     }
 }

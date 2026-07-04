@@ -63,6 +63,7 @@ fn model_url(model: WhisperModel) -> String {
     let configured = match model {
         WhisperModel::Small => option_env!("MIDOC_WHISPER_SMALL_URL"),
         WhisperModel::Medium => option_env!("MIDOC_WHISPER_MEDIUM_URL"),
+        WhisperModel::LargeV3Turbo => option_env!("MIDOC_WHISPER_LARGE_TURBO_URL"),
         WhisperModel::LargeV3 => option_env!("MIDOC_WHISPER_LARGE_URL"),
     };
     if let Some(url) = configured {
@@ -81,6 +82,7 @@ fn model_sha256(model: WhisperModel) -> String {
     let configured = match model {
         WhisperModel::Small => option_env!("MIDOC_WHISPER_SMALL_SHA256"),
         WhisperModel::Medium => option_env!("MIDOC_WHISPER_MEDIUM_SHA256"),
+        WhisperModel::LargeV3Turbo => option_env!("MIDOC_WHISPER_LARGE_TURBO_SHA256"),
         WhisperModel::LargeV3 => option_env!("MIDOC_WHISPER_LARGE_SHA256"),
     };
     configured.unwrap_or("").trim().to_lowercase()
@@ -92,17 +94,97 @@ fn asset_of(model: WhisperModel) -> ModelAsset {
         file_name: model.file_name().to_string(),
         url: model_url(model),
         sha256: model_sha256(model),
-        size_bytes: model.approx_size_bytes(),
+        size_bytes: model_download_size(model),
     }
 }
 
-/// Todos los assets descargables, de menor a mayor exigencia.
+fn model_download_size(model: WhisperModel) -> u64 {
+    let configured = match model {
+        WhisperModel::Small => option_env!("MIDOC_WHISPER_SMALL_SIZE_BYTES"),
+        WhisperModel::Medium => option_env!("MIDOC_WHISPER_MEDIUM_SIZE_BYTES"),
+        WhisperModel::LargeV3Turbo => option_env!("MIDOC_WHISPER_LARGE_TURBO_SIZE_BYTES"),
+        WhisperModel::LargeV3 => option_env!("MIDOC_WHISPER_LARGE_SIZE_BYTES"),
+    };
+
+    if let Some(raw) = configured {
+        if let Ok(size) = raw.trim().parse::<u64>() {
+            if size > 0 {
+                return size;
+            }
+        }
+    }
+
+    // Tamanos exactos de los pesos cuantizados Q5 (Content-Length verificado en
+    // huggingface.co/ggerganov/whisper.cpp); se usan para detectar descargas
+    // incompletas o corruptas.
+    match model {
+        WhisperModel::Small => 190_085_487,
+        WhisperModel::Medium => 539_212_467,
+        WhisperModel::LargeV3Turbo => 574_041_195,
+        WhisperModel::LargeV3 => 1_081_140_203,
+    }
+}
+
+/// Identificador estable del modelo de deteccion de voz (VAD) Silero, usado para
+/// saltar silencios antes de transcribir (recorta el audio que procesa la CPU).
+pub const VAD_MODEL_ID: &str = "vad-silero";
+const VAD_FILE_NAME: &str = "ggml-silero-v5.1.2.bin";
+
+fn vad_url() -> String {
+    if let Some(url) = option_env!("MIDOC_WHISPER_VAD_URL") {
+        if !url.trim().is_empty() {
+            return url.trim().to_string();
+        }
+    }
+    format!("https://huggingface.co/ggml-org/whisper-vad/resolve/main/{VAD_FILE_NAME}")
+}
+
+fn vad_sha256() -> String {
+    option_env!("MIDOC_WHISPER_VAD_SHA256")
+        .unwrap_or("")
+        .trim()
+        .to_lowercase()
+}
+
+fn vad_size() -> u64 {
+    if let Some(raw) = option_env!("MIDOC_WHISPER_VAD_SIZE_BYTES") {
+        if let Ok(size) = raw.trim().parse::<u64>() {
+            if size > 0 {
+                return size;
+            }
+        }
+    }
+    // Tamano exacto (Content-Length verificado en ggml-org/whisper-vad).
+    885_098
+}
+
+/// Asset descargable del modelo VAD (deteccion de voz) Silero. Reusa todo el
+/// gestor de descarga (reanudacion, checksum, estado). Es REFERENCIA publica (no
+/// PHI) y vive junto a los modelos Whisper en `models/`.
+pub fn vad_asset() -> ModelAsset {
+    ModelAsset {
+        model_id: VAD_MODEL_ID.to_string(),
+        file_name: VAD_FILE_NAME.to_string(),
+        url: vad_url(),
+        sha256: vad_sha256(),
+        size_bytes: vad_size(),
+    }
+}
+
+/// Todos los assets descargables: los modelos Whisper (de menor a mayor
+/// exigencia) y el modelo VAD pequeno de deteccion de voz.
 pub fn all_assets() -> Vec<ModelAsset> {
-    WhisperModel::all().into_iter().map(asset_of).collect()
+    let mut assets: Vec<ModelAsset> = WhisperModel::all().into_iter().map(asset_of).collect();
+    assets.push(vad_asset());
+    assets
 }
 
 /// Asset de un modelo por su identificador estable. `None` si no se reconoce.
+/// Reconoce tanto los modelos Whisper como el modelo VAD (`vad-silero`).
 pub fn asset_for(model_id: &str) -> Option<ModelAsset> {
+    if model_id == VAD_MODEL_ID {
+        return Some(vad_asset());
+    }
     WhisperModel::from_id(model_id).map(asset_of)
 }
 
@@ -161,6 +243,29 @@ pub fn matches_sha256(actual_hex: &str, expected_hex: &str) -> bool {
     !expected_hex.is_empty() && actual_hex.eq_ignore_ascii_case(expected_hex)
 }
 
+pub fn should_verify_file(expected_sha256: &str) -> bool {
+    !expected_sha256.trim().is_empty()
+}
+
+pub fn is_complete_model_size(actual_bytes: u64, expected_bytes: u64) -> bool {
+    expected_bytes > 0 && actual_bytes == expected_bytes
+}
+
+/// Offset efectivo para escribir la respuesta HTTP de descarga.
+///
+/// Si pedimos Range y la fuente responde 206, se puede appendear. Si responde
+/// 200, ignoro el Range y mando el archivo completo: hay que reiniciar el `.part`
+/// para no crear un binario sobredimensionado.
+pub fn resume_offset_for_http_status(resume: u64, status_code: u16) -> Result<u64, String> {
+    match (resume, status_code) {
+        (_, 200) => Ok(0),
+        (0, 206) => Ok(0),
+        (_, 206) => Ok(resume),
+        (_, code) if (200..300).contains(&code) => Ok(0),
+        (_, code) => Err(format!("la fuente respondio {code}")),
+    }
+}
+
 /// Calcula el SHA-256 de un archivo (streaming, sin cargarlo entero en memoria) y
 /// lo compara con el esperado. `false` si el esperado esta vacio (sin checksum
 /// fijado no se afirma integridad).
@@ -211,12 +316,42 @@ mod tests {
 
     #[test]
     fn assets_cover_supported_models_and_reject_unknown() {
-        assert_eq!(all_assets().len(), 3);
-        assert_eq!(asset_for("small").unwrap().file_name, "ggml-small.bin");
-        assert_eq!(asset_for("medium").unwrap().file_name, "ggml-medium.bin");
-        assert_eq!(asset_for("large-v3").unwrap().file_name, "ggml-large-v3.bin");
+        // 4 modelos Whisper + 1 modelo VAD.
+        assert_eq!(all_assets().len(), 5);
+        assert_eq!(asset_for("small").unwrap().file_name, "ggml-small-q5_1.bin");
+        assert_eq!(
+            asset_for("medium").unwrap().file_name,
+            "ggml-medium-q5_0.bin"
+        );
+        assert_eq!(
+            asset_for("large-v3-turbo").unwrap().file_name,
+            "ggml-large-v3-turbo-q5_0.bin"
+        );
+        assert_eq!(
+            asset_for("large-v3").unwrap().file_name,
+            "ggml-large-v3-q5_0.bin"
+        );
         assert!(asset_for("../etc/passwd").is_none());
         assert!(asset_for("").is_none());
+    }
+
+    #[test]
+    fn vad_asset_is_resolvable_and_lives_under_models_dir() {
+        let vad = asset_for(VAD_MODEL_ID).expect("el VAD debe resolverse");
+        assert_eq!(vad.model_id, "vad-silero");
+        assert_eq!(vad.file_name, "ggml-silero-v5.1.2.bin");
+        // URL por defecto al repo publico de modelos VAD; tamano exacto fijado.
+        assert!(vad.url.contains("whisper-vad"));
+        assert!(vad.url.ends_with("ggml-silero-v5.1.2.bin"));
+        assert_eq!(vad.size_bytes, 885_098);
+        // Comparte el gestor: vive bajo `models/` como cualquier asset.
+        let base = Path::new("C:/MiDocData");
+        assert_eq!(
+            model_path(base, &vad.file_name),
+            base.join("models").join("ggml-silero-v5.1.2.bin")
+        );
+        // El VAD viaja en el catalogo completo de descargas.
+        assert!(all_assets().iter().any(|a| a.model_id == VAD_MODEL_ID));
     }
 
     #[test]
@@ -224,7 +359,7 @@ mod tests {
         let small = asset_for("small").unwrap();
         // Sin override de build, la URL apunta al repositorio publico de pesos.
         assert!(small.url.contains("whisper.cpp"));
-        assert!(small.url.ends_with("ggml-small.bin"));
+        assert!(small.url.ends_with("ggml-small-q5_1.bin"));
         assert!(small.size_bytes > 0);
     }
 
@@ -237,7 +372,10 @@ mod tests {
             base.join("models").join("ggml-small.bin")
         );
         let p = model_path(base, "ggml-small.bin");
-        assert_eq!(part_path(&p), base.join("models").join("ggml-small.bin.part"));
+        assert_eq!(
+            part_path(&p),
+            base.join("models").join("ggml-small.bin.part")
+        );
     }
 
     #[test]
@@ -253,7 +391,11 @@ mod tests {
     fn resume_continues_partial_and_restarts_when_corrupt() {
         assert_eq!(resume_from(0, 1000), 0);
         assert_eq!(resume_from(400, 1000), 400, "continua desde lo descargado");
-        assert_eq!(resume_from(1000, 1000), 0, "reinicia si el .part esta completo o pasado");
+        assert_eq!(
+            resume_from(1000, 1000),
+            0,
+            "reinicia si el .part esta completo o pasado"
+        );
         assert_eq!(resume_from(1200, 1000), 0);
         assert_eq!(resume_from(400, 0), 0, "sin total conocido, reinicia");
     }
@@ -262,23 +404,32 @@ mod tests {
     fn matches_sha256_requires_a_pinned_hash() {
         let known = "b221d9dbb083a7f33428d7c2a3c3198ae925614d70210e28716ccaa7cd4ddb79";
         assert!(matches_sha256(known, known));
-        assert!(matches_sha256(&known.to_uppercase(), known), "compara sin distinguir caso");
+        assert!(
+            matches_sha256(&known.to_uppercase(), known),
+            "compara sin distinguir caso"
+        );
         assert!(!matches_sha256(known, "deadbeef"));
-        assert!(!matches_sha256(known, ""), "sin hash fijado no se afirma integridad");
+        assert!(
+            !matches_sha256(known, ""),
+            "sin hash fijado no se afirma integridad"
+        );
     }
 
     #[test]
     fn verify_file_streams_and_checks_pinned_hash() {
         // SHA-256("hola") conocido.
         let known = "b221d9dbb083a7f33428d7c2a3c3198ae925614d70210e28716ccaa7cd4ddb79";
-        let path = std::env::temp_dir().join(format!(
-            "midoc-verify-{}.bin",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("midoc-verify-{}.bin", std::process::id()));
         std::fs::write(&path, b"hola").unwrap();
 
-        assert!(verify_file(&path, known).unwrap(), "el archivo coincide con su hash");
-        assert!(!verify_file(&path, "deadbeef").unwrap(), "hash distinto no coincide");
+        assert!(
+            verify_file(&path, known).unwrap(),
+            "el archivo coincide con su hash"
+        );
+        assert!(
+            !verify_file(&path, "deadbeef").unwrap(),
+            "hash distinto no coincide"
+        );
         assert!(
             !verify_file(&path, "").unwrap(),
             "sin checksum fijado no se afirma integridad"
@@ -306,5 +457,44 @@ mod tests {
 
         let failed = build_status(&asset, false, 0, 0, false, false, Some("sin red".into()));
         assert_eq!(failed.error.as_deref(), Some("sin red"));
+    }
+
+    #[test]
+    fn assets_use_exact_download_sizes_for_corruption_checks() {
+        assert_eq!(asset_for("small").unwrap().size_bytes, 190_085_487);
+        assert_eq!(asset_for("medium").unwrap().size_bytes, 539_212_467);
+        assert_eq!(
+            asset_for("large-v3-turbo").unwrap().size_bytes,
+            574_041_195
+        );
+        assert_eq!(asset_for("large-v3").unwrap().size_bytes, 1_081_140_203);
+    }
+
+    #[test]
+    fn complete_model_size_must_match_expected_bytes() {
+        let asset = asset_for("large-v3").unwrap();
+        assert!(is_complete_model_size(asset.size_bytes, asset.size_bytes));
+        assert!(!is_complete_model_size(
+            asset.size_bytes - 1,
+            asset.size_bytes
+        ));
+        assert!(!is_complete_model_size(3_492_965_169, asset.size_bytes));
+    }
+
+    #[test]
+    fn empty_checksum_skips_expensive_file_verification() {
+        assert!(!should_verify_file(""));
+        assert!(!should_verify_file("   "));
+        assert!(should_verify_file(
+            "766d11cebbdf5a67c179c5774e2642b609e35e1a30240e7b559d5647c655b0a4"
+        ));
+    }
+
+    #[test]
+    fn ignored_range_response_restarts_instead_of_appending() {
+        assert_eq!(resume_offset_for_http_status(0, 200).unwrap(), 0);
+        assert_eq!(resume_offset_for_http_status(123, 206).unwrap(), 123);
+        assert_eq!(resume_offset_for_http_status(123, 200).unwrap(), 0);
+        assert!(resume_offset_for_http_status(123, 416).is_err());
     }
 }

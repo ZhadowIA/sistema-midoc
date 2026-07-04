@@ -6,13 +6,29 @@ import {
   type GeneralMedicinePayload
 } from "./clinicalProfiles.ts";
 
-export type ScribeSpeaker = "MEDICO" | "PACIENTE";
+// Ruta B (F4): la diarizacion en nube puede identificar hasta 4 roles.
+// ACOMPANANTE/OTRO solo llegan via DiarizedReview (nunca por la heuristica
+// local de transcriptToTurns, que solo alterna MEDICO/PACIENTE).
+export type ScribeSpeaker = "MEDICO" | "PACIENTE" | "ACOMPANANTE" | "OTRO";
 export type ScribeConfidence = "high" | "medium" | "low";
 
 export interface ConsultationTurn {
   id: string;
   speaker: ScribeSpeaker;
   text: string;
+  speakerId?: string;
+}
+
+// Turno de diarizacion LOCAL (sherpa-onnx, hasta el rediseno de "seleccion de
+// hablantes"): distinto de `DiarizedTurn` mas abajo, que es de la diarizacion
+// EN NUBE (Ruta B, F4) y usa segundos/roles pendientes de confirmar.
+export interface LocalDiarizedTurn {
+  id: string;
+  speakerId: string;
+  role: ScribeSpeaker;
+  text: string;
+  startCs: number;
+  endCs: number;
 }
 
 export interface TemplateSegment {
@@ -24,7 +40,7 @@ export interface TemplateSegment {
 }
 
 export interface TemplateDefinition {
-  id: "soap-general" | "soap-odontology";
+  id: string;
   segments: TemplateSegment[];
 }
 
@@ -34,6 +50,13 @@ export interface SegmentDraft {
   confidence: ScribeConfidence;
   source_turns: string[];
   warnings: string[];
+}
+
+export interface SourceTurnReference {
+  id: string;
+  label: string;
+  text: string;
+  missing: boolean;
 }
 
 export interface ScribeNoteContent {
@@ -53,13 +76,21 @@ function normalizeSpeaker(raw: string | undefined, fallback: ScribeSpeaker): Scr
   return /^paciente$/i.test(raw.trim()) ? "PACIENTE" : "MEDICO";
 }
 
+// Solo alterna Medico<->Paciente; Acompanante/Otro (Ruta B, F4) se dejan
+// intactos para no corromper esos turnos al alternar o intercambiar roles.
 function nextSpeaker(speaker: ScribeSpeaker): ScribeSpeaker {
-  return speaker === "MEDICO" ? "PACIENTE" : "MEDICO";
+  if (speaker === "MEDICO") return "PACIENTE";
+  if (speaker === "PACIENTE") return "MEDICO";
+  return speaker;
 }
 
-export function transcriptToTurns(transcript: string): ConsultationTurn[] {
+export function transcriptToTurns(transcript: string | null | undefined): ConsultationTurn[] {
   const turns: ConsultationTurn[] = [];
   let fallbackSpeaker: ScribeSpeaker = "MEDICO";
+
+  // Guarda defensiva: un borrador sin texto (o malformado) no debe tumbar la
+  // pantalla de consulta; simplemente no genera turnos.
+  if (!transcript) return turns;
 
   for (const rawLine of transcript.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -81,6 +112,259 @@ export function transcriptToTurns(transcript: string): ConsultationTurn[] {
   }
 
   return turns;
+}
+
+// --- Diarizacion en nube (Ruta B, F4) --------------------------------------
+// El portal (OpenAI) devuelve hablantes ANONIMOS (speaker_0, speaker_1). MiDoc
+// no presume que la primera voz sea el medico: los presenta como "Hablante N"
+// con rol UNASSIGNED y el medico confirma el rol localmente antes de acomodar.
+
+export type DiarizedSpeakerRole =
+  | "UNASSIGNED"
+  | "MEDICO"
+  | "PACIENTE"
+  | "ACOMPANANTE"
+  | "OTRO";
+
+export interface DiarizedSegment {
+  speaker: string;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
+export interface DiarizedSpeaker {
+  id: string;
+  label: string;
+  role: DiarizedSpeakerRole;
+}
+
+export interface DiarizedTurn {
+  id: string;
+  speakerId: string;
+  speakerRole: DiarizedSpeakerRole;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
+export interface DiarizedReview {
+  speakers: DiarizedSpeaker[];
+  turns: DiarizedTurn[];
+}
+
+/// Une dos fragmentos de un mismo turno con un solo espacio, ignorando vacios.
+function joinTurnText(current: string, next: string): string {
+  const previous = current.trim();
+  const text = next.trim();
+  if (!text) return previous;
+  return previous ? `${previous} ${text}` : text;
+}
+
+/// Comprime segmentos CONSECUTIVOS del mismo hablante en uno solo: los
+/// proveedores de diarizacion cortan por pausas o frases, y presentar cada
+/// corte como bloque separado obliga al medico a revisar de mas. El rango de
+/// tiempo se conserva (inicio del primero, fin del ultimo).
+function mergeConsecutiveSegments(segments: DiarizedSegment[]): DiarizedSegment[] {
+  const merged: DiarizedSegment[] = [];
+  for (const segment of segments) {
+    const last = merged[merged.length - 1];
+    if (last && last.speaker === segment.speaker) {
+      last.text = joinTurnText(last.text, segment.text);
+      last.endSeconds = segment.endSeconds;
+    } else {
+      merged.push({ ...segment });
+    }
+  }
+  return merged;
+}
+
+/// Agrupa los segmentos del portal por etiqueta de hablante (en orden de
+/// aparicion) y los presenta como "Hablante N" sin asumir roles. Los segmentos
+/// consecutivos del mismo hablante se comprimen en un solo turno; el orden y el
+/// tiempo se conservan y el rol arranca en UNASSIGNED.
+export function diarizedSegmentsToTurns(segments: DiarizedSegment[]): DiarizedReview {
+  const compact = mergeConsecutiveSegments(segments);
+
+  const order: string[] = [];
+  const seen = new Set<string>();
+  for (const segment of compact) {
+    if (!seen.has(segment.speaker)) {
+      seen.add(segment.speaker);
+      order.push(segment.speaker);
+    }
+  }
+
+  const speakers: DiarizedSpeaker[] = order.map((id, index) => ({
+    id,
+    label: `Hablante ${index + 1}`,
+    role: "UNASSIGNED"
+  }));
+
+  const turns: DiarizedTurn[] = compact.map((segment, index) => ({
+    id: `turn-${index + 1}`,
+    speakerId: segment.speaker,
+    speakerRole: "UNASSIGNED",
+    startSeconds: segment.startSeconds,
+    endSeconds: segment.endSeconds,
+    text: segment.text
+  }));
+
+  return { speakers, turns };
+}
+
+/// Asigna (inmutablemente) un rol a un hablante y lo propaga a sus turnos.
+export function assignDiarizedRole(
+  review: DiarizedReview,
+  speakerId: string,
+  role: DiarizedSpeakerRole
+): DiarizedReview {
+  return {
+    speakers: review.speakers.map((speaker) =>
+      speaker.id === speakerId ? { ...speaker, role } : speaker
+    ),
+    turns: review.turns.map((turn) =>
+      turn.speakerId === speakerId ? { ...turn, speakerRole: role } : turn
+    )
+  };
+}
+
+/// Gate previo al acomodo en plantilla: todo hablante que aporta texto debe
+/// tener un rol asignado. Un hablante sin turnos con texto no bloquea; una
+/// revision sin texto tampoco esta lista (nada que acomodar).
+export function diarizedRolesResolved(review: DiarizedReview): boolean {
+  const usedSpeakerIds = new Set(
+    review.turns.filter((turn) => turn.text.trim() !== "").map((turn) => turn.speakerId)
+  );
+  if (usedSpeakerIds.size === 0) return false;
+  return review.speakers
+    .filter((speaker) => usedSpeakerIds.has(speaker.id))
+    .every((speaker) => speaker.role !== "UNASSIGNED");
+}
+
+/// Convierte una revision de diarizacion en nube YA resuelta (todo hablante con
+/// texto tiene rol asignado) al formato compartido `ConsultationTurn` que usa el
+/// resto de la canalizacion (guardado, estructuracion SOAP, ayuda clinica). Los
+/// 4 roles se preservan (no colapsan a MEDICO/PACIENTE); los turnos sin texto se
+/// descartan, igual que hace `diarizedRolesResolved` al evaluar el gate.
+export function diarizedReviewToConsultationTurns(review: DiarizedReview): ConsultationTurn[] {
+  return review.turns
+    .filter((turn) => turn.text.trim() !== "" && turn.speakerRole !== "UNASSIGNED")
+    .map((turn) => ({
+      id: turn.id,
+      speaker: turn.speakerRole as ScribeSpeaker,
+      text: turn.text
+    }));
+}
+
+// --- Diarizacion LOCAL: seleccion/reasignacion de hablantes -----------------
+// sherpa-onnx tampoco asume que la primera voz es el medico; a diferencia de
+// la nube, el motor local solo separa 2 voces (Medico/Paciente por defecto,
+// el acompanante se corrige a mano en el selector de turno).
+
+/// Convierte los turnos crudos de diarizacion local (con `speakerId`) al
+/// formato compartido `ConsultationTurn`, descartando los turnos sin texto y
+/// comprimiendo turnos consecutivos de la misma voz en un solo bloque (el
+/// motor corta por pausas; cada corte no es un turno clinico distinto). El
+/// bloque fusionado conserva el id del primer turno.
+export function diarizedTurnsToConsultationTurns(turns: LocalDiarizedTurn[]): ConsultationTurn[] {
+  const result: ConsultationTurn[] = [];
+  for (const turn of turns) {
+    const text = turn.text.trim();
+    if (!text) continue;
+    const last = result[result.length - 1];
+    if (last && last.speakerId === turn.speakerId) {
+      last.text = `${last.text} ${text}`;
+    } else {
+      result.push({
+        id: turn.id,
+        speaker: turn.role,
+        speakerId: turn.speakerId,
+        text
+      });
+    }
+  }
+  return result;
+}
+
+export function assignRoleToSpeaker(
+  turns: ConsultationTurn[],
+  speakerId: string,
+  speaker: ScribeSpeaker
+): ConsultationTurn[] {
+  return turns.map((turn) =>
+    turn.speakerId === speakerId
+      ? {
+          ...turn,
+          speaker
+        }
+      : turn
+  );
+}
+
+export function swapTwoSpeakerRoles(turns: ConsultationTurn[]): ConsultationTurn[] {
+  const speakerIds = Array.from(
+    new Set(turns.map((turn) => turn.speakerId).filter((id): id is string => Boolean(id)))
+  );
+
+  if (speakerIds.length !== 2) {
+    return turns.map((turn) => ({
+      ...turn,
+      speaker: nextSpeaker(turn.speaker)
+    }));
+  }
+
+  const currentRoleBySpeakerId = new Map<string, ScribeSpeaker>();
+  for (const turn of turns) {
+    if (turn.speakerId && !currentRoleBySpeakerId.has(turn.speakerId)) {
+      currentRoleBySpeakerId.set(turn.speakerId, turn.speaker);
+    }
+  }
+
+  return turns.map((turn) => ({
+    ...turn,
+    speaker: turn.speakerId
+      ? nextSpeaker(currentRoleBySpeakerId.get(turn.speakerId) ?? turn.speaker)
+      : nextSpeaker(turn.speaker)
+  }));
+}
+
+function speakerLabel(speaker: ScribeSpeaker): string {
+  switch (speaker) {
+    case "MEDICO":
+      return "Medico";
+    case "PACIENTE":
+      return "Paciente";
+    case "ACOMPANANTE":
+      return "Acompanante";
+    default:
+      return "Otro";
+  }
+}
+
+export function formatSourceTurnReferences(
+  turns: ConsultationTurn[],
+  sourceTurnIds: string[]
+): SourceTurnReference[] {
+  const byId = new Map(turns.map((turn) => [turn.id, turn]));
+  return sourceTurnIds.map((id) => {
+    const turn = byId.get(id);
+    if (!turn) {
+      return {
+        id,
+        label: `Fuente no encontrada · ${id}`,
+        text: "",
+        missing: true
+      };
+    }
+
+    return {
+      id,
+      label: `${speakerLabel(turn.speaker)} · ${turn.id}`,
+      text: turn.text,
+      missing: false
+    };
+  });
 }
 
 export function buildTemplateSegments(profile: ClinicalProfile): TemplateDefinition {
@@ -209,6 +493,55 @@ export function buildTemplateSegments(profile: ClinicalProfile): TemplateDefinit
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cleanText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function safeTargetSet(profile: ClinicalProfile): Set<string> {
+  return new Set(buildTemplateSegments(profile).segments.map((segment) => segment.target));
+}
+
+export function normalizeTemplateDefinition(
+  value: unknown,
+  profile: ClinicalProfile
+): TemplateDefinition {
+  const fallback = buildTemplateSegments(profile);
+  if (!isRecord(value)) return fallback;
+
+  const id = cleanText(value.id) || fallback.id;
+  const rawSegments = Array.isArray(value.segments) ? value.segments : [];
+  const allowedTargets = safeTargetSet(profile);
+  const seen = new Set<string>();
+  const segments: TemplateSegment[] = [];
+
+  for (const rawSegment of rawSegments) {
+    if (!isRecord(rawSegment)) continue;
+
+    const segment: TemplateSegment = {
+      id: cleanText(rawSegment.id),
+      label: cleanText(rawSegment.label),
+      target: cleanText(rawSegment.target),
+      instructions: cleanText(rawSegment.instructions),
+      required: rawSegment.required === true
+    };
+
+    if (!segment.id || !segment.label || !segment.target) continue;
+    if (seen.has(segment.id) || !allowedTargets.has(segment.target)) continue;
+
+    seen.add(segment.id);
+    segments.push(segment);
+  }
+
+  return {
+    id,
+    segments: segments.length > 0 ? segments : fallback.segments
+  };
+}
+
 function appendText(current: string, next: string): string {
   const text = next.trim();
   if (!text) return current;
@@ -216,8 +549,12 @@ function appendText(current: string, next: string): string {
   return previous ? `${previous}\n\n${text}` : text;
 }
 
-export function appendSegmentToNote<T extends ScribeNoteContent>(note: T, segment: SegmentDraft): T {
-  const target = buildTargetIndex(note).get(segment.segment_id);
+export function appendSegmentToNote<T extends ScribeNoteContent>(
+  note: T,
+  segment: SegmentDraft,
+  template?: TemplateDefinition
+): T {
+  const target = buildTargetIndex(note, template).get(segment.segment_id);
   if (!target) return note;
 
   if (!target.startsWith("specialty.")) {
@@ -242,7 +579,10 @@ export function appendSegmentToNote<T extends ScribeNoteContent>(note: T, segmen
   };
 }
 
-function buildTargetIndex(note: ScribeNoteContent): Map<string, string> {
+function buildTargetIndex(note: ScribeNoteContent, template?: TemplateDefinition): Map<string, string> {
   const profile: ClinicalProfile = "odontogram" in note.specialty ? "ODONTOLOGY" : "GENERAL_MEDICINE";
-  return new Map(buildTemplateSegments(profile).segments.map((segment) => [segment.id, segment.target]));
+  const definition = template ?? buildTemplateSegments(profile);
+  return new Map(
+    normalizeTemplateDefinition(definition, profile).segments.map((segment) => [segment.id, segment.target])
+  );
 }

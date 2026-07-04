@@ -1,36 +1,4 @@
-import { z } from "zod";
-
-const envSchema = z.object({
-  DATABASE_URL: z.string().min(1),
-  NEXTAUTH_SECRET: z.string().min(1),
-  APP_BASE_URL: z.url(),
-  QUESTIONNAIRE_TOKEN_SECRET: z.string().min(1),
-  TERMS_VERSION: z.string().min(1),
-  PRIVACY_VERSION: z.string().min(1),
-  SMS_PROVIDER: z.string().min(1),
-  SMS_BASE_URL: z.url(),
-  SMS_API_KEY: z.string().min(1),
-  EMAIL_PROVIDER: z.string().min(1),
-  EMAIL_BASE_URL: z.url(),
-  EMAIL_API_KEY: z.string().min(1),
-  EMAIL_FROM: z.string().email(),
-  NOTIFICATION_CRON_SECRET: z.string().min(1),
-  PAYMENTS_PROVIDER: z.enum(["MOCK", "STRIPE", "CONEKTA", "OPENPAY"]),
-  PAYMENTS_WEBHOOK_SECRET: z.string().min(1),
-  // Llave para cifrar en reposo el secreto TOTP del 2FA. Se deriva a 32 bytes.
-  TWO_FACTOR_ENCRYPTION_KEY: z.string().min(16),
-  // Llave de Google Maps Embed API para el mapa del perfil publico. Opcional:
-  // si falta o es invalida, el perfil muestra un fallback (direccion + enlace).
-  GOOGLE_MAPS_EMBED_API_KEY: z.string().min(1).optional(),
-  // Proveedor de la preconsulta guiada por IA (paso 19, rebanada 8). `fake` es
-  // un proveedor determinista sin red, default para dev/pruebas. `openai` y
-  // `anthropic` se cablean en staging con BAA (paso 16); las llaves abajo son
-  // opcionales y solo se usan con su proveedor seleccionado.
-  AI_PROVIDER: z.enum(["fake", "openai", "anthropic"]).default("fake"),
-  AI_MODEL: z.string().min(1).optional(),
-  OPENAI_API_KEY: z.string().min(1).optional(),
-  ANTHROPIC_API_KEY: z.string().min(1).optional()
-});
+import { envSchema } from "./env-schema";
 
 export const env = envSchema.parse(process.env);
 

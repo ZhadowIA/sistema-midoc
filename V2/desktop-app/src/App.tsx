@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { call } from "./ipc";
 import { Atencion } from "./Atencion";
 import { Recepcion } from "./Recepcion";
@@ -9,6 +9,8 @@ import { Arco } from "./Arco";
 import { Directorio } from "./Directorio";
 import { Expediente } from "./Expediente";
 import { WeekAgenda } from "./WeekAgenda";
+import type { EncounterAgendaAppointment } from "./encounterAgenda";
+import { THEME_STORAGE_KEY, isNightTheme, nextTheme, themeToggleLabel, type Theme } from "./theme";
 import {
   PatientResolution,
   type PatientMatch,
@@ -29,6 +31,7 @@ interface DoctorProfile {
   display_name: string;
   created_at: string;
   last_used_at: string | null;
+  photo_url?: string | null;
 }
 
 interface SyncStatus {
@@ -41,17 +44,7 @@ interface SyncStatus {
   work_end_minutes: number | null;
 }
 
-interface AppointmentRow {
-  id: string;
-  status: string;
-  scheduled_start: string;
-  scheduled_end: string;
-  service_name: string | null;
-  reason: string | null;
-  patient_name: string;
-  patient_phone: string | null;
-  has_precheckin: boolean;
-}
+type AppointmentRow = EncounterAgendaAppointment;
 
 // Desenlace de "Atender" desde la agenda: o se identifico el expediente del
 // paciente (se abre), o hay candidatos a duplicado que el medico debe revisar.
@@ -63,9 +56,38 @@ type ResolveOutcome =
       candidates: PatientMatch[];
     };
 
+type AttendOutcome =
+  | { kind: "encounter"; encounter_id: string }
+  | {
+      kind: "needs_resolution";
+      appointment_patient: ResolutionPatient;
+      candidates: PatientMatch[];
+    };
+
+function profileInitials(displayName: string) {
+  const parts = displayName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  return parts.map((part) => part[0]?.toUpperCase()).join("") || "M";
+}
+
+function profileHue(seed: string) {
+  let hash = 0;
+  for (const char of seed) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 360;
+  }
+  return 190 + (hash % 55);
+}
+
+function profileAvatarStyle(profile: DoctorProfile): CSSProperties {
+  return { "--profile-hue": profileHue(profile.id) } as CSSProperties;
+}
+
 function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => void }) {
   const [profiles, setProfiles] = useState<DoctorProfile[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [selectedProfile, setSelectedProfile] = useState<DoctorProfile | null>(null);
   const [newProfileName, setNewProfileName] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [error, setError] = useState("");
@@ -76,12 +98,11 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
     try {
       const nextProfiles = await call<DoctorProfile[]>("list_doctor_profiles");
       setProfiles(nextProfiles);
-      setSelectedProfileId((current) => {
-        if (current && nextProfiles.some((profile) => profile.id === current)) {
-          return current;
+      setSelectedProfile((current) => {
+        if (!current) {
+          return null;
         }
-        const lastUsed = nextProfiles.find((profile) => profile.last_used_at);
-        return lastUsed?.id ?? nextProfiles[0]?.id ?? "";
+        return nextProfiles.find((profile) => profile.id === current.id) ?? null;
       });
     } catch (e) {
       setError(String(e));
@@ -101,7 +122,8 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
       const profile = await call<DoctorProfile>("create_doctor_profile", { displayName });
       setNewProfileName("");
       await loadProfiles();
-      setSelectedProfileId(profile.id);
+      setSelectedProfile(profile);
+      setPassphrase("");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -110,11 +132,12 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
   }
 
   async function unlock() {
+    if (!selectedProfile) return;
     setBusy(true);
     setError("");
     try {
       const result = await call<UnlockResult>("unlock_database", {
-        profileId: selectedProfileId,
+        profileId: selectedProfile.id,
         passphrase
       });
       setPassphrase("");
@@ -128,75 +151,128 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
 
   return (
     <div className="auth-shell">
-      <article className="auth-card">
+      <article className={selectedProfile ? "auth-card auth-card-narrow" : "auth-card auth-card-wide"}>
         <header>
           <span className="brand-mark">MiDoc</span>
-          <h1>Abre tu expediente</h1>
+          <h1>{selectedProfile ? "Frase de seguridad" : "Abre tu expediente"}</h1>
           <p>
-            Cada medico tiene su propia base cifrada en esta computadora. Elige el perfil e
-            introduce su frase de seguridad.
+            {selectedProfile
+              ? "Confirma la frase de este perfil para abrir su base cifrada local."
+              : "Cada medico tiene su propia base cifrada en esta computadora. Elige el perfil para continuar."}
           </p>
         </header>
-        <form
-          className="stack"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void unlock();
-          }}
-        >
-          <label className="field">
-            <span>Medico</span>
-            <select
-              value={selectedProfileId}
-              onChange={(e) => setSelectedProfileId(e.currentTarget.value)}
-            >
+        {selectedProfile ? (
+          <form
+            className="stack"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void unlock();
+            }}
+          >
+            <div className="selected-profile-card">
+              <div className="profile-photo" style={profileAvatarStyle(selectedProfile)} aria-hidden="true">
+                {selectedProfile.photo_url ? (
+                  <img src={selectedProfile.photo_url} alt="" />
+                ) : (
+                  <span>{profileInitials(selectedProfile.display_name)}</span>
+                )}
+              </div>
+              <div>
+                <span className="selected-profile-label">Medico seleccionado</span>
+                <strong>{selectedProfile.display_name}</strong>
+              </div>
+            </div>
+            <label className="field">
+              <span>Frase de seguridad</span>
+              <input
+                type="password"
+                value={passphrase}
+                onChange={(e) => setPassphrase(e.currentTarget.value)}
+                autoFocus
+              />
+            </label>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="button-row">
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => {
+                  setSelectedProfile(null);
+                  setPassphrase("");
+                  setError("");
+                }}
+              >
+                Volver
+              </button>
+              <button className="action-button" type="submit" disabled={busy || passphrase.length === 0}>
+                {busy ? "Abriendo..." : "Desbloquear"}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="stack">
+            <div className="profile-card-grid" aria-label="Medicos disponibles">
               {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.display_name}
-                </option>
+                <button
+                  key={profile.id}
+                  className="profile-card"
+                  type="button"
+                  onClick={() => {
+                    setSelectedProfile(profile);
+                    setPassphrase("");
+                    setError("");
+                  }}
+                >
+                  <span className="profile-photo" style={profileAvatarStyle(profile)} aria-hidden="true">
+                    {profile.photo_url ? (
+                      <img src={profile.photo_url} alt="" />
+                    ) : (
+                      <span>{profileInitials(profile.display_name)}</span>
+                    )}
+                  </span>
+                  <span className="profile-card-name">{profile.display_name}</span>
+                  {profile.last_used_at ? <span className="profile-card-meta">Usado recientemente</span> : null}
+                </button>
               ))}
-            </select>
-          </label>
-          <div className="profile-create-row">
-            <input
-              type="text"
-              value={newProfileName}
-              onChange={(e) => setNewProfileName(e.currentTarget.value)}
-              placeholder="Nuevo medico"
-            />
-            <button
-              className="ghost-button"
-              type="button"
-              disabled={creatingProfile || newProfileName.trim().length === 0}
-              onClick={() => void createProfile()}
-            >
-              {creatingProfile ? "Creando..." : "Crear"}
-            </button>
+              <form
+                className="profile-add-card"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void createProfile();
+                }}
+              >
+                <span className="profile-add-icon" aria-hidden="true">
+                  +
+                </span>
+                <label className="field compact-field">
+                  <span>Nuevo medico</span>
+                  <input
+                    type="text"
+                    value={newProfileName}
+                    onChange={(e) => setNewProfileName(e.currentTarget.value)}
+                    placeholder="Nombre"
+                  />
+                </label>
+                <button
+                  className="ghost-button"
+                  type="submit"
+                  disabled={creatingProfile || newProfileName.trim().length === 0}
+                >
+                  {creatingProfile ? "Creando..." : "Crear"}
+                </button>
+              </form>
+            </div>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
           </div>
-          <label className="field">
-            <span>Frase de seguridad</span>
-            <input
-              type="password"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.currentTarget.value)}
-              autoFocus
-            />
-          </label>
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="button-row">
-            <button
-              className="action-button"
-              type="submit"
-              disabled={busy || selectedProfileId.length === 0 || passphrase.length === 0}
-            >
-              {busy ? "Abriendo…" : "Desbloquear"}
-            </button>
-          </div>
-        </form>
+        )}
       </article>
     </div>
   );
@@ -296,6 +372,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [activePatient, setActivePatient] = useState<string | null>(null);
   const [resolution, setResolution] = useState<{
     appointmentId: string;
+    intent: "record" | "encounter";
     patient: ResolutionPatient;
     candidates: PatientMatch[];
   } | null>(null);
@@ -306,6 +383,24 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [view, setView] = useState<
     "agenda" | "patients" | "reception" | "benchmark" | "transcription" | "medications" | "arco"
   >("agenda");
+  const [theme, setTheme] = useState<Theme>(() => {
+    try {
+      return isNightTheme(localStorage.getItem(THEME_STORAGE_KEY)) ? "night" : "light";
+    } catch {
+      return "light";
+    }
+  });
+
+  // Aplica el tema a la raíz (cascada a toda la app, incluida la consulta) y lo
+  // recuerda. Es preferencia de UI, no dato clínico.
+  useEffect(() => {
+    document.documentElement.classList.toggle("night", theme === "night");
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Sin almacenamiento: el tema vive solo en esta sesión.
+    }
+  }, [theme]);
 
   const refresh = useCallback(async () => {
     try {
@@ -373,7 +468,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       if (summary.ai_usage_reported > 0) {
         parts.push(`${summary.ai_usage_reported} reporte(s) de IA enviados`);
       }
-      setMessage(parts.length > 0 ? `${parts.join(" · ")}.` : "Sin novedades en el portal.");
+      setMessage(parts.length > 0 ? `${parts.join(" · ")}.` : "");
       await refresh();
       await refreshPending();
     } catch (e) {
@@ -388,10 +483,30 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     onLock();
   }
 
-  // "Atender" desde la agenda: NO abre una consulta nueva. Resuelve a que
-  // expediente pertenece la cita (busca duplicados; si los hay, el medico decide
-  // si es un paciente con expediente previo) y abre ese expediente. La consulta
-  // se inicia despues, desde el propio expediente.
+  // Desvincula este equipo del portal (borra token/URL/cursor de sync, sin tocar
+  // el expediente cifrado) y muestra de nuevo el formulario para re-vincular.
+  // Util si el portal se reinstalo o el dispositivo fue revocado: el token local
+  // queda huerfano y el sync responde "No autorizado.".
+  async function unlink() {
+    if (!window.confirm(
+      "Esto desvincula este equipo del portal para que puedas volver a vincularlo. " +
+        "Tu expediente y tus datos locales NO se borran. ¿Continuar?"
+    )) {
+      return;
+    }
+    setError("");
+    setMessage("");
+    try {
+      await call("unlink_device");
+      await refresh();
+      await refreshPending();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Click desde la agenda: primero muestra una decision explicita. Si no hay
+  // similitudes, tambien se pide confirmar antes de crear un expediente.
   async function openPatientFromAppointment(
     appointmentId: string,
     opts?: { linkPatientId?: string; forceNew?: boolean }
@@ -406,10 +521,12 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       });
       if (outcome.kind === "patient") {
         setResolution(null);
+        setActiveEncounter(null);
         setActivePatient(outcome.patient_id);
       } else {
         setResolution({
           appointmentId,
+          intent: "record",
           patient: outcome.appointment_patient,
           candidates: outcome.candidates
         });
@@ -421,199 +538,306 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     }
   }
 
+  async function startConsultationFromAppointment(
+    appointmentId: string,
+    opts?: { linkPatientId?: string; forceNew?: boolean }
+  ) {
+    setError("");
+    setBusy(true);
+    try {
+      const outcome = await call<AttendOutcome>("attend_appointment", {
+        appointmentId,
+        linkPatientId: opts?.linkPatientId ?? null,
+        forceNew: opts?.forceNew ?? false
+      });
+      if (outcome.kind === "encounter") {
+        setResolution(null);
+        setActivePatient(null);
+        setActiveEncounter(outcome.encounter_id);
+      } else {
+        setResolution({
+          appointmentId,
+          intent: "encounter",
+          patient: outcome.appointment_patient,
+          candidates: outcome.candidates
+        });
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const resolutionDialog = resolution ? (
+    <div className="modal-backdrop">
+      <div
+        className="modal-shell"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="patient-resolution-title"
+      >
+        <PatientResolution
+          patient={resolution.patient}
+          candidates={resolution.candidates}
+          busy={busy}
+          onOpenRecord={(patientId) =>
+            void openPatientFromAppointment(resolution.appointmentId, {
+              linkPatientId: patientId
+            })
+          }
+          onStartConsultation={(patientId) =>
+            void startConsultationFromAppointment(resolution.appointmentId, {
+              linkPatientId: patientId
+            })
+          }
+          onCreateNew={() =>
+            resolution.intent === "encounter"
+              ? void startConsultationFromAppointment(resolution.appointmentId, {
+                  forceNew: true
+                })
+              : void openPatientFromAppointment(resolution.appointmentId, { forceNew: true })
+          }
+          onClose={() => setResolution(null)}
+          closeLabel={activeEncounter ? "Seguir en la consulta actual" : undefined}
+        />
+      </div>
+    </div>
+  ) : null;
+
   if (activeEncounter) {
     return (
-      <Atencion
-        encounterId={activeEncounter}
-        clinicalProfile={clinicalProfile}
-        onBack={() => {
-          setActiveEncounter(null);
-          void refresh();
-        }}
-      />
-    );
-  }
-
-  if (activePatient) {
-    return (
-      <Expediente
-        patientId={activePatient}
-        onBack={() => setActivePatient(null)}
-        onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
-      />
-    );
-  }
-
-  if (resolution) {
-    return (
       <>
-        <header className="app-topbar">
-          <button className="ghost-button" onClick={() => setResolution(null)}>
-            ← Agenda
+        <Atencion
+          key={activeEncounter}
+          encounterId={activeEncounter}
+          clinicalProfile={clinicalProfile}
+          appointments={appointments}
+          appointmentSelectionBusy={busy}
+          onBack={() => {
+            setActiveEncounter(null);
+            void refresh();
+          }}
+          onSelectAppointment={(appointmentId) =>
+            void startConsultationFromAppointment(appointmentId)
+          }
+        />
+        {resolutionDialog}
+      </>
+    );
+  }
+
+  const navClinic = [
+    { id: "agenda" as const, label: "Agenda", badge: appointments.length > 0 ? String(appointments.length) : "" },
+    { id: "patients" as const, label: "Pacientes", badge: "" }
+  ];
+  const navOperation = [
+    { id: "reception" as const, label: "Recepción y caja" },
+    { id: "transcription" as const, label: "Transcripción" },
+    { id: "medications" as const, label: "Medicamentos" }
+  ];
+  const navCompliance = [
+    { id: "arco" as const, label: "Privacidad (ARCO)" },
+    { id: "benchmark" as const, label: "Benchmark IA" }
+  ];
+
+  return (
+    <div className="workspace-shell">
+      <div className="workspace-brand" aria-label="MiDoc">
+        <span className="brand-mark">MiDoc</span>
+      </div>
+
+      <header className="app-topbar workspace-topbar">
+        <div className="topbar-identity">
+          <strong>{unlocked.profile.display_name}</strong>
+          <span aria-hidden="true">·</span>
+          <span className="topbar-context">expediente cifrado · esquema v{unlocked.schema_version}</span>
+        </div>
+        <div className="button-row topbar-actions">
+          {status?.linked ? (
+            <>
+              <button className="action-button sync-button" onClick={() => void syncNow()} disabled={busy}>
+                {busy ? "Sincronizando…" : "Sincronizar"}
+                <span
+                  className={pendingSync ? "sync-dot sync-dot-pending" : "sync-dot"}
+                  role="status"
+                  aria-label={pendingSync ? "Cambios pendientes por sincronizar" : "Sincronizado"}
+                />
+              </button>
+            </>
+          ) : null}
+          <button
+            className="ghost-button"
+            onClick={() => setTheme(nextTheme(theme))}
+            aria-pressed={theme === "night"}
+            title="Cambia entre tema claro y Cobalto nocturno"
+          >
+            {themeToggleLabel(theme)}
           </button>
-          <span className="topbar-context">Identificar paciente de la cita</span>
-        </header>
-        <div className="content">
-          <PatientResolution
-            patient={resolution.patient}
-            candidates={resolution.candidates}
-            busy={busy}
-            onLink={(patientId) =>
-              void openPatientFromAppointment(resolution.appointmentId, {
-                linkPatientId: patientId
-              })
-            }
-            onCreateNew={() =>
-              void openPatientFromAppointment(resolution.appointmentId, { forceNew: true })
-            }
-          />
+        </div>
+      </header>
+
+      <aside className="workspace-sidebar" aria-label="Navegación principal">
+        {status?.linked ? (
+          <>
+            <div className="sidebar-section">
+              <span className="sidebar-heading">Clínica</span>
+              {navClinic.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={
+                    view === item.id || (item.id === "patients" && activePatient)
+                      ? "sidebar-nav-item sidebar-nav-item-active"
+                      : "sidebar-nav-item"
+                  }
+                  aria-current={
+                    view === item.id || (item.id === "patients" && activePatient) ? "page" : undefined
+                  }
+                  onClick={() => {
+                    setActivePatient(null);
+                    setView(item.id);
+                  }}
+                >
+                  <span>{item.label}</span>
+                  {item.badge ? <span className="sidebar-badge">{item.badge}</span> : null}
+                </button>
+              ))}
+            </div>
+            <div className="sidebar-section">
+              <span className="sidebar-heading">Operación</span>
+              {navOperation.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={view === item.id ? "sidebar-nav-item sidebar-nav-item-active" : "sidebar-nav-item"}
+                  aria-current={view === item.id ? "page" : undefined}
+                  onClick={() => setView(item.id)}
+                >
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+            <div className="sidebar-section">
+              <span className="sidebar-heading">Cumplimiento</span>
+              {navCompliance.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={view === item.id ? "sidebar-nav-item sidebar-nav-item-active" : "sidebar-nav-item"}
+                  aria-current={view === item.id ? "page" : undefined}
+                  onClick={() => setView(item.id)}
+                >
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="sidebar-section">
+            <span className="sidebar-heading">Vinculación</span>
+            <p className="sidebar-note">Conecta este equipo con el portal para activar agenda y pacientes.</p>
+          </div>
+        )}
+
+        <div className="sidebar-profile-card">
+          <span className="sidebar-avatar" aria-hidden="true">{profileInitials(unlocked.profile.display_name)}</span>
+          <span className="sidebar-profile-text">
+            <strong>{unlocked.profile.display_name}</strong>
+            <button type="button" onClick={() => void lock()}>Bloquear</button>
+            {status?.linked ? (
+              <button type="button" onClick={() => void unlink()} disabled={busy}>
+                Desvincular
+              </button>
+            ) : null}
+          </span>
+        </div>
+      </aside>
+
+      <main className="workspace-main">
+        <div className="content workspace-content">
+          {message && (
+            <p className="form-success" role="status">
+              {message}
+            </p>
+          )}
           {error && (
             <p className="form-error" role="alert">
               {error}
             </p>
           )}
+
+          {!status ? (
+            <p className="meta">Cargando…</p>
+          ) : !status.linked ? (
+            <LinkAccountForm onLinked={() => void refresh()} />
+          ) : (
+            <>
+              {activePatient ? (
+                <Expediente
+                  patientId={activePatient}
+                  onBack={() => setActivePatient(null)}
+                  onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
+                  embedded
+                />
+              ) : view === "patients" ? (
+                <Directorio
+                  onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
+                  onOpenPatient={(patientId) => setActivePatient(patientId)}
+                />
+              ) : view === "reception" ? (
+                <Recepcion onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)} />
+              ) : view === "benchmark" ? (
+                <Benchmark />
+              ) : view === "transcription" ? (
+                <TranscriptionSetup />
+              ) : view === "medications" ? (
+                <MedicationReference />
+              ) : view === "arco" ? (
+                <Arco />
+              ) : (
+                <section className="panel agenda-panel">
+                  {appointments.length === 0 ? (
+                    <>
+                      <div className="page-heading">
+                        <div>
+                          <h1>Agenda</h1>
+                          <p>
+                            Citas sincronizadas desde tu portal público · perfil{" "}
+                            {clinicalProfile === "ODONTOLOGY" ? "odontología" : "medicina general"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="empty-state">
+                        <strong>Sin citas todavía</strong>
+                        <p>
+                          Cuando un paciente agende en tu portal, pulsa &quot;Sincronizar&quot; para
+                          traer sus citas a tu expediente.
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <WeekAgenda
+                      title="Agenda"
+                      subtitle={`Citas sincronizadas desde tu portal público · perfil ${
+                        clinicalProfile === "ODONTOLOGY" ? "odontología" : "medicina general"
+                      }`}
+                      appointments={appointments}
+                      slotMinutes={slotMinutes}
+                      workStartMinutes={workStartMinutes}
+                      workEndMinutes={workEndMinutes}
+                      onAttend={(appointmentId) => void openPatientFromAppointment(appointmentId)}
+                    />
+                  )}
+                </section>
+              )}
+            </>
+          )}
         </div>
-      </>
-    );
-  }
+      </main>
 
-  return (
-    <>
-      <header className="app-topbar">
-        <span className="brand-mark">MiDoc</span>
-        <span className="topbar-context">
-          {unlocked.profile.display_name} · expediente cifrado · esquema v{unlocked.schema_version}
-        </span>
-        <div className="button-row">
-          {status?.linked ? (
-            <button className="action-button sync-button" onClick={() => void syncNow()} disabled={busy}>
-              {busy ? "Sincronizando…" : "Sincronizar"}
-              {pendingSync && !busy ? (
-                <span className="sync-badge" role="status" aria-label="Cambios pendientes por sincronizar" />
-              ) : null}
-            </button>
-          ) : null}
-          <button className="ghost-button" onClick={() => void lock()}>
-            Bloquear
-          </button>
-        </div>
-      </header>
-
-      <div className="content">
-        {message && (
-          <p className="form-success" role="status">
-            {message}
-          </p>
-        )}
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-
-        {!status ? (
-          <p className="meta">Cargando…</p>
-        ) : !status.linked ? (
-          <LinkAccountForm onLinked={() => void refresh()} />
-        ) : (
-          <>
-            <nav className="tab-row">
-              <button
-                className={view === "agenda" ? "tab tab-active" : "tab"}
-                onClick={() => setView("agenda")}
-              >
-                Agenda
-              </button>
-              <button
-                className={view === "patients" ? "tab tab-active" : "tab"}
-                onClick={() => setView("patients")}
-              >
-                Pacientes
-              </button>
-              <button
-                className={view === "reception" ? "tab tab-active" : "tab"}
-                onClick={() => setView("reception")}
-              >
-                Recepcion y caja
-              </button>
-              <button
-                className={view === "benchmark" ? "tab tab-active" : "tab"}
-                onClick={() => setView("benchmark")}
-              >
-                Benchmark IA
-              </button>
-              <button
-                className={view === "transcription" ? "tab tab-active" : "tab"}
-                onClick={() => setView("transcription")}
-              >
-                Transcripcion
-              </button>
-              <button
-                className={view === "medications" ? "tab tab-active" : "tab"}
-                onClick={() => setView("medications")}
-              >
-                Medicamentos
-              </button>
-              <button
-                className={view === "arco" ? "tab tab-active" : "tab"}
-                onClick={() => setView("arco")}
-              >
-                Privacidad (ARCO)
-              </button>
-            </nav>
-            {view === "patients" ? (
-              <Directorio
-                onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
-                onOpenPatient={(patientId) => setActivePatient(patientId)}
-              />
-            ) : view === "reception" ? (
-              <Recepcion onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)} />
-            ) : view === "benchmark" ? (
-              <Benchmark />
-            ) : view === "transcription" ? (
-              <TranscriptionSetup />
-            ) : view === "medications" ? (
-              <MedicationReference />
-            ) : view === "arco" ? (
-              <Arco />
-            ) : (
-          <section className="panel agenda-panel">
-            <div className="panel-header">
-              <h2>Agenda</h2>
-              <p>
-                Citas sincronizadas desde tu portal publico · perfil{" "}
-                {clinicalProfile === "ODONTOLOGY" ? "odontologia" : "medicina general"}
-              </p>
-            </div>
-            {appointments.length === 0 ? (
-              <div className="empty-state">
-                <strong>Sin citas todavia</strong>
-                <p>
-                  Cuando un paciente agende en tu portal, pulsa &quot;Sincronizar&quot; para
-                  traer sus citas a tu expediente.
-                </p>
-              </div>
-            ) : (
-              <WeekAgenda
-                appointments={appointments}
-                slotMinutes={slotMinutes}
-                workStartMinutes={workStartMinutes}
-                workEndMinutes={workEndMinutes}
-                onAttend={(appointmentId) => void openPatientFromAppointment(appointmentId)}
-              />
-            )}
-          </section>
-            )}
-          </>
-        )}
-
-        <p className="footer-meta">
-          Base: {unlocked.db_path}
-          <br />
-          Respaldo: {unlocked.backup_path}
-        </p>
-      </div>
-    </>
+      {resolutionDialog}
+    </div>
   );
 }
 

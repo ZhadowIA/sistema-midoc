@@ -6,8 +6,20 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "node --test src/*.test.ts",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "node ./scripts/tauri-dev.mjs --features whisper-local",
+    "tauri:build": "tauri build --features whisper-local",
+    "tauri:dev:diarize": "tauri dev --release --features \"whisper-local diarization-local\"",
+    "tauri:build:diarize": "tauri build --features \"whisper-local diarization-local\"",
+    "tauri:dev:openblas": "tauri dev --release --features \"whisper-local whisper-openblas\"",
+    "tauri:dev:vulkan": "tauri dev --release --features \"whisper-local whisper-vulkan whisper-openblas\"",
+    "tauri:dev:metal": "tauri dev --release --features \"whisper-local whisper-metal\"",
+    "tauri:dev:cuda": "tauri dev --release --features \"whisper-cuda diarization-local\"",
+    "tauri:build:vulkan": "tauri build --features \"whisper-local whisper-vulkan whisper-openblas diarization-local\"",
+    "tauri:build:metal": "tauri build --features \"whisper-local whisper-metal diarization-local\"",
+    "tauri:build:cuda": "tauri build --features \"whisper-cuda diarization-local\""
   },
   "dependencies": {
     "react": "^19.1.0",

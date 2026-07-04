@@ -7,7 +7,7 @@ import { authenticateSyncDevice, recordAiUsageBatch } from "../../../../services
 export async function POST(request: Request) {
   try {
     const device = await authenticateSyncDevice(request);
-    assertRateLimit({ key: `sync-ai-usage:${device.id}`, limit: 120, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `sync-ai-usage:${device.id}`, limit: 120, windowMs: 1000 * 60 * 15 });
 
     const result = await recordAiUsageBatch(device, await request.json());
 

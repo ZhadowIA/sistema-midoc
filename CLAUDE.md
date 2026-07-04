@@ -50,7 +50,8 @@ npm run lint
 npm run test
 npm run env:check
 npm run db:migrate:dev
-npm run db:generate:no-engine
+npm run db:migrate:deploy
+npm run db:generate
 ```
 
 ## V1 reference documentation

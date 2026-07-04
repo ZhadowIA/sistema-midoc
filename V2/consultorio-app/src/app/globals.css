@@ -164,6 +164,7 @@ main {
 .home-shell,
 .public-shell,
 .booking-shell,
+.appointment-view,
 .profile-grid,
 .app-grid,
 .settings-stack {
@@ -422,6 +423,15 @@ a.service-card:hover {
   font: inherit;
   color: var(--ink);
   transition: border-color var(--speed) var(--ease), box-shadow var(--speed) var(--ease);
+}
+
+/* Las casillas y radios no deben estirarse con el width:100% de .field:
+   eso empujaria la etiqueta al extremo opuesto (espejo del fix desktop). */
+.field input[type="checkbox"],
+.field input[type="radio"] {
+  width: auto;
+  padding: 0;
+  accent-color: var(--primary);
 }
 
 .field input::placeholder,
@@ -934,10 +944,64 @@ a.service-card:hover {
   margin: 14px 0 0;
 }
 
-.appointment-summary {
+/* ---------- Confirmacion de cita: cabecera en banda (paso 19) ----------
+   La cita se aplana en una cabecera horizontal para que la preconsulta ocupe
+   todo el ancho debajo; el formulario respira en 3-4 columnas en escritorio y
+   colapsa a una sola en telefono (acceso principal de los pacientes). */
+.appointment-banner-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px 28px;
+}
+
+.appointment-identity {
   display: grid;
   gap: 8px;
-  margin-bottom: 18px;
+  min-width: 200px;
+}
+
+.appointment-identity h2 {
+  margin: 0;
+}
+
+.appointment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1;
+}
+
+.meta-chip {
+  flex: 1 1 130px;
+  min-width: 130px;
+  padding: 8px 14px;
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.meta-chip small {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.appointment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Separador entre la cabecera de la cita y los antecedentes (ambas secciones
+   ya no tienen panel, asi que la linea las diferencia). */
+.appointment-antecedentes {
+  border-top: 1px solid var(--line);
+  padding-top: 24px;
 }
 
 .panel > .booking-shell .panel {
@@ -2002,14 +2066,72 @@ a.service-card:hover {
   grid-column: 1 / -1;
 }
 
+.mh-block + .mh-block {
+  margin-top: 14px;
+}
+
+.mh-block-title {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mh-suffix {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.mh-family-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.mh-family-row:first-of-type {
+  border-top: 0;
+}
+
+.mh-family-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.mh-family-detail {
+  margin: 8px 0 4px 26px;
+}
+
+.mh-family-relatives {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.mh-relative {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
 .ai-preconsulta-consent {
   display: grid;
   gap: 12px;
 }
 
+.ai-preconsulta-chat {
+  display: grid;
+  gap: 14px;
+}
+
 .ai-preconsulta-history {
   list-style: none;
-  margin: 0 0 16px;
+  margin: 0;
   padding: 0;
   display: grid;
   gap: 12px;
@@ -2018,6 +2140,7 @@ a.service-card:hover {
 .ai-preconsulta-history li {
   border-left: 2px solid var(--line);
   padding-left: 12px;
+  animation: preconsulta-turn-in 180ms ease-out both;
 }
 
 .ai-preconsulta-history .ai-q {
@@ -2029,6 +2152,64 @@ a.service-card:hover {
 .ai-preconsulta-history .ai-a {
   margin: 2px 0 0;
   color: var(--muted);
+}
+
+.ai-preconsulta-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  background: linear-gradient(90deg, var(--surface) 25%, oklch(0.97 0.006 250) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite, preconsulta-turn-in 160ms ease-out both;
+}
+
+.ai-thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0.45;
+  animation: ai-thinking-pulse 1s ease-in-out infinite;
+}
+
+.ai-thinking-dot:nth-child(2) {
+  animation-delay: 140ms;
+}
+
+.ai-thinking-dot:nth-child(3) {
+  animation-delay: 280ms;
+}
+
+@keyframes ai-thinking-pulse {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+
+  40% {
+    transform: translateY(-3px);
+    opacity: 0.9;
+  }
+}
+
+@keyframes preconsulta-turn-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .cancel-prompt {
@@ -2361,6 +2542,17 @@ a.service-card:hover {
     grid-template-columns: 1fr;
   }
 
+  /* En telefono la cabecera de la cita se apila: los botones ocupan todo el
+     ancho para ser comodos al tacto. */
+  .appointment-meta,
+  .appointment-actions {
+    width: 100%;
+  }
+
+  .appointment-actions button {
+    flex: 1 1 auto;
+  }
+
   .slot-grid {
     grid-template-columns: repeat(4, 1fr);
   }
@@ -2480,5 +2672,193 @@ a.service-card:hover {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- Administrador de plataforma ---------- */
+
+.admin-shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 36px 0 64px;
+}
+
+.admin-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 24px;
+  align-items: end;
+  margin-bottom: 24px;
+}
+
+.admin-header h1 {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1.12;
+}
+
+.admin-header p {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.admin-metric {
+  min-width: 132px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  text-align: right;
+}
+
+.admin-metric span {
+  display: block;
+  color: var(--ink);
+  font-size: 1.85rem;
+  font-weight: 800;
+}
+
+.admin-metric p {
+  margin: 2px 0 0;
+  font-size: 0.88rem;
+}
+
+.admin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.filter-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 700;
+  padding: 8px 13px;
+}
+
+.filter-chip-active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.admin-table {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.admin-table-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.7fr) 120px minmax(160px, 1fr) 150px 190px;
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.admin-table-row:first-child {
+  border-top: none;
+}
+
+.admin-table-head {
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.admin-table-row strong {
+  display: block;
+  color: var(--ink);
+}
+
+.admin-table-row p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.status-pill {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.status-active {
+  background: #e6f7ed;
+  color: #126b35;
+}
+
+.status-pending_approval {
+  background: #fff3d8;
+  color: #8a5900;
+}
+
+.status-suspended {
+  background: #ffe4e4;
+  color: #9f1d1d;
+}
+
+.status-archived,
+.status-invited {
+  background: #eef1f4;
+  color: #4f5d6a;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.action-button-small,
+.secondary-button-small {
+  min-height: 34px;
+  padding: 7px 11px;
+  font-size: 0.84rem;
+}
+
+.empty-state {
+  margin: 0;
+  padding: 22px;
+  color: var(--muted);
+}
+
+@media (max-width: 920px) {
+  .admin-header {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .admin-metric {
+    text-align: left;
+  }
+
+  .admin-table {
+    border: none;
+    background: transparent;
+  }
+
+  .admin-table-head {
+    display: none;
+  }
+
+  .admin-table-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
   }
 }

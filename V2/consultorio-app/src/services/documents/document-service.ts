@@ -11,7 +11,7 @@ import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { generateOpaqueToken } from "../../lib/security/token";
 import { emitSyncEvent, getActiveDeviceDocumentKey } from "../sync/sync-service";
-import { queueNotification } from "../notifications/notification-service";
+import { phoneNotificationChannel, queueNotification } from "../notifications/notification-service";
 
 class DocumentServiceError extends ServiceError {}
 
@@ -48,7 +48,7 @@ async function runSerializable<T>(fn: (tx: Prisma.TransactionClient) => Promise<
 async function assertPatientOwnedByDoctor(doctorUserId: string, patientId: string) {
   const patient = await prisma.patient.findFirst({
     where: { id: patientId, ownerDoctorId: doctorUserId },
-    select: { id: true, firstName: true, phone: true, email: true }
+    select: { id: true, firstName: true, phone: true, email: true, preferredPhoneChannel: true }
   });
 
   if (!patient) {
@@ -112,9 +112,17 @@ export async function createUploadLink(
   });
 
   const uploadUrl = `${env.APP_BASE_URL}/carga/${token}`;
+  const phoneChannel = patient.phone
+    ? await phoneNotificationChannel({
+        patientId: patient.id,
+        preferredPhoneChannel: patient.preferredPhoneChannel
+      })
+    : null;
 
   for (const contact of [
-    patient.phone ? { channel: "SMS" as const, destination: patient.phone } : null,
+    patient.phone && phoneChannel
+      ? { channel: phoneChannel, destination: patient.phone }
+      : null,
     patient.email ? { channel: "EMAIL" as const, destination: patient.email } : null
   ]) {
     if (!contact) {

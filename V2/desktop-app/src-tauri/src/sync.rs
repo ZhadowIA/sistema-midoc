@@ -92,6 +92,11 @@ pub fn set_state(conn: &Connection, key: &str, value: &str) -> Result<(), SyncEr
     Ok(())
 }
 
+pub fn delete_state(conn: &Connection, key: &str) -> Result<(), SyncError> {
+    conn.execute("DELETE FROM sync_state WHERE key = ?1", params![key])?;
+    Ok(())
+}
+
 pub fn get_cursor(conn: &Connection) -> Result<i64, SyncError> {
     Ok(get_state(conn, "cursor")?
         .and_then(|value| value.parse().ok())
@@ -195,7 +200,7 @@ pub fn apply_event(conn: &Connection, event: &InboxEvent) -> Result<(), SyncErro
             conn.execute(
                 "INSERT INTO precheckins (appointment_id, responses_json, received_at)
                  VALUES (?1, ?2, ?3)
-                 ON CONFLICT(appointment_id) DO UPDATE SET
+                 ON CONFLICT(appointment_id, kind) DO UPDATE SET
                     responses_json = excluded.responses_json,
                     received_at = excluded.received_at",
                 params![text(payload, "appointmentId"), responses, now],
@@ -614,8 +619,9 @@ pub fn store_mailbox_document(
 /// Guarda los antecedentes (historia clinica) ya descifrados en la base local.
 /// El sobre lleva en el meta `{kind:"medical-history"}` (antecedentes) o
 /// `{kind:"ai-preconsulta"}` (resultado de la IA), y el JSON de respuestas como
-/// contenido. Idempotente por appointment_id (re-entrega no duplica; reenvio del
-/// paciente actualiza). CLINICO: vive solo aqui.
+/// contenido. Idempotente por (appointment_id, kind): reenvio del mismo tipo
+/// actualiza; los antecedentes y la preconsulta IA coexisten para una misma cita
+/// sin pisarse. CLINICO: vive solo aqui.
 pub fn store_mailbox_precheckin(
     conn: &Connection,
     appointment_id: &str,
@@ -627,9 +633,8 @@ pub fn store_mailbox_precheckin(
     conn.execute(
         "INSERT INTO precheckins (appointment_id, responses_json, kind, received_at)
          VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(appointment_id) DO UPDATE SET
+         ON CONFLICT(appointment_id, kind) DO UPDATE SET
             responses_json = excluded.responses_json,
-            kind = excluded.kind,
             received_at = excluded.received_at",
         params![appointment_id, responses_json, kind, chrono_now()],
     )?;
@@ -910,7 +915,7 @@ mod tests {
         let plaintext = precheckin_envelope(json.as_bytes());
 
         store_mailbox_precheckin(&conn, "appt-1", &plaintext).unwrap();
-        // Reenvio del paciente: actualiza, no duplica (PK por appointment_id).
+        // Reenvio del mismo tipo: actualiza, no duplica (PK por appointment_id+kind).
         let json2 = r#"{"sex":"F","allergies":"ninguna"}"#;
         store_mailbox_precheckin(&conn, "appt-1", &precheckin_envelope(json2.as_bytes())).unwrap();
 
@@ -948,6 +953,50 @@ mod tests {
     }
 
     #[test]
+    fn medical_history_and_ai_preconsulta_coexist_for_same_appointment() {
+        let conn = test_conn("precheckin-both");
+        let mh = r#"{"sex":"M","pathological":{"diabetico":"si"}}"#;
+        let ai = r#"{"motivo":"tos","conversation":[{"question":"q","answer":"a"}]}"#;
+
+        // El paciente envia los dos sobres para la misma cita: no deben pisarse.
+        store_mailbox_precheckin(&conn, "appt-both", &precheckin_envelope(mh.as_bytes())).unwrap();
+        store_mailbox_precheckin(
+            &conn,
+            "appt-both",
+            &precheckin_envelope_kind("ai-preconsulta", ai.as_bytes()),
+        )
+        .unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM precheckins WHERE appointment_id = 'appt-both'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2, "ambos kinds coexisten");
+
+        let mh_stored: String = conn
+            .query_row(
+                "SELECT responses_json FROM precheckins
+                 WHERE appointment_id = 'appt-both' AND kind = 'medical-history'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let ai_stored: String = conn
+            .query_row(
+                "SELECT responses_json FROM precheckins
+                 WHERE appointment_id = 'appt-both' AND kind = 'ai-preconsulta'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(mh_stored, mh);
+        assert_eq!(ai_stored, ai);
+    }
+
+    #[test]
     fn sync_state_roundtrip_and_cursor_default() {
         let conn = test_conn("state");
 
@@ -956,6 +1005,26 @@ mod tests {
         assert_eq!(get_cursor(&conn).unwrap(), 42);
         set_state(&conn, "cursor", "43").unwrap();
         assert_eq!(get_cursor(&conn).unwrap(), 43);
+    }
+
+    #[test]
+    fn delete_state_clears_link_so_relinking_is_possible() {
+        let conn = test_conn("unlink");
+
+        set_state(&conn, "device_token", "tok-123").unwrap();
+        set_state(&conn, "server_url", "http://localhost:3000").unwrap();
+        set_state(&conn, "cursor", "57").unwrap();
+
+        delete_state(&conn, "device_token").unwrap();
+        delete_state(&conn, "server_url").unwrap();
+        delete_state(&conn, "cursor").unwrap();
+
+        assert_eq!(get_state(&conn, "device_token").unwrap(), None);
+        assert_eq!(get_state(&conn, "server_url").unwrap(), None);
+        // Cursor vuelve al default (0) para que el re-vinculo baje desde cero.
+        assert_eq!(get_cursor(&conn).unwrap(), 0);
+        // Borrar algo inexistente no falla (idempotente).
+        delete_state(&conn, "device_token").unwrap();
     }
 
     #[test]

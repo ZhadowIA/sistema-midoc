@@ -3,8 +3,14 @@ mod arco;
 mod audio;
 mod clinical;
 mod cloud_transcription;
+mod consultation_templates;
 mod crypto;
 mod db;
+mod diarization;
+mod diarization_model;
+// Diarizacion local con sherpa-onnx: binding nativo tras el feature
+// `diarization-local`; sin el feature, un stub degrada sin separar hablantes.
+mod sherpa_diarization;
 mod medication;
 mod operations;
 mod sync;
@@ -240,6 +246,20 @@ fn create_doctor_profile(
     Ok(profile)
 }
 
+/// Politica de passphrase: los expedientes NUEVOS exigen 12+ caracteres (la
+/// passphrase es la unica barrera si roban el archivo .db). Las bases ya
+/// existentes siguen aceptando 8+ para no dejar fuera a medicos con
+/// passphrases creadas bajo la politica anterior.
+fn validate_passphrase(passphrase: &str, is_new_database: bool) -> Result<(), String> {
+    let minimum = if is_new_database { 12 } else { 8 };
+    if passphrase.chars().count() < minimum {
+        return Err(format!(
+            "la frase de seguridad debe tener al menos {minimum} caracteres"
+        ));
+    }
+    Ok(())
+}
+
 /// Opens (or creates) the encrypted clinical database with the doctor's
 /// passphrase. The passphrase only lives in memory for the duration of the
 /// call; SQLCipher keeps the derived key inside the connection.
@@ -250,12 +270,11 @@ fn unlock_database(
     profile_id: Option<String>,
     passphrase: String,
 ) -> Result<UnlockResult, String> {
-    if passphrase.len() < 8 {
-        return Err("la frase de seguridad debe tener al menos 8 caracteres".into());
-    }
     let base_dir = app_data_dir(&app)?;
     let selected_profile_id = profile_id.unwrap_or_else(|| DEFAULT_PROFILE_ID.into());
     validate_profile_id(&selected_profile_id)?;
+    let path = profile_database_path(&base_dir, &selected_profile_id)?;
+    validate_passphrase(&passphrase, !path.exists())?;
     let mut profiles = load_profiles_from_dir(&base_dir)?;
     let profile_index = profiles
         .iter()
@@ -265,7 +284,6 @@ fn unlock_database(
     let profile = profiles[profile_index].clone();
     save_profiles_to_dir(&base_dir, &profiles)?;
 
-    let path = profile_database_path(&base_dir, &profile.id)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -320,6 +338,22 @@ fn sync_status(state: tauri::State<'_, AppDb>) -> Result<SyncStatus, String> {
         work_start_minutes,
         work_end_minutes,
     })
+}
+
+/// Desvincula este equipo de la cuenta del portal: borra el device token, la URL
+/// del servidor y el cursor de sincronizacion de la base local cifrada. NO toca
+/// los datos clinicos (expediente, citas, notas): solo el vinculo de sync. Sirve
+/// para re-vincular tras cambiar de servidor, reinstalar el portal o si el
+/// dispositivo fue revocado (el token local queda huerfano y el sync da 401).
+/// El cursor se limpia para que el proximo vinculo baje el buzon desde cero.
+#[tauri::command]
+fn unlink_device(state: tauri::State<'_, AppDb>) -> Result<(), String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    sync::delete_state(conn, "device_token").map_err(|e| e.to_string())?;
+    sync::delete_state(conn, "server_url").map_err(|e| e.to_string())?;
+    sync::delete_state(conn, "cursor").map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Vincula la app con la cuenta del medico en el portal. El device token se
@@ -641,14 +675,20 @@ async fn publish_authorized_summary(
 fn list_appointments(state: tauri::State<'_, AppDb>) -> Result<Vec<AppointmentRow>, String> {
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    load_appointments(conn)
+}
 
+fn load_appointments(conn: &rusqlite::Connection) -> Result<Vec<AppointmentRow>, String> {
     let mut statement = conn
         .prepare(
             "SELECT a.id, a.status, a.scheduled_start, a.scheduled_end, a.service_name,
                     a.reason, a.patient_first_name, a.patient_last_name, a.patient_phone,
-                    (p.appointment_id IS NOT NULL) AS has_precheckin
+                    EXISTS(
+                        SELECT 1
+                        FROM precheckins p
+                        WHERE p.appointment_id = a.id
+                    ) AS has_precheckin
              FROM appointments a
-             LEFT JOIN precheckins p ON p.appointment_id = a.id
              ORDER BY a.scheduled_start ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -875,6 +915,28 @@ fn update_patient_background(
 }
 
 #[tauri::command]
+fn get_patient_medical_history(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<Option<clinical::PatientMedicalHistoryVersion>, String> {
+    with_conn(&state, |conn| {
+        clinical::latest_patient_medical_history(conn, &patient_id)
+    })
+}
+
+#[tauri::command]
+fn save_patient_medical_history(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+    input: clinical::SavePatientMedicalHistoryInput,
+) -> Result<clinical::PatientMedicalHistoryVersion, String> {
+    let mut guard = state.0.lock().unwrap();
+    let conn = guard.as_mut().ok_or("la base esta bloqueada")?;
+    clinical::save_patient_medical_history_version(conn, &patient_id, &input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn sign_encounter(
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
@@ -946,7 +1008,7 @@ fn check_in_appointment(
 #[derive(serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum WalkInOutcome {
-    Visit { visit: operations::Visit },
+    Visit { visit: Box<operations::Visit> },
     NeedsResolution { candidates: Vec<clinical::PatientMatch> },
 }
 
@@ -964,13 +1026,17 @@ fn register_walk_in(
     if let Some(patient_id) = &link_patient_id {
         let visit = operations::register_walk_in_for_patient(conn, &walk_in, patient_id)
             .map_err(|e| e.to_string())?;
-        return Ok(WalkInOutcome::Visit { visit });
+        return Ok(WalkInOutcome::Visit {
+            visit: Box::new(visit),
+        });
     }
 
     // El recepcionista confirmo que es alguien nuevo.
     if force_new {
         let visit = operations::register_walk_in(conn, &walk_in).map_err(|e| e.to_string())?;
-        return Ok(WalkInOutcome::Visit { visit });
+        return Ok(WalkInOutcome::Visit {
+            visit: Box::new(visit),
+        });
     }
 
     // Automatico: busca duplicados por nombre (con mas peso) y telefono.
@@ -990,7 +1056,9 @@ fn register_walk_in(
 
     if candidates.is_empty() {
         let visit = operations::register_walk_in(conn, &walk_in).map_err(|e| e.to_string())?;
-        Ok(WalkInOutcome::Visit { visit })
+        Ok(WalkInOutcome::Visit {
+            visit: Box::new(visit),
+        })
     } else {
         Ok(WalkInOutcome::NeedsResolution { candidates })
     }
@@ -1247,29 +1315,18 @@ fn ai_assist_text(
     })
 }
 
-/// Elige el proveedor de transcripcion segun la via solicitada.
+/// Proveedor de transcripcion LOCAL (Whisper en el dispositivo). Con el feature
+/// `whisper-local`, usa el modelo descargado (rebanada 1) y transcribe EN EL
+/// DISPOSITIVO; si aun no se descargo, guia a descargarlo. Sin el feature,
+/// explica que esta build no incluye el binding nativo (se compila en la build
+/// de distribucion).
 ///
-/// - Nube (`use_cloud`): respaldo gobernado. Requiere configuracion
-///   (`MIDOC_CLOUD_STT_*`, cableada en staging con BAA); el audio sale del equipo
-///   solo aqui, bajo consentimiento de voz (lo aplica `ai::transcribe_audio`). Sin
-///   configuracion, se rechaza con una guia.
-/// - Local (por defecto): con el feature `whisper-local`, usa el modelo Whisper
-///   descargado (rebanada 1) y transcribe EN EL DISPOSITIVO; si el modelo aun no
-///   se descargo, guia a descargarlo. Sin el feature, explica que esta build no
-///   incluye el binding nativo (se compila en la build de distribucion).
-fn resolve_transcription_provider(
+/// La via en nube gobernada por el portal se construye aparte en
+/// `ai_transcribe_audio`: necesita el estado de sync cifrado (server_url +
+/// device_token), no variables de entorno.
+fn resolve_local_transcription_provider(
     app: &tauri::AppHandle,
-    use_cloud: bool,
 ) -> Result<Box<dyn ai::TranscriptionProvider>, String> {
-    if use_cloud {
-        let config = cloud_transcription::CloudConfig::from_env().ok_or(
-            "El respaldo de transcripcion en nube no esta configurado en esta version. Se habilita en la build de distribucion con el proveedor bajo BAA.",
-        )?;
-        return Ok(Box::new(cloud_transcription::CloudTranscriptionProvider::new(
-            config,
-        )));
-    }
-
     #[cfg(feature = "whisper-local")]
     {
         let rec = transcription::recommendation();
@@ -1283,9 +1340,16 @@ fn resolve_transcription_provider(
                     .into(),
             );
         }
+        // El modelo VAD (saltar silencios) es opcional: si esta descargado se usa
+        // para acelerar; si no, la transcripcion degrada a procesar todo el audio.
+        let vad_asset = transcription_model::asset_for(transcription_model::VAD_MODEL_ID);
+        let vad_path = vad_asset
+            .map(|a| transcription_model::model_path(&base_dir, &a.file_name))
+            .filter(|p| p.exists());
         Ok(Box::new(whisper_provider::WhisperLocalProvider::new(
             &rec.model_id,
             path,
+            vad_path,
         )))
     }
     #[cfg(not(feature = "whisper-local"))]
@@ -1305,13 +1369,176 @@ fn ai_transcribe_audio(
     encounter_id: String,
     audio: AudioTranscriptionPayload,
     use_cloud: Option<bool>,
+    mode: Option<String>,
+    provider: Option<String>,
 ) -> Result<ai::TranscriptionDraft, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(audio.audio_base64.as_bytes())
         .map_err(|_| "audio invalido".to_string())?;
-    let provider = resolve_transcription_provider(&app, use_cloud.unwrap_or(false))?;
+
+    // Modo de la via en nube: estandar (default) o diarizado (separa hablantes).
+    let cloud_mode = match mode.as_deref() {
+        None | Some("standard") => "standard",
+        Some("diarized") => "diarized",
+        Some(other) => return Err(format!("modo de transcripcion no valido: {other}")),
+    };
+
+    // Proveedor real de la via en nube, elegido por el medico en la UI. El
+    // desktop solo transmite la eleccion (nunca conoce claves); el portal la
+    // valida contra su propio gate de entorno. Default: openai (compatibilidad).
+    let cloud_provider = match provider.as_deref() {
+        None | Some("openai") => "openai",
+        Some("deepgram") => "deepgram",
+        Some(other) => return Err(format!("proveedor de transcripcion no valido: {other}")),
+    };
+
+    let use_cloud = use_cloud.unwrap_or(false);
+
+    let provider: Box<dyn ai::TranscriptionProvider> = if use_cloud {
+        // Via en nube gobernada: el desktop NO conoce la clave del proveedor;
+        // envia el audio al portal con el token del dispositivo vinculado. El
+        // server_url y el device_token viven en el estado de sync cifrado.
+        let (server_url, device_token) = {
+            let guard = state.0.lock().unwrap();
+            let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+            let server_url = sync::get_state(conn, "server_url").map_err(|e| e.to_string())?;
+            let token = sync::get_state(conn, "device_token").map_err(|e| e.to_string())?;
+            let (Some(server_url), Some(token)) = (server_url, token) else {
+                return Err(
+                    "El respaldo en nube requiere vincular este equipo con el portal.".into(),
+                );
+            };
+            (server_url, token)
+        };
+        // `runId` operativo por transcripcion: hace idempotente el credito en el
+        // portal. El modo (estandar/diarizado) lo elige el medico en la UI.
+        let run_id = uuid::Uuid::new_v4().to_string();
+        Box::new(
+            cloud_transcription::PortalTranscriptionProvider::new(
+                server_url,
+                device_token,
+                run_id,
+                cloud_mode,
+                cloud_provider,
+            )
+            .map_err(|e| e.to_string())?,
+        )
+    } else {
+        resolve_local_transcription_provider(&app)?
+    };
+
+    // El portal calcula la duracion autoritativa del cobro con un parser que solo
+    // acepta WAV PCM, asi que la vía nube normaliza el audio a PCM 16-bit mono
+    // antes de enviarlo (reutiliza el decodificador del importador: acepta WAV a
+    // cualquier tasa/bit depth, MP3 y M4A/AAC). La vía local recibe el archivo
+    // original: Whisper lo decodifica internamente.
+    let (bytes, media_type) = if use_cloud {
+        let wav = audio::transcode_to_pcm16_wav(&bytes, &audio.media_type)
+            .map_err(|e| format!("no se pudo preparar el audio para la nube: {e}"))?;
+        (wav, "audio/wav".to_string())
+    } else {
+        (bytes, audio.media_type)
+    };
+
     with_ai(&state, |conn| {
         ai::transcribe_audio(
+            conn,
+            &encounter_id,
+            ai::AudioInput {
+                file_name: audio.file_name,
+                media_type,
+                bytes,
+                duration_seconds: audio.duration_seconds,
+            },
+            provider.as_ref(),
+        )
+    })
+}
+
+#[tauri::command]
+fn ai_save_reviewed_transcription(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    run_id: String,
+    turns: Vec<ai::ConsultationTurn>,
+) -> Result<ai::ReviewedTranscription, String> {
+    with_ai(&state, |conn| {
+        ai::save_reviewed_transcription(conn, &encounter_id, &run_id, turns)
+    })
+}
+
+#[tauri::command]
+fn ai_latest_reviewed_transcription(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+) -> Result<Option<ai::ReviewedTranscription>, String> {
+    with_ai(&state, |conn| {
+        ai::latest_reviewed_transcription(conn, &encounter_id)
+    })
+}
+
+#[tauri::command]
+fn ai_discard_reviewed_transcription(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    run_id: String,
+) -> Result<(), String> {
+    with_ai(&state, |conn| {
+        ai::discard_reviewed_transcription(conn, &encounter_id, &run_id)
+    })
+}
+
+/// Rutas en disco de los dos modelos ONNX de diarizacion (segmentacion + embedding).
+/// No exige que existan: si faltan, el diarizador fallara y el flujo degradara a
+/// transcripcion sin separacion.
+fn diarization_model_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
+    let base_dir = app_data_dir(app)?;
+    let seg = diarization_model::asset_for("diarization-segmentation")
+        .ok_or("modelo de segmentacion no reconocido")?;
+    let emb = diarization_model::asset_for("diarization-embedding")
+        .ok_or("modelo de embedding no reconocido")?;
+    Ok((
+        transcription_model::model_path(&base_dir, &seg.file_name),
+        transcription_model::model_path(&base_dir, &emb.file_name),
+    ))
+}
+
+/// Transcribe la consulta y separa hablantes (diarizacion local) para entregar un
+/// dialogo Medico/Paciente revisable. Local-first: Whisper + sherpa-onnx corren en
+/// el equipo, el audio se decodifica en memoria y se descarta. Si faltan los modelos
+/// de diarizacion o el feature nativo, `diarized=false` y el frontend cae a su
+/// heuristica de turnos sobre el texto (la consulta se transcribe igual).
+#[tauri::command]
+fn ai_diarize_consultation(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    audio: AudioTranscriptionPayload,
+    num_speakers: Option<u8>,
+) -> Result<ai::DiarizationDraft, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(audio.audio_base64.as_bytes())
+        .map_err(|_| "audio invalido".to_string())?;
+    // Seleccion del medico: 0 = Auto (sherpa estima), 1..=3 = fijo. Se acota al
+    // tope razonable; cualquier valor mayor se trata como el maximo.
+    let requested = num_speakers
+        .unwrap_or(diarization::DEFAULT_NUM_SPEAKERS)
+        .min(diarization::MAX_NUM_SPEAKERS);
+    // La diarizacion necesita los segmentos con marcas de tiempo de Whisper local;
+    // la transcripcion en nube no los aporta, asi que aqui se usa la via local.
+    let provider = resolve_local_transcription_provider(&app)?;
+    let (seg_path, emb_path) = diarization_model_paths(&app)?;
+    let diarizer = move |samples: &[f32], sample_rate: u32| {
+        sherpa_diarization::diarize_samples(
+            samples,
+            sample_rate,
+            &seg_path,
+            &emb_path,
+            requested,
+        )
+    };
+    with_ai(&state, |conn| {
+        ai::diarize_consultation(
             conn,
             &encounter_id,
             ai::AudioInput {
@@ -1321,6 +1548,7 @@ fn ai_transcribe_audio(
                 duration_seconds: audio.duration_seconds,
             },
             provider.as_ref(),
+            &diarizer,
         )
     })
 }
@@ -1335,6 +1563,54 @@ fn ai_structure_consultation(
     let registry = ai::ProviderRegistry::default_local();
     with_ai(&state, |conn| {
         ai::structure_consultation(conn, &encounter_id, turns, template.segments, &registry)
+    })
+}
+
+#[tauri::command]
+fn ai_generate_clinical_aid(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    template: ConsultationTemplatePayload,
+) -> Result<ai::ClinicalAidDraft, String> {
+    let registry = ai::ProviderRegistry::default_local();
+    with_ai(&state, |conn| {
+        ai::generate_clinical_aid(conn, &encounter_id, template.segments, &registry)
+    })
+}
+
+fn with_consultation_templates<T>(
+    state: &tauri::State<'_, AppDb>,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, consultation_templates::TemplateError>,
+) -> Result<T, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    f(conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_consultation_templates(
+    state: tauri::State<'_, AppDb>,
+) -> Result<Vec<consultation_templates::StoredTemplate>, String> {
+    with_consultation_templates(&state, consultation_templates::list_templates)
+}
+
+#[tauri::command]
+fn save_consultation_template(
+    state: tauri::State<'_, AppDb>,
+    template: consultation_templates::StoredTemplate,
+) -> Result<consultation_templates::StoredTemplate, String> {
+    with_consultation_templates(&state, |conn| {
+        consultation_templates::save_template(conn, template)
+    })
+}
+
+#[tauri::command]
+fn delete_consultation_template(
+    state: tauri::State<'_, AppDb>,
+    id: String,
+) -> Result<(), String> {
+    with_consultation_templates(&state, |conn| {
+        consultation_templates::delete_template(conn, &id)
     })
 }
 
@@ -1583,22 +1859,24 @@ fn available_disk_bytes(path: &Path) -> Option<u64> {
         .map(|disk| disk.available_space())
 }
 
-/// Estado de los modelos Whisper: presencia en disco, verificacion y progreso de
-/// descarga en curso. El frontend lo sondea para pintar el avance.
-#[tauri::command]
-fn transcription_model_status(
-    app: tauri::AppHandle,
-    downloads: tauri::State<'_, ModelDownloads>,
-) -> Result<Vec<transcription_model::ModelStatus>, String> {
-    let base_dir = app_data_dir(&app)?;
-    let progress = downloads.0.lock().unwrap().clone();
-
+/// Construye el estado de una lista de assets descargables (Whisper o diarizacion)
+/// a partir de lo observado en disco y del progreso de descarga en curso. Comun a
+/// ambos catalogos: la unica diferencia entre transcripcion y diarizacion es que
+/// assets se le pasan.
+fn collect_model_status(
+    base_dir: &Path,
+    progress: &HashMap<String, DownloadProgress>,
+    assets: Vec<transcription_model::ModelAsset>,
+) -> Vec<transcription_model::ModelStatus> {
     let mut out = Vec::new();
-    for asset in transcription_model::all_assets() {
-        let final_path = transcription_model::model_path(&base_dir, &asset.file_name);
+    for asset in assets {
+        let final_path = transcription_model::model_path(base_dir, &asset.file_name);
         let part = transcription_model::part_path(&final_path);
-        let final_present = final_path.exists();
+        let final_exists = final_path.exists();
         let final_len = fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
+        let final_size_ok =
+            transcription_model::is_complete_model_size(final_len, asset.size_bytes);
+        let final_present = final_exists && final_size_ok;
         let part_len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
 
         let prog = progress.get(&asset.model_id);
@@ -1607,6 +1885,7 @@ fn transcription_model_status(
         // Un archivo presente con checksum fijado que coincide se considera
         // verificado. Sin checksum fijado en el build, queda como no verificado.
         let verified = final_present
+            && transcription_model::should_verify_file(&asset.sha256)
             && transcription_model::verify_file(&final_path, &asset.sha256).unwrap_or(false);
         // Si hay descarga en curso, el progreso manda sobre el tamano del .part.
         let part_for_status = prog
@@ -1621,7 +1900,16 @@ fn transcription_model_status(
             part_for_status,
             verified,
             downloading,
-            error,
+            error.or_else(|| {
+                if final_exists && !final_size_ok {
+                    Some(format!(
+                        "archivo de modelo incompleto o corrupto: {} bytes, esperado {}",
+                        final_len, asset.size_bytes
+                    ))
+                } else {
+                    None
+                }
+            }),
         );
         // Durante la descarga, el total informado por el servidor (si lo hay) es
         // mas fiel que el tamano aproximado del catalogo.
@@ -1630,7 +1918,40 @@ fn transcription_model_status(
         }
         out.push(status);
     }
-    Ok(out)
+    out
+}
+
+/// Estado de los modelos Whisper: presencia en disco, verificacion y progreso de
+/// descarga en curso. El frontend lo sondea para pintar el avance.
+#[tauri::command]
+fn transcription_model_status(
+    app: tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+) -> Result<Vec<transcription_model::ModelStatus>, String> {
+    let base_dir = app_data_dir(&app)?;
+    let progress = downloads.0.lock().unwrap().clone();
+    Ok(collect_model_status(
+        &base_dir,
+        &progress,
+        transcription_model::all_assets(),
+    ))
+}
+
+/// Estado de los modelos de diarizacion (segmentacion + embedding). Mismo contrato
+/// que `transcription_model_status`; el frontend lo sondea igual. Comparte el mapa
+/// de progreso de descargas (las claves no colisionan: ids distintos).
+#[tauri::command]
+fn diarization_model_status(
+    app: tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+) -> Result<Vec<transcription_model::ModelStatus>, String> {
+    let base_dir = app_data_dir(&app)?;
+    let progress = downloads.0.lock().unwrap().clone();
+    Ok(collect_model_status(
+        &base_dir,
+        &progress,
+        diarization_model::all_assets(),
+    ))
 }
 
 /// Descarga (o reanuda) los pesos del modelo Whisper indicado a la carpeta
@@ -1646,14 +1967,68 @@ async fn download_transcription_model(
 ) -> Result<(), String> {
     let asset = transcription_model::asset_for(&model_id)
         .ok_or_else(|| format!("modelo no reconocido: {model_id}"))?;
-    let base_dir = app_data_dir(&app)?;
+    run_model_download(&app, downloads, &model_id, &asset).await
+}
+
+/// Descarga (o reanuda) un modelo de diarizacion (segmentacion o embedding) a la
+/// carpeta compartida de modelos. Misma frontera de red y garantias que la descarga
+/// de Whisper: REFERENCIA publica, sin datos del paciente, checksum si esta fijado.
+#[tauri::command]
+async fn download_diarization_model(
+    app: tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+    model_id: String,
+) -> Result<(), String> {
+    let asset = diarization_model::asset_for(&model_id)
+        .ok_or_else(|| format!("modelo no reconocido: {model_id}"))?;
+    run_model_download(&app, downloads, &model_id, &asset).await
+}
+
+/// Orquesta la descarga de cualquier asset (Whisper o diarizacion): reclama el slot
+/// bajo el mutex, valida espacio, reanuda el `.part`, informa progreso, verifica el
+/// checksum (si esta fijado) y renombra al archivo final. Comun a ambos catalogos.
+async fn run_model_download(
+    app: &tauri::AppHandle,
+    downloads: tauri::State<'_, ModelDownloads>,
+    model_id: &str,
+    asset: &transcription_model::ModelAsset,
+) -> Result<(), String> {
+    let base_dir = app_data_dir(app)?;
     let dir = transcription_model::models_dir(&base_dir);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
     let final_path = transcription_model::model_path(&base_dir, &asset.file_name);
     if final_path.exists() {
-        return Ok(());
+        let len = fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
+        if transcription_model::is_complete_model_size(len, asset.size_bytes) {
+            return Ok(());
+        }
+        fs::remove_file(&final_path).map_err(|e| e.to_string())?;
     }
+
+    // Reclama el slot de descarga bajo el mutex para impedir descargas
+    // concurrentes del mismo modelo: dos clics escribirian el mismo `.part` y se
+    // corromperian entre si (el porcentaje retrocede, el archivo final queda en
+    // 0 bytes al renombrar una mientras la otra sigue escribiendo). Si ya hay una
+    // en curso, no se inicia otra.
+    {
+        let mut map = downloads.0.lock().unwrap();
+        if let Some(p) = map.get(model_id) {
+            if !p.done && p.error.is_none() {
+                return Ok(());
+            }
+        }
+        map.insert(
+            model_id.to_string(),
+            DownloadProgress {
+                downloaded: 0,
+                total: asset.size_bytes,
+                done: false,
+                error: None,
+            },
+        );
+    }
+
     let part = transcription_model::part_path(&final_path);
     let part_len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
 
@@ -1662,18 +2037,29 @@ async fn download_transcription_model(
     if let Some(free) = available_disk_bytes(&dir) {
         let required = transcription_model::required_free_bytes(asset.size_bytes);
         if !transcription_model::has_enough_disk(free, required) {
-            return Err(format!(
+            let msg = format!(
                 "espacio insuficiente: se necesitan ~{} MB libres para {}",
                 required / (1024 * 1024),
                 asset.file_name
-            ));
+            );
+            // Libera el slot reclamado para que la UI deje de mostrar "descargando".
+            downloads.0.lock().unwrap().insert(
+                model_id.to_string(),
+                DownloadProgress {
+                    downloaded: 0,
+                    total: asset.size_bytes,
+                    done: true,
+                    error: Some(msg.clone()),
+                },
+            );
+            return Err(msg);
         }
     }
 
     let set_progress = |downloaded: u64, total: u64, done: bool, error: Option<String>| {
         let mut map = downloads.0.lock().unwrap();
         map.insert(
-            model_id.clone(),
+            model_id.to_string(),
             DownloadProgress {
                 downloaded,
                 total,
@@ -1686,10 +2072,20 @@ async fn download_transcription_model(
     let resume = transcription_model::resume_from(part_len, asset.size_bytes);
     set_progress(resume, asset.size_bytes, false, None);
 
-    match stream_to_part(&asset, &part, resume, &set_progress).await {
+    match stream_to_part(asset, &part, resume, &set_progress).await {
         Ok(total) => {
+            let downloaded_len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+            if !transcription_model::is_complete_model_size(downloaded_len, asset.size_bytes) {
+                let _ = fs::remove_file(&part);
+                let msg = format!(
+                    "la descarga quedo incompleta o corrupta: {} bytes, esperado {}",
+                    downloaded_len, asset.size_bytes
+                );
+                set_progress(0, asset.size_bytes, true, Some(msg.clone()));
+                return Err(msg);
+            }
             // Verifica el checksum si esta fijado; si no coincide, descarta.
-            if !asset.sha256.is_empty()
+            if transcription_model::should_verify_file(&asset.sha256)
                 && !transcription_model::verify_file(&part, &asset.sha256).unwrap_or(false)
             {
                 let _ = fs::remove_file(&part);
@@ -1728,15 +2124,17 @@ async fn stream_to_part(
     if !response.status().is_success() {
         return Err(format!("la fuente respondio {}", response.status()));
     }
+    let effective_resume =
+        transcription_model::resume_offset_for_http_status(resume, response.status().as_u16())?;
 
     // Total = lo ya descargado + lo que falta segun el servidor (si lo informa).
     let total = response
         .content_length()
-        .map(|r| resume + r)
+        .map(|r| effective_resume + r)
         .filter(|t| *t > 0)
         .unwrap_or(asset.size_bytes);
 
-    let mut file = if resume > 0 {
+    let mut file = if effective_resume > 0 {
         fs::OpenOptions::new()
             .append(true)
             .open(part)
@@ -1745,7 +2143,7 @@ async fn stream_to_part(
         fs::File::create(part).map_err(|e| e.to_string())?
     };
 
-    let mut downloaded = resume;
+    let mut downloaded = effective_resume;
     while let Some(chunk) = response
         .chunk()
         .await
@@ -1818,6 +2216,11 @@ fn arco_fulfill_cancellation(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Carga `src-tauri/.env` (si existe) antes de cualquier lectura de env vars
+    // como `MIDOC_GEMINI_API_KEY`. `.ok()` ignora el error cuando el archivo no
+    // existe (build de distribucion, CI, o quien prefiera exportarla a mano).
+    dotenvy::dotenv().ok();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppDb(Mutex::new(None)))
@@ -1829,6 +2232,7 @@ pub fn run() {
             lock_database,
             sync_status,
             link_account,
+            unlink_device,
             sync_now,
             sync_pending,
             publish_authorized_summary,
@@ -1849,6 +2253,8 @@ pub fn run() {
             save_note,
             save_prescription,
             update_patient_background,
+            get_patient_medical_history,
+            save_patient_medical_history,
             sign_encounter,
             verify_signature,
             list_resources,
@@ -1878,7 +2284,15 @@ pub fn run() {
             ai_assist_soap,
             ai_assist_text,
             ai_transcribe_audio,
+            ai_save_reviewed_transcription,
+            ai_latest_reviewed_transcription,
+            ai_discard_reviewed_transcription,
+            ai_diarize_consultation,
             ai_structure_consultation,
+            ai_generate_clinical_aid,
+            list_consultation_templates,
+            save_consultation_template,
+            delete_consultation_template,
             ai_review_run,
             ai_list_runs,
             ai_usage_summary,
@@ -1888,6 +2302,8 @@ pub fn run() {
             transcription_recommendation,
             transcription_model_status,
             download_transcription_model,
+            diarization_model_status,
+            download_diarization_model,
             check_medication_safety,
             medication_reference_status,
             import_medication_reference,
@@ -1907,6 +2323,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
     use std::path::Path;
 
     #[test]
@@ -1925,11 +2342,71 @@ mod tests {
     }
 
     #[test]
+    fn new_databases_require_twelve_char_passphrase() {
+        assert!(validate_passphrase("corta", true).is_err());
+        assert!(validate_passphrase("ochochars", true).is_err());
+        assert!(validate_passphrase("doce-caracteres!", true).is_ok());
+        // Cuenta caracteres, no bytes: passphrases con acentos no se penalizan.
+        assert!(validate_passphrase("ñañañañañaña", true).is_ok());
+    }
+
+    #[test]
+    fn existing_databases_keep_accepting_legacy_minimum() {
+        assert!(validate_passphrase("ochochars", false).is_ok());
+        assert!(validate_passphrase("corta", false).is_err());
+    }
+
+    #[test]
     fn profile_ids_reject_path_traversal() {
         assert!(validate_profile_id("dr-ana").is_ok());
         assert!(validate_profile_id("default").is_ok());
         assert!(validate_profile_id("../otro").is_err());
         assert!(validate_profile_id("dr/ana").is_err());
         assert!(validate_profile_id("").is_err());
+    }
+
+    #[test]
+    fn agenda_returns_one_appointment_when_two_precheckin_kinds_exist() {
+        let path = std::env::temp_dir().join(format!(
+            "midoc-agenda-precheckin-{}-{}.db",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let conn = db::open_encrypted(&path, "clave-de-prueba").unwrap();
+
+        conn.execute(
+            "INSERT INTO appointments (
+                id, status, scheduled_start, scheduled_end, service_name,
+                patient_first_name, patient_last_name, updated_at
+             ) VALUES (?1, 'CONFIRMED', ?2, ?3, 'Consulta general', 'Sebastian', 'Palos', ?4)",
+            params![
+                "appt-with-two-precheckins",
+                "2026-06-19T16:30:00Z",
+                "2026-06-19T17:00:00Z",
+                "2026-06-19T15:00:00Z"
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO precheckins (appointment_id, responses_json, kind, received_at)
+             VALUES (?1, '{}', 'medical-history', ?2)",
+            params!["appt-with-two-precheckins", "2026-06-19T15:01:00Z"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO precheckins (appointment_id, responses_json, kind, received_at)
+             VALUES (?1, '{}', 'ai-preconsulta', ?2)",
+            params!["appt-with-two-precheckins", "2026-06-19T15:02:00Z"],
+        )
+        .unwrap();
+
+        let appointments = load_appointments(&conn).unwrap();
+
+        assert_eq!(appointments.len(), 1);
+        assert_eq!(appointments[0].id, "appt-with-two-precheckins");
+        assert!(appointments[0].has_precheckin);
+
+        drop(conn);
+        let _ = std::fs::remove_file(path);
     }
 }

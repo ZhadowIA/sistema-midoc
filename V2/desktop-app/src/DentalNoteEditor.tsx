@@ -13,6 +13,7 @@ import {
   type ToothFace,
   SURFACE_STATUS_OPTIONS
 } from "./clinicalProfiles";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
 
 const UPPER_TEETH = DENTAL_TOOTH_IDS.slice(0, 16);
 const LOWER_TEETH = DENTAL_TOOTH_IDS.slice(16);
@@ -94,7 +95,7 @@ function ToothCard({
       </div>
       <label className="field compact-field">
         <span>Notas</span>
-        <textarea
+        <AutoGrowTextarea
           rows={2}
           value={tooth.notes}
           disabled={disabled}
@@ -454,7 +455,7 @@ export function DentalNoteEditor({
               </div>
               <label className="field compact-field grow-field">
                 <span>Notas</span>
-                <textarea
+                <AutoGrowTextarea
                   rows={2}
                   value={entry.notes ?? ""}
                   disabled={disabled}
@@ -608,7 +609,7 @@ export function DentalNoteEditor({
               </div>
               <label className="field compact-field grow-field">
                 <span>Notas</span>
-                <textarea
+                <AutoGrowTextarea
                   rows={2}
                   value={item.notes}
                   disabled={disabled}
@@ -653,7 +654,7 @@ export function DentalNoteEditor({
       <section className="dental-section dental-summary-grid">
         <label className="field">
           <span>Plan de higiene</span>
-          <textarea
+          <AutoGrowTextarea
             rows={3}
             value={payload.hygienePlan}
             disabled={disabled}

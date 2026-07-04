@@ -22,9 +22,15 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher-vendored-openssl"] }
+# En Windows, `bundled-sqlcipher-vendored-openssl` recompila OpenSSL completo
+# durante el arranque y puede dejar `tauri dev` (y `cargo test` en builds
+# frescos) aparentemente "colgado" varios minutos en `openssl-sys`, o fallar si
+# la maquina no tiene un perl apto para compilar OpenSSL. Usamos SQLCipher
+# bundlado enlazando contra un OpenSSL MSVC ya instalado via OPENSSL_DIR (ver
+# `.cargo/config.toml`, local por maquina).
+rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher"] }
 thiserror = "2.0.18"
-reqwest = { version = "0.13.4", features = ["json", "cookies", "blocking"] }
+reqwest = { version = "0.13.4", features = ["json", "cookies", "blocking", "multipart"] }
 uuid = { version = "1.23.3", features = ["v4"] }
 chrono = "0.4.45"
 sha2 = "0.11.0"
@@ -40,12 +46,47 @@ sysinfo = { version = "0.33", default-features = false, features = ["system", "d
 # `transcribes_real_audio_without_error`). Versiones <0.16 fallaban con el clang
 # actual (layout/opaque en whisper-rs-sys), por eso se fija 0.16.
 whisper-rs = { version = "0.16", optional = true }
+# Diarizacion (separacion de hablantes) local con sherpa-onnx. Opcional tras el
+# feature `diarization-local`: bundlea sherpa-onnx + ONNX Runtime y exige cadena
+# nativa, igual que whisper-rs. El build por defecto y las pruebas NO la necesitan
+# (el modulo `sherpa_diarization` provee un stub que degrada sin el feature). El
+# binding real se compila y verifica en staging (regla 5), como el de Whisper.
+sherpa-rs = { version = "0.6", optional = true }
+# Decodificacion de audio para el importador de archivos (WAV de cualquier
+# tasa/bit depth, MP3, M4A/AAC). Puro Rust (MPL-2.0), sin cadena nativa: a
+# diferencia de whisper-rs/sherpa-rs, compila y corre en el build y los tests
+# por defecto. No incluye Opus/OGG ni FLAC (fuera de alcance).
+symphonia = { version = "0.6", default-features = false, features = ["wav", "pcm", "mp3", "isomp4", "aac"] }
+# Resampleo a 16 kHz (lo que exige Whisper) cuando el archivo importado no
+# viene ya a esa tasa. Puro Rust, MIT.
+rubato = "0.15"
+# Carga `.env` en `src-tauri/` al arrancar, para que `MIDOC_GEMINI_API_KEY` y
+# similares no dependan de exportarlas a mano en la shell de cada equipo.
+dotenvy = "0.15"
 
 [features]
 # Activa el proveedor de transcripcion Whisper local (requiere cadena nativa).
 whisper-local = ["dep:whisper-rs"]
+# Backends de aceleracion de whisper.cpp. Se mantienen como features separados
+# (compilan solo con la cadena nativa correspondiente, verificados en staging,
+# regla 5) para que la matriz de distribucion elija por plataforma. El build por
+# defecto y las pruebas NO necesitan ninguno.
+#   - El medico tipico es CPU-only o, a lo sumo, con GPU integrada: por eso la
+#     base es CPU acelerada con OpenBLAS/AVX2 y, donde haya GPU, Vulkan universal.
+# Acelera la CPU con OpenBLAS (BLAS optimizado) — utilidad principal en equipos
+# sin GPU, que son la mayoria.
+whisper-openblas = ["whisper-local", "whisper-rs/openblas"]
+# Vulkan acelera tanto GPU integrada (Intel/AMD) como dedicada (NVIDIA/AMD) en
+# Windows/Linux: backend universal de GPU para el build de distribucion.
+whisper-vulkan = ["whisper-local", "whisper-rs/vulkan"]
+# Metal acelera en Apple Silicon (chip M) con memoria unificada: build de macOS.
+whisper-metal = ["whisper-local", "whisper-rs/metal"]
+# Compila Whisper con CUDA. Se mantiene separado para los equipos NVIDIA que
+# prefieran CUDA sobre Vulkan; los demas usan Vulkan/CPU sin depender del toolkit.
+whisper-cuda = ["whisper-local", "whisper-rs/cuda"]
+# Activa la diarizacion local con sherpa-onnx (requiere cadena nativa).
+diarization-local = ["dep:sherpa-rs"]
 
 [dev-dependencies]
 chrono = "0.4.45"
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
-

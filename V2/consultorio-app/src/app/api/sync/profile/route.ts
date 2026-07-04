@@ -7,7 +7,7 @@ import { authenticateSyncDevice, getSyncDeviceProfile } from "../../../../servic
 export async function GET(request: Request) {
   try {
     const device = await authenticateSyncDevice(request);
-    assertRateLimit({ key: `sync-profile:${device.id}`, limit: 120, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `sync-profile:${device.id}`, limit: 120, windowMs: 1000 * 60 * 15 });
 
     const profile = await getSyncDeviceProfile(device);
 

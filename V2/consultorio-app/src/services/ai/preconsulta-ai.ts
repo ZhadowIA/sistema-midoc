@@ -2,11 +2,12 @@ import { env } from "../../lib/env";
 
 /**
  * Adaptador de IA para la preconsulta guiada (paso 19, rebanada 8). Contrato
- * unico con tres implementaciones seleccionables por `AI_PROVIDER`:
+ * unico con implementaciones seleccionables por `AI_PROVIDER`:
  *
  *   - `fake`      determinista, sin red. Default para dev/pruebas.
  *   - `openai`    SDK oficial `openai`, llave en `OPENAI_API_KEY`.
  *   - `anthropic` SDK oficial `@anthropic-ai/sdk`, llave en `ANTHROPIC_API_KEY`.
+ *   - `gemini`    API REST oficial de Gemini, llave en `GEMINI_API_KEY`.
  *
  * GOBERNANZA (paso 11): el contenido que entra aqui debe venir ya
  * SEUDONIMIZADO (sin nombre, telefono, correo ni identificadores directos del
@@ -179,6 +180,82 @@ class AnthropicPreconsultaProvider implements PreconsultaAiProvider {
   }
 }
 
+type GeminiGenerateContentResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+      }>;
+    };
+  }>;
+  error?: {
+    message?: string;
+  };
+};
+
+function shouldRetryGemini(status: number) {
+  return status === 429 || status >= 500;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Proveedor Gemini (REST oficial). Solo se usa con `AI_PROVIDER=gemini`. */
+class GeminiPreconsultaProvider implements PreconsultaAiProvider {
+  readonly name = "gemini-preconsulta";
+
+  async nextQuestion(context: PreconsultaContext): Promise<NextQuestion> {
+    if (!env.GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY no esta configurada.");
+    }
+
+    const model = env.AI_MODEL ?? "gemini-2.5-flash";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+    const body = JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: SYSTEM_PROMPT }]
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: buildConversationSummary(context) }]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.4,
+        responseMimeType: "application/json"
+      }
+    });
+
+    let lastError = "Gemini no pudo continuar la preconsulta.";
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": env.GEMINI_API_KEY
+        },
+        body
+      });
+
+      const data = (await response.json().catch(() => ({}))) as GeminiGenerateContentResponse;
+      if (response.ok) {
+        const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
+        return parseModelDecision(text, context);
+      }
+
+      lastError = data.error?.message || lastError;
+      if (!shouldRetryGemini(response.status) || attempt === 2) {
+        break;
+      }
+      await wait(700 * (attempt + 1));
+    }
+
+    throw new Error(lastError);
+  }
+}
+
 let cachedProvider: PreconsultaAiProvider | null = null;
 
 /** Devuelve el proveedor seleccionado por `AI_PROVIDER` (memoizado). */
@@ -192,6 +269,9 @@ export function getPreconsultaAiProvider(): PreconsultaAiProvider {
       break;
     case "anthropic":
       cachedProvider = new AnthropicPreconsultaProvider();
+      break;
+    case "gemini":
+      cachedProvider = new GeminiPreconsultaProvider();
       break;
     default:
       cachedProvider = new FakePreconsultaProvider();

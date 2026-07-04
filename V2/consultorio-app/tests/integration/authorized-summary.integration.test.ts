@@ -25,6 +25,7 @@ async function seedDoctorWithDevice(label: string) {
     firstName: "Silvia",
     lastName: "Marin",
     professionalName: "Dra. Silvia Marin",
+    licenseNumber: "1234567",
     specialty: "GENERAL_MEDICINE",
     termsVersion: "2026-05",
     privacyVersion: "2026-05"

@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  ConsentType,
   NotificationChannel,
   NotificationKind,
   NotificationStatus,
+  PhoneNotificationChannel,
   Prisma,
   type Notification
 } from "@prisma/client";
@@ -13,11 +15,55 @@ import { env } from "../../lib/env";
 import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { generateOpaqueToken } from "../../lib/security/token";
+import { createResendEmailProvider } from "./resend-email-provider";
+import { createTwilioSmsProvider, createTwilioWhatsAppProvider } from "./twilio-sms-provider";
 
 class NotificationServiceError extends ServiceError {}
 
 const MAX_NOTIFICATION_ATTEMPTS = 3;
 const DEFAULT_BATCH_LIMIT = 25;
+
+type PhoneNotificationChannelInput = {
+  patientId?: string | null;
+  preferredPhoneChannel?: PhoneNotificationChannel | null;
+};
+
+async function latestMessagingConsent(patientId: string, type: ConsentType) {
+  const consent = await prisma.consent.findFirst({
+    where: {
+      patientId,
+      type
+    },
+    orderBy: { grantedAt: "desc" },
+    select: { granted: true }
+  });
+
+  return consent?.granted ?? null;
+}
+
+export async function phoneNotificationChannel(input?: PhoneNotificationChannelInput) {
+  const wantsWhatsApp =
+    input?.preferredPhoneChannel === PhoneNotificationChannel.WHATSAPP ||
+    (!input?.preferredPhoneChannel && env.PHONE_NOTIFICATION_CHANNEL === "WHATSAPP");
+
+  if (!input?.patientId) {
+    return NotificationChannel.SMS;
+  }
+
+  if (wantsWhatsApp) {
+    const whatsappConsent = await latestMessagingConsent(input.patientId, ConsentType.WHATSAPP_NOTIFICATIONS);
+    if (whatsappConsent === true) {
+      return NotificationChannel.WHATSAPP;
+    }
+  }
+
+  const smsConsent = await latestMessagingConsent(input.patientId, ConsentType.SMS_NOTIFICATIONS);
+  return smsConsent === false ? null : NotificationChannel.SMS;
+}
+
+function isPhoneNotificationChannel(channel: NotificationChannel) {
+  return channel === NotificationChannel.SMS || channel === NotificationChannel.WHATSAPP;
+}
 
 type TemplateContext = {
   actionUrl?: string;
@@ -25,6 +71,7 @@ type TemplateContext = {
   patientFirstName?: string | null;
   appointmentLabel?: string | null;
   expiresAt?: Date | null;
+  resetCode?: string | null;
 };
 
 type QueueNotificationInput = {
@@ -86,9 +133,21 @@ function templateMessage(kind: NotificationKind, channel: NotificationChannel, c
         body: `${patientGreeting}usa este enlace para subir tus estudios de forma segura: ${actionUrl}${expiresText ? `\nVence: ${expiresText}.` : ""}`
       };
     case NotificationKind.PASSWORD_RESET:
+      if (context.resetCode) {
+        return {
+          subject: channel === NotificationChannel.EMAIL ? "Codigo para recuperar tu cuenta MiDoc" : null,
+          body: `Tu codigo MiDoc para restablecer la contrasena es: ${context.resetCode}${expiresText ? `\nEl codigo vence el ${expiresText}.` : ""} Si no solicitaste este cambio, ignora este mensaje.`
+        };
+      }
+
       return {
         subject: channel === NotificationChannel.EMAIL ? "Restablece tu contrasena" : null,
         body: `Para restablecer la contrasena de tu cuenta MiDoc entra a: ${actionUrl}${expiresText ? `\nEl enlace vence el ${expiresText}.` : ""} Si no solicitaste este cambio, ignora este mensaje.`
+      };
+    case NotificationKind.EMAIL_VERIFICATION:
+      return {
+        subject: channel === NotificationChannel.EMAIL ? "Verifica tu correo MiDoc" : null,
+        body: `Verifica tu correo para poder publicar tu perfil medico en MiDoc: ${actionUrl}${expiresText ? `\nEl enlace vence el ${expiresText}.` : ""}`
       };
     case NotificationKind.GENERAL:
       return {
@@ -128,7 +187,7 @@ export async function queueNotification(input: QueueNotificationInput) {
   let shortLinkId: string | null = null;
   let actionUrl = input.actionUrl;
 
-  if (input.channel === NotificationChannel.SMS && input.actionUrl) {
+  if (isPhoneNotificationChannel(input.channel) && input.actionUrl) {
     const shortLink = await createShortLink({
       doctorId: input.doctorId,
       patientId: input.patientId,
@@ -188,8 +247,55 @@ async function deliverNotification(notification: Notification) {
     throw new NotificationServiceError("Mock provider transient failure.", 502);
   }
 
-  const provider =
-    notification.channel === NotificationChannel.SMS ? env.SMS_PROVIDER.toUpperCase() : env.EMAIL_PROVIDER.toUpperCase();
+  if (notification.channel === NotificationChannel.SMS && env.SMS_PROVIDER.toLowerCase() === "twilio") {
+    const provider = createTwilioSmsProvider({
+      accountSid: env.TWILIO_ACCOUNT_SID ?? "",
+      authToken: env.TWILIO_AUTH_TOKEN ?? "",
+      baseUrl: env.SMS_BASE_URL,
+      fromPhoneNumber: env.TWILIO_FROM_PHONE_NUMBER,
+      messagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID
+    });
+
+    return provider.sendSms({
+      to: notification.destination,
+      body: notification.body
+    });
+  }
+
+  if (notification.channel === NotificationChannel.WHATSAPP && env.WHATSAPP_PROVIDER.toLowerCase() === "twilio") {
+    const provider = createTwilioWhatsAppProvider({
+      accountSid: env.TWILIO_ACCOUNT_SID ?? "",
+      authToken: env.TWILIO_AUTH_TOKEN ?? "",
+      baseUrl: env.SMS_BASE_URL,
+      fromPhoneNumber: env.TWILIO_WHATSAPP_FROM_PHONE_NUMBER,
+      messagingServiceSid: env.TWILIO_WHATSAPP_MESSAGING_SERVICE_SID
+    });
+
+    return provider.sendWhatsApp({
+      to: notification.destination,
+      body: notification.body
+    });
+  }
+
+  if (notification.channel === NotificationChannel.EMAIL && env.EMAIL_PROVIDER.toLowerCase() === "resend") {
+    const provider = createResendEmailProvider({
+      apiKey: env.EMAIL_API_KEY,
+      baseUrl: env.EMAIL_BASE_URL,
+      from: env.EMAIL_FROM
+    });
+
+    return provider.sendEmail({
+      to: notification.destination,
+      subject: notification.subject ?? "Notificacion MiDoc",
+      body: notification.body
+    });
+  }
+
+  const provider = {
+    [NotificationChannel.SMS]: env.SMS_PROVIDER.toUpperCase(),
+    [NotificationChannel.WHATSAPP]: env.WHATSAPP_PROVIDER.toUpperCase(),
+    [NotificationChannel.EMAIL]: env.EMAIL_PROVIDER.toUpperCase()
+  }[notification.channel];
 
   return {
     provider,

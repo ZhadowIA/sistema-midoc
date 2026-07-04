@@ -17,6 +17,8 @@ MiDoc usa Next.js, TypeScript, Prisma, PostgreSQL, archivos clinicos, SMS, corre
 | SMS | **Twilio (decidido 2026-06-13).** Mensajeria transaccional con enlaces cortos propios. |
 | Observabilidad | Logs estructurados, alertas 5xx, latencia, pagos, SMS/email, IA y base de datos. |
 
+Dominio web decidido: **midocapp.com.mx**. Para correo transaccional con Resend se recomienda verificar un subdominio dedicado, por ejemplo `mail.midocapp.com.mx` o `notificaciones.midocapp.com.mx`, y usar remitentes como `no-reply@mail.midocapp.com.mx` despues de configurar SPF, DKIM y DMARC.
+
 ## Opciones de despliegue
 
 | Opcion | Cuando conviene | Ventajas | Riesgos |

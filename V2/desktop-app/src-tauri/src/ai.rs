@@ -45,6 +45,7 @@ pub const USAGE_INSTRUCTIONS: &str = "PATIENT_INSTRUCTIONS";
 pub const USAGE_GAPS: &str = "CLINICAL_GAPS";
 pub const USAGE_TRANSCRIPTION: &str = "TRANSCRIPTION";
 pub const USAGE_CONSULTATION_STRUCTURING: &str = "CONSULTATION_STRUCTURING";
+pub const USAGE_CLINICAL_AID: &str = "CLINICAL_AID";
 pub const AUDIO_RETENTION_DISCARD: &str = "discarded_after_transcription";
 
 const TEXT_USAGES: &[&str] = &[USAGE_SUMMARY, USAGE_INSTRUCTIONS, USAGE_GAPS];
@@ -55,6 +56,7 @@ const PROMPT_VERSION_INSTRUCTIONS: &str = "instructions/v1";
 const PROMPT_VERSION_GAPS: &str = "gaps/v1";
 const PROMPT_VERSION_TRANSCRIPTION: &str = "transcription/v1";
 pub const PROMPT_VERSION_CONSULTATION_STRUCTURING: &str = "consultation-structuring/v1";
+pub const PROMPT_VERSION_CLINICAL_AID: &str = "clinical-aid/v1";
 const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
 
 fn prompt_version_for(usage_type: &str) -> &'static str {
@@ -63,6 +65,7 @@ fn prompt_version_for(usage_type: &str) -> &'static str {
         USAGE_INSTRUCTIONS => PROMPT_VERSION_INSTRUCTIONS,
         USAGE_GAPS => PROMPT_VERSION_GAPS,
         USAGE_CONSULTATION_STRUCTURING => PROMPT_VERSION_CONSULTATION_STRUCTURING,
+        USAGE_CLINICAL_AID => PROMPT_VERSION_CLINICAL_AID,
         _ => PROMPT_VERSION_SOAP,
     }
 }
@@ -85,6 +88,25 @@ pub struct AiResponse {
     pub model_version: String,
     pub estimated_cost_cents: i64,
     pub latency_ms: i64,
+    /// Metadata de transcripcion en nube gobernada por el portal (Ruta B). `None`
+    /// para proveedores locales/LLM; la provee el `PortalTranscriptionProvider`.
+    pub cloud_transcription: Option<CloudTranscriptionMeta>,
+}
+
+/// Metadata autoritativa que devuelve el portal para una transcripcion en nube.
+/// Se persiste en el borrador local cifrado (nunca sube de vuelta al portal).
+pub struct CloudTranscriptionMeta {
+    /// `runId` operativo generado por el desktop y usado por el portal como llave
+    /// idempotente del uso. El borrador local reusa este id (no genera uno nuevo).
+    pub run_id: String,
+    /// Modo de la transcripcion: "standard" | "diarized".
+    pub mode: String,
+    /// Duracion autoritativa (segundos) con la que el portal calculo el credito.
+    pub duration_seconds: i64,
+    /// Credito comercial autoritativo cobrado por el portal.
+    pub credit_cost: i64,
+    /// Turnos anonimos crudos (JSON) en modo diarizado; `None` en modo estandar.
+    pub segments_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,10 +196,11 @@ impl ProviderRegistry {
         #[cfg(not(test))]
         {
             if let Some(gemini) = GeminiProvider::from_env() {
-                Self::new(vec![
-                    Box::new(gemini),
-                    Box::new(FakeProvider::new("fake-clinico")),
-                ])
+                // Proveedor real configurado: NO se agrega el fake como respaldo.
+                // Sustituir IA real por un borrador de demostracion en silencio es
+                // peligroso (el medico podria tomarlo por una sugerencia clinica
+                // real). Si Gemini falla, el error se reporta y el medico lo ve.
+                Self::new(vec![Box::new(gemini)])
             } else {
                 Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))])
             }
@@ -185,12 +208,17 @@ impl ProviderRegistry {
     }
 
     fn generate(&self, request: &AiRequest) -> Result<(String, AiResponse), AiError> {
+        let mut last_err: Option<AiError> = None;
         for provider in &self.providers {
-            if let Ok(response) = provider.generate(request) {
-                return Ok((provider.name().to_string(), response));
+            match provider.generate(request) {
+                Ok(response) => return Ok((provider.name().to_string(), response)),
+                // Conserva el error real del proveedor para reportarlo si todos
+                // fallan, en vez de un generico que oculta la causa (p. ej. el
+                // codigo de error de Gemini).
+                Err(err) => last_err = Some(err),
             }
         }
-        Err(AiError::AllProvidersFailed)
+        Err(last_err.unwrap_or(AiError::AllProvidersFailed))
     }
 }
 
@@ -255,6 +283,7 @@ impl AiProvider for FakeProvider {
                 "Posibles brechas clinicas a revisar (borrador):\n- Verifica antecedentes y alergias.\n- Confirma seguimiento de diagnosticos previos.\n- Contexto considerado:\n{context}\n\n(Estas son sugerencias; el criterio es del medico.)"
             ),
             USAGE_CONSULTATION_STRUCTURING => fake_structuring_output(context)?,
+            USAGE_CLINICAL_AID => fake_clinical_aid_output(context)?,
             _ => return Err(AiError::Invalid("tipo de uso no soportado por el proveedor".into())),
         };
 
@@ -267,6 +296,7 @@ impl AiProvider for FakeProvider {
             model_version: "fake-1".into(),
             estimated_cost_cents,
             latency_ms: start.elapsed().as_millis() as i64,
+            cloud_transcription: None,
         })
     }
 }
@@ -375,6 +405,12 @@ impl AiProvider for GeminiProvider {
                 "responseMimeType": "application/json",
                 "responseJsonSchema": consultation_structuring_schema()
             })
+        } else if request.usage_type == USAGE_CLINICAL_AID {
+            serde_json::json!({
+                "temperature": 0.1,
+                "responseMimeType": "application/json",
+                "responseJsonSchema": clinical_aid_schema()
+            })
         } else {
             serde_json::json!({ "temperature": 0.2 })
         };
@@ -392,13 +428,37 @@ impl AiProvider for GeminiProvider {
             "generationConfig": generation_config
         });
 
-        let client = reqwest::blocking::Client::new();
-        let response = client
-            .post(endpoint)
-            .header("x-goog-api-key", &self.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| AiError::Invalid(format!("Gemini no respondio: {e}")))?;
+        // Timeout generoso: los modelos con razonamiento + salida estructurada
+        // pueden tardar; sin timeout una conexion colgada bloquearia el flujo.
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| AiError::Invalid(format!("no se pudo crear el cliente HTTP: {e}")))?;
+
+        // Reintenta ante fallos de RED transitorios (conexion cortada/reset, DNS
+        // momentaneo). No reintenta ante respuestas HTTP: esas son deterministas y
+        // se reportan tal cual mas abajo.
+        let mut attempt = 0;
+        let response = loop {
+            attempt += 1;
+            match client
+                .post(&endpoint)
+                .header("x-goog-api-key", &self.api_key)
+                .json(&body)
+                .send()
+            {
+                Ok(resp) => break resp,
+                Err(error) if attempt < 3 => {
+                    std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
+                    let _ = error;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(AiError::Invalid(format!("Gemini no respondio: {error}")));
+                }
+            }
+        };
         if !response.status().is_success() {
             return Err(AiError::Invalid(format!(
                 "Gemini rechazo la solicitud: {}",
@@ -426,6 +486,7 @@ impl AiProvider for GeminiProvider {
             model_version: self.model.clone(),
             estimated_cost_cents: 1 + (request.redacted_input.len() as i64 / 4000),
             latency_ms: start.elapsed().as_millis() as i64,
+            cloud_transcription: None,
         })
     }
 }
@@ -500,6 +561,7 @@ impl TranscriptionProvider for FakeTranscriptionProvider {
             model_version: "fake-transcription-1".into(),
             estimated_cost_cents: 1 + (request.byte_len as i64 / 1_000_000),
             latency_ms: start.elapsed().as_millis() as i64,
+            cloud_transcription: None,
         })
     }
 }
@@ -507,14 +569,64 @@ impl TranscriptionProvider for FakeTranscriptionProvider {
 /// Seudonimiza el contexto antes de enviarlo a un proveedor: reemplaza el
 /// nombre del paciente por un marcador. Minimo viable; se endurece cuando se
 /// cablee un proveedor real.
+/// Normaliza un caracter para comparar nombres: minusculas y sin acentos. El
+/// texto viene de ASR (capitalizacion y acentos no confiables) y el expediente
+/// lo escribio el medico: ambos lados se comparan ya normalizados.
+fn normalize_name_char(c: char) -> char {
+    match c {
+        'á' | 'à' | 'ä' | 'â' | 'Á' | 'À' | 'Ä' | 'Â' => 'a',
+        'é' | 'è' | 'ë' | 'ê' | 'É' | 'È' | 'Ë' | 'Ê' => 'e',
+        'í' | 'ì' | 'ï' | 'î' | 'Í' | 'Ì' | 'Ï' | 'Î' => 'i',
+        'ó' | 'ò' | 'ö' | 'ô' | 'Ó' | 'Ò' | 'Ö' | 'Ô' => 'o',
+        'ú' | 'ù' | 'ü' | 'û' | 'Ú' | 'Ù' | 'Ü' | 'Û' => 'u',
+        'ñ' | 'Ñ' => 'n',
+        _ => c.to_ascii_lowercase(),
+    }
+}
+
+fn normalize_name_word(word: &str) -> String {
+    word.chars().map(normalize_name_char).collect()
+}
+
+/// Redacta el nombre del paciente antes de que el texto salga a un proveedor de
+/// IA (seudonimizacion del prompt). Cada PALABRA del nombre y apellido (nombres
+/// compuestos incluidos) se compara con frontera de palabra, sin distinguir
+/// mayusculas ni acentos, y se reemplaza por `[PACIENTE]`. Las palabras de menos
+/// de 3 caracteres (particulas como "de", "la") no se redactan: son lexico comun
+/// y borrarlas corromperia el texto clinico.
 pub fn redact(context: &str, first_name: &str, last_name: &str) -> String {
-    let mut out = context.to_string();
-    for token in [first_name, last_name] {
-        let token = token.trim();
-        if token.len() >= 3 {
-            out = out.replace(token, "[PACIENTE]");
+    let tokens: std::collections::HashSet<String> = [first_name, last_name]
+        .iter()
+        .flat_map(|name| name.split_whitespace())
+        .filter(|word| word.chars().count() >= 3)
+        .map(normalize_name_word)
+        .collect();
+    if tokens.is_empty() {
+        return context.to_string();
+    }
+
+    let mut out = String::with_capacity(context.len());
+    let mut word = String::new();
+    let flush = |out: &mut String, word: &mut String| {
+        if !word.is_empty() {
+            if tokens.contains(&normalize_name_word(word)) {
+                out.push_str("[PACIENTE]");
+            } else {
+                out.push_str(word);
+            }
+            word.clear();
+        }
+    };
+
+    for c in context.chars() {
+        if c.is_alphabetic() {
+            word.push(c);
+        } else {
+            flush(&mut out, &mut word);
+            out.push(c);
         }
     }
+    flush(&mut out, &mut word);
     out
 }
 
@@ -705,9 +817,17 @@ pub struct AiUsageReport {
     pub status: String,
     pub provider_name: String,
     pub provider_type: String,
+    // El portal valida estos opcionales con Zod `.optional().strict()`, que acepta
+    // que la clave falte (undefined) pero RECHAZA `null`. Serde serializa
+    // `Option::None` como `null`, asi que omitimos la clave cuando no hay valor
+    // (p. ej. un run local de transcripcion sin costo ni version de modelo);
+    // mandarla como `null` hacia que el sync fallara con "Datos invalidos.".
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model_version: Option<String>,
     pub prompt_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_cost_cents: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub latency_ms: Option<i64>,
     pub occurred_at: String,
     pub input_reference: serde_json::Value,
@@ -909,8 +1029,11 @@ fn build_context(detail: &clinical::EncounterDetail) -> String {
     if let Some(reason) = &detail.appointment_reason {
         parts.push(format!("Motivo de consulta: {reason}"));
     }
-    if let Some(precheckin) = &detail.precheckin {
-        parts.push(format!("Preconsulta del paciente: {precheckin}"));
+    if let Some(preconsulta) = &detail.preconsulta {
+        parts.push(format!("Preconsulta del paciente: {preconsulta}"));
+    }
+    if let Some(medical_history) = &detail.medical_history {
+        parts.push(format!("Cuestionario de antecedentes del paciente: {medical_history}"));
     }
     if let Some(allergies) = &detail.patient.allergies {
         parts.push(format!("Alergias: {allergies}"));
@@ -957,6 +1080,196 @@ pub struct TranscriptionDraft {
     pub estimated_cost_cents: i64,
     pub latency_ms: i64,
     pub transcript_text: String,
+    pub audio_retention_policy: String,
+    /// Turnos anonimos crudos (JSON) en modo diarizado en nube; `None` en modo
+    /// estandar o transcripcion local. El frontend los mapea con
+    /// `diarizedSegmentsToTurns` para la asignacion de roles por hablante.
+    pub segments_json: Option<String>,
+}
+
+fn clinical_aid_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["soap", "template_segments", "possibilities", "studies", "treatments", "warnings"],
+        "properties": {
+            "soap": {
+                "type": "object",
+                "required": ["subjective", "objective", "assessment", "diagnosis", "plan", "instructions", "specialty"],
+                "properties": {
+                    "subjective": {"type":"string"}, "objective": {"type":"string"},
+                    "assessment": {"type":"string"}, "diagnosis": {"type":"string"},
+                    "plan": {"type":"string"}, "instructions": {"type":"string"},
+                    "specialty": {"type":["object","null"]}
+                }
+            },
+            "template_segments": consultation_structuring_schema()["properties"]["segments"].clone(),
+            "possibilities": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["title","compatibility","explanation","supporting_findings","conflicting_findings","missing_data"],
+                    "properties": {
+                        "title":{"type":"string"},
+                        "compatibility":{"type":"string","enum":["HIGH","MEDIUM","LOW"]},
+                        "explanation":{"type":"string"},
+                        "supporting_findings":{"type":"array","items":{"type":"string"}},
+                        "conflicting_findings":{"type":"array","items":{"type":"string"}},
+                        "missing_data":{"type":"array","items":{"type":"string"}}
+                    }
+                }
+            },
+            "studies": {"type":"array","items":{"type":"object","required":["name","reason","priority"],"properties":{"name":{"type":"string"},"reason":{"type":"string"},"priority":{"type":"string","enum":["ROUTINE","SOON","URGENT"]}}}},
+            "treatments": {"type":"array","items":{"type":"object","required":["name","reason","precautions"],"properties":{"name":{"type":"string"},"reason":{"type":"string"},"precautions":{"type":"array","items":{"type":"string"}}}}},
+            "warnings":{"type":"array","items":{"type":"string"}}
+        }
+    })
+}
+
+fn fake_clinical_aid_output(context: &str) -> Result<String, AiError> {
+    let parsed: serde_json::Value = serde_json::from_str(context).unwrap_or_default();
+    let segments = parsed
+        .get("template_segments")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let template_segments = segments
+        .iter()
+        .take(4)
+        .filter_map(|segment| {
+            Some(SegmentDraft {
+                segment_id: segment.get("id")?.as_str()?.into(),
+                content: format!(
+                    "{} (borrador para revisión).",
+                    segment.get("label")?.as_str()?
+                ),
+                confidence: "medium".into(),
+                source_turns: vec!["turn-1".into()],
+                warnings: vec!["Confirmar contra la consulta.".into()],
+            })
+        })
+        .collect();
+    serde_json::to_string(&ClinicalAidOutput {
+        soap: NoteContent {
+            subjective: "Síntomas referidos en la transcripción revisada.".into(),
+            objective: String::new(),
+            assessment: "Requiere valoración clínica y exploración.".into(),
+            plan: String::new(),
+            diagnosis: String::new(),
+            instructions: String::new(),
+            specialty: serde_json::Value::Null,
+        },
+        template_segments,
+        possibilities: vec![ClinicalPossibility {
+            title: "Alteración del sueño".into(),
+            compatibility: "MEDIUM".into(),
+            explanation: "La fatiga coincide con descanso insuficiente.".into(),
+            supporting_findings: vec!["Insomnio referido".into()],
+            conflicting_findings: Vec::new(),
+            missing_data: vec!["Exploración física".into(), "Signos vitales".into()],
+        }],
+        studies: vec![StudySuggestion {
+            name: "Biometría hemática".into(),
+            reason: "Valorar causas frecuentes de fatiga si el criterio médico lo indica.".into(),
+            priority: "ROUTINE".into(),
+        }],
+        treatments: vec![TreatmentSuggestion {
+            name: "Medidas de higiene del sueño".into(),
+            reason: "La preconsulta refiere insomnio.".into(),
+            precautions: vec!["Confirmar causas secundarias.".into()],
+        }],
+        warnings: vec!["Todas las propuestas requieren revisión médica.".into()],
+    })
+    .map_err(|error| AiError::Invalid(format!("salida clinica invalida: {error}")))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClinicalPossibility {
+    pub title: String,
+    pub compatibility: String,
+    pub explanation: String,
+    pub supporting_findings: Vec<String>,
+    pub conflicting_findings: Vec<String>,
+    pub missing_data: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StudySuggestion {
+    pub name: String,
+    pub reason: String,
+    pub priority: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreatmentSuggestion {
+    pub name: String,
+    pub reason: String,
+    pub precautions: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ClinicalAidOutput {
+    soap: NoteContent,
+    template_segments: Vec<SegmentDraft>,
+    possibilities: Vec<ClinicalPossibility>,
+    studies: Vec<StudySuggestion>,
+    treatments: Vec<TreatmentSuggestion>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClinicalAidDraft {
+    pub run_id: String,
+    pub usage_type: String,
+    pub provider: String,
+    pub model_version: String,
+    pub estimated_cost_cents: i64,
+    pub latency_ms: i64,
+    pub soap: NoteContent,
+    pub template_segments: Vec<SegmentDraft>,
+    pub possibilities: Vec<ClinicalPossibility>,
+    pub studies: Vec<StudySuggestion>,
+    pub treatments: Vec<TreatmentSuggestion>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewedTranscription {
+    pub id: String,
+    pub encounter_id: String,
+    pub run_id: String,
+    pub transcript_text: String,
+    pub turns: Vec<ConsultationTurn>,
+    pub status: String,
+    pub created_at: String,
+    pub reviewed_at: String,
+}
+
+/// Motor de diarizacion inyectado: recibe muestras f32 y su frecuencia, devuelve
+/// tramos de hablante. En produccion es sherpa-onnx (tras el feature); en pruebas,
+/// un cierre determinista. Mantenerlo como alias evita un tipo "muy complejo".
+pub type Diarizer<'a> =
+    dyn Fn(&[f32], u32) -> Result<Vec<crate::diarization::SpeakerSegment>, AiError> + 'a;
+
+/// Resultado de transcribir + separar hablantes (diarizacion local). Ademas del
+/// borrador de transcripcion, trae el dialogo en turnos Medico/Paciente para que el
+/// medico lo revise. `diarized = false` cuando no hubo separacion (sin modelos,
+/// feature apagado o audio no decodificable): en ese caso el frontend cae a su
+/// heuristica de turnos sobre el texto.
+// Sin `rename_all`: el frontend (y el mock IPC) leen estos campos en snake_case,
+// igual que `TranscriptionDraft` y el resto de borradores de IA. Serializar en
+// camelCase dejaba `transcript_text`/`run_id` como undefined en el build real y
+// rompia `transcriptToTurns` con "Cannot read properties of undefined".
+#[derive(Debug, Serialize)]
+pub struct DiarizationDraft {
+    pub run_id: String,
+    pub usage_type: String,
+    pub provider: String,
+    pub model_version: String,
+    pub estimated_cost_cents: i64,
+    pub latency_ms: i64,
+    pub transcript_text: String,
+    pub turns: Vec<crate::diarization::DiarizedTurn>,
+    pub diarized: bool,
     pub audio_retention_policy: String,
 }
 
@@ -1076,8 +1389,10 @@ fn validate_consultation_turns(turns: &[ConsultationTurn]) -> Result<Vec<Consult
             if text.is_empty() {
                 return None;
             }
+            // La diarizacion en nube (Ruta B, F4) puede identificar hasta 4 roles;
+            // el medico los confirma en la UI antes de guardar o acomodar.
             let speaker = turn.speaker.trim().to_uppercase();
-            if speaker != "MEDICO" && speaker != "PACIENTE" {
+            if !matches!(speaker.as_str(), "MEDICO" | "PACIENTE" | "ACOMPANANTE" | "OTRO") {
                 return None;
             }
             Some(ConsultationTurn {
@@ -1139,20 +1454,23 @@ fn validate_template_segments(
     Ok(cleaned)
 }
 
-fn parse_structuring_output(
-    raw: &str,
-    template_segments: &[TemplateSegment],
-) -> Result<ConsultationStructuringOutput, AiError> {
-    use std::collections::HashSet;
+/// Advertencia que se inyecta cuando la IA devuelve un segmento sin fuentes en la
+/// conversacion. No se rechaza la respuesta completa: se marca el segmento para que
+/// el medico no lo tome por sustentado y lo verifique.
+const SEGMENT_NO_SOURCE_WARNING: &str =
+    "Sin fuentes en la conversacion: el medico debe verificar este segmento.";
 
-    let output: ConsultationStructuringOutput = serde_json::from_str(raw)
-        .map_err(|e| AiError::Invalid(format!("respuesta de acomodo invalida: {e}")))?;
-    let allowed: HashSet<&str> = template_segments
-        .iter()
-        .map(|segment| segment.id.as_str())
-        .collect();
-    for segment in &output.segments {
-        if !allowed.contains(segment.segment_id.as_str()) {
+/// Valida los segmentos devueltos por la IA y los repara cuando es seguro hacerlo.
+/// Errores DUROS (indican alucinacion, se rechaza todo): segmento o turno fuente
+/// inexistente, confianza invalida. Reparacion (no rechazo): un segmento sin
+/// fuentes ni advertencia recibe una advertencia explicita. Muta los segmentos.
+fn validate_and_repair_segments(
+    segments: &mut [SegmentDraft],
+    allowed_segments: &std::collections::HashSet<&str>,
+    allowed_turns: &std::collections::HashSet<&str>,
+) -> Result<(), AiError> {
+    for segment in segments.iter_mut() {
+        if !allowed_segments.contains(segment.segment_id.as_str()) {
             return Err(AiError::Invalid(format!(
                 "segmento desconocido devuelto por IA: {}",
                 segment.segment_id
@@ -1164,7 +1482,36 @@ fn parse_structuring_output(
                 segment.segment_id
             )));
         }
+        for source_turn in &segment.source_turns {
+            if !allowed_turns.contains(source_turn.as_str()) {
+                return Err(AiError::Invalid(format!(
+                    "fuente desconocida en segmento {}: {}",
+                    segment.segment_id, source_turn
+                )));
+            }
+        }
+        if segment.source_turns.is_empty() && segment.warnings.is_empty() {
+            segment.warnings.push(SEGMENT_NO_SOURCE_WARNING.to_string());
+        }
     }
+    Ok(())
+}
+
+fn parse_structuring_output(
+    raw: &str,
+    template_segments: &[TemplateSegment],
+    turns: &[ConsultationTurn],
+) -> Result<ConsultationStructuringOutput, AiError> {
+    use std::collections::HashSet;
+
+    let mut output: ConsultationStructuringOutput = serde_json::from_str(raw)
+        .map_err(|e| AiError::Invalid(format!("respuesta de acomodo invalida: {e}")))?;
+    let allowed: HashSet<&str> = template_segments
+        .iter()
+        .map(|segment| segment.id.as_str())
+        .collect();
+    let allowed_turns: HashSet<&str> = turns.iter().map(|turn| turn.id.as_str()).collect();
+    validate_and_repair_segments(&mut output.segments, &allowed, &allowed_turns)?;
     Ok(output)
 }
 
@@ -1219,7 +1566,7 @@ pub fn structure_consultation(
         redacted_input: redacted.clone(),
     };
     let (provider, response) = registry.generate(&request)?;
-    let output = parse_structuring_output(&response.output, &template_segments)?;
+    let output = parse_structuring_output(&response.output, &template_segments, &turns)?;
 
     let run_id = uuid::Uuid::new_v4().to_string();
     conn.execute(
@@ -1330,36 +1677,19 @@ pub fn transcribe_audio(
     };
     let input_metadata = audio_input_metadata(&audio)?;
     let response = provider.transcribe(&request, &audio)?;
+    let segments_json = response
+        .cloud_transcription
+        .as_ref()
+        .and_then(|meta| meta.segments_json.clone());
 
-    let run_id = uuid::Uuid::new_v4().to_string();
-    conn.execute(
-        "INSERT INTO ai_runs
-            (id, encounter_id, patient_id, usage_type, provider, model_version,
-             prompt_version, status, input_redacted, output, estimated_cost_cents,
-             latency_ms, consent_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'DRAFT', ?8, ?9, ?10, ?11, ?12, ?13)",
-        params![
-            run_id,
-            encounter_id,
-            patient_id,
-            USAGE_TRANSCRIPTION,
-            provider.name(),
-            response.model_version,
-            PROMPT_VERSION_TRANSCRIPTION,
-            input_metadata,
-            response.output,
-            response.estimated_cost_cents,
-            response.latency_ms,
-            consent_id,
-            now()
-        ],
-    )?;
-    audit(
+    let run_id = record_transcription_run(
         conn,
-        "ai_run",
-        &run_id,
-        "transcription-draft-generated",
-        Some(USAGE_TRANSCRIPTION),
+        encounter_id,
+        &patient_id,
+        provider.name(),
+        &response,
+        &input_metadata,
+        &consent_id,
     )?;
 
     Ok(TranscriptionDraft {
@@ -1370,6 +1700,392 @@ pub fn transcribe_audio(
         estimated_cost_cents: response.estimated_cost_cents,
         latency_ms: response.latency_ms,
         transcript_text: response.output,
+        audio_retention_policy: AUDIO_RETENTION_DISCARD.into(),
+        segments_json,
+    })
+}
+
+fn parse_clinical_aid_output(
+    raw: &str,
+    template_segments: &[TemplateSegment],
+    turns: &[ConsultationTurn],
+) -> Result<ClinicalAidOutput, AiError> {
+    let mut output: ClinicalAidOutput = serde_json::from_str(raw)
+        .map_err(|error| AiError::Invalid(format!("respuesta de ayuda clinica invalida: {error}")))?;
+    for item in &output.possibilities {
+        if !matches!(item.compatibility.as_str(), "HIGH" | "MEDIUM" | "LOW")
+            || item.compatibility.contains('%')
+            || item.title.trim().is_empty()
+            || item.explanation.trim().is_empty()
+        {
+            return Err(AiError::Invalid(
+                "nivel de compatibilidad clinica invalido".into(),
+            ));
+        }
+    }
+    for study in &output.studies {
+        if study.name.trim().is_empty()
+            || study.reason.trim().is_empty()
+            || !matches!(study.priority.as_str(), "ROUTINE" | "SOON" | "URGENT")
+        {
+            return Err(AiError::Invalid("estudio sugerido invalido".into()));
+        }
+    }
+    let allowed: std::collections::HashSet<&str> = template_segments
+        .iter()
+        .map(|segment| segment.id.as_str())
+        .collect();
+    let allowed_turns: std::collections::HashSet<&str> =
+        turns.iter().map(|turn| turn.id.as_str()).collect();
+    validate_and_repair_segments(&mut output.template_segments, &allowed, &allowed_turns)?;
+    Ok(output)
+}
+
+pub fn generate_clinical_aid(
+    conn: &Connection,
+    encounter_id: &str,
+    template_segments: Vec<TemplateSegment>,
+    registry: &ProviderRegistry,
+) -> Result<ClinicalAidDraft, AiError> {
+    let detail =
+        clinical::get_encounter_detail(conn, encounter_id).map_err(|_| AiError::NotFound)?;
+    if detail.encounter.status == "SIGNED" {
+        return Err(AiError::Invalid("el encuentro ya fue firmado".into()));
+    }
+    let consent_id = active_consent(
+        conn,
+        &detail.encounter.patient_id,
+        SCOPE_CONSULTATION_SCRIBE,
+    )?
+    .ok_or(AiError::ConsentMissing)?;
+    ensure_within_budget(conn)?;
+    let reviewed = latest_reviewed_transcription(conn, encounter_id)?
+        .ok_or_else(|| AiError::Invalid("revisa la transcripcion antes de usar Ayuda IA".into()))?;
+    let template_segments = validate_template_segments(&template_segments)?;
+    let input = serde_json::json!({
+        "task": "Genera propuestas clinicas revisables, no decisiones.",
+        "rules": [
+            "No expreses probabilidades numericas.",
+            "Usa HIGH, MEDIUM o LOW como compatibilidad.",
+            "Explica hallazgos a favor, en contra y faltantes.",
+            "No inventes datos.",
+            "En cada template_segment cita en source_turns los ids de turnos que lo sustentan; si la conversacion no cubre ese segmento, deja source_turns vacio y agrega una advertencia."
+        ],
+        "template_segments": &template_segments,
+        "turns": &reviewed.turns,
+        "encounter_context": build_context(&detail)
+    });
+    let redacted = redact(
+        &input.to_string(),
+        &detail.patient.first_name,
+        &detail.patient.last_name,
+    );
+    let request = AiRequest {
+        usage_type: USAGE_CLINICAL_AID.into(),
+        prompt_version: PROMPT_VERSION_CLINICAL_AID.into(),
+        redacted_input: redacted.clone(),
+    };
+    let (provider, response) = registry.generate(&request)?;
+    let output = parse_clinical_aid_output(
+        &response.output,
+        &template_segments,
+        &reviewed.turns,
+    )?;
+    let run_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO ai_runs
+            (id, encounter_id, patient_id, usage_type, provider, model_version,
+             prompt_version, status, input_redacted, output, estimated_cost_cents,
+             latency_ms, consent_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'DRAFT', ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            run_id,
+            encounter_id,
+            detail.encounter.patient_id,
+            USAGE_CLINICAL_AID,
+            provider,
+            response.model_version,
+            PROMPT_VERSION_CLINICAL_AID,
+            redacted,
+            response.output,
+            response.estimated_cost_cents,
+            response.latency_ms,
+            consent_id,
+            now()
+        ],
+    )?;
+    Ok(ClinicalAidDraft {
+        run_id,
+        usage_type: USAGE_CLINICAL_AID.into(),
+        provider,
+        model_version: response.model_version,
+        estimated_cost_cents: response.estimated_cost_cents,
+        latency_ms: response.latency_ms,
+        soap: output.soap,
+        template_segments: output.template_segments,
+        possibilities: output.possibilities,
+        studies: output.studies,
+        treatments: output.treatments,
+        warnings: output.warnings,
+    })
+}
+
+pub fn save_reviewed_transcription(
+    conn: &Connection,
+    encounter_id: &str,
+    run_id: &str,
+    turns: Vec<ConsultationTurn>,
+) -> Result<ReviewedTranscription, AiError> {
+    let run = read_run(conn, run_id)?;
+    if run.encounter_id.as_deref() != Some(encounter_id)
+        || run.usage_type != USAGE_TRANSCRIPTION
+        || run.status != "DRAFT"
+    {
+        return Err(AiError::Invalid(
+            "el borrador de transcripcion no puede revisarse".into(),
+        ));
+    }
+    let turns = validate_consultation_turns(&turns)?;
+    let transcript_text = turns
+        .iter()
+        .map(|turn| format!("{}: {}", turn.speaker, turn.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let turns_json = serde_json::to_string(&turns)
+        .map_err(|error| AiError::Invalid(format!("turnos invalidos: {error}")))?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let reviewed_at = now();
+    conn.execute(
+        "INSERT INTO consultation_transcriptions
+            (id, encounter_id, run_id, transcript_text, turns_json, status, created_at, reviewed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'REVIEWED', ?6, ?6)",
+        params![id, encounter_id, run_id, transcript_text, turns_json, reviewed_at],
+    )?;
+    review_run(conn, run_id, "APPROVED", None)?;
+    Ok(ReviewedTranscription {
+        id,
+        encounter_id: encounter_id.into(),
+        run_id: run_id.into(),
+        transcript_text,
+        turns,
+        status: "REVIEWED".into(),
+        created_at: reviewed_at.clone(),
+        reviewed_at,
+    })
+}
+
+pub fn latest_reviewed_transcription(
+    conn: &Connection,
+    encounter_id: &str,
+) -> Result<Option<ReviewedTranscription>, AiError> {
+    conn.query_row(
+        "SELECT id, encounter_id, run_id, transcript_text, turns_json, status,
+                created_at, reviewed_at
+         FROM consultation_transcriptions
+         WHERE encounter_id = ?1 AND status = 'REVIEWED'
+         ORDER BY reviewed_at DESC LIMIT 1",
+        [encounter_id],
+        |row| {
+            let turns_json: String = row.get(4)?;
+            let turns = serde_json::from_str(&turns_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    4,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok(ReviewedTranscription {
+                id: row.get(0)?,
+                encounter_id: row.get(1)?,
+                run_id: row.get(2)?,
+                transcript_text: row.get(3)?,
+                turns,
+                status: row.get(5)?,
+                created_at: row.get(6)?,
+                reviewed_at: row.get(7)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(AiError::from)
+}
+
+pub fn discard_reviewed_transcription(
+    conn: &Connection,
+    encounter_id: &str,
+    run_id: &str,
+) -> Result<(), AiError> {
+    let reviewed_exists: bool = conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM consultation_transcriptions
+            WHERE encounter_id = ?1 AND run_id = ?2 AND status = 'REVIEWED'
+        )",
+        params![encounter_id, run_id],
+        |row| row.get(0),
+    )?;
+    let run = read_run(conn, run_id)?;
+    if !reviewed_exists
+        || run.encounter_id.as_deref() != Some(encounter_id)
+        || run.usage_type != USAGE_TRANSCRIPTION
+        || run.status != "APPROVED"
+    {
+        return Err(AiError::Invalid(
+            "la transcripcion revisada no puede descartarse".into(),
+        ));
+    }
+
+    let discarded_at = now();
+    conn.execute(
+        "UPDATE consultation_transcriptions
+         SET status = 'DISCARDED'
+         WHERE encounter_id = ?1 AND run_id = ?2 AND status = 'REVIEWED'",
+        params![encounter_id, run_id],
+    )?;
+    conn.execute(
+        "UPDATE ai_runs
+         SET status = 'DISCARDED', feedback = NULL, reviewed_at = ?2, usage_reported_at = NULL
+         WHERE id = ?1",
+        params![run_id, discarded_at],
+    )?;
+    audit(
+        conn,
+        "ai_run",
+        run_id,
+        "reviewed-transcription-discarded",
+        Some(USAGE_TRANSCRIPTION),
+    )?;
+    Ok(())
+}
+
+/// Registra en estado DRAFT la traza de una transcripcion local (ai_run + auditoria),
+/// con la misma politica de residencia: solo metadata seudonimizada en `input_redacted`,
+/// nunca el audio. Comun a la transcripcion simple y a la diarizacion.
+fn record_transcription_run(
+    conn: &Connection,
+    encounter_id: &str,
+    patient_id: &str,
+    provider_name: &str,
+    response: &AiResponse,
+    input_metadata: &str,
+    consent_id: &str,
+) -> Result<String, AiError> {
+    // En nube, el borrador reusa el runId autoritativo del portal (idempotencia
+    // con el uso reportado) y persiste modo/duracion/credito/segmentos. En local,
+    // se genera un uuid y esas columnas quedan NULL.
+    let cloud = response.cloud_transcription.as_ref();
+    let run_id = cloud
+        .map(|meta| meta.run_id.clone())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let transcription_mode = cloud.map(|meta| meta.mode.clone());
+    let duration_seconds = cloud.map(|meta| meta.duration_seconds);
+    let credit_cost = cloud.map(|meta| meta.credit_cost);
+    let segments_json = cloud.and_then(|meta| meta.segments_json.clone());
+    conn.execute(
+        "INSERT INTO ai_runs
+            (id, encounter_id, patient_id, usage_type, provider, model_version,
+             prompt_version, status, input_redacted, output, estimated_cost_cents,
+             latency_ms, consent_id, created_at,
+             transcription_mode, duration_seconds, credit_cost, segments_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'DRAFT', ?8, ?9, ?10, ?11, ?12, ?13,
+                 ?14, ?15, ?16, ?17)",
+        params![
+            run_id,
+            encounter_id,
+            patient_id,
+            USAGE_TRANSCRIPTION,
+            provider_name,
+            response.model_version,
+            PROMPT_VERSION_TRANSCRIPTION,
+            input_metadata,
+            response.output,
+            response.estimated_cost_cents,
+            response.latency_ms,
+            consent_id,
+            now(),
+            transcription_mode,
+            duration_seconds,
+            credit_cost,
+            segments_json
+        ],
+    )?;
+    audit(
+        conn,
+        "ai_run",
+        &run_id,
+        "transcription-draft-generated",
+        Some(USAGE_TRANSCRIPTION),
+    )?;
+    Ok(run_id)
+}
+
+/// Transcribe la consulta y, ademas, separa hablantes (diarizacion local) para
+/// entregar un dialogo Medico/Paciente revisable. Misma gobernanza y residencia que
+/// `transcribe_audio`: consentimiento de voz vigente, presupuesto, traza DRAFT y
+/// audio transitorio (se decodifica en memoria y se descarta).
+///
+/// El `diarizer` se inyecta (cierre) para que este modulo no dependa del motor
+/// nativo: en produccion es sherpa-onnx (tras el feature `diarization-local`); sin el
+/// devuelve vacio y la transcripcion degrada a turnos por heuristica en el frontend.
+pub fn diarize_consultation(
+    conn: &Connection,
+    encounter_id: &str,
+    audio: AudioInput,
+    provider: &dyn TranscriptionProvider,
+    diarizer: &Diarizer,
+) -> Result<DiarizationDraft, AiError> {
+    validate_audio_input(&audio)?;
+
+    let detail =
+        clinical::get_encounter_detail(conn, encounter_id).map_err(|_| AiError::NotFound)?;
+    if detail.encounter.status == "SIGNED" {
+        return Err(AiError::Invalid("el encuentro ya fue firmado".into()));
+    }
+
+    let patient_id = detail.encounter.patient_id.clone();
+    let consent_id = active_consent(conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION)?
+        .ok_or(AiError::ConsentMissing)?;
+    ensure_within_budget(conn)?;
+
+    let request = TranscriptionRequest {
+        media_type: audio.media_type.clone(),
+        byte_len: audio.bytes.len(),
+        duration_seconds: audio.duration_seconds,
+    };
+    let input_metadata = audio_input_metadata(&audio)?;
+    let (response, whisper_segments) = provider.transcribe_detailed(&request, &audio)?;
+
+    // Separacion de hablantes sobre las muestras decodificadas en memoria (16 kHz
+    // mono). El audio nunca se persiste. Si no se puede decodificar o no hay
+    // motor/modelos, se degrada a transcripcion sin separacion.
+    let speaker_segments =
+        match crate::audio::decode_audio_to_whisper(&audio.bytes, &audio.media_type) {
+            Ok(decoded) => diarizer(&decoded.samples, 16_000).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+    let diarized = !speaker_segments.is_empty() && !whisper_segments.is_empty();
+    let turns =
+        crate::diarization::merge_segments_with_speakers(&whisper_segments, &speaker_segments);
+
+    let run_id = record_transcription_run(
+        conn,
+        encounter_id,
+        &patient_id,
+        provider.name(),
+        &response,
+        &input_metadata,
+        &consent_id,
+    )?;
+
+    Ok(DiarizationDraft {
+        run_id,
+        usage_type: USAGE_TRANSCRIPTION.into(),
+        provider: provider.name().into(),
+        model_version: response.model_version,
+        estimated_cost_cents: response.estimated_cost_cents,
+        latency_ms: response.latency_ms,
+        transcript_text: response.output,
+        turns,
+        diarized,
         audio_retention_policy: AUDIO_RETENTION_DISCARD.into(),
     })
 }
@@ -1718,6 +2434,7 @@ mod tests {
                 model_version: "raw-1".into(),
                 estimated_cost_cents: 3,
                 latency_ms: 4,
+                cloud_transcription: None,
             })
         }
     }
@@ -1762,6 +2479,64 @@ mod tests {
         assert!(!redacted.contains("Hugo"));
         assert!(!redacted.contains("Paz"));
         assert!(redacted.contains("[PACIENTE]"));
+    }
+
+    #[test]
+    fn redaction_is_case_insensitive() {
+        // El texto viene de ASR: la capitalizacion no es confiable.
+        let redacted = redact("hugo refiere tos. HUGO niega fiebre.", "Hugo", "Paz");
+        assert!(!redacted.to_lowercase().contains("hugo"));
+        assert!(redacted.contains("[PACIENTE]"));
+    }
+
+    #[test]
+    fn redaction_ignores_accent_mismatches() {
+        // Expediente con acento, transcripcion sin el (o al reves): mismo nombre.
+        let redacted = redact("El paciente Perez y tambien Pérez.", "José", "Pérez");
+        assert!(!redacted.contains("Perez"));
+        assert!(!redacted.contains("Pérez"));
+        // Y en la otra direccion: expediente sin acento, audio con acento.
+        let redacted = redact("Habla José sobre su tos.", "Jose", "Paz");
+        assert!(!redacted.contains("José"));
+    }
+
+    #[test]
+    fn redaction_matches_each_word_of_compound_names() {
+        // "Juan Carlos" en el expediente; en el audio solo dicen "Carlos".
+        let redacted = redact(
+            "Carlos refiere dolor. Juan asiente. Firma Juan de la Rosa.",
+            "Juan Carlos",
+            "de la Rosa",
+        );
+        assert!(!redacted.contains("Carlos"));
+        assert!(!redacted.contains("Juan"));
+        assert!(!redacted.contains("Rosa"));
+        // Las particulas cortas de apellidos compuestos ("de", "la") no se
+        // redactan: son palabras comunes y borrarlas corromperia el texto.
+        assert!(redacted.contains("de la [PACIENTE]"));
+    }
+
+    #[test]
+    fn redaction_respects_word_boundaries() {
+        // "Sol" como apellido no debe mutilar "Soledad" ni "solucion".
+        let redacted = redact("Soledad propone una solucion. Sol asiente.", "Ana", "Sol");
+        assert!(redacted.contains("Soledad"));
+        assert!(redacted.contains("solucion"));
+        assert!(!redacted.contains("Sol asiente"));
+        assert!(redacted.contains("[PACIENTE] asiente"));
+        // "Ana" dentro de "sanar" o "anatomia" tampoco se toca.
+        let redacted = redact("Va a sanar; revisar anatomia. Ana pregunta.", "Ana", "Sol");
+        assert!(redacted.contains("sanar"));
+        assert!(redacted.contains("anatomia"));
+        assert!(redacted.contains("[PACIENTE] pregunta"));
+    }
+
+    #[test]
+    fn redaction_keeps_json_structure_intact() {
+        // `redact` corre sobre el JSON serializado del prompt: los nombres entre
+        // comillas deben redactarse sin romper la estructura.
+        let redacted = redact(r#"{"turns":[{"text":"Hugo Paz refiere tos"}]}"#, "Hugo", "Paz");
+        assert!(redacted.contains(r#"{"turns":[{"text":"[PACIENTE] [PACIENTE] refiere tos"}]}"#));
     }
 
     #[test]
@@ -1854,6 +2629,57 @@ mod tests {
             ),
             Err(AiError::Invalid(message)) if message.contains("segmento desconocido")
         ));
+    }
+
+    #[test]
+    fn consultation_scribe_rejects_unknown_source_turns() {
+        let conn = test_conn("scribe-unknown-source");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
+        let registry = ProviderRegistry::new(vec![Box::new(RawProvider::new(
+            r#"{"segments":[{"segment_id":"subjective","content":"tos de tres dias","confidence":"high","source_turns":["turn-404"],"warnings":[]}],"missing":[],"warnings":[]}"#,
+        ))]);
+
+        assert!(matches!(
+            structure_consultation(
+                &conn,
+                &encounter_id,
+                scribe_turns(),
+                scribe_segments(),
+                &registry
+            ),
+            Err(AiError::Invalid(message)) if message.contains("fuente desconocida")
+        ));
+    }
+
+    #[test]
+    fn consultation_scribe_injects_warning_when_segment_has_no_sources() {
+        let conn = test_conn("scribe-source-warning");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
+        let registry = ProviderRegistry::new(vec![Box::new(RawProvider::new(
+            r#"{"segments":[{"segment_id":"subjective","content":"tos de tres dias","confidence":"low","source_turns":[],"warnings":[]}],"missing":[],"warnings":[]}"#,
+        ))]);
+
+        // Un segmento sin fuentes ya no rechaza toda la respuesta: se conserva y se
+        // marca con una advertencia para que el medico lo verifique.
+        let draft = structure_consultation(
+            &conn,
+            &encounter_id,
+            scribe_turns(),
+            scribe_segments(),
+            &registry,
+        )
+        .unwrap();
+        let segment = draft
+            .segments
+            .iter()
+            .find(|segment| segment.segment_id == "subjective")
+            .expect("el segmento se conserva");
+        assert!(
+            !segment.warnings.is_empty(),
+            "un segmento sin fuentes debe recibir advertencia automatica"
+        );
     }
 
     #[test]
@@ -2227,6 +3053,145 @@ mod tests {
         assert_eq!(draft.usage_type, USAGE_TRANSCRIPTION);
     }
 
+    /// Proveedor fake que devuelve metadata de transcripcion en nube (como el
+    /// PortalTranscriptionProvider), para probar la persistencia del borrador.
+    struct CloudFakeProvider {
+        run_id: String,
+    }
+
+    impl TranscriptionProvider for CloudFakeProvider {
+        fn name(&self) -> &str {
+            "portal-standard"
+        }
+
+        fn transcribe(
+            &self,
+            _request: &TranscriptionRequest,
+            _audio: &AudioInput,
+        ) -> Result<AiResponse, AiError> {
+            Ok(AiResponse {
+                output: "texto transcrito en nube".into(),
+                model_version: "gpt-4o-mini-transcribe".into(),
+                estimated_cost_cents: 0,
+                latency_ms: 5,
+                cloud_transcription: Some(CloudTranscriptionMeta {
+                    run_id: self.run_id.clone(),
+                    mode: "standard".into(),
+                    duration_seconds: 900,
+                    credit_cost: 1,
+                    segments_json: None,
+                }),
+            })
+        }
+    }
+
+    #[test]
+    fn cloud_transcription_uses_portal_run_id_and_persists_metadata() {
+        let conn = test_conn("cloud-draft");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = CloudFakeProvider {
+            run_id: "portal-run-xyz".into(),
+        };
+
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: b"raw audio should never be stored".to_vec(),
+                duration_seconds: Some(900),
+            },
+            &provider,
+        )
+        .unwrap();
+
+        // El borrador local usa el runId autoritativo del portal (idempotencia con
+        // el uso reportado), no un uuid nuevo.
+        assert_eq!(draft.run_id, "portal-run-xyz");
+
+        let (mode, duration, credit, segments): (
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT transcription_mode, duration_seconds, credit_cost, segments_json
+                 FROM ai_runs WHERE id = ?1",
+                params![draft.run_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(mode.as_deref(), Some("standard"));
+        assert_eq!(duration, Some(900));
+        assert_eq!(credit, Some(1));
+        assert_eq!(segments, None);
+    }
+
+    /// Proveedor fake que simula el modo diarizado del portal: ademas del texto,
+    /// devuelve los turnos anonimos crudos (`segments_json`) que la UI necesita
+    /// para presentar la asignacion de roles por hablante.
+    struct CloudDiarizedFakeProvider;
+
+    impl TranscriptionProvider for CloudDiarizedFakeProvider {
+        fn name(&self) -> &str {
+            "portal-diarized"
+        }
+
+        fn transcribe(
+            &self,
+            _request: &TranscriptionRequest,
+            _audio: &AudioInput,
+        ) -> Result<AiResponse, AiError> {
+            Ok(AiResponse {
+                output: "dialogo diarizado en nube".into(),
+                model_version: "gpt-4o-transcribe-diarize".into(),
+                estimated_cost_cents: 0,
+                latency_ms: 5,
+                cloud_transcription: Some(CloudTranscriptionMeta {
+                    run_id: "portal-run-diarized".into(),
+                    mode: "diarized".into(),
+                    duration_seconds: 600,
+                    credit_cost: 1,
+                    segments_json: Some(
+                        r#"[{"speaker":"speaker_0","startSeconds":0.0,"endSeconds":1.5,"text":"hola"}]"#
+                            .into(),
+                    ),
+                }),
+            })
+        }
+    }
+
+    #[test]
+    fn transcribe_audio_returns_segments_json_for_diarized_cloud_mode() {
+        // El borrador de transcripcion en nube diarizada debe traer `segments_json`
+        // en la respuesta al frontend (no solo persistido en `ai_runs`), para que
+        // la UI pueda mapearlo a hablantes con `diarizedSegmentsToTurns`.
+        let conn = test_conn("cloud-diarized-draft");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = CloudDiarizedFakeProvider;
+
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: b"raw audio should never be stored".to_vec(),
+                duration_seconds: Some(600),
+            },
+            &provider,
+        )
+        .unwrap();
+
+        let segments_json = draft.segments_json.expect("segments_json presente");
+        assert!(segments_json.contains("speaker_0"));
+        assert!(segments_json.contains("hola"));
+    }
+
     #[test]
     fn transcription_discards_audio_and_stores_reviewable_draft() {
         let conn = test_conn("voice-draft");
@@ -2275,6 +3240,380 @@ mod tests {
     }
 
     #[test]
+    fn saves_and_reads_reviewed_transcription_without_audio() {
+        let conn = test_conn("reviewed-transcription");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: vec![1, 2, 3],
+                duration_seconds: Some(20),
+            },
+            &provider,
+        )
+        .unwrap();
+        let reviewed = save_reviewed_transcription(
+            &conn,
+            &encounter_id,
+            &draft.run_id,
+            vec![ConsultationTurn {
+                id: "turn-1".into(),
+                speaker: "MEDICO".into(),
+                text: "¿Desde cuándo?".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(reviewed.status, "REVIEWED");
+        assert_eq!(
+            latest_reviewed_transcription(&conn, &encounter_id)
+                .unwrap()
+                .unwrap()
+                .run_id,
+            draft.run_id
+        );
+        assert!(!reviewed.transcript_text.contains("audio"));
+    }
+
+    #[test]
+    fn accepts_acompanante_and_otro_roles_from_diarizacion_en_nube() {
+        // La diarizacion en nube (Ruta B, F4) puede identificar hasta 4 roles;
+        // el medico los confirma en la UI antes de guardar la revision.
+        let conn = test_conn("reviewed-transcription-4-roles");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: vec![1, 2, 3],
+                duration_seconds: Some(20),
+            },
+            &provider,
+        )
+        .unwrap();
+        let reviewed = save_reviewed_transcription(
+            &conn,
+            &encounter_id,
+            &draft.run_id,
+            vec![
+                ConsultationTurn {
+                    id: "turn-1".into(),
+                    speaker: "MEDICO".into(),
+                    text: "¿Quién la acompaña hoy?".into(),
+                },
+                ConsultationTurn {
+                    id: "turn-2".into(),
+                    speaker: "ACOMPANANTE".into(),
+                    text: "Soy su hija.".into(),
+                },
+                ConsultationTurn {
+                    id: "turn-3".into(),
+                    speaker: "OTRO".into(),
+                    text: "Traigo los estudios previos.".into(),
+                },
+            ],
+        )
+        .unwrap();
+        assert!(reviewed.transcript_text.contains("ACOMPANANTE: Soy su hija."));
+        assert!(reviewed
+            .transcript_text
+            .contains("OTRO: Traigo los estudios previos."));
+    }
+
+    #[test]
+    fn rejects_unknown_speaker_roles() {
+        let conn = test_conn("reviewed-transcription-unknown-role");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: vec![1, 2, 3],
+                duration_seconds: Some(20),
+            },
+            &provider,
+        )
+        .unwrap();
+        let result = save_reviewed_transcription(
+            &conn,
+            &encounter_id,
+            &draft.run_id,
+            vec![ConsultationTurn {
+                id: "turn-1".into(),
+                speaker: "OBSERVADOR".into(),
+                text: "Nota no valida.".into(),
+            }],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn discards_reviewed_transcription_so_it_is_no_longer_loaded() {
+        let conn = test_conn("discard-reviewed-transcription");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+        let draft = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: vec![1, 2, 3],
+                duration_seconds: Some(20),
+            },
+            &provider,
+        )
+        .unwrap();
+        save_reviewed_transcription(
+            &conn,
+            &encounter_id,
+            &draft.run_id,
+            vec![ConsultationTurn {
+                id: "turn-1".into(),
+                speaker: "MEDICO".into(),
+                text: "Paciente con dolor de tres días.".into(),
+            }],
+        )
+        .unwrap();
+
+        discard_reviewed_transcription(&conn, &encounter_id, &draft.run_id).unwrap();
+
+        assert!(latest_reviewed_transcription(&conn, &encounter_id)
+            .unwrap()
+            .is_none());
+        assert_eq!(read_run(&conn, &draft.run_id).unwrap().status, "DISCARDED");
+    }
+
+    #[test]
+    fn clinical_aid_rejects_numeric_compatibility() {
+        let raw = r#"{
+          "soap":{"subjective":"","objective":"","assessment":"","plan":"","diagnosis":"","instructions":"","specialty":null},
+          "template_segments":[],
+          "possibilities":[{"title":"Anemia","compatibility":"82%","explanation":"Fatiga","supporting_findings":[],"conflicting_findings":[],"missing_data":[]}],
+          "studies":[],"treatments":[],"warnings":[]
+        }"#;
+        assert!(parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns()).is_err());
+    }
+
+    #[test]
+    fn clinical_aid_requires_reviewed_transcription_and_returns_levels() {
+        let conn = test_conn("clinical-aid-flow");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        grant_consent(&conn, &patient_id, SCOPE_CONSULTATION_SCRIBE).unwrap();
+        let provider = FakeTranscriptionProvider::new("fake-transcriptor");
+        let transcript = transcribe_audio(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: vec![1, 2, 3],
+                duration_seconds: Some(20),
+            },
+            &provider,
+        )
+        .unwrap();
+        save_reviewed_transcription(
+            &conn,
+            &encounter_id,
+            &transcript.run_id,
+            scribe_turns(),
+        )
+        .unwrap();
+        let draft = generate_clinical_aid(
+            &conn,
+            &encounter_id,
+            scribe_segments(),
+            &ProviderRegistry::default_local(),
+        )
+        .unwrap();
+        assert_eq!(draft.usage_type, USAGE_CLINICAL_AID);
+        assert!(draft
+            .possibilities
+            .iter()
+            .all(|item| matches!(item.compatibility.as_str(), "HIGH" | "MEDIUM" | "LOW")));
+    }
+
+    /// WAV PCM16 mono 16 kHz de silencio, para que la decodificacion de audio de
+    /// `diarize_consultation` tenga exito sin depender de audio real.
+    fn silent_wav_16k(seconds: usize) -> Vec<u8> {
+        let sample_count = 16_000 * seconds;
+        let data_len = (sample_count * 2) as u32;
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data_len).to_le_bytes());
+        out.extend_from_slice(b"WAVE");
+        out.extend_from_slice(b"fmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&16_000u32.to_le_bytes());
+        out.extend_from_slice(&32_000u32.to_le_bytes());
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&data_len.to_le_bytes());
+        out.extend(std::iter::repeat(0u8).take((sample_count * 2) as usize));
+        out
+    }
+
+    /// Proveedor de prueba que devuelve segmentos de texto con marcas de tiempo,
+    /// para ejercitar la fusion con la diarizacion.
+    struct SegmentedFakeProvider;
+    impl TranscriptionProvider for SegmentedFakeProvider {
+        fn name(&self) -> &str {
+            "fake-segmented"
+        }
+        fn transcribe(
+            &self,
+            _request: &TranscriptionRequest,
+            _audio: &AudioInput,
+        ) -> Result<AiResponse, AiError> {
+            Ok(AiResponse {
+                output: "Buenos dias. Me duele la cabeza.".into(),
+                model_version: "fake-1".into(),
+                estimated_cost_cents: 0,
+                latency_ms: 1,
+                cloud_transcription: None,
+            })
+        }
+        fn transcribe_detailed(
+            &self,
+            request: &TranscriptionRequest,
+            audio: &AudioInput,
+        ) -> Result<(AiResponse, Vec<crate::diarization::WhisperSegment>), AiError> {
+            let response = self.transcribe(request, audio)?;
+            let segments = vec![
+                crate::diarization::WhisperSegment {
+                    start_cs: 0,
+                    end_cs: 100,
+                    text: "Buenos dias.".into(),
+                },
+                crate::diarization::WhisperSegment {
+                    start_cs: 100,
+                    end_cs: 250,
+                    text: "Me duele la cabeza.".into(),
+                },
+            ];
+            Ok((response, segments))
+        }
+    }
+
+    #[test]
+    fn diarization_separates_two_speakers_and_records_draft() {
+        let conn = test_conn("diarize-ok");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = SegmentedFakeProvider;
+        // Diarizador de prueba: el primer segmento es hablante 0, el segundo el 1.
+        let diarizer = |_samples: &[f32], _sr: u32| {
+            Ok(vec![
+                crate::diarization::SpeakerSegment { start_cs: 0, end_cs: 100, speaker_idx: 0 },
+                crate::diarization::SpeakerSegment { start_cs: 100, end_cs: 250, speaker_idx: 1 },
+            ])
+        };
+
+        let draft = diarize_consultation(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: silent_wav_16k(1),
+                duration_seconds: Some(1),
+            },
+            &provider,
+            &diarizer,
+        )
+        .unwrap();
+
+        assert!(draft.diarized, "hubo separacion de hablantes");
+        assert_eq!(draft.turns.len(), 2);
+        assert_eq!(draft.turns[0].speaker_id, "speaker-0");
+        assert_eq!(draft.turns[0].role, crate::diarization::ScribeRole::Medico);
+        assert_eq!(draft.turns[1].speaker_id, "speaker-1");
+        assert_eq!(draft.turns[1].role, crate::diarization::ScribeRole::Paciente);
+        assert_eq!(draft.usage_type, USAGE_TRANSCRIPTION);
+        assert_eq!(draft.audio_retention_policy, AUDIO_RETENTION_DISCARD);
+
+        // Se registro una traza DRAFT como cualquier transcripcion local.
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM ai_runs WHERE id = ?1",
+                params![draft.run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "DRAFT");
+    }
+
+    #[test]
+    fn diarization_degrades_when_diarizer_yields_nothing() {
+        let conn = test_conn("diarize-degrade");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_VOICE_TRANSCRIPTION).unwrap();
+        let provider = SegmentedFakeProvider;
+        // Sin motor/modelos: el diarizador devuelve vacio.
+        let diarizer = |_s: &[f32], _r: u32| Ok(Vec::new());
+
+        let draft = diarize_consultation(
+            &conn,
+            &encounter_id,
+            AudioInput {
+                file_name: Some("consulta.wav".into()),
+                media_type: "audio/wav".into(),
+                bytes: silent_wav_16k(1),
+                duration_seconds: Some(1),
+            },
+            &provider,
+            &diarizer,
+        )
+        .unwrap();
+
+        assert!(!draft.diarized, "sin diarizacion, degrada");
+        assert!(draft.transcript_text.contains("duele la cabeza"));
+    }
+
+    #[test]
+    fn diarization_requires_voice_consent() {
+        let conn = test_conn("diarize-consent");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+        let provider = SegmentedFakeProvider;
+        let diarizer = |_s: &[f32], _r: u32| Ok(Vec::new());
+
+        assert!(matches!(
+            diarize_consultation(
+                &conn,
+                &encounter_id,
+                AudioInput {
+                    file_name: Some("consulta.wav".into()),
+                    media_type: "audio/wav".into(),
+                    bytes: silent_wav_16k(1),
+                    duration_seconds: Some(1),
+                },
+                &provider,
+                &diarizer,
+            ),
+            Err(AiError::ConsentMissing)
+        ));
+    }
+
+    #[test]
     fn transcription_usage_report_is_reference_only_and_transcription_provider() {
         let conn = test_conn("voice-report");
         let (encounter_id, patient_id) = seed_encounter(&conn);
@@ -2309,6 +3648,34 @@ mod tests {
         assert!(!serialized.contains("audio bytes"));
         assert!(!serialized.contains("Transcripcion"));
     }
+
+    #[test]
+    fn usage_report_omits_empty_optionals_instead_of_sending_null() {
+        // El portal valida con Zod `.optional().strict()`: la clave puede faltar,
+        // pero un `null` explicito lo rechaza ("Datos invalidos."). Un reporte con
+        // costo/latencia/version de modelo vacios debe OMITIR esas claves.
+        let report = AiUsageReport {
+            external_run_id: "run-1".into(),
+            usage_type: USAGE_TRANSCRIPTION.into(),
+            status: "APPROVED".into(),
+            provider_name: "whisper-local".into(),
+            provider_type: "TRANSCRIPTION".into(),
+            model_version: None,
+            prompt_version: "v1".into(),
+            estimated_cost_cents: None,
+            latency_ms: None,
+            occurred_at: "2026-06-16T12:00:00+00:00".into(),
+            input_reference: serde_json::json!({}),
+            output_reference: serde_json::json!({}),
+        };
+        let value = serde_json::to_value(&report).unwrap();
+        let object = value.as_object().unwrap();
+        assert!(!object.contains_key("modelVersion"));
+        assert!(!object.contains_key("estimatedCostCents"));
+        assert!(!object.contains_key("latencyMs"));
+        // Sin valores `null` en ningun campo del reporte.
+        assert!(object.values().all(|v| !v.is_null()));
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2340,4 +3707,17 @@ pub trait TranscriptionProvider: Send + Sync {
         request: &TranscriptionRequest,
         audio: &AudioInput,
     ) -> Result<AiResponse, AiError>;
+
+    /// Variante que ademas devuelve los segmentos de texto con sus marcas de tiempo
+    /// (centisegundos), necesarios para fusionar la transcripcion con la diarizacion
+    /// (separacion de hablantes). Por defecto reutiliza `transcribe` y no aporta
+    /// segmentos: los proveedores sin timestamps (nube, fake) degradan a una
+    /// transcripcion sin separacion. El proveedor Whisper local lo sobreescribe.
+    fn transcribe_detailed(
+        &self,
+        request: &TranscriptionRequest,
+        audio: &AudioInput,
+    ) -> Result<(AiResponse, Vec<crate::diarization::WhisperSegment>), AiError> {
+        Ok((self.transcribe(request, audio)?, Vec::new()))
+    }
 }

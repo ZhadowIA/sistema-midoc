@@ -197,7 +197,11 @@ pub struct EncounterDetail {
     pub patient: PatientRecord,
     pub appointment_reason: Option<String>,
     pub appointment_start: Option<String>,
-    pub precheckin: Option<String>,
+    /// Formulario de antecedentes / historia clinica que envio el paciente
+    /// (sobre kind medical-history o generic). Distinto de la preconsulta IA.
+    pub medical_history: Option<String>,
+    /// Resultado de la preconsulta guiada por IA (sobre kind ai-preconsulta).
+    pub preconsulta: Option<String>,
     pub note: Option<NoteVersion>,
     pub note_version_count: i64,
     pub prescription: Option<String>,
@@ -626,22 +630,13 @@ pub fn attend_appointment(
 /// 2. Si el medico eligio vincular (`link_patient_id`), se vincula y se devuelve.
 /// 3. Si eligio crear uno nuevo (`force_new`), se importa de la cita.
 /// 4. En automatico: vinculo de portal recordado o expediente ya existente se
-///    reusa; sin candidatos se importa; con candidatos se pide decidir.
+///    reusa; sin candidatos o con candidatos se pide decidir antes de crear.
 pub fn resolve_appointment_patient(
     conn: &Connection,
     appointment_id: &str,
     link_patient_id: Option<&str>,
     force_new: bool,
 ) -> Result<ResolveOutcome, ClinicalError> {
-    if let Some(encounter_id) = encounter_id_for_appointment(conn, appointment_id)? {
-        let patient_id = conn.query_row(
-            "SELECT patient_id FROM encounters WHERE id = ?1",
-            params![encounter_id],
-            |row| row.get::<_, String>(0),
-        )?;
-        return Ok(ResolveOutcome::Patient { patient_id });
-    }
-
     let (portal_id, appt) = read_appointment_patient(conn, appointment_id)?;
 
     // El medico eligio vincular a un expediente existente.
@@ -665,34 +660,50 @@ pub fn resolve_appointment_patient(
         return Ok(ResolveOutcome::Patient { patient_id });
     }
 
-    // Resolucion automatica por id del portal (cuenta de paciente o vinculo ya
-    // recordado): no vuelve a preguntar por la misma persona.
+    // Si la cita ya tenia encuentro, el primer click en agenda sigue mostrando
+    // la ventanita en vez de mandar directo a la linea del tiempo.
+    if let Some(encounter_id) = encounter_id_for_appointment(conn, appointment_id)? {
+        let patient_id = conn.query_row(
+            "SELECT patient_id FROM encounters WHERE id = ?1",
+            params![encounter_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        let mut candidates = Vec::new();
+        push_resolution_candidate(conn, &mut candidates, &patient_id, &appt)?;
+        return Ok(ResolveOutcome::NeedsResolution {
+            appointment_patient: appt,
+            candidates,
+        });
+    }
+
+    // Resolucion por id del portal (cuenta de paciente o vinculo ya recordado):
+    // se muestra como candidato, pero no navega automaticamente.
+    let mut candidates = Vec::new();
     if let Some(pid) = &portal_id {
         if let Some(local_id) = lookup_patient_link(conn, pid)? {
             if patient_exists(conn, &local_id)? {
-                return Ok(ResolveOutcome::Patient { patient_id: local_id });
+                push_resolution_candidate(conn, &mut candidates, &local_id, &appt)?;
             }
         }
         if patient_exists(conn, pid)? {
-            return Ok(ResolveOutcome::Patient {
-                patient_id: pid.clone(),
-            });
+            push_resolution_candidate(conn, &mut candidates, pid, &appt)?;
         }
     }
 
     // Busca duplicados con los datos de la cita (nombre con mas peso).
-    let candidates = match_patients_with_reasons(
+    for candidate in match_patients_with_reasons(
         conn,
         appt.email.as_deref(),
         appt.phone.as_deref(),
         &appt.first_name,
         &appt.last_name,
-    )?;
-
-    if candidates.is_empty() {
-        // Sin coincidencias: importa los datos y abre el expediente.
-        let patient_id = import_appointment_patient(conn, appointment_id)?;
-        return Ok(ResolveOutcome::Patient { patient_id });
+    )? {
+        if !candidates
+            .iter()
+            .any(|existing: &PatientMatch| existing.patient.id == candidate.patient.id)
+        {
+            candidates.push(candidate);
+        }
     }
 
     Ok(ResolveOutcome::NeedsResolution {
@@ -716,30 +727,44 @@ pub fn get_encounter_detail(
         .optional()?
         .ok_or(ClinicalError::NotFound)?;
 
-    let (appointment_reason, appointment_start, precheckin) = match &encounter.appointment_id {
-        Some(appointment_id) => {
-            let pair: Option<(Option<String>, String)> = conn
-                .query_row(
-                    "SELECT reason, scheduled_start FROM appointments WHERE id = ?1",
-                    params![appointment_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+    let (appointment_reason, appointment_start, medical_history, preconsulta) =
+        match &encounter.appointment_id {
+            Some(appointment_id) => {
+                let pair: Option<(Option<String>, String)> = conn
+                    .query_row(
+                        "SELECT reason, scheduled_start FROM appointments WHERE id = ?1",
+                        params![appointment_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                // Una cita puede tener dos sobres: el formulario de antecedentes
+                // (kind medical-history/generic) y la preconsulta guiada por IA
+                // (kind ai-preconsulta). Se separan para no mostrarlos cruzados.
+                let mut medical_history: Option<String> = None;
+                let mut preconsulta: Option<String> = None;
+                let mut statement = conn.prepare(
+                    "SELECT responses_json, kind FROM precheckins WHERE appointment_id = ?1",
+                )?;
+                let rows = statement.query_map(params![appointment_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                for row in rows {
+                    let (responses_json, kind) = row?;
+                    if kind == "ai-preconsulta" {
+                        preconsulta = Some(responses_json);
+                    } else {
+                        medical_history = Some(responses_json);
+                    }
+                }
+                (
+                    pair.as_ref().and_then(|(reason, _)| reason.clone()),
+                    pair.map(|(_, start)| start),
+                    medical_history,
+                    preconsulta,
                 )
-                .optional()?;
-            let precheckin: Option<String> = conn
-                .query_row(
-                    "SELECT responses_json FROM precheckins WHERE appointment_id = ?1",
-                    params![appointment_id],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            (
-                pair.as_ref().and_then(|(reason, _)| reason.clone()),
-                pair.map(|(_, start)| start),
-                precheckin,
-            )
-        }
-        None => (None, None, None),
-    };
+            }
+            None => (None, None, None, None),
+        };
 
     let note = conn
         .query_row(
@@ -811,7 +836,8 @@ pub fn get_encounter_detail(
         patient,
         appointment_reason,
         appointment_start,
-        precheckin,
+        medical_history,
+        preconsulta,
         note,
         note_version_count,
         prescription,
@@ -874,6 +900,77 @@ pub fn list_patients(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
+}
+
+fn patient_summary_by_id(
+    conn: &Connection,
+    patient_id: &str,
+) -> Result<Option<PatientSummary>, ClinicalError> {
+    Ok(list_patients(conn, None)?
+        .into_iter()
+        .find(|patient| patient.id == patient_id))
+}
+
+fn match_flags_for_summary(
+    patient: &PatientSummary,
+    appt: &AppointmentPatient,
+) -> (bool, bool, bool) {
+    let appointment_name = normalize_name(&appt.first_name, &appt.last_name);
+    let patient_name = normalize_name(&patient.first_name, &patient.last_name);
+    let matched_name = !appointment_name.is_empty() && appointment_name == patient_name;
+
+    let appointment_phone = appt
+        .phone
+        .as_deref()
+        .map(normalize_phone)
+        .filter(|phone| !phone.is_empty());
+    let patient_phone = patient
+        .phone
+        .as_deref()
+        .map(normalize_phone)
+        .filter(|phone| !phone.is_empty());
+    let matched_phone =
+        matches!((&appointment_phone, &patient_phone), (Some(left), Some(right)) if left == right);
+
+    let appointment_email = appt
+        .email
+        .as_deref()
+        .map(normalize_text)
+        .filter(|email| !email.is_empty());
+    let patient_email = patient
+        .email
+        .as_deref()
+        .map(normalize_text)
+        .filter(|email| !email.is_empty());
+    let matched_email =
+        matches!((&appointment_email, &patient_email), (Some(left), Some(right)) if left == right);
+
+    (matched_name, matched_phone, matched_email)
+}
+
+fn push_resolution_candidate(
+    conn: &Connection,
+    candidates: &mut Vec<PatientMatch>,
+    patient_id: &str,
+    appt: &AppointmentPatient,
+) -> Result<(), ClinicalError> {
+    if candidates
+        .iter()
+        .any(|candidate| candidate.patient.id == patient_id)
+    {
+        return Ok(());
+    }
+
+    if let Some(patient) = patient_summary_by_id(conn, patient_id)? {
+        let (matched_name, matched_phone, matched_email) = match_flags_for_summary(&patient, appt);
+        candidates.push(PatientMatch {
+            patient,
+            matched_name,
+            matched_phone,
+            matched_email,
+        });
+    }
+    Ok(())
 }
 
 /// Ficha de un paciente: sus datos mas el historial de encuentros con su
@@ -998,7 +1095,7 @@ pub fn match_patients_with_reasons(
         .collect();
 
     // El nombre pesa mas: los candidatos que coinciden por nombre van primero.
-    matches.sort_by(|a, b| b.matched_name.cmp(&a.matched_name));
+    matches.sort_by_key(|m| std::cmp::Reverse(m.matched_name));
     Ok(matches)
 }
 
@@ -1221,6 +1318,175 @@ pub fn delete_timeline_event(conn: &Connection, event_id: &str) -> Result<(), Cl
 }
 
 /* ---------- Nota SOAP, receta y antecedentes ---------- */
+
+#[derive(Debug, Serialize, Clone)]
+pub struct PatientMedicalHistoryVersion {
+    pub id: String,
+    pub patient_id: String,
+    pub version: i64,
+    pub payload_json: String,
+    pub source: String,
+    pub encounter_id: Option<String>,
+    pub source_appointment_id: Option<String>,
+    pub reconciled_source_hash: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SavePatientMedicalHistoryInput {
+    pub payload_json: String,
+    pub source: String,
+    pub encounter_id: Option<String>,
+    pub source_appointment_id: Option<String>,
+    pub reconciled_source_hash: Option<String>,
+}
+
+pub fn medical_history_source_hash(payload_json: &str) -> String {
+    Sha256::digest(payload_json.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn medical_history_version_from_row(
+    row: &rusqlite::Row,
+) -> rusqlite::Result<PatientMedicalHistoryVersion> {
+    Ok(PatientMedicalHistoryVersion {
+        id: row.get(0)?,
+        patient_id: row.get(1)?,
+        version: row.get(2)?,
+        payload_json: row.get(3)?,
+        source: row.get(4)?,
+        encounter_id: row.get(5)?,
+        source_appointment_id: row.get(6)?,
+        reconciled_source_hash: row.get(7)?,
+        created_at: row.get(8)?,
+    })
+}
+
+pub fn latest_patient_medical_history(
+    conn: &Connection,
+    patient_id: &str,
+) -> Result<Option<PatientMedicalHistoryVersion>, ClinicalError> {
+    conn.query_row(
+        "SELECT id, patient_id, version, payload_json, source, encounter_id,
+                source_appointment_id, reconciled_source_hash, created_at
+         FROM patient_medical_history_versions
+         WHERE patient_id = ?1
+         ORDER BY version DESC
+         LIMIT 1",
+        params![patient_id],
+        medical_history_version_from_row,
+    )
+    .optional()
+    .map_err(ClinicalError::from)
+}
+
+pub fn save_patient_medical_history_version(
+    conn: &mut Connection,
+    patient_id: &str,
+    input: &SavePatientMedicalHistoryInput,
+) -> Result<PatientMedicalHistoryVersion, ClinicalError> {
+    serde_json::from_str::<serde_json::Value>(&input.payload_json)
+        .map_err(|_| ClinicalError::Invalid("antecedentes invalidos".into()))?;
+    if !matches!(
+        input.source.as_str(),
+        "DOCTOR_EDIT" | "PATIENT_INITIAL" | "PATIENT_RECONCILIATION"
+    ) {
+        return Err(ClinicalError::Invalid(
+            "fuente de antecedentes invalida".into(),
+        ));
+    }
+    let patient_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM patients WHERE id = ?1)",
+        params![patient_id],
+        |row| row.get(0),
+    )?;
+    if !patient_exists {
+        return Err(ClinicalError::NotFound);
+    }
+    if let Some(encounter_id) = &input.encounter_id {
+        let encounter = read_encounter(conn, encounter_id)?;
+        if encounter.patient_id != patient_id {
+            return Err(ClinicalError::Invalid(
+                "el encuentro no pertenece al paciente".into(),
+            ));
+        }
+        ensure_open(&encounter)?;
+    }
+    if let (Some(appointment_id), Some(expected_hash)) = (
+        input.source_appointment_id.as_deref(),
+        input.reconciled_source_hash.as_deref(),
+    ) {
+        let current_payload: Option<String> = conn
+            .query_row(
+                "SELECT responses_json FROM precheckins
+                 WHERE appointment_id = ?1 AND kind IN ('medical-history', 'generic')
+                 ORDER BY CASE kind WHEN 'medical-history' THEN 0 ELSE 1 END
+                 LIMIT 1",
+                params![appointment_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(current_payload) = current_payload else {
+            return Err(ClinicalError::Invalid(
+                "el cuestionario del paciente ya no esta disponible".into(),
+            ));
+        };
+        if medical_history_source_hash(&current_payload) != expected_hash {
+            return Err(ClinicalError::Invalid(
+                "el cuestionario del paciente cambio; recarga antes de guardar".into(),
+            ));
+        }
+    }
+
+    let tx = conn.transaction()?;
+    let next_version: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(version), 0) + 1
+         FROM patient_medical_history_versions WHERE patient_id = ?1",
+        params![patient_id],
+        |row| row.get(0),
+    )?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let created_at = now();
+    tx.execute(
+        "INSERT INTO patient_medical_history_versions (
+            id, patient_id, version, payload_json, source, encounter_id,
+            source_appointment_id, reconciled_source_hash, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            id,
+            patient_id,
+            next_version,
+            input.payload_json,
+            input.source,
+            input.encounter_id,
+            input.source_appointment_id,
+            input.reconciled_source_hash,
+            created_at
+        ],
+    )?;
+    audit(
+        &tx,
+        "patient_medical_history",
+        patient_id,
+        "version-saved",
+        Some(&format!("v{next_version};source={}", input.source)),
+    )?;
+    tx.commit()?;
+
+    Ok(PatientMedicalHistoryVersion {
+        id,
+        patient_id: patient_id.to_string(),
+        version: next_version,
+        payload_json: input.payload_json.clone(),
+        source: input.source.clone(),
+        encounter_id: input.encounter_id.clone(),
+        source_appointment_id: input.source_appointment_id.clone(),
+        reconciled_source_hash: input.reconciled_source_hash.clone(),
+        created_at,
+    })
+}
 
 pub fn save_note(
     conn: &Connection,
@@ -1602,6 +1868,104 @@ mod tests {
     }
 
     #[test]
+    fn patient_medical_history_versions_increment_and_keep_precheckin_immutable() {
+        let mut conn = test_conn("patient-medical-history");
+        seed_appointment(&conn, "appt-mh", "pat-mh");
+        let encounter = open_encounter_for_appointment(&conn, "appt-mh").unwrap();
+        let patient_payload = r#"{"allergies":"Penicilina","identification":{"estado":"Jalisco"}}"#;
+        conn.execute(
+            "INSERT INTO precheckins (appointment_id, responses_json, kind, received_at)
+             VALUES (?1, ?2, 'medical-history', '2026-06-19T15:00:00Z')",
+            params!["appt-mh", patient_payload],
+        )
+        .unwrap();
+        let source_hash = medical_history_source_hash(patient_payload);
+
+        let first = save_patient_medical_history_version(
+            &mut conn,
+            "pat-mh",
+            &SavePatientMedicalHistoryInput {
+                payload_json: r#"{"allergies":"Penicilina"}"#.into(),
+                source: "PATIENT_INITIAL".into(),
+                encounter_id: Some(encounter.id.clone()),
+                source_appointment_id: Some("appt-mh".into()),
+                reconciled_source_hash: Some(source_hash.clone()),
+            },
+        )
+        .unwrap();
+        let second = save_patient_medical_history_version(
+            &mut conn,
+            "pat-mh",
+            &SavePatientMedicalHistoryInput {
+                payload_json: r#"{"allergies":"Sulfas"}"#.into(),
+                source: "DOCTOR_EDIT".into(),
+                encounter_id: Some(encounter.id),
+                source_appointment_id: Some("appt-mh".into()),
+                reconciled_source_hash: Some(source_hash),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(first.version, 1);
+        assert_eq!(second.version, 2);
+        assert_eq!(
+            latest_patient_medical_history(&conn, "pat-mh")
+                .unwrap()
+                .unwrap()
+                .payload_json,
+            r#"{"allergies":"Sulfas"}"#
+        );
+        let original: String = conn
+            .query_row(
+                "SELECT responses_json FROM precheckins
+                 WHERE appointment_id = 'appt-mh' AND kind = 'medical-history'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(original, patient_payload);
+        let audit_details: String = conn
+            .query_row(
+                "SELECT details FROM clinical_audit
+                 WHERE entity = 'patient_medical_history'
+                 ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!audit_details.contains("Sulfas"));
+    }
+
+    #[test]
+    fn patient_medical_history_rejects_unknown_patient_and_signed_encounter() {
+        let mut conn = test_conn("patient-medical-history-guards");
+        let input = SavePatientMedicalHistoryInput {
+            payload_json: "{}".into(),
+            source: "DOCTOR_EDIT".into(),
+            encounter_id: None,
+            source_appointment_id: None,
+            reconciled_source_hash: None,
+        };
+        assert!(matches!(
+            save_patient_medical_history_version(&mut conn, "missing", &input),
+            Err(ClinicalError::NotFound)
+        ));
+
+        seed_appointment(&conn, "appt-signed-mh", "pat-signed-mh");
+        let encounter = open_encounter_for_appointment(&conn, "appt-signed-mh").unwrap();
+        save_note(&conn, &encounter.id, &NoteContent::default()).unwrap();
+        sign_encounter(&conn, &encounter.id).unwrap();
+        let signed_input = SavePatientMedicalHistoryInput {
+            encounter_id: Some(encounter.id),
+            ..input
+        };
+        assert!(matches!(
+            save_patient_medical_history_version(&mut conn, "pat-signed-mh", &signed_input),
+            Err(ClinicalError::AlreadySigned)
+        ));
+    }
+
+    #[test]
     fn specialty_payload_roundtrips_and_is_covered_by_signature() {
         let conn = test_conn("specialty");
         seed_appointment(&conn, "appt-6", "pat-6");
@@ -1837,12 +2201,15 @@ mod tests {
         assert!(!patient_exists(&conn, "portal-xyz").unwrap());
         assert_eq!(encounter_count_for(&conn, "appt-1"), 0);
 
-        // Una segunda cita del MISMO id de portal se resuelve sola (vinculo
-        // recordado) y abre el mismo expediente, sin volver a preguntar.
+        // Una segunda cita del MISMO id de portal ya conoce el vinculo, pero
+        // desde la agenda igual debe mostrar la ventanita antes de navegar.
         seed_appointment(&conn, "appt-2", "portal-xyz");
         match resolve_appointment_patient(&conn, "appt-2", None, false).unwrap() {
-            ResolveOutcome::Patient { patient_id } => assert_eq!(patient_id, local.id),
-            _ => panic!("el vinculo recordado debio resolver solo"),
+            ResolveOutcome::NeedsResolution { candidates, .. } => {
+                assert_eq!(candidates.len(), 1);
+                assert_eq!(candidates[0].patient.id, local.id);
+            }
+            ResolveOutcome::Patient { .. } => panic!("debio mostrar resolucion, no navegar"),
         }
     }
 
@@ -1851,13 +2218,39 @@ mod tests {
         let conn = test_conn("resolve-new");
         seed_appointment(&conn, "appt-9", "portal-new");
 
-        // Sin coincidencias: importa el expediente y lo abre, sin encuentro.
+        // Sin coincidencias: la agenda no importa ni abre nada automaticamente.
+        // El medico debe confirmar si crea un expediente nuevo.
         match resolve_appointment_patient(&conn, "appt-9", None, false).unwrap() {
+            ResolveOutcome::NeedsResolution {
+                appointment_patient,
+                candidates,
+            } => {
+                assert_eq!(appointment_patient.first_name, "Hugo");
+                assert!(candidates.is_empty());
+            }
+            ResolveOutcome::Patient { .. } => panic!("debio pedir confirmacion para crear"),
+        }
+        assert!(!patient_exists(&conn, "portal-new").unwrap());
+        assert_eq!(encounter_count_for(&conn, "appt-9"), 0);
+
+        // El medico confirma crear el expediente nuevo.
+        match resolve_appointment_patient(&conn, "appt-9", None, true).unwrap() {
             ResolveOutcome::Patient { patient_id } => assert_eq!(patient_id, "portal-new"),
-            _ => panic!("sin duplicados debio importar y abrir el expediente"),
+            _ => panic!("force_new debio crear expediente nuevo"),
         }
         assert!(patient_exists(&conn, "portal-new").unwrap());
         assert_eq!(encounter_count_for(&conn, "appt-9"), 0);
+
+        // Si el id del portal ya existe como expediente local, tampoco debe
+        // navegar automaticamente desde la agenda.
+        seed_appointment(&conn, "appt-11", "portal-new");
+        match resolve_appointment_patient(&conn, "appt-11", None, false).unwrap() {
+            ResolveOutcome::NeedsResolution { candidates, .. } => {
+                assert_eq!(candidates.len(), 1);
+                assert_eq!(candidates[0].patient.id, "portal-new");
+            }
+            ResolveOutcome::Patient { .. } => panic!("debio mostrar resolucion, no navegar"),
+        }
 
         // force_new sobre una persona con duplicado tambien evita el encuentro.
         create_patient(

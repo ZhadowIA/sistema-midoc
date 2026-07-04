@@ -405,6 +405,62 @@ const MIGRATIONS: &[&str] = &[
     // Antecedentes (paso 19, rebanada 7): distingue la preconsulta generica del
     // formulario de antecedentes (historia clinica), que llega sellado E2E.
     "ALTER TABLE precheckins ADD COLUMN kind TEXT NOT NULL DEFAULT 'generic';",
+    // Historia clinica completa: la preconsulta guiada por IA y el formulario de
+    // antecedentes son sobres distintos (kind) para la misma cita y ya no deben
+    // pisarse. Se recrea `precheckins` con PK compuesta (appointment_id, kind)
+    // para que ambos coexistan. SQLite no permite ALTER de PK: se recrea la tabla
+    // preservando las filas existentes. Sigue siendo CLINICO (vive solo aqui).
+    "CREATE TABLE precheckins_new (
+        appointment_id TEXT NOT NULL,
+        responses_json TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'generic',
+        received_at TEXT NOT NULL,
+        PRIMARY KEY (appointment_id, kind)
+    );
+    INSERT INTO precheckins_new (appointment_id, responses_json, kind, received_at)
+        SELECT appointment_id, responses_json, kind, received_at FROM precheckins;
+    DROP TABLE precheckins;
+    ALTER TABLE precheckins_new RENAME TO precheckins;",
+    // Historia clinica permanente y versionada por paciente. El cuestionario
+    // recibido permanece inmutable en precheckins; cada conciliacion o edicion
+    // del medico crea una version local nueva.
+    "CREATE TABLE patient_medical_history_versions (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients(id),
+        version INTEGER NOT NULL,
+        payload_json TEXT NOT NULL,
+        source TEXT NOT NULL,
+        encounter_id TEXT REFERENCES encounters(id),
+        source_appointment_id TEXT,
+        reconciled_source_hash TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(patient_id, version)
+    );
+    CREATE INDEX idx_patient_medical_history_latest
+        ON patient_medical_history_versions(patient_id, version DESC);",
+    // Transcripción corregida por el médico. CLINICO: solo SQLite cifrado local.
+    "CREATE TABLE consultation_transcriptions (
+        id TEXT PRIMARY KEY NOT NULL,
+        encounter_id TEXT NOT NULL REFERENCES encounters(id),
+        run_id TEXT NOT NULL UNIQUE REFERENCES ai_runs(id),
+        transcript_text TEXT NOT NULL,
+        turns_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'REVIEWED',
+        created_at TEXT NOT NULL,
+        reviewed_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_consultation_transcriptions_encounter
+        ON consultation_transcriptions(encounter_id, reviewed_at DESC);",
+    // Metadata del borrador de transcripcion en nube gobernada por el portal
+    // (Ruta B, F3). Clase: CLINICO (segmentos) + OPERATIVO (modo/duracion/credito);
+    // todo permanece en la base local cifrada, nunca sube al portal. `credit_cost`
+    // es el cobro autoritativo que fijo el portal; `segments_json` guarda los
+    // turnos anonimos crudos (speaker_0) antes de asignar roles (F4). Nullable
+    // para que las filas existentes migren sin datos.
+    "ALTER TABLE ai_runs ADD COLUMN transcription_mode TEXT;
+    ALTER TABLE ai_runs ADD COLUMN duration_seconds INTEGER;
+    ALTER TABLE ai_runs ADD COLUMN credit_cost INTEGER;
+    ALTER TABLE ai_runs ADD COLUMN segments_json TEXT;",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
@@ -523,6 +579,38 @@ mod tests {
         drop(open_encrypted(&path, "k").unwrap());
         let conn = open_encrypted(&path, "k").unwrap();
         assert_eq!(schema_version(&conn).unwrap(), MIGRATIONS.len() as i64);
+    }
+
+    #[test]
+    fn creates_local_reviewed_transcription_table() {
+        let path = temp_db_path("reviewed-transcriptions");
+        let conn = open_encrypted(&path, "clave-correcta").unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('consultation_transcriptions')
+                 WHERE name IN ('transcript_text', 'turns_json', 'reviewed_at')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn ai_runs_has_cloud_transcription_columns() {
+        // Metadata del borrador de transcripcion en nube gobernada (Ruta B, F3):
+        // modo, duracion autoritativa, credito y segmentos crudos del portal.
+        let path = temp_db_path("cloud-tx-columns");
+        let conn = open_encrypted(&path, "clave-correcta").unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('ai_runs')
+                 WHERE name IN ('transcription_mode', 'duration_seconds', 'credit_cost', 'segments_json')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 4);
     }
 
     #[test]

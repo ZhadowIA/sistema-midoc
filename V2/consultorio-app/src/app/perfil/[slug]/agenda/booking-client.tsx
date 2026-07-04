@@ -10,6 +10,8 @@ type PublicProfile = {
   doctor: {
     publicSlug: string;
     professionalName: string;
+    /** Zona horaria del consultorio: los horarios se muestran en ella, no en la del paciente. */
+    timeZone: string;
   };
   services: Array<{
     id: string;
@@ -56,7 +58,8 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
   const [bookingFor, setBookingFor] = useState<"self" | "other">("self");
   const [patient, setPatient] = useState({
     firstName: "",
-    lastName: "",
+    apellidoPaterno: "",
+    apellidoMaterno: "",
     phone: "",
     email: "",
     birthDate: "",
@@ -67,6 +70,15 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
     relationship: "",
     phone: "",
     email: ""
+  });
+  const [notificationConsent, setNotificationConsent] = useState<{
+    sms: boolean;
+    whatsapp: boolean;
+    preferredPhoneChannel?: "SMS" | "WHATSAPP";
+  }>({
+    sms: true,
+    whatsapp: false,
+    preferredPhoneChannel: "SMS"
   });
   // Clave de pais del telefono: Mexico por defecto, autodetectada del locale tras
   // montar (evita desajuste de hidratacion) y editable por el usuario.
@@ -236,7 +248,8 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
           holdToken,
           patient: {
             firstName: patient.firstName,
-            lastName: patient.lastName,
+            apellidoPaterno: patient.apellidoPaterno,
+            apellidoMaterno: patient.apellidoMaterno || undefined,
             phone: patient.phone ? formatFullPhone(patientCountry, patient.phone) : undefined,
             email: patient.email || undefined,
             birthDate: patient.birthDate || undefined
@@ -255,7 +268,8 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
               : undefined,
           legal: {
             acceptedTerms: true,
-            acceptedPrivacy: true
+            acceptedPrivacy: true,
+            notificationConsent
           }
         })
       });
@@ -335,7 +349,10 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
                 >
                   {new Intl.DateTimeFormat("es-MX", {
                     hour: "2-digit",
-                    minute: "2-digit"
+                    minute: "2-digit",
+                    // En la zona del consultorio: el slot viaja en UTC pero
+                    // representa la hora de pared del medico, no la del paciente.
+                    timeZone: profile.doctor.timeZone
                   }).format(new Date(slot.slotStart))}
                 </button>
               ))}
@@ -385,12 +402,21 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
           </label>
 
           <label className="field">
-            <span>{bookingFor === "other" ? "Apellidos del paciente*" : "Apellidos*"}</span>
+            <span>{bookingFor === "other" ? "Apellido paterno del paciente*" : "Apellido paterno*"}</span>
             <input
               required
-              placeholder={bookingFor === "other" ? "Apellidos del paciente" : "Tus apellidos"}
-              value={patient.lastName}
-              onChange={(event) => setPatient((current) => ({ ...current, lastName: event.target.value }))}
+              placeholder={bookingFor === "other" ? "Apellido paterno del paciente" : "Tu apellido paterno"}
+              value={patient.apellidoPaterno}
+              onChange={(event) => setPatient((current) => ({ ...current, apellidoPaterno: event.target.value }))}
+            />
+          </label>
+
+          <label className="field">
+            <span>{bookingFor === "other" ? "Apellido materno del paciente" : "Apellido materno"}</span>
+            <input
+              placeholder="Opcional"
+              value={patient.apellidoMaterno}
+              onChange={(event) => setPatient((current) => ({ ...current, apellidoMaterno: event.target.value }))}
             />
           </label>
 
@@ -423,6 +449,89 @@ export function BookingClient({ profile, initialDate }: BookingClientProps) {
               onChange={(event) => setPatient((current) => ({ ...current, email: event.target.value }))}
             />
           </label>
+
+          <fieldset className="field field-full notification-consent-fieldset">
+            <legend>Recordatorios por teléfono</legend>
+
+            <div className="notification-consent-checks">
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={notificationConsent.sms}
+                  onChange={(event) =>
+                    setNotificationConsent((current) => ({
+                      ...current,
+                      sms: event.target.checked,
+                      preferredPhoneChannel: !event.target.checked && current.preferredPhoneChannel === "SMS"
+                        ? current.whatsapp
+                          ? "WHATSAPP"
+                          : undefined
+                        : current.preferredPhoneChannel
+                    }))
+                  }
+                />
+                <span>Acepto SMS</span>
+              </label>
+
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={notificationConsent.whatsapp}
+                  onChange={(event) =>
+                    setNotificationConsent((current) => ({
+                      ...current,
+                      whatsapp: event.target.checked,
+                      preferredPhoneChannel: !event.target.checked && current.preferredPhoneChannel === "WHATSAPP"
+                        ? current.sms
+                          ? "SMS"
+                          : undefined
+                        : current.preferredPhoneChannel
+                    }))
+                  }
+                />
+                <span>Acepto WhatsApp</span>
+              </label>
+            </div>
+
+            <div className="booking-for-toggle notification-channel-toggle" role="radiogroup" aria-label="Canal preferido">
+              <button
+                type="button"
+                className={
+                  notificationConsent.preferredPhoneChannel === "SMS" ? "toggle-option toggle-active" : "toggle-option"
+                }
+                aria-pressed={notificationConsent.preferredPhoneChannel === "SMS"}
+                disabled={!notificationConsent.sms}
+                onClick={() =>
+                  setNotificationConsent((current) => ({
+                    ...current,
+                    sms: true,
+                    preferredPhoneChannel: "SMS"
+                  }))
+                }
+              >
+                SMS
+              </button>
+              <button
+                type="button"
+                className={
+                  notificationConsent.preferredPhoneChannel === "WHATSAPP"
+                    ? "toggle-option toggle-active"
+                    : "toggle-option"
+                }
+                aria-pressed={notificationConsent.preferredPhoneChannel === "WHATSAPP"}
+                disabled={!notificationConsent.whatsapp}
+                onClick={() =>
+                  setNotificationConsent((current) => ({
+                    ...current,
+                    whatsapp: true,
+                    preferredPhoneChannel: "WHATSAPP"
+                  }))
+                }
+              >
+                WhatsApp
+              </button>
+            </div>
+          </fieldset>
 
           {bookingFor === "other" ? (
             <fieldset className="field field-full guardian-fieldset">

@@ -80,8 +80,10 @@ fn synced_appointment_drives_a_full_signed_consultation() {
     assert_eq!(detail.patient.first_name, "Hugo");
     assert_eq!(detail.appointment_reason.as_deref(), Some("Dolor lumbar"));
     assert_eq!(detail.appointment_start.as_deref(), Some("2026-06-22T15:00:00.000Z"));
-    let precheckin = detail.precheckin.expect("la preconsulta debe estar disponible");
-    assert!(precheckin.contains("Dolor lumbar de 2 semanas"));
+    let medical_history = detail
+        .medical_history
+        .expect("el cuestionario del paciente debe estar disponible");
+    assert!(medical_history.contains("Dolor lumbar de 2 semanas"));
 
     // 3. Antecedentes + nota SOAP con plantilla de medicina general + receta.
     update_patient_background(

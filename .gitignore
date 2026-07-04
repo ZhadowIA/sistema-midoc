@@ -44,7 +44,11 @@ whatsapp-bot/.wwebjs_cache/
 .claude/
 .atl/
 .superpowers/
+.worktrees/
 
 # Temporary files
 tmp_*.js
 tmp_*.txt
+
+# Residuos de verificacion local de builds nativos
+tmp-cmake-blas-check/

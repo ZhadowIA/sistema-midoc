@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { z, ZodError } from "zod";
 
 import { assertRateLimit } from "../../../../../../lib/rate-limit";
+import { assertAiPreconsultaNotSubmitted } from "../../../../../../services/booking/public-booking-service";
 import { getPreconsultaAiProvider } from "../../../../../../services/ai/preconsulta-ai";
 
 /** Maximo de preguntas adaptativas de la entrevista (paso 19, rebanada 8). */
@@ -23,9 +24,10 @@ const chatSchema = z.object({
 export async function POST(request: Request, context: { params: Promise<{ token: string }> }) {
   try {
     const { token } = await context.params;
-    assertRateLimit({ key: `preconsulta-ai:${token}`, limit: 60, windowMs: 1000 * 60 * 15 });
+    await assertRateLimit({ key: `preconsulta-ai:${token}`, limit: 10, windowMs: 1000 * 60 * 15 });
 
     const payload = chatSchema.parse(await request.json());
+    await assertAiPreconsultaNotSubmitted(token);
     const provider = getPreconsultaAiProvider();
     const next = await provider.nextQuestion({
       motivo: payload.motivo,
@@ -35,10 +37,14 @@ export async function POST(request: Request, context: { params: Promise<{ token:
 
     return NextResponse.json(next);
   } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json({ error: "Solicitud de preconsulta invalida." }, { status: 400 });
+    }
+
     const status =
-      typeof error === "object" && error && "status" in error ? Number(error.status) : 400;
+      typeof error === "object" && error && "status" in error ? Number(error.status) : 503;
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "No se pudo continuar la preconsulta." },
+      { error: "No se pudo continuar la preconsulta en este momento. Intenta de nuevo mas tarde." },
       { status }
     );
   }

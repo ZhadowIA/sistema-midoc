@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { call } from "./ipc";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
 
 /**
  * Verificacion determinista de seguridad de la prescripcion (paso 14): el medico
@@ -116,14 +117,14 @@ export function MedicationSafety({
   }
 
   return (
-    <section className="panel">
+    <section className="panel-plain">
       <h3>Seguridad de la prescripcion</h3>
       <p className="meta">
         Revision determinista (sin IA) de interacciones, alergias cruzadas y duplicidad. Escribe un
         medicamento por linea.
       </p>
       <div className="stack">
-        <textarea
+        <AutoGrowTextarea
           rows={3}
           placeholder={"Ibuprofeno\nWarfarina"}
           value={text}
