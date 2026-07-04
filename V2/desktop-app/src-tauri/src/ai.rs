@@ -1515,14 +1515,29 @@ fn validate_template_segments(
 const SEGMENT_NO_SOURCE_WARNING: &str =
     "Sin fuentes en la conversacion: el medico debe verificar este segmento.";
 
+/// Politica ante una fuente que no es un turno de la conversacion. En el escriba
+/// puro (acomodo) el UNICO contexto son los turnos, asi que una fuente desconocida
+/// es alucinacion y se rechaza todo. En la ayuda clinica el prompt tambien incluye
+/// antecedentes y preconsulta: el modelo puede citar esas procedencias (p. ej.
+/// "Preconsulta del paciente"); rechazar toda la respuesta por eso rompe el flujo,
+/// asi que la cita no verificable se descarta y se anota como advertencia.
+#[derive(Clone, Copy, PartialEq)]
+enum UnknownSourcePolicy {
+    Reject,
+    RepairWithWarning,
+}
+
 /// Valida los segmentos devueltos por la IA y los repara cuando es seguro hacerlo.
-/// Errores DUROS (indican alucinacion, se rechaza todo): segmento o turno fuente
-/// inexistente, confianza invalida. Reparacion (no rechazo): un segmento sin
-/// fuentes ni advertencia recibe una advertencia explicita. Muta los segmentos.
+/// Errores DUROS (indican alucinacion, se rechaza todo): segmento inexistente,
+/// confianza invalida, y turno fuente inexistente bajo `Reject`. Reparacion (no
+/// rechazo): un segmento sin fuentes ni advertencia recibe una advertencia
+/// explicita; bajo `RepairWithWarning`, una fuente desconocida se descarta y se
+/// registra en las advertencias del segmento. Muta los segmentos.
 fn validate_and_repair_segments(
     segments: &mut [SegmentDraft],
     allowed_segments: &std::collections::HashSet<&str>,
     allowed_turns: &std::collections::HashSet<&str>,
+    unknown_source_policy: UnknownSourcePolicy,
 ) -> Result<(), AiError> {
     for segment in segments.iter_mut() {
         if !allowed_segments.contains(segment.segment_id.as_str()) {
@@ -1537,12 +1552,26 @@ fn validate_and_repair_segments(
                 segment.segment_id
             )));
         }
+        let mut unknown_sources = Vec::new();
         for source_turn in &segment.source_turns {
             if !allowed_turns.contains(source_turn.as_str()) {
-                return Err(AiError::Invalid(format!(
-                    "fuente desconocida en segmento {}: {}",
-                    segment.segment_id, source_turn
-                )));
+                if unknown_source_policy == UnknownSourcePolicy::Reject {
+                    return Err(AiError::Invalid(format!(
+                        "fuente desconocida en segmento {}: {}",
+                        segment.segment_id, source_turn
+                    )));
+                }
+                unknown_sources.push(source_turn.clone());
+            }
+        }
+        if !unknown_sources.is_empty() {
+            segment
+                .source_turns
+                .retain(|source| allowed_turns.contains(source.as_str()));
+            for source in unknown_sources {
+                segment.warnings.push(format!(
+                    "Cita no verificable descartada ({source}): el medico debe confirmar este segmento."
+                ));
             }
         }
         if segment.source_turns.is_empty() && segment.warnings.is_empty() {
@@ -1566,7 +1595,12 @@ fn parse_structuring_output(
         .map(|segment| segment.id.as_str())
         .collect();
     let allowed_turns: HashSet<&str> = turns.iter().map(|turn| turn.id.as_str()).collect();
-    validate_and_repair_segments(&mut output.segments, &allowed, &allowed_turns)?;
+    validate_and_repair_segments(
+        &mut output.segments,
+        &allowed,
+        &allowed_turns,
+        UnknownSourcePolicy::Reject,
+    )?;
     Ok(output)
 }
 
@@ -1812,7 +1846,12 @@ fn parse_clinical_aid_output(
         .collect();
     let allowed_turns: std::collections::HashSet<&str> =
         turns.iter().map(|turn| turn.id.as_str()).collect();
-    validate_and_repair_segments(&mut output.template_segments, &allowed, &allowed_turns)?;
+    validate_and_repair_segments(
+        &mut output.template_segments,
+        &allowed,
+        &allowed_turns,
+        UnknownSourcePolicy::RepairWithWarning,
+    )?;
     Ok(output)
 }
 
@@ -1847,7 +1886,7 @@ pub fn generate_clinical_aid(
             "En exam_suggestions propone factores de exploracion fisica que convendria revisar segun los sintomas referidos; en question_suggestions, preguntas para completar la anamnesis. Ambas son sugerencias para el criterio del medico, nunca indicaciones.",
             "En prescription_draft redacta un borrador de receta SOLO con medicamentos o indicaciones que el medico menciono o acordo explicitamente en la conversacion, con la dosis, frecuencia y duracion tal como se dijeron; si no se menciono ningun tratamiento, deja el campo vacio.",
             "En background_updates vuelca antecedentes que el paciente respondio durante la conversacion (alergias, antecedentes personales, antecedentes familiares) usando los campos allergies, medical_background o family_background; solo informacion dicha por el paciente, sin inferencias.",
-            "En cada template_segment cita en source_turns los ids de turnos que lo sustentan; si la conversacion no cubre ese segmento, deja source_turns vacio y agrega una advertencia."
+            "En cada template_segment cita en source_turns SOLO ids de turnos de la conversacion; la informacion tomada de antecedentes o preconsulta NO se cita ahi: deja source_turns vacio (o solo con turnos reales) y anota la procedencia en warnings."
         ],
         "template_segments": &template_segments,
         "turns": &reviewed.turns,
@@ -3510,6 +3549,28 @@ mod tests {
         assert!(
             parse_clinical_aid_output(&bad_question, &scribe_segments(), &scribe_turns()).is_err()
         );
+    }
+
+    #[test]
+    fn clinical_aid_repairs_segment_with_non_turn_source_instead_of_rejecting() {
+        // Regresion: el modelo citaba "Preconsulta del paciente" como fuente y la
+        // validacion rechazaba TODA la ayuda clinica. En ayuda clinica el contexto
+        // incluye antecedentes/preconsulta: la cita no verificable se descarta con
+        // advertencia; los turnos reales se conservan.
+        let raw = r#"{
+          "soap":{"subjective":"","objective":"","assessment":"","plan":"","diagnosis":"","instructions":"","specialty":null},
+          "template_segments":[{"segment_id":"subjective","content":"Refiere insomnio","confidence":"medium","source_turns":["Preconsulta del paciente","turn-1"],"warnings":[]}],
+          "possibilities":[],
+          "studies":[],"treatments":[],"warnings":[]
+        }"#;
+        let output =
+            parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns()).unwrap();
+        let segment = &output.template_segments[0];
+        assert_eq!(segment.source_turns, vec!["turn-1".to_string()]);
+        assert!(segment
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Preconsulta del paciente")));
     }
 
     #[test]
