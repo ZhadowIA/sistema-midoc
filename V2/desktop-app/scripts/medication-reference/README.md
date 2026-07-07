@@ -52,12 +52,16 @@ Salida en `./build/` (ignorada por git; se regenera de forma reproducible):
   reglas y los miembros de clase estan curados a mano (`TODO(onchigh-full)`);
   falta transcribir el apendice completo y derivar los miembros de clase desde
   RxClass de forma reproducible.
-- **Rebanada 3 — ingest y distribucion:**
-  1. **Parser consciente de la fuente en Rust.** Hoy `parse_ddinter_csv`
-     *hardcodea* `source: "DDInter 2.0"` (medication.rs). Cargar datos ONChigh
-     por ese parser citaria la procedencia equivocada. Hay que generalizar el
-     ingest para leer la columna `source`/`source_version` del CSV nuevo. Es un
-     cambio **aditivo** en el ingest; NO toca la logica de emparejamiento.
-  2. **Retirar los pares DDInter de la semilla empaquetada** (`reference_data/`)
-     y publicar los artefactos en los endpoints `MIDOC_*_URL` (descarga
-     post-instalacion; la base a escala no se empaqueta con `include_str!`).
+- **Ingest consciente de la fuente en Rust — HECHO (rebanada 2).**
+  `parse_interactions_csv` lee el formato del paso 25 conservando la fuente real
+  y la descripcion (con soporte de campos entrecomillados), y `parse_interactions`
+  enruta por encabezado entre el formato nuevo y el DDInter heredado.
+  `update_reference` ya usa el dispatcher. Cambio **aditivo**: no toca la logica
+  de emparejamiento. `parse_ddinter_csv` (que hardcodea `source: "DDInter 2.0"`)
+  se retira junto con la semilla.
+- **Rebanada 3 — data swap y distribucion (pendiente):**
+  1. **Retirar los pares DDInter de la semilla empaquetada** (`reference_data/`)
+     y sustituirla por los artefactos ONChigh generados.
+  2. **Publicar en los endpoints `MIDOC_*_URL`** (descarga post-instalacion; la
+     base a escala no se empaqueta con `include_str!`). Requiere tu validacion
+     clinica de la lista curada antes de cambiar el comportamiento real.

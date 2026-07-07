@@ -558,6 +558,114 @@ pub fn parse_ddinter_csv(csv: &str) -> Result<Vec<InteractionRow>, MedicationErr
     Ok(rows)
 }
 
+/// Separa una linea CSV respetando comillas dobles (`""` escapa una comilla).
+/// A diferencia de `csv_fields`, tolera comas dentro de campos entrecomillados
+/// (p. ej. la descripcion clinica del formato del paso 25). Asume descripciones
+/// de una sola linea (el pipeline no emite saltos de linea dentro de un campo).
+fn csv_fields_quoted(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if in_quotes => {
+                if chars.peek() == Some(&'"') {
+                    field.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            }
+            '"' => in_quotes = true,
+            ',' if !in_quotes => {
+                fields.push(field.trim().to_string());
+                field.clear();
+            }
+            _ => field.push(c),
+        }
+    }
+    fields.push(field.trim().to_string());
+    fields
+}
+
+/// Normaliza la severidad a una de las categorias del motor. Cualquier valor
+/// desconocido cae a UNKNOWN (no se inventa severidad).
+fn normalize_severity(raw: &str) -> &'static str {
+    match raw.trim().to_uppercase().as_str() {
+        "CONTRAINDICATED" | "CONTRAINDICATION" => "CONTRAINDICATED",
+        "MAJOR" => "MAJOR",
+        "MODERATE" => "MODERATE",
+        "MINOR" => "MINOR",
+        _ => "UNKNOWN",
+    }
+}
+
+/// Parsea el CSV de interacciones del pipeline del paso 25 (columnas:
+/// `ingredient_a,ingredient_b,severity,source,source_version,description`).
+/// A diferencia de `parse_ddinter_csv`, conserva la FUENTE real de cada fila
+/// (no la hardcodea) y su descripcion; asi la procedencia citada al medico es
+/// la correcta (ONChigh, openFDA, etc.). El par se guarda en orden canonico.
+/// La `source_version` de la fila es informativa: la version canonica de la base
+/// la aplica `import_reference` desde la version del dataset.
+pub fn parse_interactions_csv(csv: &str) -> Result<Vec<InteractionRow>, MedicationError> {
+    let mut rows = Vec::new();
+    for (idx, line) in csv.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if idx == 0 && line.to_lowercase().starts_with("ingredient_a") {
+            continue; // encabezado
+        }
+        let fields = csv_fields_quoted(line);
+        if fields.len() < 4 {
+            return Err(MedicationError::Invalid(format!(
+                "fila {} del CSV de interacciones invalida: se esperaban al menos 4 columnas",
+                idx + 1
+            )));
+        }
+        let a = normalize_name(&fields[0]);
+        let b = normalize_name(&fields[1]);
+        if a.is_empty() || b.is_empty() || a == b {
+            continue;
+        }
+        let (ingredient_a, ingredient_b) = canonical_pair(&a, &b);
+        let source = fields
+            .get(3)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("ONChigh")
+            .to_string();
+        let description = fields.get(5).map(|s| s.to_string()).unwrap_or_default();
+        rows.push(InteractionRow {
+            ingredient_a,
+            ingredient_b,
+            severity: normalize_severity(&fields[2]).to_string(),
+            description,
+            source,
+        });
+    }
+    Ok(rows)
+}
+
+/// Elige el parser de interacciones segun el encabezado del CSV: el formato del
+/// pipeline del paso 25 (`ingredient_a,...`) conserva la fuente real; el formato
+/// DDInter heredado (`DDInterID_A,...`) se mantiene durante la transicion hasta
+/// que la rebanada 3 retire la semilla DDInter empaquetada.
+pub fn parse_interactions(csv: &str) -> Result<Vec<InteractionRow>, MedicationError> {
+    let header = csv
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .to_lowercase();
+    if header.starts_with("ingredient_a") {
+        parse_interactions_csv(csv)
+    } else {
+        parse_ddinter_csv(csv)
+    }
+}
+
 /// Reemplaza la base de referencia local con los datos importados, dentro de una
 /// transaccion (no deja las tablas a medio reemplazar). Si una lista viene vacia,
 /// no se toca esa tabla. Siempre actualiza la version de la base.
@@ -759,7 +867,8 @@ pub fn update_reference(
     min_interactions: usize,
 ) -> Result<ImportSummary, MedicationError> {
     let medications = parse_medication_csv(&dataset.medications_csv)?;
-    let interactions = parse_ddinter_csv(&dataset.ddinter_csv)?;
+    // Acepta el formato del paso 25 (con fuente real) o el DDInter heredado.
+    let interactions = parse_interactions(&dataset.ddinter_csv)?;
 
     if medications.is_empty() && interactions.is_empty() {
         return Err(MedicationError::Invalid(
@@ -1008,6 +1117,64 @@ mod tests {
         assert_eq!(rows[0].severity, "MAJOR");
         assert_eq!(rows[0].source, "DDInter 2.0");
         assert_eq!(rows[1].severity, "MODERATE");
+    }
+
+    #[test]
+    fn parses_interactions_csv_keeps_real_source_and_quoted_description() {
+        let csv = "ingredient_a,ingredient_b,severity,source,source_version,description\n\
+                   warfarin,ibuprofen,MAJOR,ONChigh,onc-2026,\"Riesgo de sangrado, sinergico\"\n";
+        let rows = parse_interactions_csv(csv).unwrap();
+        assert_eq!(rows.len(), 1);
+        // Orden canonico: ibuprofen < warfarin.
+        assert_eq!(rows[0].ingredient_a, "ibuprofen");
+        assert_eq!(rows[0].ingredient_b, "warfarin");
+        assert_eq!(rows[0].severity, "MAJOR");
+        // La fuente es la REAL de la fila, no el "DDInter 2.0" hardcodeado.
+        assert_eq!(rows[0].source, "ONChigh");
+        // La coma dentro de la descripcion entrecomillada se preserva.
+        assert_eq!(rows[0].description, "Riesgo de sangrado, sinergico");
+    }
+
+    #[test]
+    fn interactions_dispatcher_routes_by_header() {
+        let onchigh = "ingredient_a,ingredient_b,severity,source,source_version,description\n\
+                       sildenafil,nitroglycerin,CONTRAINDICATED,ONChigh,onc-2026,Hipotension grave\n";
+        let ddinter = "DDInterID_A,Drug_A,DDInterID_B,Drug_B,Level\n\
+                       DDInter1,Warfarina,DDInter2,Aspirina,Major\n";
+        assert_eq!(parse_interactions(onchigh).unwrap()[0].source, "ONChigh");
+        assert_eq!(parse_interactions(ddinter).unwrap()[0].source, "DDInter 2.0");
+    }
+
+    #[test]
+    fn update_reference_loads_onchigh_format_with_real_source() {
+        let conn = test_conn("onchigh-update");
+        let dataset = MedicationDataset {
+            medications_csv: "name,ingredient,display_name,drug_class\n\
+                              warfarin,warfarin,Warfarina,Anticoagulante\n\
+                              ibuprofen,ibuprofen,Ibuprofeno,AINE\n\
+                              sildenafil,sildenafil,Sildenafil,Inhibidor PDE5\n\
+                              nitroglycerin,nitroglycerin,Nitroglicerina,Nitrato\n\
+                              enalapril,enalapril,Enalapril,IECA\n"
+                .into(),
+            ddinter_csv: "ingredient_a,ingredient_b,severity,source,source_version,description\n\
+                          ibuprofen,warfarin,MAJOR,ONChigh,onc-2026,Sangrado\n\
+                          nitroglycerin,sildenafil,CONTRAINDICATED,ONChigh,onc-2026,Hipotension\n\
+                          enalapril,ibuprofen,MODERATE,ONChigh,onc-2026,uno\n\
+                          enalapril,warfarin,MINOR,ONChigh,onc-2026,dos\n\
+                          enalapril,sildenafil,MINOR,ONChigh,onc-2026,tres\n"
+                .into(),
+            openfda_json: String::new(),
+            version: "onchigh-2026-07".into(),
+        };
+        let summary = update_reference(&conn, &dataset, MIN_MEDICATIONS, MIN_INTERACTIONS).unwrap();
+        assert_eq!(summary.interactions, 5);
+
+        let report = check_prescription(&conn, "enc-1", &meds(&["warfarin", "ibuprofen"]), None).unwrap();
+        assert_eq!(report.interactions.len(), 1);
+        assert_eq!(report.interactions[0].severity, "MAJOR");
+        // La procedencia citada es la real (ONChigh), no DDInter.
+        assert_eq!(report.interactions[0].source, "ONChigh");
+        assert_eq!(report.interactions[0].source_version, "onchigh-2026-07");
     }
 
     #[test]
