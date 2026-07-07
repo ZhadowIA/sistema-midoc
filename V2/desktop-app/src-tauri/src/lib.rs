@@ -1192,7 +1192,27 @@ fn with_ai<T>(
 ) -> Result<T, String> {
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
-    f(conn).map_err(|e| e.to_string())
+    f(conn).map_err(ai_error_to_ipc)
+}
+
+/// La sobrecarga del proveedor cruza IPC como JSON estructurado para que la UI
+/// decida por `code` (ofrecer reintento/alternativa) en vez de parsear texto.
+/// El resto de errores sigue viajando como mensaje plano.
+fn ai_error_to_ipc(error: ai::AiError) -> String {
+    match error {
+        ai::AiError::Overloaded {
+            provider,
+            model,
+            message,
+        } => serde_json::json!({
+            "code": "ai_overloaded",
+            "provider": provider,
+            "model": model,
+            "message": message,
+        })
+        .to_string(),
+        other => other.to_string(),
+    }
 }
 
 #[tauri::command]
@@ -1559,8 +1579,9 @@ fn ai_structure_consultation(
     encounter_id: String,
     turns: Vec<ai::ConsultationTurn>,
     template: ConsultationTemplatePayload,
+    model_override: Option<String>,
 ) -> Result<ai::ConsultationStructuringDraft, String> {
-    let registry = ai::ProviderRegistry::default_local();
+    let registry = resolve_text_registry(model_override)?;
     with_ai(&state, |conn| {
         ai::structure_consultation(conn, &encounter_id, turns, template.segments, &registry)
     })
@@ -1571,11 +1592,37 @@ fn ai_generate_clinical_aid(
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
     template: ConsultationTemplatePayload,
+    model_override: Option<String>,
 ) -> Result<ai::ClinicalAidDraft, String> {
-    let registry = ai::ProviderRegistry::default_local();
+    let registry = resolve_text_registry(model_override)?;
     with_ai(&state, |conn| {
         ai::generate_clinical_aid(conn, &encounter_id, template.segments, &registry)
     })
+}
+
+/// Modelos de texto disponibles para ofrecer como alternativa cuando el modelo
+/// primario esta sobrecargado. Vacio si no hay proveedor real configurado.
+#[tauri::command]
+fn ai_list_text_models() -> Vec<ai::TextModelOption> {
+    ai::text_model_options()
+}
+
+/// Valida el override contra el catalogo: elegir un modelo/proveedor no
+/// configurado degradaria en silencio al fake, y eso esta prohibido por diseno.
+/// El override es el `id` de una opcion del catalogo (`gemini:<m>` / `openai:<m>`).
+fn resolve_text_registry(
+    model_override: Option<String>,
+) -> Result<ai::ProviderRegistry, String> {
+    let Some(option_id) = model_override else {
+        return Ok(ai::ProviderRegistry::default_local());
+    };
+    let allowed = ai::text_model_options();
+    let option = allowed
+        .iter()
+        .find(|option| option.id == option_id)
+        .ok_or("el modelo solicitado no esta configurado como alternativa")?;
+    ai::ProviderRegistry::local_for_option(option)
+        .ok_or_else(|| "el proveedor del modelo solicitado ya no esta configurado".to_string())
 }
 
 fn with_consultation_templates<T>(
@@ -2290,6 +2337,7 @@ pub fn run() {
             ai_diarize_consultation,
             ai_structure_consultation,
             ai_generate_clinical_aid,
+            ai_list_text_models,
             list_consultation_templates,
             save_consultation_template,
             delete_consultation_template,

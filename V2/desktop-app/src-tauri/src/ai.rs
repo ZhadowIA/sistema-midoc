@@ -27,6 +27,16 @@ pub enum AiError {
     ConsentMissing,
     #[error("ningun proveedor de IA pudo completar la solicitud")]
     AllProvidersFailed,
+    /// Falla transitoria del proveedor (503/429/5xx o red agotada): el proveedor
+    /// esta sobrecargado o no disponible, no es un error del sistema del medico.
+    /// La UI ofrece reintentar o elegir otro modelo; no debe tratarse como
+    /// error de configuracion.
+    #[error("{message}")]
+    Overloaded {
+        provider: String,
+        model: String,
+        message: String,
+    },
     #[error("se alcanzo el presupuesto mensual de IA; ajustalo para continuar")]
     BudgetExceeded,
 }
@@ -195,7 +205,7 @@ impl ProviderRegistry {
         }
         #[cfg(not(test))]
         {
-            if let Some(gemini) = GeminiProvider::from_env() {
+            if let Some(gemini) = GeminiProvider::from_env_with_model(None) {
                 // Proveedor real configurado: NO se agrega el fake como respaldo.
                 // Sustituir IA real por un borrador de demostracion en silencio es
                 // peligroso (el medico podria tomarlo por una sugerencia clinica
@@ -203,6 +213,27 @@ impl ProviderRegistry {
                 Self::new(vec![Box::new(gemini)])
             } else {
                 Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))])
+            }
+        }
+    }
+
+    /// Registro para una opcion explicita del catalogo (el medico eligio una
+    /// alternativa ante sobrecarga). Devuelve `None` si el proveedor de esa
+    /// opcion ya no esta configurado en el entorno — el llamador reporta error
+    /// en vez de degradar al fake.
+    pub fn local_for_option(option: &TextModelOption) -> Option<Self> {
+        #[cfg(test)]
+        {
+            let _ = option;
+            Some(Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))]))
+        }
+        #[cfg(not(test))]
+        {
+            match option.provider.as_str() {
+                PROVIDER_OPENAI => OpenAiProvider::from_env_with_model(Some(option.model.clone()))
+                    .map(|provider| Self::new(vec![Box::new(provider) as Box<dyn AiProvider>])),
+                _ => GeminiProvider::from_env_with_model(Some(option.model.clone()))
+                    .map(|provider| Self::new(vec![Box::new(provider) as Box<dyn AiProvider>])),
             }
         }
     }
@@ -356,6 +387,128 @@ fn fake_structuring_output(context: &str) -> Result<String, AiError> {
     .map_err(|e| AiError::Invalid(format!("no se pudo serializar el borrador: {e}")))
 }
 
+/// Estados HTTP que indican falla transitoria del proveedor (sobrecarga, limite
+/// de tasa o caida momentanea): se reintentan con backoff y, si persisten, se
+/// reportan como `AiError::Overloaded` para que el medico pueda elegir otro
+/// modelo. 400/401/403 quedan fuera: son deterministas (solicitud o credencial).
+pub fn transient_provider_status(status: u16) -> bool {
+    matches!(status, 429 | 500 | 502 | 503 | 504)
+}
+
+pub const PROVIDER_GEMINI: &str = "gemini-direct";
+pub const PROVIDER_OPENAI: &str = "openai-direct";
+
+/// Opcion de modelo de texto disponible para Ayuda IA. Solo incluye modelos de
+/// proveedores REALES configurados; el fake de demostracion nunca se ofrece.
+/// `id` es estable y unico entre proveedores (`gemini:<modelo>` / `openai:<modelo>`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TextModelOption {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub label: String,
+    pub is_default: bool,
+}
+
+/// Catalogo de modelos de texto disponibles segun el entorno: modelos Gemini
+/// (primario + `MIDOC_GEMINI_FALLBACK_MODELS`) y, si esta configurado Y el gate
+/// de gobernanza esta declarado, OpenAI como proveedor alternativo. Vacio si no
+/// hay proveedor real (en ese caso no hay alternativa que ofrecer).
+pub fn text_model_options() -> Vec<TextModelOption> {
+    let mut options = gemini_text_model_options(
+        std::env::var("MIDOC_GEMINI_API_KEY").ok(),
+        std::env::var("MIDOC_GEMINI_MODEL").ok(),
+        std::env::var("MIDOC_GEMINI_FALLBACK_MODELS").ok(),
+    );
+    options.extend(openai_text_model_options(
+        std::env::var("MIDOC_OPENAI_API_KEY").ok(),
+        std::env::var("MIDOC_OPENAI_TEXT_ZDR_APPROVED").ok(),
+        std::env::var("MIDOC_OPENAI_MODEL").ok(),
+    ));
+    options
+}
+
+pub const DEFAULT_GEMINI_MODEL: &str = "gemini-3-flash";
+const DEFAULT_GEMINI_FALLBACK_MODELS: &str = "gemini-2.5-flash";
+pub const DEFAULT_OPENAI_MODEL: &str = "gpt-5-mini";
+
+fn has_content(value: &Option<String>) -> bool {
+    value
+        .as_ref()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn gemini_option(model: &str, is_default: bool) -> TextModelOption {
+    TextModelOption {
+        id: format!("gemini:{model}"),
+        provider: PROVIDER_GEMINI.into(),
+        model: model.to_string(),
+        label: format!("Gemini · {model}"),
+        is_default,
+    }
+}
+
+fn gemini_text_model_options(
+    api_key: Option<String>,
+    model: Option<String>,
+    fallback_models: Option<String>,
+) -> Vec<TextModelOption> {
+    if !has_content(&api_key) {
+        return Vec::new();
+    }
+    let default_model = model
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_GEMINI_MODEL.into());
+    let mut options = vec![gemini_option(&default_model, true)];
+    let fallbacks = fallback_models.unwrap_or_else(|| DEFAULT_GEMINI_FALLBACK_MODELS.into());
+    for candidate in fallbacks.split(',') {
+        let candidate = candidate.trim();
+        if candidate.is_empty() || options.iter().any(|option| option.model == candidate) {
+            continue;
+        }
+        options.push(gemini_option(candidate, false));
+    }
+    options
+}
+
+/// OpenAI para texto requiere DOS condiciones: la clave (`MIDOC_OPENAI_API_KEY`)
+/// y el gate de gobernanza auto-declarado (`MIDOC_OPENAI_TEXT_ZDR_APPROVED=true`),
+/// espejo del patron `OPENAI_TRANSCRIPTION_ZDR_APPROVED` del portal. El gate no
+/// verifica nada con OpenAI: evita activar por accidente un proveedor cuyo BAA/ZDR
+/// aun no esta confirmado (paso 16). Nunca es el modelo por defecto: la decision
+/// vigente (doc 11) mantiene a Gemini como primario por costo.
+fn openai_text_model_options(
+    api_key: Option<String>,
+    zdr_approved: Option<String>,
+    model: Option<String>,
+) -> Vec<TextModelOption> {
+    if !has_content(&api_key) {
+        return Vec::new();
+    }
+    let approved = zdr_approved
+        .map(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            value == "true" || value == "1"
+        })
+        .unwrap_or(false);
+    if !approved {
+        return Vec::new();
+    }
+    let model = model
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_OPENAI_MODEL.into());
+    vec![TextModelOption {
+        id: format!("openai:{model}"),
+        provider: PROVIDER_OPENAI.into(),
+        model: model.clone(),
+        label: format!("OpenAI · {model}"),
+        is_default: false,
+    }]
+}
+
 #[cfg_attr(test, allow(dead_code))]
 pub struct GeminiProvider {
     api_key: String,
@@ -364,17 +517,20 @@ pub struct GeminiProvider {
 
 #[cfg_attr(test, allow(dead_code))]
 impl GeminiProvider {
-    pub fn from_env() -> Option<Self> {
+    /// Construye el proveedor desde el entorno; `model_override` fija el modelo
+    /// por ejecucion cuando el medico elige una alternativa ante sobrecarga del
+    /// modelo primario.
+    pub fn from_env_with_model(model_override: Option<String>) -> Option<Self> {
         let api_key = std::env::var("MIDOC_GEMINI_API_KEY").ok()?;
         let api_key = api_key.trim().to_string();
         if api_key.is_empty() {
             return None;
         }
-        let model = std::env::var("MIDOC_GEMINI_MODEL")
-            .ok()
+        let model = model_override
+            .or_else(|| std::env::var("MIDOC_GEMINI_MODEL").ok())
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "gemini-3-flash".into());
+            .unwrap_or_else(|| DEFAULT_GEMINI_MODEL.into());
         Some(Self { api_key, model })
     }
 
@@ -389,7 +545,7 @@ impl GeminiProvider {
 
 impl AiProvider for GeminiProvider {
     fn name(&self) -> &str {
-        "gemini-direct"
+        PROVIDER_GEMINI
     }
 
     fn generate(&self, request: &AiRequest) -> Result<AiResponse, AiError> {
@@ -436,9 +592,9 @@ impl AiProvider for GeminiProvider {
             .build()
             .map_err(|e| AiError::Invalid(format!("no se pudo crear el cliente HTTP: {e}")))?;
 
-        // Reintenta ante fallos de RED transitorios (conexion cortada/reset, DNS
-        // momentaneo). No reintenta ante respuestas HTTP: esas son deterministas y
-        // se reportan tal cual mas abajo.
+        // Reintenta ante fallos transitorios: de RED (conexion cortada/reset, DNS
+        // momentaneo) y de PROVEEDOR sobrecargado (503/429/5xx). Los errores HTTP
+        // deterministas (400/401/403) no se reintentan y se reportan mas abajo.
         let mut attempt = 0;
         let response = loop {
             attempt += 1;
@@ -448,6 +604,12 @@ impl AiProvider for GeminiProvider {
                 .json(&body)
                 .send()
             {
+                Ok(resp)
+                    if transient_provider_status(resp.status().as_u16()) && attempt < 3 =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
+                    continue;
+                }
                 Ok(resp) => break resp,
                 Err(error) if attempt < 3 => {
                     std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
@@ -455,14 +617,32 @@ impl AiProvider for GeminiProvider {
                     continue;
                 }
                 Err(error) => {
-                    return Err(AiError::Invalid(format!("Gemini no respondio: {error}")));
+                    return Err(AiError::Overloaded {
+                        provider: PROVIDER_GEMINI.into(),
+                        model: self.model.clone(),
+                        message: format!("Gemini no respondio tras varios intentos: {error}"),
+                    });
                 }
             }
         };
-        if !response.status().is_success() {
+        let status = response.status();
+        if !status.is_success() {
+            if transient_provider_status(status.as_u16()) {
+                return Err(AiError::Overloaded {
+                    provider: PROVIDER_GEMINI.into(),
+                    model: self.model.clone(),
+                    message: format!(
+                        "Gemini esta sobrecargado o temporalmente no disponible ({status})"
+                    ),
+                });
+            }
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                return Err(AiError::Invalid(format!(
+                    "Gemini rechazo la credencial ({status}); revisa MIDOC_GEMINI_API_KEY"
+                )));
+            }
             return Err(AiError::Invalid(format!(
-                "Gemini rechazo la solicitud: {}",
-                response.status()
+                "Gemini rechazo la solicitud: {status}"
             )));
         }
         let payload: serde_json::Value = response
@@ -479,6 +659,164 @@ impl AiProvider for GeminiProvider {
             .and_then(|part| part.get("text"))
             .and_then(|value| value.as_str())
             .ok_or_else(|| AiError::Invalid("Gemini no devolvio texto utilizable".into()))?
+            .to_string();
+
+        Ok(AiResponse {
+            output,
+            model_version: self.model.clone(),
+            estimated_cost_cents: 1 + (request.redacted_input.len() as i64 / 4000),
+            latency_ms: start.elapsed().as_millis() as i64,
+            cloud_transcription: None,
+        })
+    }
+}
+
+/// Proveedor alternativo de texto: OpenAI directo (chat completions). Solo se
+/// ofrece cuando el medico lo elige ante sobrecarga de Gemini y el entorno lo
+/// habilita (clave + gate ZDR auto-declarado, ver `openai_text_model_options`).
+/// Recibe exactamente la misma canalizacion seudonimizada que Gemini.
+#[cfg_attr(test, allow(dead_code))]
+pub struct OpenAiProvider {
+    api_key: String,
+    model: String,
+}
+
+#[cfg_attr(test, allow(dead_code))]
+impl OpenAiProvider {
+    pub fn from_env_with_model(model_override: Option<String>) -> Option<Self> {
+        let api_key = std::env::var("MIDOC_OPENAI_API_KEY").ok()?;
+        let api_key = api_key.trim().to_string();
+        if api_key.is_empty() {
+            return None;
+        }
+        let model = model_override
+            .or_else(|| std::env::var("MIDOC_OPENAI_MODEL").ok())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEFAULT_OPENAI_MODEL.into());
+        Some(Self { api_key, model })
+    }
+}
+
+impl AiProvider for OpenAiProvider {
+    fn name(&self) -> &str {
+        PROVIDER_OPENAI
+    }
+
+    fn generate(&self, request: &AiRequest) -> Result<AiResponse, AiError> {
+        let start = std::time::Instant::now();
+
+        // Mismos esquemas que Gemini, envueltos en el response_format de OpenAI.
+        // strict=false: los esquemas no declaran additionalProperties y el modo
+        // estricto de OpenAI los rechazaria; la validacion dura ya ocurre al
+        // deserializar la salida en Rust.
+        let response_format = if request.usage_type == USAGE_CONSULTATION_STRUCTURING {
+            Some(serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "consultation_structuring",
+                    "strict": false,
+                    "schema": consultation_structuring_schema()
+                }
+            }))
+        } else if request.usage_type == USAGE_CLINICAL_AID {
+            Some(serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "clinical_aid",
+                    "strict": false,
+                    "schema": clinical_aid_schema()
+                }
+            }))
+        } else {
+            None
+        };
+
+        // Sin `temperature`: la familia gpt-5 solo acepta el valor por defecto y
+        // fijarlo rechazaria la solicitud completa.
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Eres apoyo documental clinico. No inventes informacion. Devuelve solo contenido derivado de la entrada y marca faltantes o ambiguedades."
+                },
+                { "role": "user", "content": request.redacted_input }
+            ]
+        });
+        if let Some(format) = response_format {
+            body["response_format"] = format;
+        }
+
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| AiError::Invalid(format!("no se pudo crear el cliente HTTP: {e}")))?;
+
+        // Misma politica de reintentos que Gemini: transitorios (red y 5xx/429)
+        // con backoff; deterministas (400/401/403) se reportan sin reintento.
+        let mut attempt = 0;
+        let response = loop {
+            attempt += 1;
+            match client
+                .post("https://api.openai.com/v1/chat/completions")
+                .bearer_auth(&self.api_key)
+                .json(&body)
+                .send()
+            {
+                Ok(resp)
+                    if transient_provider_status(resp.status().as_u16()) && attempt < 3 =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
+                    continue;
+                }
+                Ok(resp) => break resp,
+                Err(error) if attempt < 3 => {
+                    std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
+                    let _ = error;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(AiError::Overloaded {
+                        provider: PROVIDER_OPENAI.into(),
+                        model: self.model.clone(),
+                        message: format!("OpenAI no respondio tras varios intentos: {error}"),
+                    });
+                }
+            }
+        };
+        let status = response.status();
+        if !status.is_success() {
+            if transient_provider_status(status.as_u16()) {
+                return Err(AiError::Overloaded {
+                    provider: PROVIDER_OPENAI.into(),
+                    model: self.model.clone(),
+                    message: format!(
+                        "OpenAI esta sobrecargado o temporalmente no disponible ({status})"
+                    ),
+                });
+            }
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                return Err(AiError::Invalid(format!(
+                    "OpenAI rechazo la credencial ({status}); revisa MIDOC_OPENAI_API_KEY"
+                )));
+            }
+            return Err(AiError::Invalid(format!(
+                "OpenAI rechazo la solicitud: {status}"
+            )));
+        }
+        let payload: serde_json::Value = response
+            .json()
+            .map_err(|e| AiError::Invalid(format!("respuesta OpenAI invalida: {e}")))?;
+        let output = payload
+            .get("choices")
+            .and_then(|value| value.as_array())
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| AiError::Invalid("OpenAI no devolvio texto utilizable".into()))?
             .to_string();
 
         Ok(AiResponse {
@@ -2933,6 +3271,104 @@ mod tests {
             assist_soap(&conn, &encounter_id, &registry),
             Err(AiError::AllProvidersFailed)
         ));
+    }
+
+    /// Proveedor que reporta sobrecarga, como Gemini ante 503/429.
+    struct OverloadedProvider;
+    impl AiProvider for OverloadedProvider {
+        fn name(&self) -> &str {
+            "overloaded"
+        }
+        fn generate(&self, _request: &AiRequest) -> Result<AiResponse, AiError> {
+            Err(AiError::Overloaded {
+                provider: "overloaded".into(),
+                model: "model-x".into(),
+                message: "sobrecargado (503)".into(),
+            })
+        }
+    }
+
+    #[test]
+    fn transient_status_classification_matches_overload_semantics() {
+        for status in [429, 500, 502, 503, 504] {
+            assert!(transient_provider_status(status), "esperaba transitorio: {status}");
+        }
+        for status in [200, 400, 401, 403, 404] {
+            assert!(!transient_provider_status(status), "esperaba determinista: {status}");
+        }
+    }
+
+    #[test]
+    fn overloaded_error_survives_registry_for_doctor_choice() {
+        let conn = test_conn("overload");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+
+        let registry = ProviderRegistry::new(vec![Box::new(OverloadedProvider)]);
+        match assist_soap(&conn, &encounter_id, &registry) {
+            Err(AiError::Overloaded { provider, model, .. }) => {
+                assert_eq!(provider, "overloaded");
+                assert_eq!(model, "model-x");
+            }
+            Err(other) => panic!("esperaba Overloaded, obtuve {other:?}"),
+            Ok(_) => panic!("esperaba Overloaded, la generacion no debio completarse"),
+        }
+    }
+
+    #[test]
+    fn text_model_catalog_requires_real_provider() {
+        assert!(gemini_text_model_options(None, None, None).is_empty());
+        assert!(gemini_text_model_options(Some("  ".into()), None, None).is_empty());
+    }
+
+    #[test]
+    fn text_model_catalog_defaults_and_dedupes() {
+        let options = gemini_text_model_options(Some("key".into()), None, None);
+        assert_eq!(options[0].model, DEFAULT_GEMINI_MODEL);
+        assert_eq!(options[0].id, format!("gemini:{DEFAULT_GEMINI_MODEL}"));
+        assert_eq!(options[0].provider, PROVIDER_GEMINI);
+        assert!(options[0].is_default);
+        assert_eq!(options[1].model, "gemini-2.5-flash");
+        assert!(!options[1].is_default);
+
+        // El primario no se repite como alternativa y los vacios se ignoran.
+        let options = gemini_text_model_options(
+            Some("key".into()),
+            Some("gemini-custom".into()),
+            Some("gemini-custom, , gemini-alt".into()),
+        );
+        assert_eq!(
+            options.iter().map(|o| o.model.as_str()).collect::<Vec<_>>(),
+            vec!["gemini-custom", "gemini-alt"]
+        );
+    }
+
+    #[test]
+    fn openai_text_models_require_key_and_governance_gate() {
+        // Sin clave: nada, aunque el gate este declarado.
+        assert!(openai_text_model_options(None, Some("true".into()), None).is_empty());
+        // Con clave pero sin gate ZDR auto-declarado: nada (paso 16).
+        assert!(openai_text_model_options(Some("key".into()), None, None).is_empty());
+        assert!(
+            openai_text_model_options(Some("key".into()), Some("false".into()), None).is_empty()
+        );
+
+        // Con clave + gate: una opcion, nunca como default (Gemini sigue primario).
+        let options =
+            openai_text_model_options(Some("key".into()), Some("true".into()), None);
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].provider, PROVIDER_OPENAI);
+        assert_eq!(options[0].model, DEFAULT_OPENAI_MODEL);
+        assert_eq!(options[0].id, format!("openai:{DEFAULT_OPENAI_MODEL}"));
+        assert!(!options[0].is_default);
+
+        // Modelo configurable.
+        let options = openai_text_model_options(
+            Some("key".into()),
+            Some("1".into()),
+            Some("gpt-5.4".into()),
+        );
+        assert_eq!(options[0].model, "gpt-5.4");
     }
 
     #[test]

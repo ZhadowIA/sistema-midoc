@@ -1205,6 +1205,32 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         warnings: ["Acomodo simulado en navegador."]
       } as T;
     }
+    case "ai_list_text_models":
+      // En el navegador no hay proveedor real; se simula el catalogo para poder
+      // ejercitar el dialogo de sobrecarga en desarrollo.
+      return [
+        {
+          id: "gemini:gemini-3-flash",
+          provider: "gemini-direct",
+          model: "gemini-3-flash",
+          label: "Gemini · gemini-3-flash",
+          is_default: true
+        },
+        {
+          id: "gemini:gemini-2.5-flash",
+          provider: "gemini-direct",
+          model: "gemini-2.5-flash",
+          label: "Gemini · gemini-2.5-flash",
+          is_default: false
+        },
+        {
+          id: "openai:gpt-5-mini",
+          provider: "openai-direct",
+          model: "gpt-5-mini",
+          label: "OpenAI · gpt-5-mini",
+          is_default: false
+        }
+      ] as T;
     case "ai_generate_clinical_aid": {
       if (!mockState.aiScribeConsent) {
         throw "falta el consentimiento del paciente para asistencia de IA";
