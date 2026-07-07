@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "node --test src/*.test.ts",
+    "test:medication": "node --test scripts/medication-reference/*.test.ts",
+    "medication:build": "node scripts/medication-reference/build.ts",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "node ./scripts/tauri-dev.mjs --features whisper-local",

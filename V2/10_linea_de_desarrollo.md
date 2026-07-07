@@ -89,7 +89,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 22 | Diarizacion local (separacion de hablantes) | `superpowers:writing-plans` | Dialogo Medico/Paciente separado offline con sherpa-onnx; Ruta B anade transcripcion en nube gobernada por el portal. | 🚧 IN PROGRESS (nativo pendiente de staging) |
 | 23 | Anamnesis asistida (cuestionario desde conversacion) | `superpowers:writing-plans` | Antecedentes estructurados propuestos por IA desde la consulta hablada, reconciliados campo por campo y confirmados por el medico. | 🔜 PLANEADO |
 | 24 | Degradacion asistida de proveedor de IA | `superpowers:test-driven-development` | Ante sobrecarga del proveedor (503/429), el medico ve la causa y elige reintentar o generar con otro modelo disponible — nunca fallback silencioso. | 🚧 IN PROGRESS |
-| 25 | Base de medicamentos a escala | `superpowers:writing-plans` | Pipeline reproducible de fuentes publicas + catalogo mexicano de marcas; la verificacion de recetas pasa de semilla curada (65 ingredientes) a cobertura real. | 🔜 PLANEADO |
+| 25 | Base de medicamentos a escala | `superpowers:writing-plans` | Pipeline reproducible de fuentes publicas + catalogo mexicano de marcas; la verificacion de recetas pasa de semilla curada (65 ingredientes) a cobertura real. | 🚧 IN PROGRESS (rebanada 1: pipeline + contrato + pruebas) |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -1204,6 +1204,8 @@ Clasificacion de datos: todos los artefactos son REFERENCIA publica (no PHI); el
 - **DrugBank** — comercial de pago (la via academica prohibe producto comercial). Escalon futuro solo cuando el volumen de clientes justifique el contrato, para catalogo exhaustivo.
 
 La licencia de cada dataset se cita en el manifest. Cualquier cambio a una fuente no de dominio publico exige permiso escrito antes de publicar en los endpoints de produccion.
+
+Rebanada 1 (2026-07-07): pipeline reproducible en TypeScript fuera de la app (`desktop-app/scripts/medication-reference/`), con TDD. Funciones puras `expandClassRule`/`expandRuleset` que convierten reglas ONChigh por clase en pares canonicos de ingredientes (espejando `normalize_name`/`canonical_pair` del motor, que NO cambia), deduplicando y conservando la severidad mas alta; emisor de `interactions.csv` (con columna `source` real, no DDInter), `medications.csv` y `manifest.json` con licencia por fuente y checksums SHA-256. Datos ONChigh curados a mano (subconjunto de alta prioridad verificable; `TODO(onchigh-full)` y `TODO(cofepris)` marcan lo pendiente). 15 pruebas en verde (`npm run test:medication`), incluida autoconsistencia (todo ingrediente de una regla existe en la base) y reproducibilidad. Descubrimiento: `parse_ddinter_csv` hardcodea `source: "DDInter 2.0"`, asi que la rebanada 3 debe generalizar el ingest de Rust a una columna de fuente antes de cargar ONChigh — cambio aditivo que no toca el emparejamiento. Salida en `build/` (ignorada por git); la sustitucion de la semilla viva y el retiro de los pares DDInter son la rebanada 3, tras revision.
 
 ## MVP recomendado
 

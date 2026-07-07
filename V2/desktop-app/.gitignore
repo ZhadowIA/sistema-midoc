@@ -25,3 +25,6 @@ dist-ssr
 
 # Resultados de pruebas locales
 test-results/
+
+# Artefactos generados por el pipeline de medicamentos (paso 25)
+scripts/medication-reference/build/
