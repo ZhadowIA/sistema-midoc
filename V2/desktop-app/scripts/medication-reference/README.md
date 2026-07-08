@@ -56,12 +56,20 @@ Salida en `./build/` (ignorada por git; se regenera de forma reproducible):
   `parse_interactions_csv` lee el formato del paso 25 conservando la fuente real
   y la descripcion (con soporte de campos entrecomillados), y `parse_interactions`
   enruta por encabezado entre el formato nuevo y el DDInter heredado.
-  `update_reference` ya usa el dispatcher. Cambio **aditivo**: no toca la logica
-  de emparejamiento. `parse_ddinter_csv` (que hardcodea `source: "DDInter 2.0"`)
-  se retira junto con la semilla.
-- **Rebanada 3 — data swap y distribucion (pendiente):**
-  1. **Retirar los pares DDInter de la semilla empaquetada** (`reference_data/`)
-     y sustituirla por los artefactos ONChigh generados.
-  2. **Publicar en los endpoints `MIDOC_*_URL`** (descarga post-instalacion; la
-     base a escala no se empaqueta con `include_str!`). Requiere tu validacion
-     clinica de la lista curada antes de cambiar el comportamiento real.
+  `update_reference` ya usa el dispatcher.
+- **Triple whammy (reglas n-arias) — HECHO.** El motor evalua interacciones de
+  tres clases por las clases presentes en la prescripcion (tabla
+  `class_triple_interactions`, `parse_triples_csv`, `import_triples`). El
+  pipeline emite `triples.csv`; `sources.ts` define la clase Diuretico y las
+  reglas IECA/ARA2 + diuretico + AINE.
+- **Data swap — HECHO (rebanada 3).** `reference_data/` ya contiene la base
+  ONChigh generada (`medications.csv`, `interactions.csv`, `triples.csv`,
+  `manifest.json`); `ddinter.csv` (CC BY-NC) fue **eliminado**. La semilla
+  empaquetada (`BUNDLED_*`, version `onchigh-2026-07-07`) instala esta base.
+  Para regenerarla: `npm run medication:build <version>` y copiar los tres CSV
+  + manifest a `src-tauri/src/reference_data/`.
+- **Pendiente (ops, no codigo):** publicar los artefactos en los endpoints
+  `MIDOC_*_URL` (incluido `MIDOC_TRIPLES_URL`) para actualizacion
+  post-instalacion sin reinstalar la app. `openfda.json` es un artefacto
+  legado de dominio publico aun no regenerado por el pipeline (`labels: 0` en
+  el manifest; los 64 textos siguen sirviendo de respaldo).

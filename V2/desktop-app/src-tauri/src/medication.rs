@@ -993,20 +993,24 @@ pub struct MedicationDataset {
 /// pero por debajo del minimo, se aborta la actualizacion completa.
 pub const MIN_MEDICATIONS: usize = 5;
 pub const MIN_INTERACTIONS: usize = 5;
-pub const BUNDLED_REFERENCE_VERSION: &str = "midoc-real-2026-06-14";
+/// Base ONChigh de dominio publico (paso 25, rebanada 3). Reemplaza la semilla
+/// DDInter (CC BY-NC) que se retiro para eliminar el riesgo legal en un SaaS
+/// de pago. Generada de forma reproducible por `scripts/medication-reference/`.
+pub const BUNDLED_REFERENCE_VERSION: &str = "onchigh-2026-07-07";
 
 const BUNDLED_MEDICATIONS_CSV: &str = include_str!("reference_data/medications.csv");
-const BUNDLED_DDINTER_CSV: &str = include_str!("reference_data/ddinter.csv");
+const BUNDLED_INTERACTIONS_CSV: &str = include_str!("reference_data/interactions.csv");
+const BUNDLED_TRIPLES_CSV: &str = include_str!("reference_data/triples.csv");
 const BUNDLED_OPENFDA_JSON: &str = include_str!("reference_data/openfda.json");
 
 pub fn bundled_reference_dataset() -> MedicationDataset {
     MedicationDataset {
         medications_csv: BUNDLED_MEDICATIONS_CSV.to_string(),
-        ddinter_csv: BUNDLED_DDINTER_CSV.to_string(),
-        // La semilla empaquetada actual no trae tripletas (sus clases son
-        // heredadas e inconsistentes con las del pipeline); las tripletas llegan
-        // con la base ONChigh generada. Vacio = no toca la tabla.
-        triples_csv: String::new(),
+        // Interacciones ONChigh (formato con fuente real); el dispatcher las
+        // reconoce por encabezado. Ya no es DDInter.
+        ddinter_csv: BUNDLED_INTERACTIONS_CSV.to_string(),
+        // Tripletas de clase (triple whammy) de la base ONChigh.
+        triples_csv: BUNDLED_TRIPLES_CSV.to_string(),
         openfda_json: BUNDLED_OPENFDA_JSON.to_string(),
         version: BUNDLED_REFERENCE_VERSION.to_string(),
     }
@@ -1667,11 +1671,47 @@ mod tests {
         let conn = test_conn("bundled-brand-alias");
         install_bundled_reference(&conn).unwrap();
 
-        let report = check_prescription(&conn, "enc-1", &meds(&["Tylenol", "Warfarina"]), None).unwrap();
-        let tylenol = report.normalized.iter().find(|drug| drug.input == "Tylenol").unwrap();
-        assert_eq!(tylenol.ingredient.as_deref(), Some("acetaminophen"));
-        assert_eq!(tylenol.display_name.as_deref(), Some("Paracetamol"));
+        // Marca comercial (Advil) -> ingrediente canonico; interaccion citada
+        // desde la fuente ONChigh de dominio publico (ya no DDInter).
+        let report = check_prescription(&conn, "enc-1", &meds(&["Advil", "Warfarina"]), None).unwrap();
+        let advil = report.normalized.iter().find(|drug| drug.input == "Advil").unwrap();
+        assert_eq!(advil.ingredient.as_deref(), Some("ibuprofen"));
+        assert_eq!(advil.display_name.as_deref(), Some("Ibuprofeno"));
         assert_eq!(report.interactions.len(), 1);
-        assert_eq!(report.interactions[0].source, "DDInter 2.0");
+        assert_eq!(report.interactions[0].severity, "MAJOR");
+        assert_eq!(report.interactions[0].source, "ONChigh");
+    }
+
+    #[test]
+    fn bundled_reference_has_no_ddinter_source() {
+        // El swap retiro la semilla DDInter (CC BY-NC): ninguna interaccion
+        // empaquetada debe citarla.
+        let conn = test_conn("bundled-no-ddinter");
+        install_bundled_reference(&conn).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM drug_interactions WHERE source LIKE '%DDInter%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn bundled_reference_fires_triple_whammy() {
+        // La base empaquetada ONChigh ya trae las tripletas de clase.
+        let conn = test_conn("bundled-triple");
+        install_bundled_reference(&conn).unwrap();
+        let report = check_prescription(
+            &conn,
+            "enc-1",
+            &meds(&["Enalapril", "Furosemida", "Ibuprofeno"]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(report.triple_interactions.len(), 1);
+        assert_eq!(report.triple_interactions[0].severity, "MAJOR");
+        assert_eq!(report.triple_interactions[0].source, "ONChigh");
     }
 }

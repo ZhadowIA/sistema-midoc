@@ -1,14 +1,32 @@
 {
-  "version": "midoc-real-2026-06-14",
-  "sources": {
-    "rxnorm": "https://rxnav.nlm.nih.gov/REST/rxcui.json",
-    "ddinter": "https://ddinter.scbdd.com/static/media/download",
-    "openfda": "https://api.fda.gov/drug/label.json"
-  },
+  "version": "onchigh-2026-07-07",
+  "generatedAt": "2026-07-08T00:21:46.047Z",
+  "sources": [
+    {
+      "name": "ONChigh",
+      "license": "Public Domain (ONC/RAND, licencia mundial irrevocable al gobierno de EE. UU.)",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC3422823/"
+    },
+    {
+      "name": "RxNorm/RxClass",
+      "license": "Public Domain (U.S. National Library of Medicine)",
+      "url": "https://www.nlm.nih.gov/research/umls/rxnorm/"
+    },
+    {
+      "name": "openFDA",
+      "license": "Public Domain (U.S. Government)",
+      "url": "https://open.fda.gov/"
+    }
+  ],
   "counts": {
-    "medicationRows": 173,
-    "interactionRows": 1060,
-    "labelRows": 64,
-    "rxnormValidatedIngredients": 65
+    "medicationRows": 90,
+    "interactionRows": 188,
+    "labelRows": 0
+  },
+  "triples": 2,
+  "checksums": {
+    "interactionsCsv": "aee3953fe6b1867ce8013458ff84d89851e5e3cc3806b6a08b999905d51c51e4",
+    "triplesCsv": "3ea6133e69bd5561529c7884295afbc86058ea9a8d5e5ceb9e4d5d0391a5f792",
+    "medicationsCsv": "c4581b673e8a9a3010a27f549d9f5e07e0863407f3ecd0208ef0d586c2b9e0ee"
   }
 }
