@@ -996,7 +996,7 @@ pub const MIN_INTERACTIONS: usize = 5;
 /// Base ONChigh de dominio publico (paso 25, rebanada 3). Reemplaza la semilla
 /// DDInter (CC BY-NC) que se retiro para eliminar el riesgo legal en un SaaS
 /// de pago. Generada de forma reproducible por `scripts/medication-reference/`.
-pub const BUNDLED_REFERENCE_VERSION: &str = "onchigh-2026-07-07";
+pub const BUNDLED_REFERENCE_VERSION: &str = "onchigh-mx-2026-07-07";
 
 const BUNDLED_MEDICATIONS_CSV: &str = include_str!("reference_data/medications.csv");
 const BUNDLED_INTERACTIONS_CSV: &str = include_str!("reference_data/interactions.csv");
@@ -1696,6 +1696,28 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn bundled_reference_recognizes_mexican_brand_names() {
+        // Capa de marcas MX (rebanada 4): el medico teclea el nombre comercial
+        // y se reconoce el ingrediente; una interaccion por marca dispara igual.
+        let conn = test_conn("bundled-mx-brands");
+        install_bundled_reference(&conn).unwrap();
+
+        // Marca -> ingrediente canonico.
+        let report = check_prescription(&conn, "enc-1", &meds(&["Tafil", "Tempra"]), None).unwrap();
+        let tafil = report.normalized.iter().find(|d| d.input == "Tafil").unwrap();
+        assert_eq!(tafil.ingredient.as_deref(), Some("alprazolam"));
+        assert_eq!(tafil.display_name.as_deref(), Some("Alprazolam"));
+        assert!(report.unrecognized.is_empty(), "Tempra deberia reconocerse");
+
+        // Interaccion citada por marcas comerciales: Sintrom (acenocumarol,
+        // anticoagulante) + Flanax (naproxeno, AINE) -> sangrado, MAJOR.
+        let bleed = check_prescription(&conn, "enc-1", &meds(&["Sintrom", "Flanax"]), None).unwrap();
+        assert_eq!(bleed.interactions.len(), 1);
+        assert_eq!(bleed.interactions[0].severity, "MAJOR");
+        assert_eq!(bleed.interactions[0].source, "ONChigh");
     }
 
     #[test]

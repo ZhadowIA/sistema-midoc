@@ -16,7 +16,7 @@
 //! de clase desde RxClass se revisan juntos en la rebanada siguiente. Cada
 //! regla que falte esta marcada con TODO(onchigh-full).
 
-import type { ClassMembers, ClassRule, MedicationRow, TripleRule } from "./reference.ts";
+import { resolveBrands, type BrandAlias, type ClassMembers, type ClassRule, type MedicationRow, type TripleRule } from "./reference.ts";
 
 /**
  * Miembros por clase terapeutica (subconjunto). En la version completa este
@@ -225,7 +225,6 @@ export const BASE_MEDICATIONS: MedicationRow[] = [
   { name: "acenocoumarol", ingredient: "acenocoumarol", displayName: "Acenocumarol", drugClass: "Anticoagulante" },
   { name: "ibuprofen", ingredient: "ibuprofen", displayName: "Ibuprofeno", drugClass: "AINE" },
   { name: "ibuprofeno", ingredient: "ibuprofen", displayName: "Ibuprofeno", drugClass: "AINE" },
-  { name: "advil", ingredient: "ibuprofen", displayName: "Ibuprofeno", drugClass: "AINE" },
   { name: "naproxen", ingredient: "naproxen", displayName: "Naproxeno", drugClass: "AINE" },
   { name: "naproxeno", ingredient: "naproxen", displayName: "Naproxeno", drugClass: "AINE" },
   { name: "diclofenac", ingredient: "diclofenac", displayName: "Diclofenaco", drugClass: "AINE" },
@@ -312,6 +311,122 @@ export const BASE_MEDICATIONS: MedicationRow[] = [
   { name: "clortalidona", ingredient: "chlorthalidone", displayName: "Clortalidona", drugClass: "Diuretico" }
 ];
 
+/**
+ * Ingredientes de primer nivel que NO participan en reglas de interaccion pero
+ * son de uso diario en Mexico: se incluyen para que se RECONOZCAN (y no salgan
+ * como "no reconocido"). El swap a ONChigh los habia dejado fuera. Clase
+ * terapeutica para duplicidad/alergia cruzada.
+ * TODO(cofepris-full): ampliar con el Cuadro Basico del IMSS completo.
+ */
+export const ADDITIONAL_INGREDIENTS: MedicationRow[] = [
+  { name: "acetaminophen", ingredient: "acetaminophen", displayName: "Paracetamol", drugClass: "Analgesico" },
+  { name: "paracetamol", ingredient: "acetaminophen", displayName: "Paracetamol", drugClass: "Analgesico" },
+  { name: "acetaminofen", ingredient: "acetaminophen", displayName: "Paracetamol", drugClass: "Analgesico" },
+  { name: "omeprazole", ingredient: "omeprazole", displayName: "Omeprazol", drugClass: "IBP" },
+  { name: "omeprazol", ingredient: "omeprazole", displayName: "Omeprazol", drugClass: "IBP" },
+  { name: "pantoprazole", ingredient: "pantoprazole", displayName: "Pantoprazol", drugClass: "IBP" },
+  { name: "pantoprazol", ingredient: "pantoprazole", displayName: "Pantoprazol", drugClass: "IBP" },
+  { name: "metformin", ingredient: "metformin", displayName: "Metformina", drugClass: "Biguanida" },
+  { name: "metformina", ingredient: "metformin", displayName: "Metformina", drugClass: "Biguanida" },
+  { name: "amoxicillin", ingredient: "amoxicillin", displayName: "Amoxicilina", drugClass: "Penicilina" },
+  { name: "amoxicilina", ingredient: "amoxicillin", displayName: "Amoxicilina", drugClass: "Penicilina" },
+  { name: "ampicilina", ingredient: "ampicillin", displayName: "Ampicilina", drugClass: "Penicilina" },
+  { name: "azithromycin", ingredient: "azithromycin", displayName: "Azitromicina", drugClass: "Macrolido" },
+  { name: "azitromicina", ingredient: "azithromycin", displayName: "Azitromicina", drugClass: "Macrolido" },
+  { name: "loratadine", ingredient: "loratadine", displayName: "Loratadina", drugClass: "Antihistaminico" },
+  { name: "loratadina", ingredient: "loratadine", displayName: "Loratadina", drugClass: "Antihistaminico" }
+];
+
+/**
+ * Capa de marcas comerciales mexicanas (paso 25, rebanada 4). Cada marca -> su
+ * principio activo (vocabulario RxNorm). Verificadas contra multiples fuentes:
+ * PLM (medicamentosplm.com), Vademecum, el Listado de Medicamentos de Referencia
+ * de COFEPRIS (gob.mx) y el Cuadro Basico del IMSS. Se prioriza a los principios
+ * activos que participan en reglas de interaccion: una marca sin mapear seria un
+ * fallo silencioso de reconocimiento (no verifica lo que no conoce).
+ * TODO(cofepris-full): completar desde el registro sanitario de COFEPRIS.
+ */
+export const MEXICAN_BRANDS: BrandAlias[] = [
+  // Anticoagulantes
+  { brand: "coumadin", ingredient: "warfarin" },
+  { brand: "sintrom", ingredient: "acenocoumarol" },
+  // AINE
+  { brand: "advil", ingredient: "ibuprofen" },
+  { brand: "motrin", ingredient: "ibuprofen" },
+  { brand: "actron", ingredient: "ibuprofen" },
+  { brand: "flanax", ingredient: "naproxen" },
+  { brand: "naxen", ingredient: "naproxen" },
+  { brand: "dolac", ingredient: "ketorolac" },
+  { brand: "supradol", ingredient: "ketorolac" },
+  { brand: "voltaren", ingredient: "diclofenac" },
+  { brand: "mobic", ingredient: "meloxicam" },
+  // Antiplaquetarios
+  { brand: "aspirina protect", ingredient: "aspirin" },
+  { brand: "plavix", ingredient: "clopidogrel" },
+  // IECA / ARA2
+  { brand: "renitec", ingredient: "enalapril" },
+  { brand: "cozaar", ingredient: "losartan" },
+  { brand: "micardis", ingredient: "telmisartan" },
+  { brand: "diovan", ingredient: "valsartan" },
+  // Diureticos
+  { brand: "lasix", ingredient: "furosemide" },
+  { brand: "aldactone", ingredient: "spironolactone" },
+  // Inhibidores PDE5
+  { brand: "viagra", ingredient: "sildenafil" },
+  { brand: "cialis", ingredient: "tadalafil" },
+  { brand: "levitra", ingredient: "vardenafil" },
+  // ISRS / IRSN
+  { brand: "prozac", ingredient: "fluoxetine" },
+  { brand: "altruline", ingredient: "sertraline" },
+  { brand: "paxil", ingredient: "paroxetine" },
+  { brand: "efexor", ingredient: "venlafaxine" },
+  { brand: "cymbalta", ingredient: "duloxetine" },
+  // Opioides serotoninergicos
+  { brand: "tradol", ingredient: "tramadol" },
+  { brand: "tramal", ingredient: "tramadol" },
+  // Benzodiacepinas
+  { brand: "tafil", ingredient: "alprazolam" },
+  { brand: "neupax", ingredient: "alprazolam" },
+  { brand: "rivotril", ingredient: "clonazepam" },
+  { brand: "valium", ingredient: "diazepam" },
+  { brand: "ativan", ingredient: "lorazepam" },
+  // Estatinas
+  { brand: "zocor", ingredient: "simvastatin" },
+  { brand: "lipitor", ingredient: "atorvastatin" },
+  // Inhibidores fuertes CYP3A4
+  { brand: "klaricid", ingredient: "clarithromycin" },
+  // Antifolato (Bactrim/Septrin son TMP/SMX; se mapea al componente sulfamida)
+  { brand: "bactrim", ingredient: "sulfamethoxazole" },
+  { brand: "septrin", ingredient: "sulfamethoxazole" },
+  // Inhibidor de xantina oxidasa
+  { brand: "zyloprim", ingredient: "allopurinol" },
+  // Analgesico / IBP / antidiabetico (reconocimiento)
+  { brand: "tempra", ingredient: "acetaminophen" },
+  { brand: "tylenol", ingredient: "acetaminophen" },
+  { brand: "losec", ingredient: "omeprazole" },
+  { brand: "glucophage", ingredient: "metformin" },
+  { brand: "amoxil", ingredient: "amoxicillin" }
+];
+
+/**
+ * Base de medicamentos completa: genericos de interaccion + genericos de
+ * reconocimiento + marcas comerciales resueltas. Deduplica por nombre (la
+ * primera aparicion manda).
+ */
+export function assembleMedications(): MedicationRow[] {
+  const catalog = [...BASE_MEDICATIONS, ...ADDITIONAL_INGREDIENTS];
+  const combined = [...catalog, ...resolveBrands(MEXICAN_BRANDS, catalog)];
+  const seen = new Set<string>();
+  const rows: MedicationRow[] = [];
+  for (const row of combined) {
+    const key = row.name.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(row);
+  }
+  return rows;
+}
+
 /** Fuentes con licencia declarada para el manifest (compuerta legal paso 25). */
 export const SOURCES = [
   {
@@ -323,6 +438,11 @@ export const SOURCES = [
     name: "RxNorm/RxClass",
     license: "Public Domain (U.S. National Library of Medicine)",
     url: "https://www.nlm.nih.gov/research/umls/rxnorm/"
+  },
+  {
+    name: "COFEPRIS/PLM (marcas MX)",
+    license: "Referencia publica: nombres comerciales verificados contra PLM, Vademecum, Listado de Medicamentos de Referencia (COFEPRIS/gob.mx) y Cuadro Basico del IMSS",
+    url: "https://www.gob.mx/cofepris"
   },
   {
     name: "openFDA",

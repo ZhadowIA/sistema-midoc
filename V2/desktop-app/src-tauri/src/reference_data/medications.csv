@@ -4,7 +4,6 @@ warfarina,warfarin,Warfarina,Anticoagulante
 acenocoumarol,acenocoumarol,Acenocumarol,Anticoagulante
 ibuprofen,ibuprofen,Ibuprofeno,AINE
 ibuprofeno,ibuprofen,Ibuprofeno,AINE
-advil,ibuprofen,Ibuprofeno,AINE
 naproxen,naproxen,Naproxeno,AINE
 naproxeno,naproxen,Naproxeno,AINE
 diclofenac,diclofenac,Diclofenaco,AINE
@@ -89,3 +88,64 @@ torsemide,torsemide,Torasemida,Diuretico
 torasemida,torsemide,Torasemida,Diuretico
 chlorthalidone,chlorthalidone,Clortalidona,Diuretico
 clortalidona,chlorthalidone,Clortalidona,Diuretico
+acetaminophen,acetaminophen,Paracetamol,Analgesico
+paracetamol,acetaminophen,Paracetamol,Analgesico
+acetaminofen,acetaminophen,Paracetamol,Analgesico
+omeprazole,omeprazole,Omeprazol,IBP
+omeprazol,omeprazole,Omeprazol,IBP
+pantoprazole,pantoprazole,Pantoprazol,IBP
+pantoprazol,pantoprazole,Pantoprazol,IBP
+metformin,metformin,Metformina,Biguanida
+metformina,metformin,Metformina,Biguanida
+amoxicillin,amoxicillin,Amoxicilina,Penicilina
+amoxicilina,amoxicillin,Amoxicilina,Penicilina
+ampicilina,ampicillin,Ampicilina,Penicilina
+azithromycin,azithromycin,Azitromicina,Macrolido
+azitromicina,azithromycin,Azitromicina,Macrolido
+loratadine,loratadine,Loratadina,Antihistaminico
+loratadina,loratadine,Loratadina,Antihistaminico
+coumadin,warfarin,Warfarina,Anticoagulante
+sintrom,acenocoumarol,Acenocumarol,Anticoagulante
+advil,ibuprofen,Ibuprofeno,AINE
+motrin,ibuprofen,Ibuprofeno,AINE
+actron,ibuprofen,Ibuprofeno,AINE
+flanax,naproxen,Naproxeno,AINE
+naxen,naproxen,Naproxeno,AINE
+dolac,ketorolac,Ketorolaco,AINE
+supradol,ketorolac,Ketorolaco,AINE
+voltaren,diclofenac,Diclofenaco,AINE
+mobic,meloxicam,Meloxicam,AINE
+aspirina protect,aspirin,Aspirina,Antiplaquetario
+plavix,clopidogrel,Clopidogrel,Antiplaquetario
+renitec,enalapril,Enalapril,IECA
+cozaar,losartan,Losartan,ARA2
+micardis,telmisartan,Telmisartan,ARA2
+diovan,valsartan,Valsartan,ARA2
+lasix,furosemide,Furosemida,Diuretico
+aldactone,spironolactone,Espironolactona,Ahorrador de potasio
+viagra,sildenafil,Sildenafil,Inhibidor PDE5
+cialis,tadalafil,Tadalafil,Inhibidor PDE5
+levitra,vardenafil,Vardenafil,Inhibidor PDE5
+prozac,fluoxetine,Fluoxetina,ISRS
+altruline,sertraline,Sertralina,ISRS
+paxil,paroxetine,Paroxetina,ISRS
+efexor,venlafaxine,Venlafaxina,IRSN
+cymbalta,duloxetine,Duloxetina,IRSN
+tradol,tramadol,Tramadol,Opioide serotoninergico
+tramal,tramadol,Tramadol,Opioide serotoninergico
+tafil,alprazolam,Alprazolam,Benzodiacepina
+neupax,alprazolam,Alprazolam,Benzodiacepina
+rivotril,clonazepam,Clonazepam,Benzodiacepina
+valium,diazepam,Diazepam,Benzodiacepina
+ativan,lorazepam,Lorazepam,Benzodiacepina
+zocor,simvastatin,Simvastatina,Estatina CYP3A4 alto riesgo
+lipitor,atorvastatin,Atorvastatina,Estatina CYP3A4 riesgo moderado
+klaricid,clarithromycin,Claritromicina,Inhibidor fuerte CYP3A4
+bactrim,sulfamethoxazole,Sulfametoxazol,Antibiotico antifolato
+septrin,sulfamethoxazole,Sulfametoxazol,Antibiotico antifolato
+zyloprim,allopurinol,Alopurinol,Inhibidor xantina oxidasa
+tempra,acetaminophen,Paracetamol,Analgesico
+tylenol,acetaminophen,Paracetamol,Analgesico
+losec,omeprazole,Omeprazol,IBP
+glucophage,metformin,Metformina,Biguanida
+amoxil,amoxicillin,Amoxicilina,Penicilina

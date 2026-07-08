@@ -45,9 +45,16 @@ Salida en `./build/` (ignorada por git; se regenera de forma reproducible):
 
 ## Pendiente (rebanadas siguientes)
 
-- **Rebanada 2 — capa mexicana:** alias marca comercial -> ingrediente desde
-  COFEPRIS / Compendio Nacional de Insumos. Marcado `TODO(cofepris)` en
-  `sources.ts`. Hoy solo hay unos alias de ejemplo (Advil, Tempra…).
+- **Capa mexicana de marcas — HECHO (rebanada 4).** `MEXICAN_BRANDS` en
+  `sources.ts` mapea nombres comerciales MX -> ingrediente (Sintrom, Tafil,
+  Rivotril, Flanax, Klaricid, Lipitor, Tempra, Losec…), verificados contra PLM,
+  Vademecum, el Listado de Medicamentos de Referencia de COFEPRIS y el Cuadro
+  Basico del IMSS. `resolveBrands` (en `reference.ts`) resuelve display/clase
+  desde el catalogo y **lanza** si una marca apunta a un ingrediente inexistente.
+  `ADDITIONAL_INGREDIENTS` reincorpora genericos de primer nivel que el swap
+  habia dejado fuera (paracetamol, omeprazol, metformina…). `assembleMedications`
+  combina genericos + reconocimiento + marcas. `TODO(cofepris-full)`: completar
+  desde el registro sanitario.
 - **Rebanada 2 — lista ONChigh completa y RxClass real:** hoy el subconjunto de
   reglas y los miembros de clase estan curados a mano (`TODO(onchigh-full)`);
   falta transcribir el apendice completo y derivar los miembros de clase desde

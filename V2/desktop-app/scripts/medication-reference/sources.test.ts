@@ -1,9 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { expandRuleset, expandTripleRuleset, normalizeName } from "./reference.ts";
-import { BASE_MEDICATIONS, CLASS_MEMBERS, ONCHIGH_RULES, SOURCES, TRIPLE_RULES } from "./sources.ts";
+import {
+  assembleMedications,
+  BASE_MEDICATIONS,
+  CLASS_MEMBERS,
+  MEXICAN_BRANDS,
+  ONCHIGH_RULES,
+  SOURCES,
+  TRIPLE_RULES
+} from "./sources.ts";
 
+const MEDICATIONS = assembleMedications();
 const knownIngredients = new Set(BASE_MEDICATIONS.map((m) => normalizeName(m.ingredient)));
+const medByName = new Map(MEDICATIONS.map((m) => [normalizeName(m.name), m]));
 
 test("todo ingrediente de una clase existe en la base (autoconsistencia)", () => {
   const missing: string[] = [];
@@ -36,12 +46,40 @@ test("la expansion produce pares reconocibles por el motor", () => {
 
 test("un mismo nombre no apunta a ingredientes distintos (sin ambiguedad)", () => {
   const byName = new Map<string, string>();
-  for (const m of BASE_MEDICATIONS) {
+  for (const m of MEDICATIONS) {
     const name = normalizeName(m.name);
     const ingredient = normalizeName(m.ingredient);
     const prev = byName.get(name);
     assert.ok(prev === undefined || prev === ingredient, `nombre ambiguo: ${name} -> ${prev} y ${ingredient}`);
     byName.set(name, ingredient);
+  }
+});
+
+test("las marcas comerciales MX resuelven a su ingrediente y clase correctos", () => {
+  // assembleMedications lanza si una marca apunta a un ingrediente inexistente,
+  // asi que llegar aqui ya prueba que todas resuelven. Spot-check de las criticas.
+  const expect = (brand: string, ingredient: string, cls: string) => {
+    const row = medByName.get(normalizeName(brand));
+    assert.ok(row, `marca no reconocida: ${brand}`);
+    assert.equal(normalizeName(row!.ingredient), ingredient);
+    assert.equal(row!.drugClass, cls);
+  };
+  expect("Sintrom", "acenocoumarol", "Anticoagulante");
+  expect("Tafil", "alprazolam", "Benzodiacepina");
+  expect("Klaricid", "clarithromycin", "Inhibidor fuerte CYP3A4");
+  expect("Lipitor", "atorvastatin", "Estatina CYP3A4 riesgo moderado");
+  expect("Tempra", "acetaminophen", "Analgesico");
+  expect("Lasix", "furosemide", "Diuretico");
+});
+
+test("cada marca MX cae en el catalogo y hay marcas para clases de interaccion", () => {
+  assert.ok(MEXICAN_BRANDS.length >= 30, "la capa de marcas quedo demasiado corta");
+  // Las marcas cubren clases que disparan alertas (no solo reconocimiento).
+  const brandClasses = new Set(
+    MEXICAN_BRANDS.map((b) => medByName.get(normalizeName(b.brand))?.drugClass)
+  );
+  for (const cls of ["Anticoagulante", "AINE", "Benzodiacepina", "Diuretico", "IECA"]) {
+    assert.ok(brandClasses.has(cls), `sin marca comercial para la clase de interaccion ${cls}`);
   }
 });
 
@@ -53,10 +91,13 @@ test("nitrato + inhibidor PDE5 se expande como CONTRAINDICATED", () => {
   assert.equal(found?.severity, "CONTRAINDICATED");
 });
 
-test("las fuentes declaradas son de dominio publico y ninguna es DDInter", () => {
+test("ninguna fuente tiene licencia restrictiva (sin DDInter ni no-comercial)", () => {
   assert.ok(SOURCES.length > 0);
-  assert.ok(SOURCES.every((s) => /public domain/i.test(s.license)));
+  // Las fuentes de interaccion son dominio publico; las marcas MX son referencia
+  // publica. Lo que NO se admite es una fuente no comercial (DDInter / CC BY-NC).
+  assert.ok(SOURCES.every((s) => /public domain|referencia publica/i.test(s.license)));
   assert.ok(!SOURCES.some((s) => /ddinter/i.test(s.name)));
+  assert.ok(!SOURCES.some((s) => /non-commercial|by-nc|no comercial/i.test(s.license)));
 });
 
 // --- Decisiones clinicas del medico (2026-07-07): fijadas para que no se

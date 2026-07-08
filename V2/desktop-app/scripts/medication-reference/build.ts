@@ -21,7 +21,7 @@ import {
   toMedicationsCsv,
   toTriplesCsv
 } from "./reference.ts";
-import { BASE_MEDICATIONS, CLASS_MEMBERS, ONCHIGH_RULES, SOURCES, TRIPLE_RULES } from "./sources.ts";
+import { assembleMedications, CLASS_MEMBERS, ONCHIGH_RULES, SOURCES, TRIPLE_RULES } from "./sources.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, "build");
@@ -37,12 +37,13 @@ function main(): void {
   const triples = expandTripleRuleset(TRIPLE_RULES, "ONChigh", version);
   const interactionsCsv = toInteractionsCsv(pairs);
   const triplesCsv = toTriplesCsv(triples);
-  const medicationsCsv = toMedicationsCsv(BASE_MEDICATIONS);
+  const medications = assembleMedications();
+  const medicationsCsv = toMedicationsCsv(medications);
 
   const manifest = {
     ...buildManifest({
       version,
-      medications: BASE_MEDICATIONS.length,
+      medications: medications.length,
       interactions: pairs.length,
       labels: 0,
       sources: SOURCES
@@ -63,7 +64,7 @@ function main(): void {
 
   process.stdout.write(
     `Base de medicamentos generada (version ${version}):\n` +
-      `  ${BASE_MEDICATIONS.length} medicamentos\n` +
+      `  ${medications.length} medicamentos (genericos + marcas comerciales MX)\n` +
       `  ${pairs.length} interacciones de par (expandidas por clase desde ONChigh)\n` +
       `  ${triples.length} interacciones de tripleta de clases (triple whammy)\n` +
       `  fuentes: ${SOURCES.map((s) => s.name).join(", ")}\n` +

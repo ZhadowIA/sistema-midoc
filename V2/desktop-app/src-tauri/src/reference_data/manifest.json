@@ -1,6 +1,6 @@
 {
-  "version": "onchigh-2026-07-07",
-  "generatedAt": "2026-07-08T00:21:46.047Z",
+  "version": "onchigh-mx-2026-07-07",
+  "generatedAt": "2026-07-08T02:37:22.213Z",
   "sources": [
     {
       "name": "ONChigh",
@@ -13,20 +13,25 @@
       "url": "https://www.nlm.nih.gov/research/umls/rxnorm/"
     },
     {
+      "name": "COFEPRIS/PLM (marcas MX)",
+      "license": "Referencia publica: nombres comerciales verificados contra PLM, Vademecum, Listado de Medicamentos de Referencia (COFEPRIS/gob.mx) y Cuadro Basico del IMSS",
+      "url": "https://www.gob.mx/cofepris"
+    },
+    {
       "name": "openFDA",
       "license": "Public Domain (U.S. Government)",
       "url": "https://open.fda.gov/"
     }
   ],
   "counts": {
-    "medicationRows": 90,
+    "medicationRows": 150,
     "interactionRows": 188,
     "labelRows": 0
   },
   "triples": 2,
   "checksums": {
-    "interactionsCsv": "aee3953fe6b1867ce8013458ff84d89851e5e3cc3806b6a08b999905d51c51e4",
-    "triplesCsv": "3ea6133e69bd5561529c7884295afbc86058ea9a8d5e5ceb9e4d5d0391a5f792",
-    "medicationsCsv": "c4581b673e8a9a3010a27f549d9f5e07e0863407f3ecd0208ef0d586c2b9e0ee"
+    "interactionsCsv": "5155f7355e13474a7adfa0822ba6e3d4e747b4133c4c4bca2e402a058a0363e4",
+    "triplesCsv": "eae4d6295470bd6c4c419e1049b70b253850dbcdef910f19857151c288c6b48f",
+    "medicationsCsv": "087d29d5620367046c6f5ce70334b99f0e12c5c3d063a896da4b605415b9f581"
   }
 }

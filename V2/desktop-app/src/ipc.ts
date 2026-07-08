@@ -596,9 +596,9 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       // base sigue sembrada. El mock espeja ese comportamiento.
       if (mockState.medicationRef.version === "seed-v1") {
         mockState.medicationRef = {
-          version: "midoc-real-2026-06-14",
-          medications: 173,
-          interactions: 1060,
+          version: "onchigh-mx-2026-07-07",
+          medications: 150,
+          interactions: 188,
           labels: 64
         };
       }
@@ -1369,9 +1369,19 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         sildenafil: { ingredient: "sildenafil", display: "Sildenafil", cls: "Inhibidor PDE5" },
         nitroglicerina: { ingredient: "nitroglicerina", display: "Nitroglicerina", cls: "Nitrato" },
         enalapril: { ingredient: "enalapril", display: "Enalapril", cls: "IECA" },
+        renitec: { ingredient: "enalapril", display: "Enalapril", cls: "IECA" },
         losartan: { ingredient: "losartan", display: "Losartan", cls: "ARA2" },
+        cozaar: { ingredient: "losartan", display: "Losartan", cls: "ARA2" },
         furosemida: { ingredient: "furosemide", display: "Furosemida", cls: "Diuretico" },
         furosemide: { ingredient: "furosemide", display: "Furosemida", cls: "Diuretico" },
+        lasix: { ingredient: "furosemide", display: "Furosemida", cls: "Diuretico" },
+        // Marcas comerciales MX (rebanada 4): el mock espeja el reconocimiento.
+        sintrom: { ingredient: "acenocoumarol", display: "Acenocumarol", cls: "Anticoagulante" },
+        flanax: { ingredient: "naproxen", display: "Naproxeno", cls: "AINE" },
+        naxen: { ingredient: "naproxen", display: "Naproxeno", cls: "AINE" },
+        tafil: { ingredient: "alprazolam", display: "Alprazolam", cls: "Benzodiacepina" },
+        klaricid: { ingredient: "clarithromycin", display: "Claritromicina", cls: "Inhibidor fuerte CYP3A4" },
+        lipitor: { ingredient: "atorvastatin", display: "Atorvastatina", cls: "Estatina CYP3A4 riesgo moderado" },
         amoxicilina: { ingredient: "amoxicilina", display: "Amoxicilina", cls: "Penicilina" },
         paracetamol: { ingredient: "acetaminophen", display: "Paracetamol", cls: "Analgesico" },
         acetaminofen: { ingredient: "acetaminophen", display: "Paracetamol", cls: "Analgesico" },
@@ -1383,7 +1393,11 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         "ibuprofen|warfarin": { severity: "MAJOR", description: "Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia." },
         "naproxen|warfarin": { severity: "MAJOR", description: "Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia." },
         "nitroglicerina|sildenafil": { severity: "CONTRAINDICATED", description: "Hipotension grave por vasodilatacion sumada: combinacion contraindicada." },
-        "enalapril|ibuprofen": { severity: "MAJOR", description: "Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo." }
+        "enalapril|ibuprofen": { severity: "MAJOR", description: "Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo." },
+        "acenocoumarol|naproxen": { severity: "MAJOR", description: "Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia." },
+        "acenocoumarol|ibuprofen": { severity: "MAJOR", description: "Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia." },
+        "atorvastatin|clarithromycin": { severity: "MAJOR", description: "Riesgo aumentado de miopatia/rabdomiolisis: considerar suspender, reducir o cambiar la estatina." },
+        "clarithromycin|simvastatin": { severity: "CONTRAINDICATED", description: "Miopatia/rabdomiolisis por aumento marcado de la estatina: simvastatina contraindicada con inhibidores fuertes de CYP3A4." }
       };
       // Reglas de tres clases (triple whammy): se evaluan por las clases presentes.
       const tripleRules: Array<{ classes: [string, string, string]; description: string }> = [
@@ -1465,7 +1479,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         duplicateTherapy,
         tripleInteractions,
         labelNotes,
-        referenceVersion: "onchigh-2026-07-07",
+        referenceVersion: "onchigh-mx-2026-07-07",
         hasAlerts:
           interactionAlerts.length + allergyAlerts.length + duplicateTherapy.length + tripleInteractions.length > 0
       } as T;
@@ -1512,9 +1526,9 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return { medications, interactions, labels, version } as T;
     }
     case "update_medication_reference_from_midoc": {
-      const version = "midoc-real-2026-06-14";
-      const medications = 173;
-      const interactions = 1060;
+      const version = "onchigh-mx-2026-07-07";
+      const medications = 150;
+      const interactions = 188;
       const labels = 64;
       mockState.medicationRef = { version, medications, interactions, labels };
       return { medications, interactions, labels, version } as T;
