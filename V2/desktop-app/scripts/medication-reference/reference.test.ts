@@ -7,10 +7,14 @@ import {
   expandRuleset,
   toInteractionsCsv,
   toMedicationsCsv,
+  toTriplesCsv,
+  canonicalTriple,
+  expandTripleRuleset,
   buildManifest,
   type ClassRule,
   type ClassMembers,
-  type MedicationRow
+  type MedicationRow,
+  type TripleRule
 } from "./reference.ts";
 
 // El pipeline debe producir EXACTAMENTE lo que el motor de Rust espera. Estas
@@ -113,6 +117,38 @@ test("toInteractionsCsv emite encabezado con fuente y una fila por par", () => {
     { ingredientA: "a", ingredientB: "b", severity: "MAJOR", source: "ONChigh", sourceVersion: "v", description: "uno, dos" }
   ]);
   assert.ok(withComma.includes('"uno, dos"'));
+});
+
+test("canonicalTriple ordena las tres clases sin importar el orden de entrada", () => {
+  assert.deepEqual(canonicalTriple("AINE", "IECA", "Diuretico"), ["AINE", "Diuretico", "IECA"]);
+  assert.deepEqual(canonicalTriple("Diuretico", "AINE", "IECA"), canonicalTriple("IECA", "Diuretico", "AINE"));
+});
+
+test("expandTripleRuleset normaliza, deduplica y descarta clases repetidas", () => {
+  const rules: TripleRule[] = [
+    { classA: "IECA", classB: "Diuretico", classC: "AINE", severity: "MAJOR", description: "triple whammy" },
+    // Misma tripleta en otro orden y menor severidad: se colapsa, gana MAJOR.
+    { classA: "AINE", classB: "IECA", classC: "Diuretico", severity: "MODERATE", description: "dup" },
+    // Clase repetida: invalida, se descarta.
+    { classA: "AINE", classB: "AINE", classC: "IECA", severity: "MAJOR", description: "invalida" }
+  ];
+  const triples = expandTripleRuleset(rules, "ONChigh", "onc-2026");
+  assert.equal(triples.length, 1);
+  assert.equal(triples[0].severity, "MAJOR");
+  assert.equal(triples[0].description, "triple whammy");
+  assert.deepEqual([triples[0].classA, triples[0].classB, triples[0].classC], ["AINE", "Diuretico", "IECA"]);
+  assert.equal(triples[0].source, "ONChigh");
+});
+
+test("toTriplesCsv emite el formato de clases con encabezado", () => {
+  const triples = expandTripleRuleset(
+    [{ classA: "IECA", classB: "Diuretico", classC: "AINE", severity: "MAJOR", description: "lesion renal aguda" }],
+    "ONChigh",
+    "onc-2026"
+  );
+  const lines = toTriplesCsv(triples).trim().split("\n");
+  assert.equal(lines[0], "class_a,class_b,class_c,severity,source,source_version,description");
+  assert.equal(lines[1], "AINE,Diuretico,IECA,MAJOR,ONChigh,onc-2026,lesion renal aguda");
 });
 
 test("toMedicationsCsv emite el formato name,ingredient,display_name,drug_class", () => {

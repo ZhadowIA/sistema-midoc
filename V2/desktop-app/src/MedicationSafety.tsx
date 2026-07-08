@@ -39,6 +39,16 @@ interface DuplicateTherapyAlert {
   drugClass: string;
 }
 
+interface TripleInteractionAlert {
+  drugA: string;
+  drugB: string;
+  drugC: string;
+  severity: string;
+  description: string;
+  source: string;
+  sourceVersion: string;
+}
+
 interface LabelNote {
   drugA: string;
   drugB: string;
@@ -52,6 +62,7 @@ interface SafetyReport {
   interactions: InteractionAlert[];
   allergyAlerts: AllergyAlert[];
   duplicateTherapy: DuplicateTherapyAlert[];
+  tripleInteractions: TripleInteractionAlert[];
   labelNotes: LabelNote[];
   referenceVersion: string;
   hasAlerts: boolean;
@@ -163,6 +174,17 @@ export function MedicationSafety({
                 <strong>
                   Interaccion ({SEVERITY_LABEL[alert.severity] ?? alert.severity}): {alert.drugA} +{" "}
                   {alert.drugB}
+                </strong>
+                <p>{alert.description}</p>
+                <p className="meta">Fuente: {alert.source}</p>
+              </div>
+            ))}
+
+            {report.tripleInteractions.map((alert, i) => (
+              <div className={`med-alert med-${alert.severity.toLowerCase()}`} key={`tri-${i}`}>
+                <strong>
+                  Interaccion triple ({SEVERITY_LABEL[alert.severity] ?? alert.severity}): {alert.drugA} +{" "}
+                  {alert.drugB} + {alert.drugC}
                 </strong>
                 <p>{alert.description}</p>
                 <p className="meta">Fuente: {alert.source}</p>

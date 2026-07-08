@@ -79,6 +79,20 @@ pub struct DuplicateTherapyAlert {
     pub drug_class: String,
 }
 
+/// Alerta de interaccion de TRES clases (p. ej. el "triple whammy"): tres
+/// farmacos de tres clases distintas presentes a la vez. No es un par.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TripleInteractionAlert {
+    pub drug_a: String,
+    pub drug_b: String,
+    pub drug_c: String,
+    pub severity: String,
+    pub description: String,
+    pub source: String,
+    pub source_version: String,
+}
+
 /// Nota informativa de respaldo (openFDA): cuando no hay una interaccion
 /// estructurada (DDInter) para un par, pero la etiqueta FDA de uno de los
 /// farmacos menciona al otro. Es evidencia para consultar, no una alerta dura.
@@ -101,6 +115,8 @@ pub struct SafetyReport {
     pub interactions: Vec<InteractionAlert>,
     pub allergy_alerts: Vec<AllergyAlert>,
     pub duplicate_therapy: Vec<DuplicateTherapyAlert>,
+    /// Interacciones de tres clases (triple whammy). Alertas duras.
+    pub triple_interactions: Vec<TripleInteractionAlert>,
     /// Respaldo informativo de openFDA (no cuenta como alerta dura).
     pub label_notes: Vec<LabelNote>,
     pub reference_version: String,
@@ -125,6 +141,14 @@ fn canonical_pair(a: &str, b: &str) -> (String, String) {
     } else {
         (b.to_string(), a.to_string())
     }
+}
+
+/// Orden canonico de una tripleta de clases (a <= b <= c), para encontrar la
+/// regla sin importar el orden en que aparezcan las clases en la prescripcion.
+fn canonical_triple(a: &str, b: &str, c: &str) -> (String, String, String) {
+    let mut v = [a, b, c];
+    v.sort_unstable();
+    (v[0].to_string(), v[1].to_string(), v[2].to_string())
 }
 
 /// Rango de severidad para ordenar (mayor primero) y priorizar en la UI.
@@ -334,6 +358,59 @@ pub fn check_prescription(
         }
     }
 
+    // 4b. Interacciones de tres clases (triple whammy). Se evalua por las CLASES
+    // presentes: si una regla exige tres clases y las tres estan en la
+    // prescripcion (cada una por un farmaco distinto), se alerta. No es un par.
+    let mut triple_interactions: Vec<TripleInteractionAlert> = Vec::new();
+    {
+        // Primer farmaco representante de cada clase presente (para mostrar).
+        let mut class_rep: std::collections::HashMap<String, &NormalizedDrug> =
+            std::collections::HashMap::new();
+        for drug in &recognized {
+            if let Some(class) = drug.drug_class.as_deref() {
+                if !class.is_empty() {
+                    class_rep.entry(class.to_string()).or_insert(drug);
+                }
+            }
+        }
+        if class_rep.len() >= 3 {
+            let mut stmt = conn.prepare(
+                "SELECT class_a, class_b, class_c, severity, description, source, source_version
+                 FROM class_triple_interactions",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })?;
+            for row in rows {
+                let (class_a, class_b, class_c, severity, description, source, source_version) = row?;
+                if let (Some(a), Some(b), Some(c)) = (
+                    class_rep.get(&class_a),
+                    class_rep.get(&class_b),
+                    class_rep.get(&class_c),
+                ) {
+                    triple_interactions.push(TripleInteractionAlert {
+                        drug_a: a.display_name.clone().unwrap_or_default(),
+                        drug_b: b.display_name.clone().unwrap_or_default(),
+                        drug_c: c.display_name.clone().unwrap_or_default(),
+                        severity,
+                        description,
+                        source,
+                        source_version,
+                    });
+                }
+            }
+            triple_interactions.sort_by_key(|alert| std::cmp::Reverse(severity_rank(&alert.severity)));
+        }
+    }
+
     // 5. Respaldo openFDA: para pares SIN interaccion estructurada, si la
     // etiqueta FDA de un farmaco menciona al otro, se ofrece como evidencia.
     let mut label_notes: Vec<LabelNote> = Vec::new();
@@ -354,9 +431,14 @@ pub fn check_prescription(
         }
     }
 
-    let has_alerts =
-        !interactions.is_empty() || !allergy_alerts.is_empty() || !duplicate_therapy.is_empty();
-    let alert_count = interactions.len() + allergy_alerts.len() + duplicate_therapy.len();
+    let has_alerts = !interactions.is_empty()
+        || !allergy_alerts.is_empty()
+        || !duplicate_therapy.is_empty()
+        || !triple_interactions.is_empty();
+    let alert_count = interactions.len()
+        + allergy_alerts.len()
+        + duplicate_therapy.len()
+        + triple_interactions.len();
     audit(conn, encounter_id, alert_count)?;
 
     Ok(SafetyReport {
@@ -365,6 +447,7 @@ pub fn check_prescription(
         interactions,
         allergy_alerts,
         duplicate_therapy,
+        triple_interactions,
         label_notes,
         reference_version: reference_version(conn)?,
         has_alerts,
@@ -423,6 +506,17 @@ pub struct MedicationRow {
 pub struct InteractionRow {
     pub ingredient_a: String,
     pub ingredient_b: String,
+    pub severity: String,
+    pub description: String,
+    pub source: String,
+}
+
+/// Fila de interaccion de tres clases (tripleta canonica) lista para cargar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TripleRow {
+    pub class_a: String,
+    pub class_b: String,
+    pub class_c: String,
     pub severity: String,
     pub description: String,
     pub source: String,
@@ -649,6 +743,52 @@ pub fn parse_interactions_csv(csv: &str) -> Result<Vec<InteractionRow>, Medicati
     Ok(rows)
 }
 
+/// Parsea el CSV de tripletas de clase del paso 25 (columnas:
+/// `class_a,class_b,class_c,severity,source,source_version,description`).
+/// Guarda las clases en orden canonico. Conserva la fuente y la descripcion.
+pub fn parse_triples_csv(csv: &str) -> Result<Vec<TripleRow>, MedicationError> {
+    let mut rows = Vec::new();
+    for (idx, line) in csv.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if idx == 0 && line.to_lowercase().starts_with("class_a") {
+            continue; // encabezado
+        }
+        let fields = csv_fields_quoted(line);
+        if fields.len() < 4 {
+            return Err(MedicationError::Invalid(format!(
+                "fila {} del CSV de tripletas invalida: se esperaban al menos 4 columnas",
+                idx + 1
+            )));
+        }
+        let a = fields[0].trim();
+        let b = fields[1].trim();
+        let c = fields[2].trim();
+        if a.is_empty() || b.is_empty() || c.is_empty() || a == b || b == c || a == c {
+            continue; // una tripleta exige tres clases distintas y no vacias
+        }
+        let (class_a, class_b, class_c) = canonical_triple(a, b, c);
+        let source = fields
+            .get(4)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("ONChigh")
+            .to_string();
+        let description = fields.get(6).map(|s| s.to_string()).unwrap_or_default();
+        rows.push(TripleRow {
+            class_a,
+            class_b,
+            class_c,
+            severity: normalize_severity(&fields[3]).to_string(),
+            description,
+            source,
+        });
+    }
+    Ok(rows)
+}
+
 /// Elige el parser de interacciones segun el encabezado del CSV: el formato del
 /// pipeline del paso 25 (`ingredient_a,...`) conserva la fuente real; el formato
 /// DDInter heredado (`DDInterID_A,...`) se mantiene durante la transicion hasta
@@ -727,6 +867,39 @@ pub fn import_reference(
         labels: 0,
         version: version.to_string(),
     })
+}
+
+/// Reemplaza las interacciones de tres clases dentro de una transaccion. Si la
+/// lista viene vacia, no toca la tabla (una fuente sin tripletas no borra las
+/// existentes). Las clases se guardan en orden canonico.
+pub fn import_triples(
+    conn: &Connection,
+    triples: &[TripleRow],
+    version: &str,
+) -> Result<usize, MedicationError> {
+    if triples.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM class_triple_interactions", [])?;
+    for triple in triples {
+        tx.execute(
+            "INSERT OR IGNORE INTO class_triple_interactions
+                (class_a, class_b, class_c, severity, description, source, source_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                triple.class_a,
+                triple.class_b,
+                triple.class_c,
+                triple.severity,
+                triple.description,
+                triple.source,
+                version
+            ],
+        )?;
+    }
+    tx.commit()?;
+    Ok(triples.len())
 }
 
 /// Parsea el JSON de la API de etiquetas de openFDA (drug/label). Extrae, por
@@ -809,6 +982,8 @@ pub fn import_label_text(
 pub struct MedicationDataset {
     pub medications_csv: String,
     pub ddinter_csv: String,
+    /// CSV de tripletas de clase (triple whammy). Vacio si la fuente no lo trae.
+    pub triples_csv: String,
     pub openfda_json: String,
     pub version: String,
 }
@@ -828,6 +1003,10 @@ pub fn bundled_reference_dataset() -> MedicationDataset {
     MedicationDataset {
         medications_csv: BUNDLED_MEDICATIONS_CSV.to_string(),
         ddinter_csv: BUNDLED_DDINTER_CSV.to_string(),
+        // La semilla empaquetada actual no trae tripletas (sus clases son
+        // heredadas e inconsistentes con las del pipeline); las tripletas llegan
+        // con la base ONChigh generada. Vacio = no toca la tabla.
+        triples_csv: String::new(),
         openfda_json: BUNDLED_OPENFDA_JSON.to_string(),
         version: BUNDLED_REFERENCE_VERSION.to_string(),
     }
@@ -889,6 +1068,10 @@ pub fn update_reference(
     }
 
     let mut summary = import_reference(conn, &medications, &interactions, &dataset.version)?;
+    // Tripletas de clase (triple whammy): sin minimo de cordura (son pocas).
+    // Solo se reemplazan si la fuente las trajo.
+    let triples = parse_triples_csv(&dataset.triples_csv)?;
+    import_triples(conn, &triples, &dataset.version)?;
     // El texto de etiquetas (openFDA) es respaldo informativo: sin minimo de
     // cordura. Solo se reemplaza si la fuente trajo datos.
     let labels = parse_openfda_labels(&dataset.openfda_json)?;
@@ -1163,6 +1346,7 @@ mod tests {
                           enalapril,warfarin,MINOR,ONChigh,onc-2026,dos\n\
                           enalapril,sildenafil,MINOR,ONChigh,onc-2026,tres\n"
                 .into(),
+            triples_csv: String::new(),
             openfda_json: String::new(),
             version: "onchigh-2026-07".into(),
         };
@@ -1175,6 +1359,85 @@ mod tests {
         // La procedencia citada es la real (ONChigh), no DDInter.
         assert_eq!(report.interactions[0].source, "ONChigh");
         assert_eq!(report.interactions[0].source_version, "onchigh-2026-07");
+    }
+
+    #[test]
+    fn parses_triples_csv_in_canonical_class_order() {
+        let csv = "class_a,class_b,class_c,severity,source,source_version,description\n\
+                   IECA,Diuretico,AINE,MAJOR,ONChigh,onc-2026,\"Triple whammy, lesion renal\"\n\
+                   AINE,AINE,IECA,MAJOR,ONChigh,onc-2026,repetida\n";
+        let rows = parse_triples_csv(csv).unwrap();
+        assert_eq!(rows.len(), 1); // la de clases repetidas se descarta
+        // Orden canonico: AINE < Diuretico < IECA.
+        assert_eq!(rows[0].class_a, "AINE");
+        assert_eq!(rows[0].class_b, "Diuretico");
+        assert_eq!(rows[0].class_c, "IECA");
+        assert_eq!(rows[0].source, "ONChigh");
+        assert_eq!(rows[0].description, "Triple whammy, lesion renal");
+    }
+
+    /// Dataset ONChigh minimo con una regla de triple whammy, para verificar la
+    /// evaluacion n-aria de extremo a extremo.
+    fn triple_dataset() -> MedicationDataset {
+        MedicationDataset {
+            medications_csv: "name,ingredient,display_name,drug_class\n\
+                              enalapril,enalapril,Enalapril,IECA\n\
+                              furosemida,furosemide,Furosemida,Diuretico\n\
+                              ibuprofeno,ibuprofen,Ibuprofeno,AINE\n\
+                              paracetamol,acetaminophen,Paracetamol,Analgesico\n\
+                              losartan,losartan,Losartan,ARA2\n"
+                .into(),
+            // El par IECA+AINE tambien existe, para distinguir par de tripleta.
+            ddinter_csv: "ingredient_a,ingredient_b,severity,source,source_version,description\n\
+                          enalapril,ibuprofen,MAJOR,ONChigh,onc-2026,IECA mas AINE\n\
+                          ibuprofen,losartan,MAJOR,ONChigh,onc-2026,ARA2 mas AINE\n\
+                          acetaminophen,enalapril,MINOR,ONChigh,onc-2026,relleno\n\
+                          acetaminophen,ibuprofen,MINOR,ONChigh,onc-2026,relleno\n\
+                          acetaminophen,losartan,MINOR,ONChigh,onc-2026,relleno\n"
+                .into(),
+            triples_csv: "class_a,class_b,class_c,severity,source,source_version,description\n\
+                          AINE,Diuretico,IECA,MAJOR,ONChigh,onc-2026,Triple whammy IECA\n\
+                          AINE,ARA2,Diuretico,MAJOR,ONChigh,onc-2026,Triple whammy ARA2\n"
+                .into(),
+            openfda_json: String::new(),
+            version: "onchigh-2026-07".into(),
+        }
+    }
+
+    #[test]
+    fn triple_whammy_alerts_only_when_the_three_classes_are_present() {
+        let conn = test_conn("triple-whammy");
+        update_reference(&conn, &triple_dataset(), MIN_MEDICATIONS, MIN_INTERACTIONS).unwrap();
+
+        // Los tres presentes -> alerta de tripleta, sin importar el orden.
+        let full = check_prescription(
+            &conn,
+            "enc-1",
+            &meds(&["Ibuprofeno", "Enalapril", "Furosemida"]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(full.triple_interactions.len(), 1);
+        let alert = &full.triple_interactions[0];
+        assert_eq!(alert.severity, "MAJOR");
+        assert_eq!(alert.source, "ONChigh");
+        assert_eq!(alert.source_version, "onchigh-2026-07");
+        assert!(full.has_alerts);
+
+        // Solo dos de las tres clases -> NO dispara la tripleta (aunque el par si).
+        let only_two = check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Enalapril"]), None).unwrap();
+        assert_eq!(only_two.triple_interactions.len(), 0);
+        assert_eq!(only_two.interactions.len(), 1); // el par IECA+AINE sigue
+
+        // Sustituir el diuretico por un analgesico neutro -> no hay tripleta.
+        let neutral = check_prescription(
+            &conn,
+            "enc-1",
+            &meds(&["Ibuprofeno", "Enalapril", "Paracetamol"]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(neutral.triple_interactions.len(), 0);
     }
 
     #[test]
@@ -1251,6 +1514,7 @@ mod tests {
         MedicationDataset {
             medications_csv: meds,
             ddinter_csv: ddinter,
+            triples_csv: String::new(),
             openfda_json: String::new(),
             version: version.to_string(),
         }
@@ -1341,7 +1605,7 @@ mod tests {
     #[test]
     fn update_rejects_empty_source() {
         let conn = test_conn("update-empty");
-        let empty = MedicationDataset { medications_csv: String::new(), ddinter_csv: String::new(), openfda_json: String::new(), version: "x".into() };
+        let empty = MedicationDataset { medications_csv: String::new(), ddinter_csv: String::new(), triples_csv: String::new(), openfda_json: String::new(), version: "x".into() };
         assert!(matches!(
             update_reference(&conn, &empty, MIN_MEDICATIONS, MIN_INTERACTIONS),
             Err(MedicationError::Invalid(_))

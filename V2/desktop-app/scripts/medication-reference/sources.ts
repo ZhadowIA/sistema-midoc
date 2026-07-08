@@ -16,7 +16,7 @@
 //! de clase desde RxClass se revisan juntos en la rebanada siguiente. Cada
 //! regla que falte esta marcada con TODO(onchigh-full).
 
-import type { ClassMembers, ClassRule, MedicationRow } from "./reference.ts";
+import type { ClassMembers, ClassRule, MedicationRow, TripleRule } from "./reference.ts";
 
 /**
  * Miembros por clase terapeutica (subconjunto). En la version completa este
@@ -53,7 +53,8 @@ export const CLASS_MEMBERS: ClassMembers = {
   Metotrexato: ["methotrexate"],
   "Antibiotico antifolato": ["trimethoprim", "sulfamethoxazole"],
   "Inhibidor xantina oxidasa": ["allopurinol", "febuxostat"],
-  Tiopurina: ["azathioprine", "mercaptopurine"]
+  Tiopurina: ["azathioprine", "mercaptopurine"],
+  Diuretico: ["hydrochlorothiazide", "furosemide", "bumetanide", "torsemide", "chlorthalidone"]
 };
 
 /**
@@ -184,10 +185,30 @@ export const ONCHIGH_RULES: ClassRule[] = [
   }
   // TODO(onchigh-full): completar el resto de la lista ONChigh (QT largo,
   // digoxina, etc.) al transcribir el apendice completo.
-  // TODO(triple-whammy): IECA/ARA2 + diuretico + AINE (lesion renal aguda) es una
-  // interaccion de TRES farmacos; el motor empareja pares canonicos, no la
-  // expresa. Requiere extender check_prescription a reglas n-arias (decision
-  // pendiente del usuario, ver resumen 2026-07-07).
+];
+
+/**
+ * Reglas de interaccion de TRES clases. El "triple whammy" (IECA/ARA2 +
+ * diuretico + AINE) causa lesion renal aguda por el efecto combinado sobre la
+ * perfusion renal. Se modela como dos reglas (IECA y ARA2) porque la pierna
+ * "IECA/ARA2" es "cualquiera de las dos". Severidad MAJOR: debe interrumpir y
+ * pedir juicio clinico (a veces se usa pocos dias). Decision clinica 2026-07-07.
+ */
+export const TRIPLE_RULES: TripleRule[] = [
+  {
+    classA: "IECA",
+    classB: "Diuretico",
+    classC: "AINE",
+    severity: "MAJOR",
+    description: "Triple whammy: IECA + diuretico + AINE eleva el riesgo de lesion renal aguda. Vigilar funcion renal y potasio; evitar o suspender el AINE."
+  },
+  {
+    classA: "ARA2",
+    classB: "Diuretico",
+    classC: "AINE",
+    severity: "MAJOR",
+    description: "Triple whammy: ARA2 + diuretico + AINE eleva el riesgo de lesion renal aguda. Vigilar funcion renal y potasio; evitar o suspender el AINE."
+  }
 ];
 
 /**
@@ -278,7 +299,17 @@ export const BASE_MEDICATIONS: MedicationRow[] = [
   { name: "azatioprina", ingredient: "azathioprine", displayName: "Azatioprina", drugClass: "Tiopurina" },
   { name: "mercaptopurine", ingredient: "mercaptopurine", displayName: "Mercaptopurina", drugClass: "Tiopurina" },
   { name: "mercaptopurina", ingredient: "mercaptopurine", displayName: "Mercaptopurina", drugClass: "Tiopurina" },
-  { name: "6-mercaptopurina", ingredient: "mercaptopurine", displayName: "Mercaptopurina", drugClass: "Tiopurina" }
+  { name: "6-mercaptopurina", ingredient: "mercaptopurine", displayName: "Mercaptopurina", drugClass: "Tiopurina" },
+  { name: "hydrochlorothiazide", ingredient: "hydrochlorothiazide", displayName: "Hidroclorotiazida", drugClass: "Diuretico" },
+  { name: "hidroclorotiazida", ingredient: "hydrochlorothiazide", displayName: "Hidroclorotiazida", drugClass: "Diuretico" },
+  { name: "furosemide", ingredient: "furosemide", displayName: "Furosemida", drugClass: "Diuretico" },
+  { name: "furosemida", ingredient: "furosemide", displayName: "Furosemida", drugClass: "Diuretico" },
+  { name: "bumetanide", ingredient: "bumetanide", displayName: "Bumetanida", drugClass: "Diuretico" },
+  { name: "bumetanida", ingredient: "bumetanide", displayName: "Bumetanida", drugClass: "Diuretico" },
+  { name: "torsemide", ingredient: "torsemide", displayName: "Torasemida", drugClass: "Diuretico" },
+  { name: "torasemida", ingredient: "torsemide", displayName: "Torasemida", drugClass: "Diuretico" },
+  { name: "chlorthalidone", ingredient: "chlorthalidone", displayName: "Clortalidona", drugClass: "Diuretico" },
+  { name: "clortalidona", ingredient: "chlorthalidone", displayName: "Clortalidona", drugClass: "Diuretico" }
 ];
 
 /** Fuentes con licencia declarada para el manifest (compuerta legal paso 25). */

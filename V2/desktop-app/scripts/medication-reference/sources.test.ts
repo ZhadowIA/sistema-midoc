@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { expandRuleset, normalizeName } from "./reference.ts";
-import { BASE_MEDICATIONS, CLASS_MEMBERS, ONCHIGH_RULES, SOURCES } from "./sources.ts";
+import { expandRuleset, expandTripleRuleset, normalizeName } from "./reference.ts";
+import { BASE_MEDICATIONS, CLASS_MEMBERS, ONCHIGH_RULES, SOURCES, TRIPLE_RULES } from "./sources.ts";
 
 const knownIngredients = new Set(BASE_MEDICATIONS.map((m) => normalizeName(m.ingredient)));
 
@@ -98,4 +98,22 @@ test("IECA/ARA2 + AINE alerta como MAJOR (frecuente en primer nivel)", () => {
 test("linezolid conserva su alerta CONTRAINDICATED con serotoninergicos", () => {
   assert.equal(pair("linezolid", "fluoxetine")?.severity, "CONTRAINDICATED");
   assert.equal(pair("linezolid", "tramadol")?.severity, "CONTRAINDICATED");
+});
+
+test("las reglas triple usan clases existentes con miembros en la base", () => {
+  const triples = expandTripleRuleset(TRIPLE_RULES, "ONChigh", "test");
+  assert.ok(triples.length >= 2, "faltan las reglas de triple whammy");
+  const knownIngredientsSet = new Set(BASE_MEDICATIONS.map((m) => normalizeName(m.ingredient)));
+  const drugClassHasMember = (className: string) =>
+    (CLASS_MEMBERS[className] ?? []).some((ing) => knownIngredientsSet.has(normalizeName(ing)));
+  for (const t of triples) {
+    for (const cls of [t.classA, t.classB, t.classC]) {
+      assert.ok(CLASS_MEMBERS[cls]?.length, `clase de tripleta sin miembros: ${cls}`);
+      assert.ok(drugClassHasMember(cls), `clase ${cls} sin ingrediente en la base`);
+    }
+    assert.equal(t.severity, "MAJOR");
+  }
+  // Cubre las dos piernas IECA y ARA2 del triple whammy.
+  assert.ok(triples.some((t) => [t.classA, t.classB, t.classC].includes("IECA")));
+  assert.ok(triples.some((t) => [t.classA, t.classB, t.classC].includes("ARA2")));
 });

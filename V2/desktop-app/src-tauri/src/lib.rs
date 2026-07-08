@@ -1783,6 +1783,9 @@ async fn update_medication_reference(
     let dataset = medication::MedicationDataset {
         medications_csv,
         ddinter_csv,
+        // El import manual por URL no captura tripletas de clase (llegan por la
+        // fuente MiDoc o la base empaquetada). Vacio = no toca esa tabla.
+        triples_csv: String::new(),
         openfda_json,
         version,
     };
@@ -1801,6 +1804,7 @@ async fn update_medication_reference(
 const MIDOC_MEDICATIONS_URL: Option<&str> = option_env!("MIDOC_MEDICATIONS_URL");
 const MIDOC_DDINTER_URL: Option<&str> = option_env!("MIDOC_DDINTER_URL");
 const MIDOC_OPENFDA_URL: Option<&str> = option_env!("MIDOC_OPENFDA_URL");
+const MIDOC_TRIPLES_URL: Option<&str> = option_env!("MIDOC_TRIPLES_URL");
 
 /// Actualiza la base usando la fuente fija de MiDoc. En builds sin endpoints
 /// configurados instala el catalogo curado empaquetado con la app, asi el medico
@@ -1822,9 +1826,16 @@ async fn update_medication_reference_from_midoc(
             "etiquetas MiDoc",
         )
         .await?;
+        let triples_csv = fetch_text(
+            &client,
+            MIDOC_TRIPLES_URL.unwrap_or("").trim(),
+            "tripletas MiDoc",
+        )
+        .await?;
         let dataset = medication::MedicationDataset {
             medications_csv,
             ddinter_csv,
+            triples_csv,
             openfda_json,
             version: medication::BUNDLED_REFERENCE_VERSION.to_string(),
         };
