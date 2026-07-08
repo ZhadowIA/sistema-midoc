@@ -1368,17 +1368,28 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         coumadin: { ingredient: "warfarin", display: "Warfarina", cls: "Anticoagulante" },
         sildenafil: { ingredient: "sildenafil", display: "Sildenafil", cls: "Inhibidor PDE5" },
         nitroglicerina: { ingredient: "nitroglicerina", display: "Nitroglicerina", cls: "Nitrato" },
+        enalapril: { ingredient: "enalapril", display: "Enalapril", cls: "IECA" },
+        losartan: { ingredient: "losartan", display: "Losartan", cls: "ARA2" },
+        furosemida: { ingredient: "furosemide", display: "Furosemida", cls: "Diuretico" },
+        furosemide: { ingredient: "furosemide", display: "Furosemida", cls: "Diuretico" },
         amoxicilina: { ingredient: "amoxicilina", display: "Amoxicilina", cls: "Penicilina" },
         paracetamol: { ingredient: "acetaminophen", display: "Paracetamol", cls: "Analgesico" },
         acetaminofen: { ingredient: "acetaminophen", display: "Paracetamol", cls: "Analgesico" },
         tylenol: { ingredient: "acetaminophen", display: "Paracetamol", cls: "Analgesico" },
         tempra: { ingredient: "acetaminophen", display: "Paracetamol", cls: "Analgesico" }
       };
+      // Base ONChigh (paso 25): pares citando la fuente real, no DDInter.
       const interactions: Record<string, { severity: string; description: string }> = {
-        "ibuprofen|warfarin": { severity: "MAJOR", description: "Los AINE aumentan el riesgo de sangrado con warfarina." },
-        "naproxen|warfarin": { severity: "MAJOR", description: "Los AINE aumentan el riesgo de sangrado con warfarina." },
-        "nitroglicerina|sildenafil": { severity: "CONTRAINDICATED", description: "Hipotension grave por combinar nitrato con inhibidor de PDE5." }
+        "ibuprofen|warfarin": { severity: "MAJOR", description: "Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia." },
+        "naproxen|warfarin": { severity: "MAJOR", description: "Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia." },
+        "nitroglicerina|sildenafil": { severity: "CONTRAINDICATED", description: "Hipotension grave por vasodilatacion sumada: combinacion contraindicada." },
+        "enalapril|ibuprofen": { severity: "MAJOR", description: "Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo." }
       };
+      // Reglas de tres clases (triple whammy): se evaluan por las clases presentes.
+      const tripleRules: Array<{ classes: [string, string, string]; description: string }> = [
+        { classes: ["IECA", "Diuretico", "AINE"], description: "Triple whammy: IECA + diuretico + AINE eleva el riesgo de lesion renal aguda. Vigilar funcion renal y potasio; evitar o suspender el AINE." },
+        { classes: ["ARA2", "Diuretico", "AINE"], description: "Triple whammy: ARA2 + diuretico + AINE eleva el riesgo de lesion renal aguda. Vigilar funcion renal y potasio; evitar o suspender el AINE." }
+      ];
       const input = (args?.medications as string[]) ?? [];
       const normalized = input.map((raw) => {
         const ref = refs[raw.trim().toLowerCase()];
@@ -1394,7 +1405,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
           const [a, b] = [recognized[i].ingredient!, recognized[j].ingredient!].sort();
           const hit = interactions[`${a}|${b}`];
           if (hit) {
-            interactionAlerts.push({ drugA: recognized[i].displayName, drugB: recognized[j].displayName, severity: hit.severity, description: hit.description, source: "Conjunto sembrado MiDoc (interaccion clinica conocida)", sourceVersion: "seed-v1" });
+            interactionAlerts.push({ drugA: recognized[i].displayName, drugB: recognized[j].displayName, severity: hit.severity, description: hit.description, source: "ONChigh", sourceVersion: "onchigh-2026-07-07" });
           }
           if (recognized[i].drugClass && recognized[i].drugClass === recognized[j].drugClass && recognized[i].ingredient !== recognized[j].ingredient) {
             duplicateTherapy.push({ drugA: recognized[i].displayName, drugB: recognized[j].displayName, drugClass: recognized[i].drugClass });
@@ -1407,6 +1418,27 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         const cls = (drug.drugClass ?? "").toLowerCase();
         if (allergies && cls && (allergies.includes(cls) || cls.includes(allergies))) {
           allergyAlerts.push({ drug: drug.displayName, matchedAllergy: allergies, viaClass: drug.drugClass, source: "Alergias registradas en el expediente" });
+        }
+      }
+      // Interacciones de tres clases: primer farmaco representante por clase.
+      const classRep: Record<string, { displayName: string | null }> = {};
+      for (const drug of recognized) {
+        const cls = drug.drugClass ?? "";
+        if (cls && !classRep[cls]) classRep[cls] = { displayName: drug.displayName };
+      }
+      const tripleInteractions: Array<Record<string, unknown>> = [];
+      for (const rule of tripleRules) {
+        const [ca, cb, cc] = rule.classes;
+        if (classRep[ca] && classRep[cb] && classRep[cc]) {
+          tripleInteractions.push({
+            drugA: classRep[ca].displayName,
+            drugB: classRep[cb].displayName,
+            drugC: classRep[cc].displayName,
+            severity: "MAJOR",
+            description: rule.description,
+            source: "ONChigh",
+            sourceVersion: "onchigh-2026-07-07"
+          });
         }
       }
       const unrecognized = normalized.filter((n) => !n.recognized).map((n) => n.input);
@@ -1431,9 +1463,11 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         interactions: interactionAlerts,
         allergyAlerts,
         duplicateTherapy,
+        tripleInteractions,
         labelNotes,
-        referenceVersion: "seed-v1",
-        hasAlerts: interactionAlerts.length + allergyAlerts.length + duplicateTherapy.length > 0
+        referenceVersion: "onchigh-2026-07-07",
+        hasAlerts:
+          interactionAlerts.length + allergyAlerts.length + duplicateTherapy.length + tripleInteractions.length > 0
       } as T;
     }
     case "medication_reference_status":
