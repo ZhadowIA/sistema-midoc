@@ -58,3 +58,44 @@ test("las fuentes declaradas son de dominio publico y ninguna es DDInter", () =>
   assert.ok(SOURCES.every((s) => /public domain/i.test(s.license)));
   assert.ok(!SOURCES.some((s) => /ddinter/i.test(s.name)));
 });
+
+// --- Decisiones clinicas del medico (2026-07-07): fijadas para que no se
+// reviertan en silencio. Cada assert corresponde a un ajuste pedido. ---
+
+const clinicalPairs = expandRuleset(ONCHIGH_RULES, CLASS_MEMBERS, "ONChigh", "test");
+function pair(a: string, b: string) {
+  const [x, y] = [a, b].sort();
+  return clinicalPairs.find((p) => p.ingredientA === x && p.ingredientB === y);
+}
+
+test("aspirina salio de AINE: no alerta con metotrexato, pero si con anticoagulante", () => {
+  // Aspirina + metotrexato ya NO dispara (era el falso positivo a evitar).
+  assert.equal(pair("aspirin", "methotrexate"), undefined);
+  // Aspirina + warfarina SIGUE alertando, via Anticoagulante + Antiplaquetario.
+  assert.equal(pair("aspirin", "warfarin")?.severity, "MAJOR");
+  // Un AINE real + metotrexato si dispara.
+  assert.equal(pair("ibuprofen", "methotrexate")?.severity, "MAJOR");
+});
+
+test("estatinas divididas: simva/lova CONTRAINDICATED, atorva MAJOR", () => {
+  assert.equal(pair("simvastatin", "clarithromycin")?.severity, "CONTRAINDICATED");
+  assert.equal(pair("lovastatin", "itraconazole")?.severity, "CONTRAINDICATED");
+  assert.equal(pair("atorvastatin", "clarithromycin")?.severity, "MAJOR");
+});
+
+test("alopurinol/febuxostat + tiopurina es CONTRAINDICATED", () => {
+  assert.equal(pair("allopurinol", "azathioprine")?.severity, "CONTRAINDICATED");
+  assert.equal(pair("febuxostat", "mercaptopurine")?.severity, "CONTRAINDICATED");
+});
+
+test("IECA/ARA2 + AINE alerta como MAJOR (frecuente en primer nivel)", () => {
+  assert.equal(pair("enalapril", "ibuprofen")?.severity, "MAJOR");
+  assert.equal(pair("losartan", "naproxen")?.severity, "MAJOR");
+  // Pero NO con aspirina (ya no es AINE): evita ruido con cardioproteccion.
+  assert.equal(pair("enalapril", "aspirin"), undefined);
+});
+
+test("linezolid conserva su alerta CONTRAINDICATED con serotoninergicos", () => {
+  assert.equal(pair("linezolid", "fluoxetine")?.severity, "CONTRAINDICATED");
+  assert.equal(pair("linezolid", "tramadol")?.severity, "CONTRAINDICATED");
+});

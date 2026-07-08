@@ -26,7 +26,11 @@ import type { ClassMembers, ClassRule, MedicationRow } from "./reference.ts";
  */
 export const CLASS_MEMBERS: ClassMembers = {
   Anticoagulante: ["warfarin", "acenocoumarol"],
-  AINE: ["ibuprofen", "naproxen", "diclofenac", "ketorolac", "meloxicam", "aspirin"],
+  // Aspirina NO va aqui: para CDS por ingrediente puro generaba falsos positivos
+  // (p. ej. metotrexato + aspirina 81-100 mg). El sangrado con anticoagulante ya
+  // lo cubre Antiplaquetario. Si en el futuro se maneja dosis, aspirina >=500 mg/dia
+  // podria entrar como AINE. Decision clinica del medico (2026-07-07).
+  AINE: ["ibuprofen", "naproxen", "diclofenac", "ketorolac", "meloxicam"],
   Antiplaquetario: ["aspirin", "clopidogrel"],
   IECA: ["enalapril", "lisinopril", "captopril", "ramipril"],
   ARA2: ["losartan", "valsartan", "telmisartan"],
@@ -40,10 +44,16 @@ export const CLASS_MEMBERS: ClassMembers = {
   "Opioide serotoninergico": ["tramadol", "fentanyl", "meperidine"],
   Benzodiacepina: ["diazepam", "alprazolam", "clonazepam", "lorazepam"],
   Opioide: ["morphine", "hydrocodone", "oxycodone", "codeine", "tramadol"],
-  "Estatina CYP3A4": ["simvastatin", "lovastatin", "atorvastatin"],
+  // Estatinas divididas por criterio clinico: simva/lova tienen contraindicacion
+  // formal con inhibidores fuertes CYP3A4; atorvastatina es riesgo aumentado
+  // (se maneja con suspension/reduccion/cambio), no contraindicacion dura.
+  "Estatina CYP3A4 alto riesgo": ["simvastatin", "lovastatin"],
+  "Estatina CYP3A4 riesgo moderado": ["atorvastatin"],
   "Inhibidor fuerte CYP3A4": ["clarithromycin", "erythromycin", "ketoconazole", "itraconazole"],
   Metotrexato: ["methotrexate"],
-  "Antibiotico antifolato": ["trimethoprim", "sulfamethoxazole"]
+  "Antibiotico antifolato": ["trimethoprim", "sulfamethoxazole"],
+  "Inhibidor xantina oxidasa": ["allopurinol", "febuxostat"],
+  Tiopurina: ["azathioprine", "mercaptopurine"]
 };
 
 /**
@@ -104,19 +114,19 @@ export const ONCHIGH_RULES: ClassRule[] = [
     classA: "IMAO",
     classB: "ISRS",
     severity: "CONTRAINDICATED",
-    description: "Sindrome serotoninergico: no coadministrar; respetar periodo de lavado."
+    description: "Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
   },
   {
     classA: "IMAO",
     classB: "IRSN",
     severity: "CONTRAINDICATED",
-    description: "Sindrome serotoninergico: no coadministrar; respetar periodo de lavado."
+    description: "Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
   },
   {
     classA: "IMAO",
     classB: "Opioide serotoninergico",
     severity: "CONTRAINDICATED",
-    description: "Sindrome serotoninergico o toxicidad opioide: combinacion contraindicada."
+    description: "Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
   },
   {
     classA: "ISRS",
@@ -131,25 +141,53 @@ export const ONCHIGH_RULES: ClassRule[] = [
     description: "Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
   },
   {
-    classA: "Estatina CYP3A4",
+    classA: "Estatina CYP3A4 alto riesgo",
+    classB: "Inhibidor fuerte CYP3A4",
+    severity: "CONTRAINDICATED",
+    description: "Miopatia/rabdomiolisis por aumento marcado de la estatina: simvastatina/lovastatina estan contraindicadas con inhibidores fuertes de CYP3A4."
+  },
+  {
+    classA: "Estatina CYP3A4 riesgo moderado",
     classB: "Inhibidor fuerte CYP3A4",
     severity: "MAJOR",
-    description: "Riesgo de miopatia/rabdomiolisis por aumento de la concentracion de la estatina."
+    description: "Riesgo aumentado de miopatia/rabdomiolisis: considerar suspender, reducir dosis o cambiar la estatina durante el tratamiento con el inhibidor."
   },
   {
     classA: "Metotrexato",
     classB: "Antibiotico antifolato",
     severity: "MAJOR",
-    description: "Toxicidad por metotrexato (mielosupresion) por efecto antifolato sumado."
+    description: "Evitar combinacion. Riesgo de pancitopenia, mucositis, nefrotoxicidad y toxicidad grave por metotrexato por efecto antifolato sumado."
   },
   {
     classA: "Metotrexato",
     classB: "AINE",
     severity: "MAJOR",
-    description: "Aumento del riesgo de toxicidad por metotrexato (mielosupresion, dano renal)."
+    description: "Aumento de la toxicidad por metotrexato (mielosupresion, dano renal) por reduccion de la eliminacion renal, sobre todo con dosis altas o deterioro renal."
+  },
+  {
+    classA: "IECA",
+    classB: "AINE",
+    severity: "MAJOR",
+    description: "Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+  },
+  {
+    classA: "ARA2",
+    classB: "AINE",
+    severity: "MAJOR",
+    description: "Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+  },
+  {
+    classA: "Inhibidor xantina oxidasa",
+    classB: "Tiopurina",
+    severity: "CONTRAINDICATED",
+    description: "Toxicidad grave por tiopurinas (mielosupresion): la inhibicion de xantina oxidasa bloquea su metabolismo. Evitar o reduccion extrema supervisada."
   }
   // TODO(onchigh-full): completar el resto de la lista ONChigh (QT largo,
-  // digoxina, alopurinol+azatioprina, etc.) al transcribir el apendice completo.
+  // digoxina, etc.) al transcribir el apendice completo.
+  // TODO(triple-whammy): IECA/ARA2 + diuretico + AINE (lesion renal aguda) es una
+  // interaccion de TRES farmacos; el motor empareja pares canonicos, no la
+  // expresa. Requiere extender check_prescription a reglas n-arias (decision
+  // pendiente del usuario, ver resumen 2026-07-07).
 ];
 
 /**
@@ -220,10 +258,10 @@ export const BASE_MEDICATIONS: MedicationRow[] = [
   { name: "hydrocodone", ingredient: "hydrocodone", displayName: "Hidrocodona", drugClass: "Opioide" },
   { name: "oxycodone", ingredient: "oxycodone", displayName: "Oxicodona", drugClass: "Opioide" },
   { name: "codeine", ingredient: "codeine", displayName: "Codeina", drugClass: "Opioide" },
-  { name: "simvastatin", ingredient: "simvastatin", displayName: "Simvastatina", drugClass: "Estatina CYP3A4" },
-  { name: "simvastatina", ingredient: "simvastatin", displayName: "Simvastatina", drugClass: "Estatina CYP3A4" },
-  { name: "lovastatin", ingredient: "lovastatin", displayName: "Lovastatina", drugClass: "Estatina CYP3A4" },
-  { name: "atorvastatin", ingredient: "atorvastatin", displayName: "Atorvastatina", drugClass: "Estatina CYP3A4" },
+  { name: "simvastatin", ingredient: "simvastatin", displayName: "Simvastatina", drugClass: "Estatina CYP3A4 alto riesgo" },
+  { name: "simvastatina", ingredient: "simvastatin", displayName: "Simvastatina", drugClass: "Estatina CYP3A4 alto riesgo" },
+  { name: "lovastatin", ingredient: "lovastatin", displayName: "Lovastatina", drugClass: "Estatina CYP3A4 alto riesgo" },
+  { name: "atorvastatin", ingredient: "atorvastatin", displayName: "Atorvastatina", drugClass: "Estatina CYP3A4 riesgo moderado" },
   { name: "clarithromycin", ingredient: "clarithromycin", displayName: "Claritromicina", drugClass: "Inhibidor fuerte CYP3A4" },
   { name: "claritromicina", ingredient: "clarithromycin", displayName: "Claritromicina", drugClass: "Inhibidor fuerte CYP3A4" },
   { name: "erythromycin", ingredient: "erythromycin", displayName: "Eritromicina", drugClass: "Inhibidor fuerte CYP3A4" },
@@ -232,7 +270,15 @@ export const BASE_MEDICATIONS: MedicationRow[] = [
   { name: "methotrexate", ingredient: "methotrexate", displayName: "Metotrexato", drugClass: "Metotrexato" },
   { name: "metotrexato", ingredient: "methotrexate", displayName: "Metotrexato", drugClass: "Metotrexato" },
   { name: "trimethoprim", ingredient: "trimethoprim", displayName: "Trimetoprima", drugClass: "Antibiotico antifolato" },
-  { name: "sulfamethoxazole", ingredient: "sulfamethoxazole", displayName: "Sulfametoxazol", drugClass: "Antibiotico antifolato" }
+  { name: "sulfamethoxazole", ingredient: "sulfamethoxazole", displayName: "Sulfametoxazol", drugClass: "Antibiotico antifolato" },
+  { name: "allopurinol", ingredient: "allopurinol", displayName: "Alopurinol", drugClass: "Inhibidor xantina oxidasa" },
+  { name: "alopurinol", ingredient: "allopurinol", displayName: "Alopurinol", drugClass: "Inhibidor xantina oxidasa" },
+  { name: "febuxostat", ingredient: "febuxostat", displayName: "Febuxostat", drugClass: "Inhibidor xantina oxidasa" },
+  { name: "azathioprine", ingredient: "azathioprine", displayName: "Azatioprina", drugClass: "Tiopurina" },
+  { name: "azatioprina", ingredient: "azathioprine", displayName: "Azatioprina", drugClass: "Tiopurina" },
+  { name: "mercaptopurine", ingredient: "mercaptopurine", displayName: "Mercaptopurina", drugClass: "Tiopurina" },
+  { name: "mercaptopurina", ingredient: "mercaptopurine", displayName: "Mercaptopurina", drugClass: "Tiopurina" },
+  { name: "6-mercaptopurina", ingredient: "mercaptopurine", displayName: "Mercaptopurina", drugClass: "Tiopurina" }
 ];
 
 /** Fuentes con licencia declarada para el manifest (compuerta legal paso 25). */
