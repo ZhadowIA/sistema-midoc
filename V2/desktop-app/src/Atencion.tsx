@@ -60,7 +60,13 @@ import {
   type TranscriptionMode
 } from "./transcriptionWorkspace";
 import { ClinicalAidRail } from "./ClinicalAidRail";
-import type { ClinicalAidDraft } from "./clinicalAid";
+import {
+  parseAiOverload,
+  type AiOverloadInfo,
+  type BackgroundUpdate,
+  type ClinicalAidDraft,
+  type TextModelOption
+} from "./clinicalAid";
 import {
   applyConflictDecisions,
   reconcileMedicalHistories,
@@ -308,6 +314,9 @@ export function Atencion({
   const [reviewedTranscription, setReviewedTranscription] =
     useState<ReviewedTranscription | null>(null);
   const [clinicalAidDraft, setClinicalAidDraft] = useState<ClinicalAidDraft | null>(null);
+  const [aiOverload, setAiOverload] = useState<
+    (AiOverloadInfo & { alternatives: TextModelOption[] }) | null
+  >(null);
   const [consultationTemplates, setConsultationTemplates] = useState<StoredConsultationTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("default");
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
@@ -872,20 +881,43 @@ export function Atencion({
       .finally(() => setBusy(false));
   }
 
-  function generateClinicalAid() {
+  function generateClinicalAid(alternative?: TextModelOption) {
     if (!reviewedTranscription) return;
     setBusy(true);
     setError("");
+    setAiOverload(null);
     setClinicalAidDraft(null);
     call<ClinicalAidDraft>("ai_generate_clinical_aid", {
       encounterId,
-      template: activeTemplate
+      template: activeTemplate,
+      modelOverride: alternative?.id ?? null
     })
       .then((draft) => {
         setClinicalAidDraft(draft);
-        setMessage("Ayuda clínica generada. Revisa cada propuesta antes de aplicarla.");
+        setMessage(
+          alternative
+            ? `Ayuda clínica generada con la alternativa ${alternative.label}. Revisa cada propuesta antes de aplicarla.`
+            : "Ayuda clínica generada. Revisa cada propuesta antes de aplicarla."
+        );
       })
-      .catch((cause: unknown) => setError(String(cause)))
+      .catch((cause: unknown) => {
+        const overload = parseAiOverload(cause);
+        if (!overload) {
+          setError(String(cause));
+          return;
+        }
+        // Sobrecarga transitoria del proveedor: en lugar del banner críptico,
+        // el médico decide si reintenta o genera con otro modelo/proveedor.
+        void call<TextModelOption[]>("ai_list_text_models", {})
+          .then((models) =>
+            models.filter(
+              (option) =>
+                !(option.provider === overload.provider && option.model === overload.model)
+            )
+          )
+          .catch(() => [] as TextModelOption[])
+          .then((alternatives) => setAiOverload({ ...overload, alternatives }));
+      })
       .finally(() => setBusy(false));
   }
 
@@ -902,6 +934,26 @@ export function Atencion({
       instructions: draft.instructions
     }));
     setMessage("SOAP aplicado al editor. Revisa y guarda manualmente.");
+  }
+
+  // Las propuestas de IA se ANEXAN a lo que el medico ya escribio; nunca
+  // sobrescriben. El medico revisa el resultado en el editor antes de guardar.
+  function applyClinicalAidPrescription(text: string) {
+    setPrescription((current) => (current.trim() ? `${current.trimEnd()}\n${text}` : text));
+    setMessage("Receta sugerida aplicada al editor. Revisa y guarda manualmente.");
+  }
+
+  function applyClinicalAidBackground(update: BackgroundUpdate) {
+    setBackground((current) => {
+      const existing = current[update.field] ?? "";
+      return {
+        ...current,
+        [update.field]: existing.trim()
+          ? `${existing.trimEnd()}\n${update.content}`
+          : update.content
+      };
+    });
+    setMessage("Antecedente aplicado. Revisa y guarda manualmente.");
   }
 
   function discardClinicalAid() {
@@ -1028,6 +1080,52 @@ export function Atencion({
                   ×
                 </button>
               </p>
+            )}
+            {aiOverload && (
+              <section
+                className="panel ai-overload-dialog"
+                role="alertdialog"
+                aria-label="Proveedor de IA sobrecargado"
+              >
+                <h3>El modelo de IA está sobrecargado</h3>
+                <p>
+                  {aiOverload.provider} ({aiOverload.model}) está sobrecargado o temporalmente
+                  no disponible. Es un problema del proveedor, no de tu sistema ni de tu
+                  configuración; suele resolverse en minutos.
+                </p>
+                <p className="meta">{aiOverload.message}</p>
+                <div className="ai-overload-actions">
+                  <button
+                    className="action-button"
+                    disabled={busy}
+                    onClick={() => generateClinicalAid()}
+                  >
+                    Reintentar con {aiOverload.model}
+                  </button>
+                  {aiOverload.alternatives.map((option) => (
+                    <button
+                      key={option.id}
+                      className="ghost-button"
+                      disabled={busy}
+                      onClick={() => generateClinicalAid(option)}
+                    >
+                      Generar con {option.label}
+                    </button>
+                  ))}
+                  <button
+                    className="ghost-button danger-link"
+                    disabled={busy}
+                    onClick={() => setAiOverload(null)}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+                {aiOverload.alternatives.length === 0 && (
+                  <p className="meta">
+                    No hay modelos alternativos configurados; puedes reintentar en unos minutos.
+                  </p>
+                )}
+              </section>
             )}
 
             {resolvedSection === "preconsulta" && detail.preconsulta ? (
@@ -1393,13 +1491,17 @@ export function Atencion({
                   name: template.name
                 }))}
                 selectedTemplateId={selectedTemplateId}
+                templateSegments={activeTemplate.segments}
+                specialtyLabel={moduleLabel}
                 busy={busy}
                 draft={clinicalAidDraft}
                 onToggleConsent={() => void toggleScribeConsent()}
                 onTemplateChange={setSelectedTemplateId}
-                onGenerate={generateClinicalAid}
+                onGenerate={() => generateClinicalAid()}
                 onApplySoap={applyClinicalAidSoap}
                 onApplySegment={applyScribeSegment}
+                onApplyPrescription={applyClinicalAidPrescription}
+                onApplyBackground={applyClinicalAidBackground}
                 onDiscard={discardClinicalAid}
               />
             ) : null}

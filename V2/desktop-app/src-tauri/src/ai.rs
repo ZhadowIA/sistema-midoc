@@ -27,6 +27,16 @@ pub enum AiError {
     ConsentMissing,
     #[error("ningun proveedor de IA pudo completar la solicitud")]
     AllProvidersFailed,
+    /// Falla transitoria del proveedor (503/429/5xx o red agotada): el proveedor
+    /// esta sobrecargado o no disponible, no es un error del sistema del medico.
+    /// La UI ofrece reintentar o elegir otro modelo; no debe tratarse como
+    /// error de configuracion.
+    #[error("{message}")]
+    Overloaded {
+        provider: String,
+        model: String,
+        message: String,
+    },
     #[error("se alcanzo el presupuesto mensual de IA; ajustalo para continuar")]
     BudgetExceeded,
 }
@@ -56,7 +66,7 @@ const PROMPT_VERSION_INSTRUCTIONS: &str = "instructions/v1";
 const PROMPT_VERSION_GAPS: &str = "gaps/v1";
 const PROMPT_VERSION_TRANSCRIPTION: &str = "transcription/v1";
 pub const PROMPT_VERSION_CONSULTATION_STRUCTURING: &str = "consultation-structuring/v1";
-pub const PROMPT_VERSION_CLINICAL_AID: &str = "clinical-aid/v1";
+pub const PROMPT_VERSION_CLINICAL_AID: &str = "clinical-aid/v2";
 const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
 
 fn prompt_version_for(usage_type: &str) -> &'static str {
@@ -195,7 +205,7 @@ impl ProviderRegistry {
         }
         #[cfg(not(test))]
         {
-            if let Some(gemini) = GeminiProvider::from_env() {
+            if let Some(gemini) = GeminiProvider::from_env_with_model(None) {
                 // Proveedor real configurado: NO se agrega el fake como respaldo.
                 // Sustituir IA real por un borrador de demostracion en silencio es
                 // peligroso (el medico podria tomarlo por una sugerencia clinica
@@ -203,6 +213,27 @@ impl ProviderRegistry {
                 Self::new(vec![Box::new(gemini)])
             } else {
                 Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))])
+            }
+        }
+    }
+
+    /// Registro para una opcion explicita del catalogo (el medico eligio una
+    /// alternativa ante sobrecarga). Devuelve `None` si el proveedor de esa
+    /// opcion ya no esta configurado en el entorno — el llamador reporta error
+    /// en vez de degradar al fake.
+    pub fn local_for_option(option: &TextModelOption) -> Option<Self> {
+        #[cfg(test)]
+        {
+            let _ = option;
+            Some(Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))]))
+        }
+        #[cfg(not(test))]
+        {
+            match option.provider.as_str() {
+                PROVIDER_OPENAI => OpenAiProvider::from_env_with_model(Some(option.model.clone()))
+                    .map(|provider| Self::new(vec![Box::new(provider) as Box<dyn AiProvider>])),
+                _ => GeminiProvider::from_env_with_model(Some(option.model.clone()))
+                    .map(|provider| Self::new(vec![Box::new(provider) as Box<dyn AiProvider>])),
             }
         }
     }
@@ -356,6 +387,128 @@ fn fake_structuring_output(context: &str) -> Result<String, AiError> {
     .map_err(|e| AiError::Invalid(format!("no se pudo serializar el borrador: {e}")))
 }
 
+/// Estados HTTP que indican falla transitoria del proveedor (sobrecarga, limite
+/// de tasa o caida momentanea): se reintentan con backoff y, si persisten, se
+/// reportan como `AiError::Overloaded` para que el medico pueda elegir otro
+/// modelo. 400/401/403 quedan fuera: son deterministas (solicitud o credencial).
+pub fn transient_provider_status(status: u16) -> bool {
+    matches!(status, 429 | 500 | 502 | 503 | 504)
+}
+
+pub const PROVIDER_GEMINI: &str = "gemini-direct";
+pub const PROVIDER_OPENAI: &str = "openai-direct";
+
+/// Opcion de modelo de texto disponible para Ayuda IA. Solo incluye modelos de
+/// proveedores REALES configurados; el fake de demostracion nunca se ofrece.
+/// `id` es estable y unico entre proveedores (`gemini:<modelo>` / `openai:<modelo>`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TextModelOption {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub label: String,
+    pub is_default: bool,
+}
+
+/// Catalogo de modelos de texto disponibles segun el entorno: modelos Gemini
+/// (primario + `MIDOC_GEMINI_FALLBACK_MODELS`) y, si esta configurado Y el gate
+/// de gobernanza esta declarado, OpenAI como proveedor alternativo. Vacio si no
+/// hay proveedor real (en ese caso no hay alternativa que ofrecer).
+pub fn text_model_options() -> Vec<TextModelOption> {
+    let mut options = gemini_text_model_options(
+        std::env::var("MIDOC_GEMINI_API_KEY").ok(),
+        std::env::var("MIDOC_GEMINI_MODEL").ok(),
+        std::env::var("MIDOC_GEMINI_FALLBACK_MODELS").ok(),
+    );
+    options.extend(openai_text_model_options(
+        std::env::var("MIDOC_OPENAI_API_KEY").ok(),
+        std::env::var("MIDOC_OPENAI_TEXT_ZDR_APPROVED").ok(),
+        std::env::var("MIDOC_OPENAI_MODEL").ok(),
+    ));
+    options
+}
+
+pub const DEFAULT_GEMINI_MODEL: &str = "gemini-3-flash";
+const DEFAULT_GEMINI_FALLBACK_MODELS: &str = "gemini-2.5-flash";
+pub const DEFAULT_OPENAI_MODEL: &str = "gpt-5-mini";
+
+fn has_content(value: &Option<String>) -> bool {
+    value
+        .as_ref()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn gemini_option(model: &str, is_default: bool) -> TextModelOption {
+    TextModelOption {
+        id: format!("gemini:{model}"),
+        provider: PROVIDER_GEMINI.into(),
+        model: model.to_string(),
+        label: format!("Gemini · {model}"),
+        is_default,
+    }
+}
+
+fn gemini_text_model_options(
+    api_key: Option<String>,
+    model: Option<String>,
+    fallback_models: Option<String>,
+) -> Vec<TextModelOption> {
+    if !has_content(&api_key) {
+        return Vec::new();
+    }
+    let default_model = model
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_GEMINI_MODEL.into());
+    let mut options = vec![gemini_option(&default_model, true)];
+    let fallbacks = fallback_models.unwrap_or_else(|| DEFAULT_GEMINI_FALLBACK_MODELS.into());
+    for candidate in fallbacks.split(',') {
+        let candidate = candidate.trim();
+        if candidate.is_empty() || options.iter().any(|option| option.model == candidate) {
+            continue;
+        }
+        options.push(gemini_option(candidate, false));
+    }
+    options
+}
+
+/// OpenAI para texto requiere DOS condiciones: la clave (`MIDOC_OPENAI_API_KEY`)
+/// y el gate de gobernanza auto-declarado (`MIDOC_OPENAI_TEXT_ZDR_APPROVED=true`),
+/// espejo del patron `OPENAI_TRANSCRIPTION_ZDR_APPROVED` del portal. El gate no
+/// verifica nada con OpenAI: evita activar por accidente un proveedor cuyo BAA/ZDR
+/// aun no esta confirmado (paso 16). Nunca es el modelo por defecto: la decision
+/// vigente (doc 11) mantiene a Gemini como primario por costo.
+fn openai_text_model_options(
+    api_key: Option<String>,
+    zdr_approved: Option<String>,
+    model: Option<String>,
+) -> Vec<TextModelOption> {
+    if !has_content(&api_key) {
+        return Vec::new();
+    }
+    let approved = zdr_approved
+        .map(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            value == "true" || value == "1"
+        })
+        .unwrap_or(false);
+    if !approved {
+        return Vec::new();
+    }
+    let model = model
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_OPENAI_MODEL.into());
+    vec![TextModelOption {
+        id: format!("openai:{model}"),
+        provider: PROVIDER_OPENAI.into(),
+        model: model.clone(),
+        label: format!("OpenAI · {model}"),
+        is_default: false,
+    }]
+}
+
 #[cfg_attr(test, allow(dead_code))]
 pub struct GeminiProvider {
     api_key: String,
@@ -364,17 +517,20 @@ pub struct GeminiProvider {
 
 #[cfg_attr(test, allow(dead_code))]
 impl GeminiProvider {
-    pub fn from_env() -> Option<Self> {
+    /// Construye el proveedor desde el entorno; `model_override` fija el modelo
+    /// por ejecucion cuando el medico elige una alternativa ante sobrecarga del
+    /// modelo primario.
+    pub fn from_env_with_model(model_override: Option<String>) -> Option<Self> {
         let api_key = std::env::var("MIDOC_GEMINI_API_KEY").ok()?;
         let api_key = api_key.trim().to_string();
         if api_key.is_empty() {
             return None;
         }
-        let model = std::env::var("MIDOC_GEMINI_MODEL")
-            .ok()
+        let model = model_override
+            .or_else(|| std::env::var("MIDOC_GEMINI_MODEL").ok())
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "gemini-3-flash".into());
+            .unwrap_or_else(|| DEFAULT_GEMINI_MODEL.into());
         Some(Self { api_key, model })
     }
 
@@ -389,7 +545,7 @@ impl GeminiProvider {
 
 impl AiProvider for GeminiProvider {
     fn name(&self) -> &str {
-        "gemini-direct"
+        PROVIDER_GEMINI
     }
 
     fn generate(&self, request: &AiRequest) -> Result<AiResponse, AiError> {
@@ -436,9 +592,9 @@ impl AiProvider for GeminiProvider {
             .build()
             .map_err(|e| AiError::Invalid(format!("no se pudo crear el cliente HTTP: {e}")))?;
 
-        // Reintenta ante fallos de RED transitorios (conexion cortada/reset, DNS
-        // momentaneo). No reintenta ante respuestas HTTP: esas son deterministas y
-        // se reportan tal cual mas abajo.
+        // Reintenta ante fallos transitorios: de RED (conexion cortada/reset, DNS
+        // momentaneo) y de PROVEEDOR sobrecargado (503/429/5xx). Los errores HTTP
+        // deterministas (400/401/403) no se reintentan y se reportan mas abajo.
         let mut attempt = 0;
         let response = loop {
             attempt += 1;
@@ -448,6 +604,12 @@ impl AiProvider for GeminiProvider {
                 .json(&body)
                 .send()
             {
+                Ok(resp)
+                    if transient_provider_status(resp.status().as_u16()) && attempt < 3 =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
+                    continue;
+                }
                 Ok(resp) => break resp,
                 Err(error) if attempt < 3 => {
                     std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
@@ -455,14 +617,32 @@ impl AiProvider for GeminiProvider {
                     continue;
                 }
                 Err(error) => {
-                    return Err(AiError::Invalid(format!("Gemini no respondio: {error}")));
+                    return Err(AiError::Overloaded {
+                        provider: PROVIDER_GEMINI.into(),
+                        model: self.model.clone(),
+                        message: format!("Gemini no respondio tras varios intentos: {error}"),
+                    });
                 }
             }
         };
-        if !response.status().is_success() {
+        let status = response.status();
+        if !status.is_success() {
+            if transient_provider_status(status.as_u16()) {
+                return Err(AiError::Overloaded {
+                    provider: PROVIDER_GEMINI.into(),
+                    model: self.model.clone(),
+                    message: format!(
+                        "Gemini esta sobrecargado o temporalmente no disponible ({status})"
+                    ),
+                });
+            }
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                return Err(AiError::Invalid(format!(
+                    "Gemini rechazo la credencial ({status}); revisa MIDOC_GEMINI_API_KEY"
+                )));
+            }
             return Err(AiError::Invalid(format!(
-                "Gemini rechazo la solicitud: {}",
-                response.status()
+                "Gemini rechazo la solicitud: {status}"
             )));
         }
         let payload: serde_json::Value = response
@@ -479,6 +659,164 @@ impl AiProvider for GeminiProvider {
             .and_then(|part| part.get("text"))
             .and_then(|value| value.as_str())
             .ok_or_else(|| AiError::Invalid("Gemini no devolvio texto utilizable".into()))?
+            .to_string();
+
+        Ok(AiResponse {
+            output,
+            model_version: self.model.clone(),
+            estimated_cost_cents: 1 + (request.redacted_input.len() as i64 / 4000),
+            latency_ms: start.elapsed().as_millis() as i64,
+            cloud_transcription: None,
+        })
+    }
+}
+
+/// Proveedor alternativo de texto: OpenAI directo (chat completions). Solo se
+/// ofrece cuando el medico lo elige ante sobrecarga de Gemini y el entorno lo
+/// habilita (clave + gate ZDR auto-declarado, ver `openai_text_model_options`).
+/// Recibe exactamente la misma canalizacion seudonimizada que Gemini.
+#[cfg_attr(test, allow(dead_code))]
+pub struct OpenAiProvider {
+    api_key: String,
+    model: String,
+}
+
+#[cfg_attr(test, allow(dead_code))]
+impl OpenAiProvider {
+    pub fn from_env_with_model(model_override: Option<String>) -> Option<Self> {
+        let api_key = std::env::var("MIDOC_OPENAI_API_KEY").ok()?;
+        let api_key = api_key.trim().to_string();
+        if api_key.is_empty() {
+            return None;
+        }
+        let model = model_override
+            .or_else(|| std::env::var("MIDOC_OPENAI_MODEL").ok())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEFAULT_OPENAI_MODEL.into());
+        Some(Self { api_key, model })
+    }
+}
+
+impl AiProvider for OpenAiProvider {
+    fn name(&self) -> &str {
+        PROVIDER_OPENAI
+    }
+
+    fn generate(&self, request: &AiRequest) -> Result<AiResponse, AiError> {
+        let start = std::time::Instant::now();
+
+        // Mismos esquemas que Gemini, envueltos en el response_format de OpenAI.
+        // strict=false: los esquemas no declaran additionalProperties y el modo
+        // estricto de OpenAI los rechazaria; la validacion dura ya ocurre al
+        // deserializar la salida en Rust.
+        let response_format = if request.usage_type == USAGE_CONSULTATION_STRUCTURING {
+            Some(serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "consultation_structuring",
+                    "strict": false,
+                    "schema": consultation_structuring_schema()
+                }
+            }))
+        } else if request.usage_type == USAGE_CLINICAL_AID {
+            Some(serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "clinical_aid",
+                    "strict": false,
+                    "schema": clinical_aid_schema()
+                }
+            }))
+        } else {
+            None
+        };
+
+        // Sin `temperature`: la familia gpt-5 solo acepta el valor por defecto y
+        // fijarlo rechazaria la solicitud completa.
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Eres apoyo documental clinico. No inventes informacion. Devuelve solo contenido derivado de la entrada y marca faltantes o ambiguedades."
+                },
+                { "role": "user", "content": request.redacted_input }
+            ]
+        });
+        if let Some(format) = response_format {
+            body["response_format"] = format;
+        }
+
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| AiError::Invalid(format!("no se pudo crear el cliente HTTP: {e}")))?;
+
+        // Misma politica de reintentos que Gemini: transitorios (red y 5xx/429)
+        // con backoff; deterministas (400/401/403) se reportan sin reintento.
+        let mut attempt = 0;
+        let response = loop {
+            attempt += 1;
+            match client
+                .post("https://api.openai.com/v1/chat/completions")
+                .bearer_auth(&self.api_key)
+                .json(&body)
+                .send()
+            {
+                Ok(resp)
+                    if transient_provider_status(resp.status().as_u16()) && attempt < 3 =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
+                    continue;
+                }
+                Ok(resp) => break resp,
+                Err(error) if attempt < 3 => {
+                    std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
+                    let _ = error;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(AiError::Overloaded {
+                        provider: PROVIDER_OPENAI.into(),
+                        model: self.model.clone(),
+                        message: format!("OpenAI no respondio tras varios intentos: {error}"),
+                    });
+                }
+            }
+        };
+        let status = response.status();
+        if !status.is_success() {
+            if transient_provider_status(status.as_u16()) {
+                return Err(AiError::Overloaded {
+                    provider: PROVIDER_OPENAI.into(),
+                    model: self.model.clone(),
+                    message: format!(
+                        "OpenAI esta sobrecargado o temporalmente no disponible ({status})"
+                    ),
+                });
+            }
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                return Err(AiError::Invalid(format!(
+                    "OpenAI rechazo la credencial ({status}); revisa MIDOC_OPENAI_API_KEY"
+                )));
+            }
+            return Err(AiError::Invalid(format!(
+                "OpenAI rechazo la solicitud: {status}"
+            )));
+        }
+        let payload: serde_json::Value = response
+            .json()
+            .map_err(|e| AiError::Invalid(format!("respuesta OpenAI invalida: {e}")))?;
+        let output = payload
+            .get("choices")
+            .and_then(|value| value.as_array())
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| AiError::Invalid("OpenAI no devolvio texto utilizable".into()))?
             .to_string();
 
         Ok(AiResponse {
@@ -1090,7 +1428,7 @@ pub struct TranscriptionDraft {
 fn clinical_aid_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
-        "required": ["soap", "template_segments", "possibilities", "studies", "treatments", "warnings"],
+        "required": ["soap", "template_segments", "possibilities", "exam_suggestions", "question_suggestions", "studies", "treatments", "prescription_draft", "background_updates", "warnings"],
         "properties": {
             "soap": {
                 "type": "object",
@@ -1118,8 +1456,12 @@ fn clinical_aid_schema() -> serde_json::Value {
                     }
                 }
             },
+            "exam_suggestions": {"type":"array","items":{"type":"object","required":["name","reason"],"properties":{"name":{"type":"string"},"reason":{"type":"string"}}}},
+            "question_suggestions": {"type":"array","items":{"type":"object","required":["question","reason"],"properties":{"question":{"type":"string"},"reason":{"type":"string"}}}},
             "studies": {"type":"array","items":{"type":"object","required":["name","reason","priority"],"properties":{"name":{"type":"string"},"reason":{"type":"string"},"priority":{"type":"string","enum":["ROUTINE","SOON","URGENT"]}}}},
             "treatments": {"type":"array","items":{"type":"object","required":["name","reason","precautions"],"properties":{"name":{"type":"string"},"reason":{"type":"string"},"precautions":{"type":"array","items":{"type":"string"}}}}},
+            "prescription_draft": {"type":"string"},
+            "background_updates": {"type":"array","items":{"type":"object","required":["field","content"],"properties":{"field":{"type":"string","enum":["allergies","medical_background","family_background"]},"content":{"type":"string"}}}},
             "warnings":{"type":"array","items":{"type":"string"}}
         }
     })
@@ -1167,6 +1509,14 @@ fn fake_clinical_aid_output(context: &str) -> Result<String, AiError> {
             conflicting_findings: Vec::new(),
             missing_data: vec!["Exploración física".into(), "Signos vitales".into()],
         }],
+        exam_suggestions: vec![ExamSuggestion {
+            name: "Signos vitales y estado general".into(),
+            reason: "La transcripción no registra exploración física.".into(),
+        }],
+        question_suggestions: vec![QuestionSuggestion {
+            question: "¿Desde cuándo presenta el síntoma y cómo ha evolucionado?".into(),
+            reason: "Precisar cronología ayuda a acotar posibilidades.".into(),
+        }],
         studies: vec![StudySuggestion {
             name: "Biometría hemática".into(),
             reason: "Valorar causas frecuentes de fatiga si el criterio médico lo indica.".into(),
@@ -1176,6 +1526,11 @@ fn fake_clinical_aid_output(context: &str) -> Result<String, AiError> {
             name: "Medidas de higiene del sueño".into(),
             reason: "La preconsulta refiere insomnio.".into(),
             precautions: vec!["Confirmar causas secundarias.".into()],
+        }],
+        prescription_draft: "Medidas de higiene del sueño según lo comentado en consulta.".into(),
+        background_updates: vec![BackgroundUpdate {
+            field: "medical_background".into(),
+            content: "Refiere insomnio de larga evolución (mencionado en consulta).".into(),
         }],
         warnings: vec!["Todas las propuestas requieren revisión médica.".into()],
     })
@@ -1190,6 +1545,30 @@ pub struct ClinicalPossibility {
     pub supporting_findings: Vec<String>,
     pub conflicting_findings: Vec<String>,
     pub missing_data: Vec<String>,
+}
+
+/// Factor de exploracion fisica que la IA sugiere revisar. Es una propuesta
+/// para el criterio del medico, nunca una indicacion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExamSuggestion {
+    pub name: String,
+    pub reason: String,
+}
+
+/// Pregunta sugerida para completar la anamnesis con el paciente.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionSuggestion {
+    pub question: String,
+    pub reason: String,
+}
+
+/// Antecedente que el paciente respondio durante la conversacion y que la IA
+/// propone volcar al expediente. `field` esta acotado a los campos de texto
+/// libre editables por el medico en consulta.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackgroundUpdate {
+    pub field: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1211,8 +1590,18 @@ struct ClinicalAidOutput {
     soap: NoteContent,
     template_segments: Vec<SegmentDraft>,
     possibilities: Vec<ClinicalPossibility>,
+    // `default` tolera respuestas de la version de prompt anterior (v1) que
+    // no incluian estas secciones.
+    #[serde(default)]
+    exam_suggestions: Vec<ExamSuggestion>,
+    #[serde(default)]
+    question_suggestions: Vec<QuestionSuggestion>,
     studies: Vec<StudySuggestion>,
     treatments: Vec<TreatmentSuggestion>,
+    #[serde(default)]
+    prescription_draft: String,
+    #[serde(default)]
+    background_updates: Vec<BackgroundUpdate>,
     warnings: Vec<String>,
 }
 
@@ -1227,8 +1616,12 @@ pub struct ClinicalAidDraft {
     pub soap: NoteContent,
     pub template_segments: Vec<SegmentDraft>,
     pub possibilities: Vec<ClinicalPossibility>,
+    pub exam_suggestions: Vec<ExamSuggestion>,
+    pub question_suggestions: Vec<QuestionSuggestion>,
     pub studies: Vec<StudySuggestion>,
     pub treatments: Vec<TreatmentSuggestion>,
+    pub prescription_draft: String,
+    pub background_updates: Vec<BackgroundUpdate>,
     pub warnings: Vec<String>,
 }
 
@@ -1460,14 +1853,29 @@ fn validate_template_segments(
 const SEGMENT_NO_SOURCE_WARNING: &str =
     "Sin fuentes en la conversacion: el medico debe verificar este segmento.";
 
+/// Politica ante una fuente que no es un turno de la conversacion. En el escriba
+/// puro (acomodo) el UNICO contexto son los turnos, asi que una fuente desconocida
+/// es alucinacion y se rechaza todo. En la ayuda clinica el prompt tambien incluye
+/// antecedentes y preconsulta: el modelo puede citar esas procedencias (p. ej.
+/// "Preconsulta del paciente"); rechazar toda la respuesta por eso rompe el flujo,
+/// asi que la cita no verificable se descarta y se anota como advertencia.
+#[derive(Clone, Copy, PartialEq)]
+enum UnknownSourcePolicy {
+    Reject,
+    RepairWithWarning,
+}
+
 /// Valida los segmentos devueltos por la IA y los repara cuando es seguro hacerlo.
-/// Errores DUROS (indican alucinacion, se rechaza todo): segmento o turno fuente
-/// inexistente, confianza invalida. Reparacion (no rechazo): un segmento sin
-/// fuentes ni advertencia recibe una advertencia explicita. Muta los segmentos.
+/// Errores DUROS (indican alucinacion, se rechaza todo): segmento inexistente,
+/// confianza invalida, y turno fuente inexistente bajo `Reject`. Reparacion (no
+/// rechazo): un segmento sin fuentes ni advertencia recibe una advertencia
+/// explicita; bajo `RepairWithWarning`, una fuente desconocida se descarta y se
+/// registra en las advertencias del segmento. Muta los segmentos.
 fn validate_and_repair_segments(
     segments: &mut [SegmentDraft],
     allowed_segments: &std::collections::HashSet<&str>,
     allowed_turns: &std::collections::HashSet<&str>,
+    unknown_source_policy: UnknownSourcePolicy,
 ) -> Result<(), AiError> {
     for segment in segments.iter_mut() {
         if !allowed_segments.contains(segment.segment_id.as_str()) {
@@ -1482,12 +1890,26 @@ fn validate_and_repair_segments(
                 segment.segment_id
             )));
         }
+        let mut unknown_sources = Vec::new();
         for source_turn in &segment.source_turns {
             if !allowed_turns.contains(source_turn.as_str()) {
-                return Err(AiError::Invalid(format!(
-                    "fuente desconocida en segmento {}: {}",
-                    segment.segment_id, source_turn
-                )));
+                if unknown_source_policy == UnknownSourcePolicy::Reject {
+                    return Err(AiError::Invalid(format!(
+                        "fuente desconocida en segmento {}: {}",
+                        segment.segment_id, source_turn
+                    )));
+                }
+                unknown_sources.push(source_turn.clone());
+            }
+        }
+        if !unknown_sources.is_empty() {
+            segment
+                .source_turns
+                .retain(|source| allowed_turns.contains(source.as_str()));
+            for source in unknown_sources {
+                segment.warnings.push(format!(
+                    "Cita no verificable descartada ({source}): el medico debe confirmar este segmento."
+                ));
             }
         }
         if segment.source_turns.is_empty() && segment.warnings.is_empty() {
@@ -1511,7 +1933,12 @@ fn parse_structuring_output(
         .map(|segment| segment.id.as_str())
         .collect();
     let allowed_turns: HashSet<&str> = turns.iter().map(|turn| turn.id.as_str()).collect();
-    validate_and_repair_segments(&mut output.segments, &allowed, &allowed_turns)?;
+    validate_and_repair_segments(
+        &mut output.segments,
+        &allowed,
+        &allowed_turns,
+        UnknownSourcePolicy::Reject,
+    )?;
     Ok(output)
 }
 
@@ -1723,6 +2150,16 @@ fn parse_clinical_aid_output(
             ));
         }
     }
+    for exam in &output.exam_suggestions {
+        if exam.name.trim().is_empty() || exam.reason.trim().is_empty() {
+            return Err(AiError::Invalid("sugerencia de exploracion invalida".into()));
+        }
+    }
+    for question in &output.question_suggestions {
+        if question.question.trim().is_empty() || question.reason.trim().is_empty() {
+            return Err(AiError::Invalid("pregunta sugerida invalida".into()));
+        }
+    }
     for study in &output.studies {
         if study.name.trim().is_empty()
             || study.reason.trim().is_empty()
@@ -1731,13 +2168,28 @@ fn parse_clinical_aid_output(
             return Err(AiError::Invalid("estudio sugerido invalido".into()));
         }
     }
+    for update in &output.background_updates {
+        if update.content.trim().is_empty()
+            || !matches!(
+                update.field.as_str(),
+                "allergies" | "medical_background" | "family_background"
+            )
+        {
+            return Err(AiError::Invalid("antecedente propuesto invalido".into()));
+        }
+    }
     let allowed: std::collections::HashSet<&str> = template_segments
         .iter()
         .map(|segment| segment.id.as_str())
         .collect();
     let allowed_turns: std::collections::HashSet<&str> =
         turns.iter().map(|turn| turn.id.as_str()).collect();
-    validate_and_repair_segments(&mut output.template_segments, &allowed, &allowed_turns)?;
+    validate_and_repair_segments(
+        &mut output.template_segments,
+        &allowed,
+        &allowed_turns,
+        UnknownSourcePolicy::RepairWithWarning,
+    )?;
     Ok(output)
 }
 
@@ -1769,7 +2221,10 @@ pub fn generate_clinical_aid(
             "Usa HIGH, MEDIUM o LOW como compatibilidad.",
             "Explica hallazgos a favor, en contra y faltantes.",
             "No inventes datos.",
-            "En cada template_segment cita en source_turns los ids de turnos que lo sustentan; si la conversacion no cubre ese segmento, deja source_turns vacio y agrega una advertencia."
+            "En exam_suggestions propone factores de exploracion fisica que convendria revisar segun los sintomas referidos; en question_suggestions, preguntas para completar la anamnesis. Ambas son sugerencias para el criterio del medico, nunca indicaciones.",
+            "En prescription_draft redacta un borrador de receta SOLO con medicamentos o indicaciones que el medico menciono o acordo explicitamente en la conversacion, con la dosis, frecuencia y duracion tal como se dijeron; si no se menciono ningun tratamiento, deja el campo vacio.",
+            "En background_updates vuelca antecedentes que el paciente respondio durante la conversacion (alergias, antecedentes personales, antecedentes familiares) usando los campos allergies, medical_background o family_background; solo informacion dicha por el paciente, sin inferencias.",
+            "En cada template_segment cita en source_turns SOLO ids de turnos de la conversacion; la informacion tomada de antecedentes o preconsulta NO se cita ahi: deja source_turns vacio (o solo con turnos reales) y anota la procedencia en warnings."
         ],
         "template_segments": &template_segments,
         "turns": &reviewed.turns,
@@ -1824,8 +2279,12 @@ pub fn generate_clinical_aid(
         soap: output.soap,
         template_segments: output.template_segments,
         possibilities: output.possibilities,
+        exam_suggestions: output.exam_suggestions,
+        question_suggestions: output.question_suggestions,
         studies: output.studies,
         treatments: output.treatments,
+        prescription_draft: output.prescription_draft,
+        background_updates: output.background_updates,
         warnings: output.warnings,
     })
 }
@@ -2814,6 +3273,104 @@ mod tests {
         ));
     }
 
+    /// Proveedor que reporta sobrecarga, como Gemini ante 503/429.
+    struct OverloadedProvider;
+    impl AiProvider for OverloadedProvider {
+        fn name(&self) -> &str {
+            "overloaded"
+        }
+        fn generate(&self, _request: &AiRequest) -> Result<AiResponse, AiError> {
+            Err(AiError::Overloaded {
+                provider: "overloaded".into(),
+                model: "model-x".into(),
+                message: "sobrecargado (503)".into(),
+            })
+        }
+    }
+
+    #[test]
+    fn transient_status_classification_matches_overload_semantics() {
+        for status in [429, 500, 502, 503, 504] {
+            assert!(transient_provider_status(status), "esperaba transitorio: {status}");
+        }
+        for status in [200, 400, 401, 403, 404] {
+            assert!(!transient_provider_status(status), "esperaba determinista: {status}");
+        }
+    }
+
+    #[test]
+    fn overloaded_error_survives_registry_for_doctor_choice() {
+        let conn = test_conn("overload");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+
+        let registry = ProviderRegistry::new(vec![Box::new(OverloadedProvider)]);
+        match assist_soap(&conn, &encounter_id, &registry) {
+            Err(AiError::Overloaded { provider, model, .. }) => {
+                assert_eq!(provider, "overloaded");
+                assert_eq!(model, "model-x");
+            }
+            Err(other) => panic!("esperaba Overloaded, obtuve {other:?}"),
+            Ok(_) => panic!("esperaba Overloaded, la generacion no debio completarse"),
+        }
+    }
+
+    #[test]
+    fn text_model_catalog_requires_real_provider() {
+        assert!(gemini_text_model_options(None, None, None).is_empty());
+        assert!(gemini_text_model_options(Some("  ".into()), None, None).is_empty());
+    }
+
+    #[test]
+    fn text_model_catalog_defaults_and_dedupes() {
+        let options = gemini_text_model_options(Some("key".into()), None, None);
+        assert_eq!(options[0].model, DEFAULT_GEMINI_MODEL);
+        assert_eq!(options[0].id, format!("gemini:{DEFAULT_GEMINI_MODEL}"));
+        assert_eq!(options[0].provider, PROVIDER_GEMINI);
+        assert!(options[0].is_default);
+        assert_eq!(options[1].model, "gemini-2.5-flash");
+        assert!(!options[1].is_default);
+
+        // El primario no se repite como alternativa y los vacios se ignoran.
+        let options = gemini_text_model_options(
+            Some("key".into()),
+            Some("gemini-custom".into()),
+            Some("gemini-custom, , gemini-alt".into()),
+        );
+        assert_eq!(
+            options.iter().map(|o| o.model.as_str()).collect::<Vec<_>>(),
+            vec!["gemini-custom", "gemini-alt"]
+        );
+    }
+
+    #[test]
+    fn openai_text_models_require_key_and_governance_gate() {
+        // Sin clave: nada, aunque el gate este declarado.
+        assert!(openai_text_model_options(None, Some("true".into()), None).is_empty());
+        // Con clave pero sin gate ZDR auto-declarado: nada (paso 16).
+        assert!(openai_text_model_options(Some("key".into()), None, None).is_empty());
+        assert!(
+            openai_text_model_options(Some("key".into()), Some("false".into()), None).is_empty()
+        );
+
+        // Con clave + gate: una opcion, nunca como default (Gemini sigue primario).
+        let options =
+            openai_text_model_options(Some("key".into()), Some("true".into()), None);
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].provider, PROVIDER_OPENAI);
+        assert_eq!(options[0].model, DEFAULT_OPENAI_MODEL);
+        assert_eq!(options[0].id, format!("openai:{DEFAULT_OPENAI_MODEL}"));
+        assert!(!options[0].is_default);
+
+        // Modelo configurable.
+        let options = openai_text_model_options(
+            Some("key".into()),
+            Some("1".into()),
+            Some("gpt-5.4".into()),
+        );
+        assert_eq!(options[0].model, "gpt-5.4");
+    }
+
     #[test]
     fn consent_revocation_blocks_new_runs() {
         let conn = test_conn("revoke");
@@ -3409,6 +3966,65 @@ mod tests {
     }
 
     #[test]
+    fn clinical_aid_rejects_empty_exam_or_question_suggestions() {
+        let base = r#"{
+          "soap":{"subjective":"","objective":"","assessment":"","plan":"","diagnosis":"","instructions":"","specialty":null},
+          "template_segments":[],
+          "possibilities":[],
+          "exam_suggestions":EXAMS,
+          "question_suggestions":QUESTIONS,
+          "studies":[],"treatments":[],"warnings":[]
+        }"#;
+        let bad_exam = base
+            .replace("EXAMS", r#"[{"name":"  ","reason":"Sin datos"}]"#)
+            .replace("QUESTIONS", "[]");
+        assert!(parse_clinical_aid_output(&bad_exam, &scribe_segments(), &scribe_turns()).is_err());
+        let bad_question = base
+            .replace("EXAMS", "[]")
+            .replace("QUESTIONS", r#"[{"question":"¿Desde cuándo?","reason":""}]"#);
+        assert!(
+            parse_clinical_aid_output(&bad_question, &scribe_segments(), &scribe_turns()).is_err()
+        );
+    }
+
+    #[test]
+    fn clinical_aid_repairs_segment_with_non_turn_source_instead_of_rejecting() {
+        // Regresion: el modelo citaba "Preconsulta del paciente" como fuente y la
+        // validacion rechazaba TODA la ayuda clinica. En ayuda clinica el contexto
+        // incluye antecedentes/preconsulta: la cita no verificable se descarta con
+        // advertencia; los turnos reales se conservan.
+        let raw = r#"{
+          "soap":{"subjective":"","objective":"","assessment":"","plan":"","diagnosis":"","instructions":"","specialty":null},
+          "template_segments":[{"segment_id":"subjective","content":"Refiere insomnio","confidence":"medium","source_turns":["Preconsulta del paciente","turn-1"],"warnings":[]}],
+          "possibilities":[],
+          "studies":[],"treatments":[],"warnings":[]
+        }"#;
+        let output =
+            parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns()).unwrap();
+        let segment = &output.template_segments[0];
+        assert_eq!(segment.source_turns, vec!["turn-1".to_string()]);
+        assert!(segment
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Preconsulta del paciente")));
+    }
+
+    #[test]
+    fn clinical_aid_rejects_background_update_with_unknown_field() {
+        let raw = r#"{
+          "soap":{"subjective":"","objective":"","assessment":"","plan":"","diagnosis":"","instructions":"","specialty":null},
+          "template_segments":[],
+          "possibilities":[],
+          "studies":[],"treatments":[],
+          "background_updates":[{"field":"blood_type","content":"O+"}],
+          "warnings":[]
+        }"#;
+        assert!(parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns()).is_err());
+        let valid = raw.replace("blood_type", "allergies");
+        assert!(parse_clinical_aid_output(&valid, &scribe_segments(), &scribe_turns()).is_ok());
+    }
+
+    #[test]
     fn clinical_aid_requires_reviewed_transcription_and_returns_levels() {
         let conn = test_conn("clinical-aid-flow");
         let (encounter_id, patient_id) = seed_encounter(&conn);
@@ -3446,6 +4062,8 @@ mod tests {
             .possibilities
             .iter()
             .all(|item| matches!(item.compatibility.as_str(), "HIGH" | "MEDIUM" | "LOW")));
+        assert!(!draft.exam_suggestions.is_empty());
+        assert!(!draft.question_suggestions.is_empty());
     }
 
     /// WAV PCM16 mono 16 kHz de silencio, para que la decodificacion de audio de

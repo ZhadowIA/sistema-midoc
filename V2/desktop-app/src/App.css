@@ -1661,15 +1661,6 @@ textarea:disabled {
   color: var(--faint);
 }
 
-/* Ahora la Ayuda IA es una ruta más en el centro: sin tarjeta ni borde
-   exterior, ocupa todo el ancho como las demás secciones de la consulta. */
-.consultation-center > .clinical-aid-launch {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
 /* La pantalla de consulta es mas ancha: agenda del dia, nota y contexto
    permanente forman la Estacion Clinica. */
 .encounter-content {
@@ -2628,47 +2619,295 @@ body.dictating .encounter-modes:focus-within {
   gap: 8px;
 }
 
+/* Ayuda IA (paso 22): la ruta ocupa todo el centro. Preparación como banda
+   de trabajo sobre --surface; resultados en pestañas con conteo, legibles
+   a 50 cm sin scroll de tarjetas anidadas. */
 .clinical-aid-launch {
   display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid color-mix(in oklch, var(--primary) 32%, var(--line));
+  gap: 18px;
+}
+
+.clinical-aid-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+
+.clinical-aid-setup {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
   border-radius: var(--radius-panel);
-  background: var(--bg);
+  background: var(--surface);
 }
 
 .clinical-aid-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 6px 24px;
+}
+
+.clinical-aid-source {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.clinical-aid-source-dot {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.clinical-aid-source.is-ready .clinical-aid-source-dot {
+  background: var(--success);
+}
+
+.clinical-aid-source-state {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.clinical-aid-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.clinical-aid-template {
+  flex: 1 1 220px;
+  max-width: 340px;
+}
+
+.clinical-aid-blocker {
+  margin: 0;
 }
 
 .clinical-aid-results {
   display: grid;
-  gap: 4px;
 }
 
-.clinical-aid-result {
+.clinical-aid-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.clinical-aid-results-header h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.clinical-aid-results-header .meta {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+/* Pestañas de resultados de Ayuda IA: reusa .tab-row pero dentro del panel,
+   sin el sticky ni el padding lateral pensados para la vista de operacion. */
+.clinical-aid-tabs {
+  position: static;
+  padding: 0;
+  margin-top: 10px;
+}
+
+.tab-count {
+  margin-left: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tab-active .tab-count {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.clinical-aid-block {
   display: grid;
-  gap: 7px;
-  padding-block: 10px;
+  gap: 8px;
+  padding-block: 14px;
   border-top: 1px solid var(--line);
 }
 
-.clinical-aid-result p {
+.clinical-aid-panel > .clinical-aid-block:first-child {
+  border-top: 0;
+}
+
+.clinical-aid-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.clinical-aid-block-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.clinical-aid-block p {
   margin: 0;
-  font-size: 0.86rem;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  max-width: 70ch;
+}
+
+.aid-apply {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 0.84rem;
+  flex-shrink: 0;
+}
+
+.aid-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.aid-list li {
+  display: grid;
+  gap: 2px;
+  max-width: 70ch;
+}
+
+.aid-list b {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.aid-list span {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.aid-possibility {
+  display: grid;
+  gap: 8px;
+  padding-block: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.aid-possibility:first-of-type {
+  border-top: 0;
+}
+
+/* Dialogo de proveedor sobrecargado: decision explicita del medico, no fallback
+   silencioso. Borde de advertencia para distinguirlo de un error permanente. */
+.ai-overload-dialog {
+  border-left: 4px solid #d97706;
+  display: grid;
+  gap: 8px;
+}
+
+.ai-overload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .clinical-aid-heading {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
 }
 
-.compatibility-high { color: var(--success); }
-.compatibility-medium { color: oklch(0.48 0.11 70); }
-.compatibility-low { color: var(--muted); }
+.clinical-aid-heading b {
+  font-size: 0.98rem;
+  font-weight: 650;
+}
+
+.aid-evidence {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.aid-evidence > div {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.aid-evidence dt {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.aid-evidence dd {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--ink);
+  max-width: 65ch;
+}
+
+.clinical-aid-background {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in oklch, var(--accent) 35%, var(--line));
+  border-radius: var(--radius-panel);
+  background: color-mix(in oklch, var(--accent) 6%, var(--bg));
+}
+
+.aid-background-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.aid-background-row p {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.clinical-aid-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
 
 .section-kicker,
 .transcription-card-label {

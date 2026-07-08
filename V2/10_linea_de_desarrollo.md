@@ -79,13 +79,17 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | ✅ DONE |
 | 13 | Directorio y expediente longitudinal | `impeccable` | Directorio de pacientes y linea del tiempo clinica editable. | ✅ DONE |
 | 14 | Seguridad de medicacion determinista | `codex-security:security-scan` | Interacciones, alergias cruzadas y duplicidad sin IA, con fuente citada. | ✅ DONE |
-| 15 | Transcripcion local real (Whisper) | `superpowers:writing-plans` | whisper.cpp real, descarga de modelo y respaldo en nube gobernado. | 🔜 PLANEADO |
+| 15 | Transcripcion local real (Whisper) | `superpowers:writing-plans` | whisper.cpp real, descarga de modelo y respaldo en nube gobernado. | ✅ DONE (backends nativos se validan en staging) |
 | 16 | Proveedores de IA reales en staging (BAA) | `codex-security:security-scan` | Adaptadores reales de LLM/transcripcion con gobernanza intacta. | 🔜 PLANEADO |
 | 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
 | 18 | Agendado con responsable/tutor | `superpowers:test-driven-development` | El sistema distingue paciente con tutor de paciente sin tutor. | ✅ DONE |
 | 19 | Pulido del flujo publico, preconsulta y sincronizacion | `impeccable` | Perfil/agenda fieles, preconsulta diferida (antecedentes o guiada por IA), recordatorio con cancelacion y sync con aviso. | 🔜 PLANEADO |
 | 20 | App del medico: multi-perfil y agenda dia/semana | `impeccable` | Varios medicos comparten una computadora con bases cifradas independientes y agenda dia/semana. | ✅ DONE |
 | 21 | Plantillas clinicas asistidas por conversacion | `superpowers:writing-plans` | Consulta grabada/transcrita se acomoda en segmentos revisables de la plantilla activa. | 🧪 EN REVISION (PR #18) |
+| 22 | Diarizacion local (separacion de hablantes) | `superpowers:writing-plans` | Dialogo Medico/Paciente separado offline con sherpa-onnx; Ruta B anade transcripcion en nube gobernada por el portal. | 🚧 IN PROGRESS (nativo pendiente de staging) |
+| 23 | Anamnesis asistida (cuestionario desde conversacion) | `superpowers:writing-plans` | Antecedentes estructurados propuestos por IA desde la consulta hablada, reconciliados campo por campo y confirmados por el medico. | 🔜 PLANEADO |
+| 24 | Degradacion asistida de proveedor de IA | `superpowers:test-driven-development` | Ante sobrecarga del proveedor (503/429), el medico ve la causa y elige reintentar o generar con otro modelo disponible — nunca fallback silencioso. | 🚧 IN PROGRESS |
+| 25 | Base de medicamentos a escala | `superpowers:writing-plans` | Pipeline reproducible de fuentes publicas + catalogo mexicano de marcas; la verificacion de recetas pasa de semilla curada (65 ingredientes) a cobertura real. | 🔜 PLANEADO |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -1115,6 +1119,17 @@ aplica contenido automaticamente y no presenta `realtime_capable` como
 streaming: mientras no exista un contrato incremental, el texto aparece al
 finalizar la grabacion.
 
+Extension de UX (2026-07-06): los resultados de la Ayuda IA dejan de ser un
+listado unico con scroll y se organizan en cinco pestañas: Plantilla (SOAP o
+plantilla personalizada seleccionada), Especialidad (segmentos `specialty.*`
+de la plantilla propia del modulo, p. ej. general/familiar), Posibilidades
+clinicas, Sugerencias (exploracion fisica, preguntas al paciente y estudios)
+y Tratamiento (opciones + receta sugerida). Los antecedentes detectados y el
+boton de descartar permanecen visibles bajo las pestañas porque son acciones,
+no lectura. La particion plantilla/especialidad la resuelve
+`splitAidSegments` con el target de la definicion activa; un segmento sin
+definicion conocida cae a la pestaña Plantilla para no perder propuestas.
+
 Extension (Ruta B, 2026-06-30 a 2026-07-01): la rebanada 3 del paso 15 (`CloudTranscriptionProvider` estilo Deepgram, `CloudConfig::from_env`, `MIDOC_CLOUD_STT_*`) queda **reemplazada** por la transcripcion en nube gobernada por el portal (plan detallado en `docs/superpowers/plans/2026-06-30-ruta-b-faseado.md`). El desktop ya no conoce ninguna clave de proveedor: el portal media la llamada (OpenAI), cobra por duracion autoritativa del WAV y devuelve texto (modo estandar) o turnos anonimos por hablante (modo diarizado). Selector de 3 vias en `Transcripcion consulta`: local (Whisper + sherpa-onnx, gratis), nube estandar y nube con hablantes. En nube con hablantes, el medico confirma el rol (Medico/Paciente/Acompanante/Otro) de cada hablante anonimo antes de continuar — el gate de roles bloquea "Marcar como revisada" hasta que todo hablante con texto tenga rol asignado. `ConsultationTurn` admite los 4 roles en toda la canalizacion (guardado, estructuracion SOAP, ayuda clinica), en TS y Rust.
 
 Costo en creditos por transcripcion (autoritativo, lo fija el portal):
@@ -1128,6 +1143,67 @@ Costo en creditos por transcripcion (autoritativo, lo fija el portal):
 El resto de usos de IA (SOAP asistido, ayuda clinica, preconsulta, etc.) sigue tarifado sobre el LLM base (Gemini): `+1` credito por invocacion, sin cambios.
 
 Estado: F1 (portal, #28) + F2 (portal, #29) + F3 (desktop, cliente del portal, #31) + F4 (diarizacion: logica pura + Rust + UI de 3 modos y asignacion de roles) completas y con pruebas verdes (cargo + node). Pendiente, no bloqueante para el codigo: activacion del proveedor real con BAA firmado y ZDR verificado en staging (paso 16) — el gate `OPENAI_TRANSCRIPTION_ZDR_APPROVED` es auto-declarado (evita activacion accidental) y no verifica nada con OpenAI; la barrera real es legal/administrativa, no tecnica.
+
+## Paso 23 - Anamnesis asistida: cuestionario de antecedentes desde la conversacion
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Cuando el paciente no contesto (o contesto parcialmente) el cuestionario estructurado de antecedentes, el medico hace las preguntas durante la consulta y la IA propone las respuestas mapeadas al cuestionario (`patient_medical_history_versions`), campo por campo, para que el medico las revise, corrija y confirme — sin re-transcribir y sin romper la inmutabilidad por versiones ni el contrato compartido con el portal. |
+| Requisitos relacionados | Extiende el paso 11 (IA gobernada), el paso 19 (preconsulta/reconciliacion) y la Ayuda IA del paso 22. Antecedente directo: `background_updates` de la Ayuda IA (2026-07-03), que solo cubre los 3 campos de texto libre (`allergies`, `medical_background`, `family_background`). |
+| Entrada necesaria | Transcripcion revisada de la consulta (paso 21/22); contrato del cuestionario (`medicalHistoryFormat.ts`, espejo de `consultorio-app/src/lib/medical-history.ts`); flujo de reconciliacion existente (`reconcileMedicalHistories` / `applyConflictDecisions`). |
+| Se construye | Extraccion gobernada (uso `CLINICAL_AID` o uso nuevo dedicado) que devuelve respuestas propuestas restringidas por esquema a las claves reales del cuestionario (`GroupDef`/`FieldDef`, incluidos `yesno`, `select` y estructuras como heredo-familiares), con cita del turno de conversacion que sustenta cada respuesta; UI de reconciliacion campo por campo que reusa el patron de conflictos de la preconsulta (valor actual vs. propuesto, aceptar/editar/descartar); guardado como nueva version con `source = DOCTOR_EDIT` (la IA NUNCA es fuente directa de una version) y trazabilidad del `run_id` de IA en la auditoria. |
+| Se valida con | Un paciente sin cuestionario contestado llega a consulta; el medico le hace las preguntas hablando, genera la propuesta, revisa cada campo (acepta unos, corrige otros, descarta los no dichos), confirma, y el expediente queda con una version nueva correcta y auditada — sin haber tecleado las respuestas. |
+| Compuerta de avance | Ninguna respuesta se guarda sin confirmacion explicita del medico; el esquema JSON rechaza claves fuera del contrato del cuestionario; cada respuesta propuesta cita el turno que la sustenta (sin cita, se marca como no confiable); la version guardada registra `source = DOCTOR_EDIT` y referencia al run de IA; los cambios de contrato del cuestionario se replican en ambas apps (regla existente del espejo). |
+| Push recomendado | Por rebanada cerrada: (1) contrato de extraccion + validacion por esquema con pruebas puras, (2) UI de reconciliacion campo por campo, (3) guardado versionado + auditoria de extremo a extremo. |
+
+Clasificacion de datos: las respuestas propuestas y confirmadas son CLINICO (solo base local cifrada); el contrato del cuestionario es REFERENCIA; la traza del run (costo, latencia, version de prompt) es OPERATIVO local, sin contenido clinico.
+
+Decision de alcance que motiva este paso (2026-07-03): la Ayuda IA ya vuelca antecedentes dichos en conversacion a los 3 campos de texto libre del paciente, pero el cuestionario estructurado quedo deliberadamente fuera: tiene contrato compartido con el portal, tipado por campo y versionado inmutable con reconciliacion propia, y merece este diseno dedicado en lugar de un atajo.
+
+## Paso 24 - Degradacion asistida de proveedor de IA (sobrecarga)
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Cuando el proveedor de IA rechaza una solicitud por sobrecarga o limite de tasa (HTTP 503/429, timeouts de red agotados), el sistema se lo explica al medico en lenguaje claro ("es temporal, no es tu sistema") y le ofrece reintentar con el mismo modelo o generar con otro modelo/proveedor configurado — con consentimiento explicito, nunca como fallback silencioso. |
+| Requisitos relacionados | Extiende el paso 11 (IA gobernada, capa multi-proveedor) y la Ayuda IA del paso 22. Respeta la decision existente (2026-07): NO degradar en silencio al proveedor fake porque el medico podria tomar un borrador de demostracion por una sugerencia clinica real. |
+| Entrada necesaria | Ayuda IA operativa con proveedor real (Gemini directo, `MIDOC_GEMINI_API_KEY`); trazas de run que ya registran proveedor y modelo ganador. |
+| Skills IA recomendadas | `superpowers:test-driven-development`, `superpowers:verification-before-completion` |
+| Se construye | (1) Clasificacion tipada de errores del proveedor: `Overloaded { provider, model }` para 429/503/5xx transitorios y timeouts agotados, separada de errores permanentes (credenciales, solicitud invalida); reintento automatico con backoff dentro del proveedor antes de molestar al medico. (2) Error estructurado a traves de IPC (JSON con `code`) para que la UI decida por codigo, no parseando texto. (3) Catalogo de modelos/proveedores disponibles (`ai_list_text_models`): modelos Gemini (primario + `MIDOC_GEMINI_FALLBACK_MODELS`) y OpenAI como proveedor alternativo de texto (`OpenAiProvider`, chat completions con los mismos esquemas JSON y la misma canalizacion seudonimizada) cuando el entorno declara `MIDOC_OPENAI_API_KEY` **y** el gate de gobernanza auto-declarado `MIDOC_OPENAI_TEXT_ZDR_APPROVED=true` (espejo del patron `OPENAI_TRANSCRIPTION_ZDR_APPROVED` del portal; la barrera real es legal/administrativa del paso 16, el gate solo evita activacion accidental); el fake nunca se ofrece como alternativa y OpenAI nunca es el primario (la decision vigente del doc 11 mantiene Gemini por costo). (4) Override de modelo por ejecucion en los comandos de Ayuda IA y acomodo (`ai_generate_clinical_aid`, `ai_structure_consultation`); la traza registra el modelo realmente usado (ya existia). (5) Dialogo en Atencion: causa en lenguaje claro + reintentar / generar con alternativa / cancelar; la salida indica visiblemente el modelo que la produjo. |
+| Se valida con | Con Gemini devolviendo 503, el medico ve el dialogo de sobrecarga (no un banner criptico), elige un modelo alternativo configurado y obtiene la ayuda clinica; la traza registra el modelo alternativo. Sin alternativas configuradas, solo se ofrece reintentar. |
+| Compuerta de avance | Ningun cambio de proveedor/modelo ocurre sin eleccion explicita del medico; el fake jamas aparece como alternativa; los errores permanentes (401/403/400) NO muestran el dialogo de sobrecarga (piden revisar configuracion); los reintentos automaticos tienen tope (no bloquear la consulta); pruebas de clasificacion de errores y de catalogo en verde. |
+| Push recomendado | Una rama corta unica (`v2/paso24-degradacion-proveedor-ia`); backend y UI caben en un PR revisable. |
+
+Clasificacion de datos: el error del proveedor y el catalogo de modelos son OPERATIVO (sin contenido clinico); no se agrega ninguna superficie nueva de salida de PHI — el override reutiliza la misma canalizacion seudonimizada existente.
+
+Motivacion (2026-07-04): en uso real, Gemini devolvio `503 Service Unavailable` durante una Ayuda IA y el medico vio el error crudo sin saber si era su sistema, su configuracion o algo temporal, y sin camino de accion. Este paso convierte esa falla externa en una decision informada del medico.
+
+## Paso 25 - Base de medicamentos a escala (pipeline publico + catalogo mexicano)
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Sustituir la semilla curada del paso 14 (65 ingredientes, 1,060 interacciones DDInter, 64 etiquetas — version `midoc-real-2026-06-14`) por una base de referencia con **licencia limpia para SaaS de pago**, generada de forma reproducible desde fuentes publicas y complementada con un catalogo mexicano de marcas comerciales (COFEPRIS / Compendio Nacional de Insumos), para que la verificacion de recetas reconozca lo que el medico realmente escribe. Un farmaco no reconocido hoy produce silencio que parece "sin interacciones": el peor modo de fallo en seguridad de medicacion. |
+| Fuente primaria de interacciones | **ONChigh** (lista de interacciones de alta prioridad del panel ONC/Phansalkar): **dominio publico** (RAND cedio al gobierno de EE. UU. licencia mundial irrevocable). Era una de las dos fuentes de la Drug Interaction API de la NLM, discontinuada en enero 2024. Es una lista **por clase** de alta prioridad (lo que debe interrumpir al medico), no un catalogo exhaustivo — decision deliberada: reduce fatiga de alertas. Complementos de dominio publico: openFDA (etiqueta) y RxNorm/RxClass (normalizacion), ya en uso. Reemplaza a DDInter como fuente por defecto. |
+| Requisitos relacionados | Extiende el paso 14 (DONE): el motor de verificacion, el importador transaccional versionado y los endpoints de actualizacion (`MIDOC_MEDICATIONS_URL` / `MIDOC_DDINTER_URL` / `MIDOC_OPENFDA_URL`, hoy sin configurar — el boton "Buscar actualizaciones" reinstala la misma semilla) ya existen; lo que falta es el contenido y el pipeline que lo genere. |
+| Entrada necesaria | Formato CSV/JSON que consume `import_medication_reference` (medication.rs); manifest con fuentes de la semilla actual (`reference_data/manifest.json`); **fuente de interacciones ya decidida (ONChigh, dominio publico — ver decision abajo)**. |
+| Skills IA recomendadas | `superpowers:writing-plans`, `superpowers:test-driven-development` |
+| Se construye | (1) **Pipeline reproducible** (script versionado en el repo, corre fuera de la app): toma ONChigh como fuente de interacciones, valida y normaliza ingredientes contra RxNorm/RxClass, extrae etiquetas relevantes de openFDA y emite los tres artefactos en el formato del importador, con manifest de version, conteos y checksums. (2) **Capa mexicana de alias**: dataset marca comercial → ingrediente derivado de los registros sanitarios de COFEPRIS y el Compendio Nacional, integrado como filas adicionales del CSV de medicamentos (mismo mecanismo que los 173 alias manuales actuales, pero generado); incluye el mapeo español → ingles de ingredientes que las fuentes internacionales requieren. (3) **Publicacion y distribucion**: artefactos publicados en los endpoints `MIDOC_*_URL`; a escala real la base NO se empaqueta con `include_str!` (inflaria el binario decenas de MB) — se descarga tras la instalacion y la semilla curada queda solo como arranque offline. (4) **Escala y rendimiento**: minimos de importacion (`MIN_MEDICATIONS`/`MIN_INTERACTIONS`) recalibrados, indices en SQLite y verificacion de que `check_prescription` responde sin latencia perceptible con ~10^5 pares. |
+| Se valida con | El medico pulsa "Buscar actualizaciones", descarga la base a escala y una receta escrita con marca mexicana (p. ej. "Tempra" + warfarina) produce la alerta con severidad y fuente citada, offline despues de la descarga; un farmaco del Compendio Nacional fuera de la semilla original ahora se reconoce. |
+| Compuerta de avance | El pipeline es reproducible (misma entrada → mismos artefactos) y cita fuente, fecha y licencia de cada dataset en el manifest; **la fuente por defecto es de dominio publico (ONChigh/openFDA/RxNorm) y DDInter queda retirado salvo permiso comercial escrito**; la importacion pasa el vetting existente (transaccional, versionada, con minimos); la verificacion sigue funcionando offline y sin enviar la prescripcion a la nube. |
+| Push recomendado | Por rebanada cerrada: (1) pipeline + artefactos generados con pruebas del formato, (2) capa mexicana de alias, (3) publicacion en endpoints + validacion a escala en la app. |
+
+Clasificacion de datos: todos los artefactos son REFERENCIA publica (no PHI); el pipeline corre fuera de la app y nunca ve datos de pacientes; la prescripcion se sigue verificando localmente.
+
+**Decision de fuente y licenciamiento (2026-07-07):** se eligio **ONChigh + openFDA + RxNorm/RxClass**, todas de dominio publico, como base por defecto para evitar el riesgo legal de raiz. Comparativa de las fuentes evaluadas:
+
+- **ONChigh (ONC/Phansalkar)** — dominio publico. Elegida como primaria. Lista por clase de alta prioridad; usada por la NLM hasta 2024.
+- **openFDA** — dominio publico (gobierno EE. UU.). Etiqueta como respaldo de texto. Ya en uso.
+- **RxNorm / RxClass** — dominio publico (NLM). Normalizacion de ingredientes y clases. Ya en uso.
+- **Thesaurus ANSM (Francia)** — publicado por agencia estatal, reutilizable, con niveles de severidad clinicos y extractor abierto; candidato de ampliacion, en frances.
+- **DDInter** — **CC BY-NC (no comercial): descartada como fuente por defecto.** Solo utilizable con permiso comercial escrito de los autores/editor. La semilla actual del paso 14 ya incluye 1,060 pares de DDInter, asi que el riesgo existe desde hoy; parte de este paso es **retirar DDInter de la semilla empaquetada** salvo que se obtenga permiso.
+- **TWOSIDES / nSIDES (Tatonetti)** — minado estadistico de FAERS; licencia no declarada con claridad y las asociaciones son señales estadisticas, no juicio clinico: no apto como alerta dura.
+- **DrugBank** — comercial de pago (la via academica prohibe producto comercial). Escalon futuro solo cuando el volumen de clientes justifique el contrato, para catalogo exhaustivo.
+
+La licencia de cada dataset se cita en el manifest. Cualquier cambio a una fuente no de dominio publico exige permiso escrito antes de publicar en los endpoints de produccion.
 
 ## MVP recomendado
 
