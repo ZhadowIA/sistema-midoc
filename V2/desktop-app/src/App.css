@@ -2263,15 +2263,203 @@ body.dictating .encounter-modes:focus-within {
   gap: 14px;
 }
 
-.odontogram-arches {
+.odontogram-chart {
   display: grid;
-  gap: 18px;
+  gap: 12px;
 }
 
-.tooth-grid {
+.odontogram-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.odontogram-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.dentition-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.dentition-toggle button {
+  border: 0;
+  background: var(--bg);
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.dentition-toggle button + button {
+  border-left: 1px solid var(--line);
+}
+
+.dentition-toggle button.active {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.odontogram-rows {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 10px;
+  gap: 12px;
+  justify-items: safe center;
+  overflow-x: auto;
+  padding: 8px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: linear-gradient(180deg, var(--bg), var(--surface));
+}
+
+.odontogram-row {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+}
+
+.odontogram-row-label {
+  font-size: 0.76rem;
+  color: var(--faint);
+}
+
+.odontogram-row-teeth {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.odontogram-slot {
+  display: flex;
+  align-items: flex-end;
+}
+
+.odontogram-midline {
+  width: 1px;
+  align-self: stretch;
+  margin: 0 5px;
+  background: var(--line);
+}
+
+.odontogram-tooth {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  border: 0;
+  background: none;
+  padding: 3px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.odontogram-tooth:hover {
+  background: var(--primary-soft);
+}
+
+.odontogram-tooth.selected {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.tooth-number {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.odontogram-tooth.has-findings .tooth-number {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.tooth-glyph {
+  width: 32px;
+  height: 32px;
+  display: block;
+}
+
+.tooth-glyph polygon {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.tooth-glyph .surface-status-healthy,
+.legend-swatch .surface-status-healthy {
+  fill: var(--bg);
+}
+
+.tooth-glyph .surface-status-caries,
+.legend-swatch .surface-status-caries {
+  fill: var(--danger);
+}
+
+.tooth-glyph .surface-status-restored,
+.legend-swatch .surface-status-restored {
+  fill: var(--primary);
+}
+
+.tooth-glyph .surface-status-sealant,
+.legend-swatch .surface-status-sealant {
+  fill: var(--success);
+}
+
+.tooth-glyph .surface-status-fracture,
+.legend-swatch .surface-status-fracture {
+  fill: var(--warning);
+}
+
+.tooth-glyph.tooth-status-missing polygon,
+.tooth-glyph.tooth-status-extraction-indicated polygon {
+  opacity: 0.35;
+}
+
+.tooth-marker {
+  stroke: var(--ink);
+  stroke-width: 3;
+  fill: none;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.odontogram-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.legend-swatch {
+  width: 14px;
+  height: 14px;
+}
+
+.legend-swatch rect {
+  stroke: var(--line);
+}
+
+.odontogram-detail {
+  display: grid;
+  gap: 8px;
+  max-width: 520px;
+}
+
+.odontogram-empty-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--faint);
 }
 
 .tooth-card {
@@ -2451,10 +2639,6 @@ body.dictating .encounter-modes:focus-within {
   .patient-resolution-panel .list-row,
   .patient-resolution-panel .row-actions {
     align-items: stretch;
-  }
-
-  .tooth-grid {
-    grid-template-columns: 1fr;
   }
 
   .encounter-layout {
