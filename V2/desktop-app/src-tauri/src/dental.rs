@@ -216,6 +216,47 @@ pub fn patient_dental_balance(
     })
 }
 
+/// Historial de payloads de especialidad del paciente (ultima version de la
+/// nota por encuentro, del mas antiguo al mas reciente). Lo usa el indice de
+/// placa para graficar la evolucion de higiene entre consultas; el porcentaje
+/// se calcula en la UI con la misma funcion pura que la captura en vivo.
+#[derive(Debug, Serialize)]
+pub struct SpecialtyHistoryEntry {
+    pub encounter_id: String,
+    pub opened_at: String,
+    pub signed_at: Option<String>,
+    pub status: String,
+    pub specialty_json: String,
+}
+
+pub fn specialty_history(
+    conn: &Connection,
+    patient_id: &str,
+) -> Result<Vec<SpecialtyHistoryEntry>, DentalError> {
+    let mut statement = conn.prepare(
+        "SELECT e.id, e.opened_at, e.signed_at, e.status, nv.specialty_payload
+         FROM encounters e
+         JOIN note_versions nv ON nv.encounter_id = e.id
+         WHERE e.patient_id = ?1
+           AND nv.version = (
+               SELECT MAX(version) FROM note_versions WHERE encounter_id = e.id
+           )
+         ORDER BY e.opened_at ASC, e.id ASC",
+    )?;
+    let rows = statement
+        .query_map(params![patient_id], |row| {
+            Ok(SpecialtyHistoryEntry {
+                encounter_id: row.get(0)?,
+                opened_at: row.get(1)?,
+                signed_at: row.get(2)?,
+                status: row.get(3)?,
+                specialty_json: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /* ---------- Escrituras ---------- */
 
 pub fn create_budget(conn: &Connection, input: &NewBudget) -> Result<Budget, DentalError> {
@@ -584,6 +625,35 @@ mod tests {
 
         // Un presupuesto inexistente no recibe abonos.
         assert!(validate_budget_payment(&conn, "ghost", "PAYMENT", 1).is_err());
+    }
+
+    #[test]
+    fn specialty_history_returns_latest_note_version_per_encounter() {
+        let conn = test_conn("history");
+        seed_patient(&conn, "p1");
+        conn.execute_batch(
+            "INSERT INTO encounters (id, patient_id, status, opened_at, signed_at)
+             VALUES ('e1', 'p1', 'SIGNED', '2026-06-01T10:00:00Z', '2026-06-01T11:00:00Z'),
+                    ('e2', 'p1', 'OPEN', '2026-07-01T10:00:00Z', NULL);
+             INSERT INTO note_versions (encounter_id, version, created_at, specialty_payload)
+             VALUES ('e1', 1, '2026-06-01', '{\"plaque\":{\"16\":[\"M\",\"D\"]}}'),
+                    ('e1', 2, '2026-06-01', '{\"plaque\":{\"16\":[\"M\"]}}'),
+                    ('e2', 1, '2026-07-01', '{\"plaque\":{}}');",
+        )
+        .unwrap();
+
+        let history = specialty_history(&conn, "p1").unwrap();
+        assert_eq!(history.len(), 2);
+        // Orden cronologico y ultima version por encuentro.
+        assert_eq!(history[0].encounter_id, "e1");
+        assert!(history[0].specialty_json.contains("[\"M\"]"));
+        assert!(!history[0].specialty_json.contains("\"D\""));
+        assert_eq!(history[0].status, "SIGNED");
+        assert_eq!(history[1].encounter_id, "e2");
+        assert_eq!(history[1].signed_at, None);
+
+        // Paciente sin encuentros: lista vacia, no error.
+        assert!(specialty_history(&conn, "ghost").unwrap().is_empty());
     }
 
     #[test]

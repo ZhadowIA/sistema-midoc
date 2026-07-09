@@ -708,6 +708,39 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         .filter((budget) => budget.patient_id === patientId)
         .map(budgetWithTotals) as T;
     }
+    case "dental_specialty_history": {
+      const enc = mockState.encounter;
+      if (String(args?.patientId) !== enc.patient.id) return [] as T;
+      // Consulta previa de demostracion para ver la evolucion de higiene.
+      const entries: Array<{
+        encounter_id: string;
+        opened_at: string;
+        signed_at: string | null;
+        status: string;
+        specialty_json: string;
+      }> = [
+        {
+          encounter_id: "enc-demo-past",
+          opened_at: "2026-06-09T16:00:00Z",
+          signed_at: "2026-06-09T17:00:00Z",
+          status: "SIGNED",
+          specialty_json: JSON.stringify({
+            plaque: { "16": ["M", "D", "V"], "17": ["M", "V"], "26": ["M"], "31": ["V", "L"] }
+          })
+        }
+      ];
+      const latestNote = enc.notes[enc.notes.length - 1];
+      if (latestNote) {
+        entries.push({
+          encounter_id: enc.id,
+          opened_at: new Date().toISOString(),
+          signed_at: enc.signed_at,
+          status: enc.status,
+          specialty_json: JSON.stringify(latestNote.specialty ?? {})
+        });
+      }
+      return entries as T;
+    }
     case "dental_patient_balance": {
       const patientId = String(args?.patientId);
       const accepted = ops.dentalBudgets

@@ -1238,6 +1238,14 @@ fn dental_patient_balance(
     with_dental(&state, |conn| dental::patient_dental_balance(conn, &patient_id))
 }
 
+#[tauri::command]
+fn dental_specialty_history(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<Vec<dental::SpecialtyHistoryEntry>, String> {
+    with_dental(&state, |conn| dental::specialty_history(conn, &patient_id))
+}
+
 /* ---------- IA clinica gobernada (paso 11) ---------- */
 
 fn with_ai<T>(
@@ -2389,6 +2397,7 @@ pub fn run() {
             dental_set_item_status,
             dental_list_budgets,
             dental_patient_balance,
+            dental_specialty_history,
             ai_consent_status,
             ai_grant_consent,
             ai_revoke_consent,

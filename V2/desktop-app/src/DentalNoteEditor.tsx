@@ -17,6 +17,7 @@ import {
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { OdontogramChart } from "./OdontogramChart";
 import { DentalDictationPanel } from "./DentalDictationPanel";
+import { PlaqueIndexPanel } from "./PlaqueIndexPanel";
 
 const UPPER_TEETH = DENTAL_TOOTH_IDS.slice(0, 16);
 const LOWER_TEETH = DENTAL_TOOTH_IDS.slice(16);
@@ -345,6 +346,16 @@ export function DentalNoteEditor({
             Selecciona una pieza del odontograma para editar su detalle completo.
           </p>
         )}
+      </section>
+
+      <section className="dental-section">
+        <PlaqueIndexPanel
+          patientId={patientId}
+          encounterId={encounterId}
+          payload={payload}
+          disabled={disabled}
+          onChange={onChange}
+        />
       </section>
 
       <section className="dental-section">
