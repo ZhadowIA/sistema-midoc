@@ -20,10 +20,15 @@ import {
 // El pipeline debe producir EXACTAMENTE lo que el motor de Rust espera. Estas
 // dos funciones espejan `normalize_name` y `canonical_pair` de medication.rs;
 // si divergen, una interaccion no se encontraria al verificar la receta.
-test("normalizeName colapsa espacios y pasa a minusculas, como el motor Rust", () => {
+test("normalizeName colapsa espacios, pasa a minusculas y pliega acentos, como el motor Rust", () => {
   assert.equal(normalizeName("  Warfarina "), "warfarina");
   assert.equal(normalizeName("ACIDO   acetilsalicilico"), "acido acetilsalicilico");
   assert.equal(normalizeName("Enalapril\tMaleato"), "enalapril maleato");
+  // Pliegue de diacriticos: debe coincidir con fold_diacritic de medication.rs.
+  assert.equal(normalizeName("Losartán"), "losartan");
+  assert.equal(normalizeName("Codeína"), "codeina");
+  assert.equal(normalizeName("ÁCIDO Acetilsalicílico"), "acido acetilsalicilico");
+  assert.equal(normalizeName("Niño"), "nino");
 });
 
 test("canonicalPair es independiente del orden", () => {

@@ -39,7 +39,9 @@ export const CLASS_MEMBERS: ClassMembers = {
   Nitrato: ["nitroglycerin", "isosorbide dinitrate", "isosorbide mononitrate"],
   "Inhibidor PDE5": ["sildenafil", "tadalafil", "vardenafil"],
   IMAO: ["phenelzine", "tranylcypromine", "linezolid", "selegiline"],
-  ISRS: ["fluoxetine", "sertraline", "paroxetine", "citalopram", "escitalopram"],
+  // Fluvoxamina es ISRS (interactua con IMAO) y ademas inhibidor CYP1A2 (regla
+  // con tizanidina): aparece en ambas clases; la expansion lo maneja sin problema.
+  ISRS: ["fluoxetine", "sertraline", "paroxetine", "citalopram", "escitalopram", "fluvoxamine"],
   IRSN: ["venlafaxine", "duloxetine"],
   "Opioide serotoninergico": ["tramadol", "fentanyl", "meperidine"],
   Benzodiacepina: ["diazepam", "alprazolam", "clonazepam", "lorazepam"],
@@ -54,7 +56,17 @@ export const CLASS_MEMBERS: ClassMembers = {
   "Antibiotico antifolato": ["trimethoprim", "sulfamethoxazole"],
   "Inhibidor xantina oxidasa": ["allopurinol", "febuxostat"],
   Tiopurina: ["azathioprine", "mercaptopurine"],
-  Diuretico: ["hydrochlorothiazide", "furosemide", "bumetanide", "torsemide", "chlorthalidone"]
+  Diuretico: ["hydrochlorothiazide", "furosemide", "bumetanide", "torsemide", "chlorthalidone"],
+  // --- Apendice ONChigh completado (sin QT, diferido a rebanada dedicada) ---
+  // Ergotaminicos vasoconstrictores (migrana): con inhibidor fuerte CYP3A4 dan
+  // ergotismo/vasoespasmo por acumulacion. Muy usados en Mexico (Cafergot).
+  "Ergotaminico": ["ergotamine", "dihydroergotamine"],
+  // Inhibidores de CYP1A2 relevantes en primer nivel: ciprofloxacino (antibiotico
+  // frecuente) y fluvoxamina. Elevan de forma marcada la tizanidina.
+  "Inhibidor CYP1A2": ["ciprofloxacin", "fluvoxamine"],
+  Tizanidina: ["tizanidine"],
+  Triptan: ["sumatriptan", "rizatriptan", "zolmitriptan", "naratriptan", "eletriptan"],
+  "Antidepresivo triciclico": ["amitriptyline", "imipramine", "clomipramine", "nortriptyline"]
 };
 
 /**
@@ -182,9 +194,35 @@ export const ONCHIGH_RULES: ClassRule[] = [
     classB: "Tiopurina",
     severity: "CONTRAINDICATED",
     description: "Toxicidad grave por tiopurinas (mielosupresion): la inhibicion de xantina oxidasa bloquea su metabolismo. Evitar o reduccion extrema supervisada."
+  },
+  // --- Apendice ONChigh completado (Phansalkar JAMIA 2012, PMC3422823). Las 4
+  // reglas siguientes cierran las DDIs de alta prioridad relevantes a primer
+  // nivel en Mexico que faltaban. QT+QT (ONChigh #8) se difiere a una rebanada
+  // dedicada con lista QT curada (evita fatiga de alertas). ---
+  {
+    classA: "Ergotaminico",
+    classB: "Inhibidor fuerte CYP3A4",
+    severity: "CONTRAINDICATED",
+    description: "Ergotismo (vasoespasmo, isquemia) por acumulacion del ergotaminico: los inhibidores fuertes de CYP3A4 bloquean su metabolismo. Combinacion contraindicada."
+  },
+  {
+    classA: "Tizanidina",
+    classB: "Inhibidor CYP1A2",
+    severity: "CONTRAINDICATED",
+    description: "Hipotension grave, somnolencia y bradicardia por aumento marcado de tizanidina: ciprofloxacino y fluvoxamina inhiben CYP1A2. Combinacion contraindicada."
+  },
+  {
+    classA: "Triptan",
+    classB: "IMAO",
+    severity: "MAJOR",
+    description: "Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa."
+  },
+  {
+    classA: "Antidepresivo triciclico",
+    classB: "IMAO",
+    severity: "CONTRAINDICATED",
+    description: "Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos."
   }
-  // TODO(onchigh-full): completar el resto de la lista ONChigh (QT largo,
-  // digoxina, etc.) al transcribir el apendice completo.
 ];
 
 /**
@@ -308,7 +346,35 @@ export const BASE_MEDICATIONS: MedicationRow[] = [
   { name: "torsemide", ingredient: "torsemide", displayName: "Torasemida", drugClass: "Diuretico" },
   { name: "torasemida", ingredient: "torsemide", displayName: "Torasemida", drugClass: "Diuretico" },
   { name: "chlorthalidone", ingredient: "chlorthalidone", displayName: "Clortalidona", drugClass: "Diuretico" },
-  { name: "clortalidona", ingredient: "chlorthalidone", displayName: "Clortalidona", drugClass: "Diuretico" }
+  { name: "clortalidona", ingredient: "chlorthalidone", displayName: "Clortalidona", drugClass: "Diuretico" },
+  // --- Ingredientes del apendice ONChigh completado. drug_class es la clase
+  // TERAPEUTICA natural (para duplicidad/alergia), no la clase de interaccion:
+  // p. ej. ciprofloxacino es Fluoroquinolona (evita falsa duplicidad con
+  // fluvoxamina, que ambos inhiben CYP1A2 pero no son duplicados terapeuticos). ---
+  { name: "ergotamine", ingredient: "ergotamine", displayName: "Ergotamina", drugClass: "Ergotaminico" },
+  { name: "ergotamina", ingredient: "ergotamine", displayName: "Ergotamina", drugClass: "Ergotaminico" },
+  { name: "dihydroergotamine", ingredient: "dihydroergotamine", displayName: "Dihidroergotamina", drugClass: "Ergotaminico" },
+  { name: "dihidroergotamina", ingredient: "dihydroergotamine", displayName: "Dihidroergotamina", drugClass: "Ergotaminico" },
+  { name: "tizanidine", ingredient: "tizanidine", displayName: "Tizanidina", drugClass: "Relajante muscular" },
+  { name: "tizanidina", ingredient: "tizanidine", displayName: "Tizanidina", drugClass: "Relajante muscular" },
+  { name: "ciprofloxacin", ingredient: "ciprofloxacin", displayName: "Ciprofloxacino", drugClass: "Fluoroquinolona" },
+  { name: "ciprofloxacino", ingredient: "ciprofloxacin", displayName: "Ciprofloxacino", drugClass: "Fluoroquinolona" },
+  { name: "ciprofloxacina", ingredient: "ciprofloxacin", displayName: "Ciprofloxacino", drugClass: "Fluoroquinolona" },
+  { name: "fluvoxamine", ingredient: "fluvoxamine", displayName: "Fluvoxamina", drugClass: "ISRS" },
+  { name: "fluvoxamina", ingredient: "fluvoxamine", displayName: "Fluvoxamina", drugClass: "ISRS" },
+  { name: "sumatriptan", ingredient: "sumatriptan", displayName: "Sumatriptan", drugClass: "Triptan" },
+  { name: "rizatriptan", ingredient: "rizatriptan", displayName: "Rizatriptan", drugClass: "Triptan" },
+  { name: "zolmitriptan", ingredient: "zolmitriptan", displayName: "Zolmitriptan", drugClass: "Triptan" },
+  { name: "naratriptan", ingredient: "naratriptan", displayName: "Naratriptan", drugClass: "Triptan" },
+  { name: "eletriptan", ingredient: "eletriptan", displayName: "Eletriptan", drugClass: "Triptan" },
+  { name: "amitriptyline", ingredient: "amitriptyline", displayName: "Amitriptilina", drugClass: "Antidepresivo triciclico" },
+  { name: "amitriptilina", ingredient: "amitriptyline", displayName: "Amitriptilina", drugClass: "Antidepresivo triciclico" },
+  { name: "imipramine", ingredient: "imipramine", displayName: "Imipramina", drugClass: "Antidepresivo triciclico" },
+  { name: "imipramina", ingredient: "imipramine", displayName: "Imipramina", drugClass: "Antidepresivo triciclico" },
+  { name: "clomipramine", ingredient: "clomipramine", displayName: "Clomipramina", drugClass: "Antidepresivo triciclico" },
+  { name: "clomipramina", ingredient: "clomipramine", displayName: "Clomipramina", drugClass: "Antidepresivo triciclico" },
+  { name: "nortriptyline", ingredient: "nortriptyline", displayName: "Nortriptilina", drugClass: "Antidepresivo triciclico" },
+  { name: "nortriptilina", ingredient: "nortriptyline", displayName: "Nortriptilina", drugClass: "Antidepresivo triciclico" }
 ];
 
 /**
@@ -405,8 +471,63 @@ export const MEXICAN_BRANDS: BrandAlias[] = [
   { brand: "tylenol", ingredient: "acetaminophen" },
   { brand: "losec", ingredient: "omeprazole" },
   { brand: "glucophage", ingredient: "metformin" },
-  { brand: "amoxil", ingredient: "amoxicillin" }
+  { brand: "amoxil", ingredient: "amoxicillin" },
+  // --- Marcas del apendice ONChigh completado (verificadas 2026-07-08 contra
+  // Vademecum Mexico / PLM / registros COFEPRIS; ver PR). Solo ingredientes con
+  // regla de interaccion. Los triptanes/tricicilicos sin marca MX confirmada
+  // (p. ej. zolmitriptan) se reconocen por su generico, no se inventa marca. ---
+  { brand: "cafergot", ingredient: "ergotamine" }, // ergotamina + cafeina
+  { brand: "sirdalud", ingredient: "tizanidine" },
+  { brand: "ciproxina", ingredient: "ciprofloxacin" }, // Bayer, reg. 280M98 SSA
+  { brand: "luvox", ingredient: "fluvoxamine" },
+  { brand: "imigran", ingredient: "sumatriptan" },
+  { brand: "maxalt", ingredient: "rizatriptan" },
+  { brand: "anapsique", ingredient: "amitriptyline" }, // Psicofarma, reg. 85953 SSA
+  { brand: "anafranil", ingredient: "clomipramine" },
+  { brand: "tofranil", ingredient: "imipramine" },
+  // --- Ampliacion de cobertura por regla (verificadas 2026-07-08 contra
+  // Vademecum Mexico / PLM / registros COFEPRIS). Solo marcas MONO-ingrediente
+  // con registro MX; se descartan combinaciones (mapear una marca A+B a un solo
+  // ingrediente perderia las interacciones del otro) y farmacos sin marca MX. ---
+  // ISRS / IMAO
+  { brand: "lexapro", ingredient: "escitalopram" },
+  { brand: "jumex", ingredient: "selegiline" },
+  { brand: "zyvoxam", ingredient: "linezolid" },
+  // Inmunosupresores / antimetabolitos (tiopurinas, metotrexato, xantina oxidasa)
+  { brand: "imuran", ingredient: "azathioprine" },
+  { brand: "purinethol", ingredient: "mercaptopurine" },
+  { brand: "ledertrexate", ingredient: "methotrexate" }, // Pfizer, reg. 56216 SSA
+  { brand: "adenuric", ingredient: "febuxostat" }, // Siegfried Rhein, reg. 108M2024
+  { brand: "turazive", ingredient: "febuxostat" }, // Eurofarma, reg. 083M2015
+  // Inhibidores fuertes CYP3A4 (antimicoticos, macrolido)
+  { brand: "nizoral", ingredient: "ketoconazole" }, // PLM reg. 8927
+  { brand: "sporanox", ingredient: "itraconazole" },
+  { brand: "ilosone", ingredient: "erythromycin" }, // PLM reg. 76409
+  // IECA
+  { brand: "zestril", ingredient: "lisinopril" },
+  { brand: "tritace", ingredient: "ramipril" }, // Sanofi, reg. 040M92 SSA
+  // Nitrato / opioides (uso hospitalario, pero se teclean por marca)
+  { brand: "isorbid", ingredient: "isosorbide dinitrate" }, // Armstrong
+  { brand: "durogesic", ingredient: "fentanyl" }, // Janssen, reg. 064M93 (parche)
+  { brand: "demerol", ingredient: "meperidine" }, // Sanofi, reg. 27424
+  // Triptanes
+  { brand: "relpax", ingredient: "eletriptan" }, // Pfizer, reg. 050M2000 SSA
+  { brand: "zomig", ingredient: "zolmitriptan" } // Grunenthal, reg. 356M2000 SSA
 ];
+
+// Ingredientes con regla que a proposito NO llevan marca (se reconocen por su
+// generico). Documentado para que no parezca un olvido:
+//   - Combinaciones: amilorida (Moduretic), hidroclorotiazida (casi siempre en
+//     combos), trimetoprima (Bactrim ya mapea al componente sulfa), codeina
+//     (Tylex CD = codeina+paracetamol). Mapear un combo a un solo ingrediente
+//     perderia las interacciones del otro.
+//   - No comercializados en Mexico con marca vigente: fenelzina (Nardil),
+//     tranilcipromina (Parnate) — los IMAO clasicos no se surten en MX.
+//   - Genericos/hospitalarios o marca no vigente: captopril, clortalidona,
+//     bumetanida, torasemida, lovastatina, nitroglicerina, mononitrato de
+//     isosorbida, morfina, hidrocodona, oxicodona, cloruro de potasio,
+//     eplerenona, citalopram, nortriptilina, naratriptan, dihidroergotamina.
+// Ampliar aqui conforme se verifique una marca MX mono-ingrediente vigente.
 
 /**
  * Base de medicamentos completa: genericos de interaccion + genericos de

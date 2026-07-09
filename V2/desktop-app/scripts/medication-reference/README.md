@@ -53,12 +53,24 @@ Salida en `./build/` (ignorada por git; se regenera de forma reproducible):
   desde el catalogo y **lanza** si una marca apunta a un ingrediente inexistente.
   `ADDITIONAL_INGREDIENTS` reincorpora genericos de primer nivel que el swap
   habia dejado fuera (paracetamol, omeprazol, metformina…). `assembleMedications`
-  combina genericos + reconocimiento + marcas. `TODO(cofepris-full)`: completar
-  desde el registro sanitario.
-- **Rebanada 2 — lista ONChigh completa y RxClass real:** hoy el subconjunto de
-  reglas y los miembros de clase estan curados a mano (`TODO(onchigh-full)`);
-  falta transcribir el apendice completo y derivar los miembros de clase desde
-  RxClass de forma reproducible.
+  combina genericos + reconocimiento + marcas. Alcance por decision de producto:
+  se cubren marcas MX **solo de ingredientes que participan en una regla de
+  interaccion** (reconocer un principio sin regla no aporta seguridad y mapear
+  mal si mete ruido). Cobertura actual: **59 de 81** ingredientes con regla
+  tienen marca MX (72 marcas verificadas contra Vademecum MX / PLM / registros
+  COFEPRIS). Los 22 restantes se reconocen por generico y se omiten a proposito
+  (combinaciones, IMAO no comercializados en MX, o solo genericos); ver el
+  comentario junto a `assembleMedications` en `sources.ts`. `TODO(cofepris-full)`:
+  pipeline reproducible que baje el Visor BRSDM completo (miles de registros)
+  queda como rebanada aparte.
+- **Apendice ONChigh completado (sin QT) — HECHO.** Se transcribieron las DDIs de
+  alta prioridad de Phansalkar (JAMIA 2012, PMC3422823) relevantes a primer nivel
+  en Mexico que faltaban, como reglas por clase: ergotaminico + inhibidor fuerte
+  CYP3A4, tizanidina + inhibidor CYP1A2, triptan + IMAO y antidepresivo triciclico
+  + IMAO (ademas se sumo fluvoxamina a ISRS). **QT+QT (ONChigh #8) queda diferido**
+  a una rebanada dedicada con lista QT curada, para no disparar fatiga de alertas.
+  Sigue pendiente derivar los miembros de clase desde **RxClass** de forma
+  reproducible (hoy curados a mano, `TODO(rxclass)`).
 - **Ingest consciente de la fuente en Rust — HECHO (rebanada 2).**
   `parse_interactions_csv` lee el formato del paso 25 conservando la fuente real
   y la descripcion (con soporte de campos entrecomillados), y `parse_interactions`

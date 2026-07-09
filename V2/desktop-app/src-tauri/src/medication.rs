@@ -131,6 +131,26 @@ fn normalize_name(raw: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+        .chars()
+        .map(fold_diacritic)
+        .collect()
+}
+
+/// Pliega los diacriticos latinos comunes en es/pt/fr (acentos, dieresis, enie,
+/// cedilla) a su letra base, para que la entrada acentuada del medico case con
+/// los nombres de la base (guardados sin acento). Debe coincidir con
+/// `normalizeName` del pipeline (reference.ts). Se aplica DESPUES de minusculas.
+fn fold_diacritic(c: char) -> char {
+    match c {
+        'á' | 'à' | 'ä' | 'â' | 'ã' | 'å' => 'a',
+        'é' | 'è' | 'ë' | 'ê' => 'e',
+        'í' | 'ì' | 'ï' | 'î' => 'i',
+        'ó' | 'ò' | 'ö' | 'ô' | 'õ' => 'o',
+        'ú' | 'ù' | 'ü' | 'û' => 'u',
+        'ñ' => 'n',
+        'ç' => 'c',
+        other => other,
+    }
 }
 
 /// Orden canonico de un par de ingredientes (a <= b), para que la interaccion
@@ -996,7 +1016,7 @@ pub const MIN_INTERACTIONS: usize = 5;
 /// Base ONChigh de dominio publico (paso 25, rebanada 3). Reemplaza la semilla
 /// DDInter (CC BY-NC) que se retiro para eliminar el riesgo legal en un SaaS
 /// de pago. Generada de forma reproducible por `scripts/medication-reference/`.
-pub const BUNDLED_REFERENCE_VERSION: &str = "onchigh-mx-2026-07-07";
+pub const BUNDLED_REFERENCE_VERSION: &str = "onchigh-mx-2026-07-08";
 
 const BUNDLED_MEDICATIONS_CSV: &str = include_str!("reference_data/medications.csv");
 const BUNDLED_INTERACTIONS_CSV: &str = include_str!("reference_data/interactions.csv");
@@ -1178,6 +1198,19 @@ mod tests {
     #[test]
     fn canonical_pair_is_order_independent() {
         assert_eq!(canonical_pair("warfarina", "ibuprofeno"), canonical_pair("ibuprofeno", "warfarina"));
+    }
+
+    #[test]
+    fn normalize_name_strips_accents_and_case() {
+        // El medico teclea con acentos; la base guarda sin ellos. Sin esta
+        // normalizacion el farmaco saldria "no reconocido" y se perderian sus
+        // interacciones en silencio (el peor caso en seguridad de medicacion).
+        assert_eq!(normalize_name("Losartán"), "losartan");
+        assert_eq!(normalize_name("Codeína"), "codeina");
+        assert_eq!(normalize_name("  ÁCIDO   Acetilsalicílico "), "acido acetilsalicilico");
+        assert_eq!(normalize_name("Niño"), "nino"); // la enie tambien se pliega
+        // Sin acentos no cambia nada (idempotente para ASCII).
+        assert_eq!(normalize_name("Ibuprofeno"), "ibuprofeno");
     }
 
     #[test]
@@ -1735,5 +1768,52 @@ mod tests {
         assert_eq!(report.triple_interactions.len(), 1);
         assert_eq!(report.triple_interactions[0].severity, "MAJOR");
         assert_eq!(report.triple_interactions[0].source, "ONChigh");
+    }
+
+    #[test]
+    fn accented_input_is_recognized_and_still_fires_interactions() {
+        // Entrada con acentos (como la escribe el medico) debe reconocerse contra
+        // la base (que guarda sin acentos) y disparar la interaccion.
+        let conn = test_conn("accented-input");
+        install_bundled_reference(&conn).unwrap();
+
+        // "Losartán" (ARA2) + "Naproxeno" (AINE) -> deterioro renal, MAJOR.
+        let report = check_prescription(&conn, "enc-1", &meds(&["Losartán", "Naproxeno"]), None).unwrap();
+        assert!(report.unrecognized.is_empty(), "Losartán deberia reconocerse pese al acento");
+        assert_eq!(report.interactions.len(), 1);
+        assert_eq!(report.interactions[0].severity, "MAJOR");
+
+        // La extraccion desde texto libre tambien tolera acentos y dosis pegada.
+        let extracted = extract_medications(&conn, "Paciente con Losartán 50 mg y Naproxeno 500 mg").unwrap();
+        assert!(extracted.iter().any(|d| d == "Losartan"));
+        assert!(extracted.iter().any(|d| d == "Naproxeno"));
+    }
+
+    #[test]
+    fn bundled_reference_fires_completed_onchigh_rules() {
+        // Apendice ONChigh completado: las 4 reglas nuevas disparan de extremo a
+        // extremo desde la base empaquetada, con la fuente y severidad correctas.
+        let conn = test_conn("bundled-onchigh-full");
+        install_bundled_reference(&conn).unwrap();
+
+        let contraindicated = |a: &str, b: &str| {
+            let report = check_prescription(&conn, "enc-1", &meds(&[a, b]), None).unwrap();
+            assert_eq!(report.interactions.len(), 1, "{a} + {b} deberia dar 1 interaccion");
+            assert_eq!(report.interactions[0].severity, "CONTRAINDICATED", "{a} + {b}");
+            assert_eq!(report.interactions[0].source, "ONChigh");
+        };
+
+        // Ergotaminico + inhibidor fuerte CYP3A4 (ergotismo).
+        contraindicated("ergotamine", "clarithromycin");
+        // Tizanidina + inhibidor CYP1A2 (hipotension/sedacion).
+        contraindicated("tizanidine", "ciprofloxacin");
+        // Antidepresivo triciclico + IMAO (crisis hipertensiva).
+        contraindicated("amitriptyline", "tranylcypromine");
+
+        // Triptan + IMAO (sindrome serotoninergico): MAJOR.
+        let triptan = check_prescription(&conn, "enc-1", &meds(&["sumatriptan", "phenelzine"]), None).unwrap();
+        assert_eq!(triptan.interactions.len(), 1);
+        assert_eq!(triptan.interactions[0].severity, "MAJOR");
+        assert_eq!(triptan.interactions[0].source, "ONChigh");
     }
 }

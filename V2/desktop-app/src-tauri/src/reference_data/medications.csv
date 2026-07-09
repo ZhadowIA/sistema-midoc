@@ -88,6 +88,30 @@ torsemide,torsemide,Torasemida,Diuretico
 torasemida,torsemide,Torasemida,Diuretico
 chlorthalidone,chlorthalidone,Clortalidona,Diuretico
 clortalidona,chlorthalidone,Clortalidona,Diuretico
+ergotamine,ergotamine,Ergotamina,Ergotaminico
+ergotamina,ergotamine,Ergotamina,Ergotaminico
+dihydroergotamine,dihydroergotamine,Dihidroergotamina,Ergotaminico
+dihidroergotamina,dihydroergotamine,Dihidroergotamina,Ergotaminico
+tizanidine,tizanidine,Tizanidina,Relajante muscular
+tizanidina,tizanidine,Tizanidina,Relajante muscular
+ciprofloxacin,ciprofloxacin,Ciprofloxacino,Fluoroquinolona
+ciprofloxacino,ciprofloxacin,Ciprofloxacino,Fluoroquinolona
+ciprofloxacina,ciprofloxacin,Ciprofloxacino,Fluoroquinolona
+fluvoxamine,fluvoxamine,Fluvoxamina,ISRS
+fluvoxamina,fluvoxamine,Fluvoxamina,ISRS
+sumatriptan,sumatriptan,Sumatriptan,Triptan
+rizatriptan,rizatriptan,Rizatriptan,Triptan
+zolmitriptan,zolmitriptan,Zolmitriptan,Triptan
+naratriptan,naratriptan,Naratriptan,Triptan
+eletriptan,eletriptan,Eletriptan,Triptan
+amitriptyline,amitriptyline,Amitriptilina,Antidepresivo triciclico
+amitriptilina,amitriptyline,Amitriptilina,Antidepresivo triciclico
+imipramine,imipramine,Imipramina,Antidepresivo triciclico
+imipramina,imipramine,Imipramina,Antidepresivo triciclico
+clomipramine,clomipramine,Clomipramina,Antidepresivo triciclico
+clomipramina,clomipramine,Clomipramina,Antidepresivo triciclico
+nortriptyline,nortriptyline,Nortriptilina,Antidepresivo triciclico
+nortriptilina,nortriptyline,Nortriptilina,Antidepresivo triciclico
 acetaminophen,acetaminophen,Paracetamol,Analgesico
 paracetamol,acetaminophen,Paracetamol,Analgesico
 acetaminofen,acetaminophen,Paracetamol,Analgesico
@@ -149,3 +173,30 @@ tylenol,acetaminophen,Paracetamol,Analgesico
 losec,omeprazole,Omeprazol,IBP
 glucophage,metformin,Metformina,Biguanida
 amoxil,amoxicillin,Amoxicilina,Penicilina
+cafergot,ergotamine,Ergotamina,Ergotaminico
+sirdalud,tizanidine,Tizanidina,Relajante muscular
+ciproxina,ciprofloxacin,Ciprofloxacino,Fluoroquinolona
+luvox,fluvoxamine,Fluvoxamina,ISRS
+imigran,sumatriptan,Sumatriptan,Triptan
+maxalt,rizatriptan,Rizatriptan,Triptan
+anapsique,amitriptyline,Amitriptilina,Antidepresivo triciclico
+anafranil,clomipramine,Clomipramina,Antidepresivo triciclico
+tofranil,imipramine,Imipramina,Antidepresivo triciclico
+lexapro,escitalopram,Escitalopram,ISRS
+jumex,selegiline,Selegilina,IMAO
+zyvoxam,linezolid,Linezolid,IMAO
+imuran,azathioprine,Azatioprina,Tiopurina
+purinethol,mercaptopurine,Mercaptopurina,Tiopurina
+ledertrexate,methotrexate,Metotrexato,Metotrexato
+adenuric,febuxostat,Febuxostat,Inhibidor xantina oxidasa
+turazive,febuxostat,Febuxostat,Inhibidor xantina oxidasa
+nizoral,ketoconazole,Ketoconazol,Inhibidor fuerte CYP3A4
+sporanox,itraconazole,Itraconazol,Inhibidor fuerte CYP3A4
+ilosone,erythromycin,Eritromicina,Inhibidor fuerte CYP3A4
+zestril,lisinopril,Lisinopril,IECA
+tritace,ramipril,Ramipril,IECA
+isorbid,isosorbide dinitrate,Dinitrato de isosorbida,Nitrato
+durogesic,fentanyl,Fentanilo,Opioide
+demerol,meperidine,Meperidina,Opioide serotoninergico
+relpax,eletriptan,Eletriptan,Triptan
+zomig,zolmitriptan,Zolmitriptan,Triptan

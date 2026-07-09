@@ -70,10 +70,20 @@ test("las marcas comerciales MX resuelven a su ingrediente y clase correctos", (
   expect("Lipitor", "atorvastatin", "Estatina CYP3A4 riesgo moderado");
   expect("Tempra", "acetaminophen", "Analgesico");
   expect("Lasix", "furosemide", "Diuretico");
+  // Marcas del apendice ONChigh completado.
+  expect("Sirdalud", "tizanidine", "Relajante muscular");
+  expect("Cafergot", "ergotamine", "Ergotaminico");
+  expect("Ciproxina", "ciprofloxacin", "Fluoroquinolona");
+  expect("Anapsique", "amitriptyline", "Antidepresivo triciclico");
+  // Ampliacion de cobertura por regla.
+  expect("Lexapro", "escitalopram", "ISRS");
+  expect("Ledertrexate", "methotrexate", "Metotrexato");
+  expect("Nizoral", "ketoconazole", "Inhibidor fuerte CYP3A4");
+  expect("Zomig", "zolmitriptan", "Triptan");
 });
 
 test("cada marca MX cae en el catalogo y hay marcas para clases de interaccion", () => {
-  assert.ok(MEXICAN_BRANDS.length >= 30, "la capa de marcas quedo demasiado corta");
+  assert.ok(MEXICAN_BRANDS.length >= 70, "la capa de marcas quedo demasiado corta");
   // Las marcas cubren clases que disparan alertas (no solo reconocimiento).
   const brandClasses = new Set(
     MEXICAN_BRANDS.map((b) => medByName.get(normalizeName(b.brand))?.drugClass)
@@ -139,6 +149,34 @@ test("IECA/ARA2 + AINE alerta como MAJOR (frecuente en primer nivel)", () => {
 test("linezolid conserva su alerta CONTRAINDICATED con serotoninergicos", () => {
   assert.equal(pair("linezolid", "fluoxetine")?.severity, "CONTRAINDICATED");
   assert.equal(pair("linezolid", "tramadol")?.severity, "CONTRAINDICATED");
+});
+
+// --- Apendice ONChigh completado (sin QT, diferido): 4 reglas nuevas ancladas
+// a Phansalkar JAMIA 2012 (PMC3422823). Verifican interacciones frecuentes en
+// primer nivel en Mexico que el subconjunto curado no cubria. ---
+
+test("ergotaminico + inhibidor fuerte CYP3A4 es CONTRAINDICATED (ergotismo)", () => {
+  assert.equal(pair("ergotamine", "clarithromycin")?.severity, "CONTRAINDICATED");
+  assert.equal(pair("dihydroergotamine", "itraconazole")?.severity, "CONTRAINDICATED");
+});
+
+test("tizanidina + inhibidor CYP1A2 es CONTRAINDICATED (hipotension/sedacion)", () => {
+  assert.equal(pair("tizanidine", "ciprofloxacin")?.severity, "CONTRAINDICATED");
+  assert.equal(pair("tizanidine", "fluvoxamine")?.severity, "CONTRAINDICATED");
+});
+
+test("triptan + IMAO alerta como MAJOR (sindrome serotoninergico)", () => {
+  assert.equal(pair("sumatriptan", "phenelzine")?.severity, "MAJOR");
+  assert.equal(pair("rizatriptan", "linezolid")?.severity, "MAJOR");
+});
+
+test("antidepresivo triciclico + IMAO es CONTRAINDICATED (crisis hipertensiva)", () => {
+  assert.equal(pair("amitriptyline", "tranylcypromine")?.severity, "CONTRAINDICATED");
+  assert.equal(pair("imipramine", "phenelzine")?.severity, "CONTRAINDICATED");
+});
+
+test("fluvoxamina cuenta como ISRS: alerta con IMAO (antes faltaba)", () => {
+  assert.equal(pair("fluvoxamine", "phenelzine")?.severity, "CONTRAINDICATED");
 });
 
 test("las reglas triple usan clases existentes con miembros en la base", () => {

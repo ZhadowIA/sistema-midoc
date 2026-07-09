@@ -1,3 +1,3 @@
 class_a,class_b,class_c,severity,source,source_version,description
-AINE,ARA2,Diuretico,MAJOR,ONChigh,onchigh-mx-2026-07-07,Triple whammy: ARA2 + diuretico + AINE eleva el riesgo de lesion renal aguda. Vigilar funcion renal y potasio; evitar o suspender el AINE.
-AINE,Diuretico,IECA,MAJOR,ONChigh,onchigh-mx-2026-07-07,Triple whammy: IECA + diuretico + AINE eleva el riesgo de lesion renal aguda. Vigilar funcion renal y potasio; evitar o suspender el AINE.
+AINE,ARA2,Diuretico,MAJOR,ONChigh,onchigh-mx-2026-07-08,Triple whammy: ARA2 + diuretico + AINE eleva el riesgo de lesion renal aguda. Vigilar funcion renal y potasio; evitar o suspender el AINE.
+AINE,Diuretico,IECA,MAJOR,ONChigh,onchigh-mx-2026-07-08,Triple whammy: IECA + diuretico + AINE eleva el riesgo de lesion renal aguda. Vigilar funcion renal y potasio; evitar o suspender el AINE.

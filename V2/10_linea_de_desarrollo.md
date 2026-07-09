@@ -89,7 +89,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 22 | Diarizacion local (separacion de hablantes) | `superpowers:writing-plans` | Dialogo Medico/Paciente separado offline con sherpa-onnx; Ruta B anade transcripcion en nube gobernada por el portal. | 🚧 IN PROGRESS (nativo pendiente de staging) |
 | 23 | Anamnesis asistida (cuestionario desde conversacion) | `superpowers:writing-plans` | Antecedentes estructurados propuestos por IA desde la consulta hablada, reconciliados campo por campo y confirmados por el medico. | 🔜 PLANEADO |
 | 24 | Degradacion asistida de proveedor de IA | `superpowers:test-driven-development` | Ante sobrecarga del proveedor (503/429), el medico ve la causa y elige reintentar o generar con otro modelo disponible — nunca fallback silencioso. | 🚧 IN PROGRESS |
-| 25 | Base de medicamentos a escala | `superpowers:writing-plans` | Pipeline reproducible de fuentes publicas + catalogo mexicano de marcas; verificacion con interacciones de par y de tres clases (triple whammy), base ONChigh de dominio publico. | ✅ DONE (swap ONChigh + triple whammy; falta publicar endpoints, ops) |
+| 25 | Base de medicamentos a escala | `superpowers:writing-plans` | Pipeline reproducible de fuentes publicas + catalogo mexicano de marcas; verificacion con interacciones de par y de tres clases (triple whammy), base ONChigh de dominio publico. | ✅ DONE (swap ONChigh + triple whammy + apendice ONChigh completo sin QT + marcas MX por regla; pendiente: regla QT curada, RxClass reproducible, pipeline BRSDM completo, publicar endpoints/ops) |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
