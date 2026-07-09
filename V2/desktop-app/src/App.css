@@ -2467,6 +2467,71 @@ body.dictating .encounter-modes:focus-within {
   padding-top: 16px;
 }
 
+.dental-dictation {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 12px 14px;
+}
+
+.dictation-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.dictation-controls {
+  display: grid;
+  gap: 6px;
+}
+
+.dictation-consent-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.dictation-review {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 10px;
+}
+
+.dictation-review-title {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.dictation-proposal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+}
+
+.dictation-unrecognized {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--warning);
+}
+
+.dictation-unrecognized-note {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--faint);
+}
+
+@media (max-width: 760px) {
+  .dictation-input-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .budget-balance-summary {
   display: flex;
   flex-wrap: wrap;

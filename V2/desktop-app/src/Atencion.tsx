@@ -1414,6 +1414,8 @@ export function Atencion({
           {resolvedProfile === "ODONTOLOGY" ? (
             <>
               <DentalNoteEditor
+                patientId={patientId}
+                encounterId={encounterId}
                 payload={coerceDentalPayload(note.specialty)}
                 disabled={busy || signed}
                 onChange={(specialty) => setNote((current) => ({ ...current, specialty }))}

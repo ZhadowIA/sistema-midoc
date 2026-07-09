@@ -16,6 +16,7 @@ import {
 } from "./clinicalProfiles";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { OdontogramChart } from "./OdontogramChart";
+import { DentalDictationPanel } from "./DentalDictationPanel";
 
 const UPPER_TEETH = DENTAL_TOOTH_IDS.slice(0, 16);
 const LOWER_TEETH = DENTAL_TOOTH_IDS.slice(16);
@@ -269,10 +270,14 @@ function PeriodontogramArch({
 }
 
 export function DentalNoteEditor({
+  patientId,
+  encounterId,
   payload,
   disabled,
   onChange
 }: {
+  patientId: string;
+  encounterId: string;
   payload: DentalPayload;
   disabled: boolean;
   onChange: (next: DentalPayload) => void;
@@ -301,6 +306,13 @@ export function DentalNoteEditor({
           <h3>Odontograma</h3>
           <p>Hallazgos por pieza y superficie para una consulta dental completa.</p>
         </div>
+        <DentalDictationPanel
+          patientId={patientId}
+          encounterId={encounterId}
+          payload={payload}
+          disabled={disabled}
+          onChange={onChange}
+        />
         <OdontogramChart
           payload={payload}
           disabled={disabled}
