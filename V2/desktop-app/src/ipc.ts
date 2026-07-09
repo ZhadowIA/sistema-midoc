@@ -324,11 +324,70 @@ const ops = {
     method: string;
     kind: string;
     concept: string | null;
+    budget_id: string | null;
     receipt_number: string;
     created_at: string;
   }>,
-  receiptSeq: 0
+  receiptSeq: 0,
+  // Presupuestos dentales (paso 26). El libro de abonos es acumulado y NO se
+  // limpia al reabrir caja, igual que la tabla payments real.
+  dentalBudgets: [] as Array<{
+    id: string;
+    patient_id: string;
+    encounter_id: string | null;
+    label: string;
+    status: string;
+    discount_cents: number;
+    notes: string | null;
+    alternative_group: string | null;
+    created_at: string;
+    decided_at: string | null;
+    items: Array<{
+      id: string;
+      budget_id: string;
+      tooth_id: string;
+      procedure: string;
+      price_cents: number;
+      status: string;
+      completed_at: string | null;
+    }>;
+  }>,
+  budgetLedger: [] as Array<{ budget_id: string; amount_cents: number; kind: string }>,
+  budgetSeq: 0
 };
+
+function budgetPaidCents(budgetId: string): number {
+  return ops.budgetLedger
+    .filter((entry) => entry.budget_id === budgetId)
+    .reduce(
+      (sum, entry) => sum + (entry.kind === "REFUND" ? -entry.amount_cents : entry.amount_cents),
+      0
+    );
+}
+
+function budgetWithTotals(budget: (typeof ops.dentalBudgets)[number]) {
+  const gross = budget.items.reduce((sum, item) => sum + item.price_cents, 0);
+  const total = gross - budget.discount_cents;
+  const paid = budgetPaidCents(budget.id);
+  return { ...budget, total_cents: total, paid_cents: paid, balance_cents: total - paid };
+}
+
+function requireBudget(budgetId: string) {
+  const budget = ops.dentalBudgets.find((entry) => entry.id === budgetId);
+  if (!budget) throw "presupuesto no encontrado";
+  return budget;
+}
+
+// Espejo de dental::validate_budget_payment del motor.
+function validateBudgetPayment(budgetId: string, kind: string, amountCents: number) {
+  const budget = budgetWithTotals(requireBudget(budgetId));
+  if (budget.status !== "ACCEPTED") throw "solo se abona a un presupuesto aceptado";
+  if (kind === "REFUND") {
+    if (amountCents > budget.paid_cents) throw "el reembolso excede lo abonado al presupuesto";
+  } else if (amountCents > budget.balance_cents) {
+    throw "el abono excede el saldo del presupuesto";
+  }
+}
 
 function opsSummary() {
   const session = ops.session!;
@@ -525,7 +584,6 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return result as T;
     }
     case "register_payment": {
-      if (!ops.session) throw "no hay una caja abierta; abre la caja del dia antes de cobrar";
       const input = args?.payment as {
         visit_id: string | null;
         patient_id: string | null;
@@ -533,7 +591,12 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         method: string;
         kind: string;
         concept: string | null;
+        budget_id?: string | null;
       };
+      if (input.budget_id) {
+        validateBudgetPayment(input.budget_id, input.kind, input.amount_cents);
+      }
+      if (!ops.session) throw "no hay una caja abierta; abre la caja del dia antes de cobrar";
       ops.receiptSeq += 1;
       const payment = {
         id: `pay-${ops.receiptSeq}`,
@@ -544,14 +607,121 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         method: input.method,
         kind: input.kind,
         concept: input.concept,
+        budget_id: input.budget_id ?? null,
         receipt_number: `R-${String(ops.receiptSeq).padStart(6, "0")}`,
         created_at: new Date().toISOString()
       };
       ops.payments.push(payment);
+      if (payment.budget_id) {
+        ops.budgetLedger.push({
+          budget_id: payment.budget_id,
+          amount_cents: payment.amount_cents,
+          kind: payment.kind
+        });
+      }
       return payment as T;
     }
     case "list_session_payments":
       return [...ops.payments].reverse() as T;
+    case "dental_create_budget": {
+      const input = args?.budget as {
+        patient_id: string;
+        encounter_id: string | null;
+        label: string;
+        notes: string | null;
+        discount_cents: number;
+        alternative_group: string | null;
+        items: Array<{ tooth_id: string; procedure: string; price_cents: number }>;
+      };
+      if (!input.label.trim()) throw "el presupuesto necesita un nombre";
+      if (input.items.length === 0) throw "el presupuesto necesita al menos una partida";
+      const gross = input.items.reduce((sum, item) => sum + item.price_cents, 0);
+      if (input.discount_cents < 0 || input.discount_cents > gross) {
+        throw "el descuento debe estar entre cero y el total";
+      }
+      ops.budgetSeq += 1;
+      const id = `budget-${ops.budgetSeq}`;
+      const budget = {
+        id,
+        patient_id: input.patient_id,
+        encounter_id: input.encounter_id,
+        label: input.label.trim(),
+        status: "PROPOSED",
+        discount_cents: input.discount_cents,
+        notes: input.notes,
+        alternative_group: input.alternative_group,
+        created_at: new Date().toISOString(),
+        decided_at: null,
+        items: input.items.map((item, index) => ({
+          id: `${id}-item-${index + 1}`,
+          budget_id: id,
+          tooth_id: item.tooth_id || "GENERAL",
+          procedure: item.procedure,
+          price_cents: item.price_cents,
+          status: "PLANNED",
+          completed_at: null
+        }))
+      };
+      ops.dentalBudgets.unshift(budget);
+      return budgetWithTotals(budget) as T;
+    }
+    case "dental_decide_budget": {
+      const budget = requireBudget(String(args?.budgetId));
+      const status = String(args?.status).toUpperCase();
+      if (budget.status !== "PROPOSED") throw "solo un presupuesto propuesto puede decidirse";
+      if (status !== "ACCEPTED" && status !== "REJECTED") throw "decision invalida";
+      budget.status = status;
+      budget.decided_at = new Date().toISOString();
+      if (status === "ACCEPTED" && budget.alternative_group) {
+        for (const sibling of ops.dentalBudgets) {
+          if (
+            sibling.id !== budget.id &&
+            sibling.patient_id === budget.patient_id &&
+            sibling.alternative_group === budget.alternative_group &&
+            sibling.status === "PROPOSED"
+          ) {
+            sibling.status = "REJECTED";
+            sibling.decided_at = budget.decided_at;
+          }
+        }
+      }
+      return budgetWithTotals(budget) as T;
+    }
+    case "dental_set_item_status": {
+      const itemId = String(args?.itemId);
+      const status = String(args?.status).toUpperCase();
+      const budget = ops.dentalBudgets.find((entry) =>
+        entry.items.some((item) => item.id === itemId)
+      );
+      if (!budget) throw "presupuesto no encontrado";
+      if (budget.status !== "ACCEPTED" && status !== "PLANNED") {
+        throw "solo un presupuesto aceptado registra avance";
+      }
+      const item = budget.items.find((entry) => entry.id === itemId)!;
+      item.status = status;
+      item.completed_at = status === "COMPLETED" ? new Date().toISOString() : null;
+      return budgetWithTotals(budget) as T;
+    }
+    case "dental_list_budgets": {
+      const patientId = String(args?.patientId);
+      return ops.dentalBudgets
+        .filter((budget) => budget.patient_id === patientId)
+        .map(budgetWithTotals) as T;
+    }
+    case "dental_patient_balance": {
+      const patientId = String(args?.patientId);
+      const accepted = ops.dentalBudgets
+        .filter((budget) => budget.patient_id === patientId && budget.status === "ACCEPTED")
+        .map(budgetWithTotals);
+      const total = accepted.reduce((sum, budget) => sum + budget.total_cents, 0);
+      const paid = accepted.reduce((sum, budget) => sum + budget.paid_cents, 0);
+      return {
+        accepted_total_cents: total,
+        paid_cents: paid,
+        balance_cents: total - paid,
+        accepted_budgets: accepted.length
+      } as T;
+    }
   }
 
   switch (command) {

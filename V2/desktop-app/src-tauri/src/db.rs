@@ -475,6 +475,34 @@ const MIGRATIONS: &[&str] = &[
         source_version TEXT NOT NULL,
         PRIMARY KEY (class_a, class_b, class_c)
     );",
+    // Presupuestos dentales con saldos por avance (paso 26 rebanada 3). Clase
+    // OPERATIVO: el dinero vive aqui, no en el payload clinico. Los abonos se
+    // asientan en `payments` (caja del paso 10) via la columna nueva
+    // `budget_id`: una sola contabilidad, sin movimientos duplicados.
+    "CREATE TABLE dental_budgets (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        encounter_id TEXT,
+        label TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PROPOSED',
+        discount_cents INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
+        alternative_group TEXT,
+        created_at TEXT NOT NULL,
+        decided_at TEXT
+    );
+    CREATE INDEX idx_dental_budgets_patient ON dental_budgets (patient_id);
+    CREATE TABLE dental_budget_items (
+        id TEXT PRIMARY KEY NOT NULL,
+        budget_id TEXT NOT NULL REFERENCES dental_budgets (id),
+        tooth_id TEXT NOT NULL DEFAULT 'GENERAL',
+        procedure TEXT NOT NULL,
+        price_cents INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PLANNED',
+        completed_at TEXT
+    );
+    CREATE INDEX idx_dental_budget_items_budget ON dental_budget_items (budget_id);
+    ALTER TABLE payments ADD COLUMN budget_id TEXT REFERENCES dental_budgets (id);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

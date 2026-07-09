@@ -6,6 +6,7 @@ mod cloud_transcription;
 mod consultation_templates;
 mod crypto;
 mod db;
+mod dental;
 mod diarization;
 mod diarization_model;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature
@@ -1184,6 +1185,59 @@ fn list_session_payments(
     })
 }
 
+/* ---------- Presupuestos dentales y saldos (paso 26) ---------- */
+
+fn with_dental<T>(
+    state: &tauri::State<'_, AppDb>,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, dental::DentalError>,
+) -> Result<T, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    f(conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn dental_create_budget(
+    state: tauri::State<'_, AppDb>,
+    budget: dental::NewBudget,
+) -> Result<dental::Budget, String> {
+    with_dental(&state, |conn| dental::create_budget(conn, &budget))
+}
+
+#[tauri::command]
+fn dental_decide_budget(
+    state: tauri::State<'_, AppDb>,
+    budget_id: String,
+    status: String,
+) -> Result<dental::Budget, String> {
+    with_dental(&state, |conn| dental::decide_budget(conn, &budget_id, &status))
+}
+
+#[tauri::command]
+fn dental_set_item_status(
+    state: tauri::State<'_, AppDb>,
+    item_id: String,
+    status: String,
+) -> Result<dental::Budget, String> {
+    with_dental(&state, |conn| dental::set_item_status(conn, &item_id, &status))
+}
+
+#[tauri::command]
+fn dental_list_budgets(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<Vec<dental::Budget>, String> {
+    with_dental(&state, |conn| dental::list_patient_budgets(conn, &patient_id))
+}
+
+#[tauri::command]
+fn dental_patient_balance(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<dental::DentalBalance, String> {
+    with_dental(&state, |conn| dental::patient_dental_balance(conn, &patient_id))
+}
+
 /* ---------- IA clinica gobernada (paso 11) ---------- */
 
 fn with_ai<T>(
@@ -2330,6 +2384,11 @@ pub fn run() {
             cash_summary,
             register_payment,
             list_session_payments,
+            dental_create_budget,
+            dental_decide_budget,
+            dental_set_item_status,
+            dental_list_budgets,
+            dental_patient_balance,
             ai_consent_status,
             ai_grant_consent,
             ai_revoke_consent,

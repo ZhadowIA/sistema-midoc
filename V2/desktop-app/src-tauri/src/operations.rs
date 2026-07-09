@@ -103,6 +103,7 @@ pub struct Payment {
     pub method: String,
     pub kind: String,
     pub concept: Option<String>,
+    pub budget_id: Option<String>,
     pub receipt_number: String,
     pub created_at: String,
 }
@@ -628,6 +629,9 @@ pub struct PaymentInput {
     pub method: String,
     pub kind: String,
     pub concept: Option<String>,
+    /// Abono a un presupuesto dental (paso 26): se valida contra su saldo.
+    #[serde(default)]
+    pub budget_id: Option<String>,
 }
 
 /// Folio de recibo monotono y persistente (sobrevive borrados; aqui no hay
@@ -667,6 +671,13 @@ pub fn register_payment(
         return Err(OperationsError::Invalid("tipo de cobro invalido".into()));
     }
 
+    // Un movimiento ligado a un presupuesto dental respeta su saldo: solo
+    // presupuestos aceptados, sin abonar de mas ni reembolsar de mas.
+    if let Some(budget_id) = &input.budget_id {
+        crate::dental::validate_budget_payment(conn, budget_id, &kind, input.amount_cents)
+            .map_err(|e| OperationsError::Invalid(e.to_string()))?;
+    }
+
     let session = get_open_session(conn)?.ok_or(OperationsError::NoOpenCashSession)?;
     let receipt_number = next_receipt_number(conn)?;
     let id = uuid::Uuid::new_v4().to_string();
@@ -674,11 +685,12 @@ pub fn register_payment(
     conn.execute(
         "INSERT INTO payments
             (id, cash_session_id, visit_id, appointment_id, patient_id, amount_cents,
-             method, kind, concept, receipt_number, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             method, kind, concept, budget_id, receipt_number, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             id, session.id, input.visit_id, input.appointment_id, input.patient_id,
-            input.amount_cents, method, kind, input.concept, receipt_number, timestamp
+            input.amount_cents, method, kind, input.concept, input.budget_id,
+            receipt_number, timestamp
         ],
     )?;
     audit(conn, "payment", &id, "registered", Some(&receipt_number))?;
@@ -692,6 +704,7 @@ pub fn register_payment(
         method,
         kind,
         concept: input.concept.clone(),
+        budget_id: input.budget_id.clone(),
         receipt_number,
         created_at: timestamp,
     })
@@ -703,7 +716,7 @@ pub fn list_session_payments(
 ) -> Result<Vec<Payment>, OperationsError> {
     let mut statement = conn.prepare(
         "SELECT id, cash_session_id, visit_id, patient_id, amount_cents, method, kind,
-                concept, receipt_number, created_at
+                concept, budget_id, receipt_number, created_at
          FROM payments WHERE cash_session_id = ?1 ORDER BY created_at DESC",
     )?;
     let rows = statement
@@ -717,8 +730,9 @@ pub fn list_session_payments(
                 method: row.get(5)?,
                 kind: row.get(6)?,
                 concept: row.get(7)?,
-                receipt_number: row.get(8)?,
-                created_at: row.get(9)?,
+                budget_id: row.get(8)?,
+                receipt_number: row.get(9)?,
+                created_at: row.get(10)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -947,6 +961,7 @@ mod tests {
                     method: "cash".into(),
                     kind: "PAYMENT".into(),
                     concept: None,
+                    budget_id: None,
                 }
             ),
             Err(OperationsError::NoOpenCashSession)
@@ -963,6 +978,7 @@ mod tests {
                 method: "cash".into(),
                 kind: "PAYMENT".into(),
                 concept: Some("Consulta general".into()),
+                budget_id: None,
             },
         )
         .unwrap();
@@ -976,6 +992,7 @@ mod tests {
                 method: "card".into(),
                 kind: "DEPOSIT".into(),
                 concept: None,
+                budget_id: None,
             },
         )
         .unwrap();
@@ -996,6 +1013,7 @@ mod tests {
                     method: "cash".into(),
                     kind: "PAYMENT".into(),
                     concept: None,
+                    budget_id: None,
                 }
             ),
             Err(OperationsError::Invalid(_))
@@ -1018,6 +1036,7 @@ mod tests {
                     method: method.into(),
                     kind: kind.into(),
                     concept: None,
+                    budget_id: None,
                 },
             )
             .unwrap();
