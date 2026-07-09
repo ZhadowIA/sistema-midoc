@@ -1,0 +1,242 @@
+ingredient_a,ingredient_b,severity,source,source_version,description
+acenocoumarol,aspirin,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por inhibicion plaquetaria concomitante.
+acenocoumarol,clopidogrel,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por inhibicion plaquetaria concomitante.
+acenocoumarol,diclofenac,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia.
+acenocoumarol,ibuprofen,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia.
+acenocoumarol,ketorolac,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia.
+acenocoumarol,meloxicam,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia.
+acenocoumarol,naproxen,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia.
+acenocoumarol,sulfamethoxazole,MAJOR,ONChigh,onchigh-mx-2026-07-08,Sulfametoxazol/trimetoprima potencia el efecto anticoagulante: riesgo de sangrado.
+acenocoumarol,trimethoprim,MAJOR,ONChigh,onchigh-mx-2026-07-08,Sulfametoxazol/trimetoprima potencia el efecto anticoagulante: riesgo de sangrado.
+allopurinol,azathioprine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Toxicidad grave por tiopurinas (mielosupresion): la inhibicion de xantina oxidasa bloquea su metabolismo. Evitar o reduccion extrema supervisada.
+allopurinol,mercaptopurine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Toxicidad grave por tiopurinas (mielosupresion): la inhibicion de xantina oxidasa bloquea su metabolismo. Evitar o reduccion extrema supervisada.
+alprazolam,codeine,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+alprazolam,hydrocodone,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+alprazolam,morphine,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+alprazolam,oxycodone,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+alprazolam,tramadol,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+amiloride,captopril,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+amiloride,enalapril,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+amiloride,lisinopril,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+amiloride,losartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+amiloride,ramipril,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+amiloride,telmisartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+amiloride,valsartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+amitriptyline,linezolid,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+amitriptyline,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+amitriptyline,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+amitriptyline,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+aspirin,warfarin,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por inhibicion plaquetaria concomitante.
+atorvastatin,clarithromycin,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Riesgo aumentado de miopatia/rabdomiolisis: considerar suspender, reducir dosis o cambiar la estatina durante el tratamiento con el inhibidor."
+atorvastatin,erythromycin,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Riesgo aumentado de miopatia/rabdomiolisis: considerar suspender, reducir dosis o cambiar la estatina durante el tratamiento con el inhibidor."
+atorvastatin,itraconazole,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Riesgo aumentado de miopatia/rabdomiolisis: considerar suspender, reducir dosis o cambiar la estatina durante el tratamiento con el inhibidor."
+atorvastatin,ketoconazole,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Riesgo aumentado de miopatia/rabdomiolisis: considerar suspender, reducir dosis o cambiar la estatina durante el tratamiento con el inhibidor."
+azathioprine,febuxostat,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Toxicidad grave por tiopurinas (mielosupresion): la inhibicion de xantina oxidasa bloquea su metabolismo. Evitar o reduccion extrema supervisada.
+captopril,diclofenac,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+captopril,eplerenone,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+captopril,ibuprofen,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+captopril,ketorolac,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+captopril,meloxicam,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+captopril,naproxen,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+captopril,potassium chloride,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por aporte externo de potasio.
+captopril,spironolactone,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+ciprofloxacin,tizanidine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Hipotension grave, somnolencia y bradicardia por aumento marcado de tizanidina: ciprofloxacino y fluvoxamina inhiben CYP1A2. Combinacion contraindicada."
+citalopram,fentanyl,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+citalopram,linezolid,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+citalopram,meperidine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+citalopram,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+citalopram,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+citalopram,tramadol,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+citalopram,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+clarithromycin,dihydroergotamine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Ergotismo (vasoespasmo, isquemia) por acumulacion del ergotaminico: los inhibidores fuertes de CYP3A4 bloquean su metabolismo. Combinacion contraindicada."
+clarithromycin,ergotamine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Ergotismo (vasoespasmo, isquemia) por acumulacion del ergotaminico: los inhibidores fuertes de CYP3A4 bloquean su metabolismo. Combinacion contraindicada."
+clarithromycin,lovastatin,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Miopatia/rabdomiolisis por aumento marcado de la estatina: simvastatina/lovastatina estan contraindicadas con inhibidores fuertes de CYP3A4.
+clarithromycin,simvastatin,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Miopatia/rabdomiolisis por aumento marcado de la estatina: simvastatina/lovastatina estan contraindicadas con inhibidores fuertes de CYP3A4.
+clomipramine,linezolid,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+clomipramine,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+clomipramine,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+clomipramine,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+clonazepam,codeine,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+clonazepam,hydrocodone,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+clonazepam,morphine,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+clonazepam,oxycodone,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+clonazepam,tramadol,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+clopidogrel,warfarin,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por inhibicion plaquetaria concomitante.
+codeine,diazepam,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+codeine,lorazepam,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+diazepam,hydrocodone,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+diazepam,morphine,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+diazepam,oxycodone,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+diazepam,tramadol,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+diclofenac,enalapril,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+diclofenac,lisinopril,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+diclofenac,losartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+diclofenac,methotrexate,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Aumento de la toxicidad por metotrexato (mielosupresion, dano renal) por reduccion de la eliminacion renal, sobre todo con dosis altas o deterioro renal."
+diclofenac,ramipril,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+diclofenac,telmisartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+diclofenac,valsartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+diclofenac,warfarin,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia.
+dihydroergotamine,erythromycin,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Ergotismo (vasoespasmo, isquemia) por acumulacion del ergotaminico: los inhibidores fuertes de CYP3A4 bloquean su metabolismo. Combinacion contraindicada."
+dihydroergotamine,itraconazole,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Ergotismo (vasoespasmo, isquemia) por acumulacion del ergotaminico: los inhibidores fuertes de CYP3A4 bloquean su metabolismo. Combinacion contraindicada."
+dihydroergotamine,ketoconazole,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Ergotismo (vasoespasmo, isquemia) por acumulacion del ergotaminico: los inhibidores fuertes de CYP3A4 bloquean su metabolismo. Combinacion contraindicada."
+duloxetine,linezolid,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+duloxetine,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+duloxetine,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+duloxetine,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+eletriptan,linezolid,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+eletriptan,phenelzine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+eletriptan,selegiline,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+eletriptan,tranylcypromine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+enalapril,eplerenone,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+enalapril,ibuprofen,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+enalapril,ketorolac,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+enalapril,meloxicam,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+enalapril,naproxen,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+enalapril,potassium chloride,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por aporte externo de potasio.
+enalapril,spironolactone,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+eplerenone,lisinopril,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+eplerenone,losartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+eplerenone,ramipril,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+eplerenone,telmisartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+eplerenone,valsartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+ergotamine,erythromycin,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Ergotismo (vasoespasmo, isquemia) por acumulacion del ergotaminico: los inhibidores fuertes de CYP3A4 bloquean su metabolismo. Combinacion contraindicada."
+ergotamine,itraconazole,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Ergotismo (vasoespasmo, isquemia) por acumulacion del ergotaminico: los inhibidores fuertes de CYP3A4 bloquean su metabolismo. Combinacion contraindicada."
+ergotamine,ketoconazole,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Ergotismo (vasoespasmo, isquemia) por acumulacion del ergotaminico: los inhibidores fuertes de CYP3A4 bloquean su metabolismo. Combinacion contraindicada."
+erythromycin,lovastatin,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Miopatia/rabdomiolisis por aumento marcado de la estatina: simvastatina/lovastatina estan contraindicadas con inhibidores fuertes de CYP3A4.
+erythromycin,simvastatin,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Miopatia/rabdomiolisis por aumento marcado de la estatina: simvastatina/lovastatina estan contraindicadas con inhibidores fuertes de CYP3A4.
+escitalopram,fentanyl,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+escitalopram,linezolid,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+escitalopram,meperidine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+escitalopram,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+escitalopram,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+escitalopram,tramadol,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+escitalopram,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+febuxostat,mercaptopurine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Toxicidad grave por tiopurinas (mielosupresion): la inhibicion de xantina oxidasa bloquea su metabolismo. Evitar o reduccion extrema supervisada.
+fentanyl,fluoxetine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+fentanyl,fluvoxamine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+fentanyl,linezolid,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+fentanyl,paroxetine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+fentanyl,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+fentanyl,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+fentanyl,sertraline,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+fentanyl,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+fluoxetine,linezolid,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+fluoxetine,meperidine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+fluoxetine,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+fluoxetine,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+fluoxetine,tramadol,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+fluoxetine,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+fluvoxamine,linezolid,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+fluvoxamine,meperidine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+fluvoxamine,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+fluvoxamine,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+fluvoxamine,tizanidine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Hipotension grave, somnolencia y bradicardia por aumento marcado de tizanidina: ciprofloxacino y fluvoxamina inhiben CYP1A2. Combinacion contraindicada."
+fluvoxamine,tramadol,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+fluvoxamine,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+hydrocodone,lorazepam,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+ibuprofen,lisinopril,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+ibuprofen,losartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+ibuprofen,methotrexate,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Aumento de la toxicidad por metotrexato (mielosupresion, dano renal) por reduccion de la eliminacion renal, sobre todo con dosis altas o deterioro renal."
+ibuprofen,ramipril,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+ibuprofen,telmisartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+ibuprofen,valsartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+ibuprofen,warfarin,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia.
+imipramine,linezolid,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+imipramine,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+imipramine,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+imipramine,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+isosorbide dinitrate,sildenafil,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Hipotension grave por vasodilatacion sumada: combinacion contraindicada.
+isosorbide dinitrate,tadalafil,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Hipotension grave por vasodilatacion sumada: combinacion contraindicada.
+isosorbide dinitrate,vardenafil,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Hipotension grave por vasodilatacion sumada: combinacion contraindicada.
+isosorbide mononitrate,sildenafil,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Hipotension grave por vasodilatacion sumada: combinacion contraindicada.
+isosorbide mononitrate,tadalafil,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Hipotension grave por vasodilatacion sumada: combinacion contraindicada.
+isosorbide mononitrate,vardenafil,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Hipotension grave por vasodilatacion sumada: combinacion contraindicada.
+itraconazole,lovastatin,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Miopatia/rabdomiolisis por aumento marcado de la estatina: simvastatina/lovastatina estan contraindicadas con inhibidores fuertes de CYP3A4.
+itraconazole,simvastatin,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Miopatia/rabdomiolisis por aumento marcado de la estatina: simvastatina/lovastatina estan contraindicadas con inhibidores fuertes de CYP3A4.
+ketoconazole,lovastatin,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Miopatia/rabdomiolisis por aumento marcado de la estatina: simvastatina/lovastatina estan contraindicadas con inhibidores fuertes de CYP3A4.
+ketoconazole,simvastatin,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Miopatia/rabdomiolisis por aumento marcado de la estatina: simvastatina/lovastatina estan contraindicadas con inhibidores fuertes de CYP3A4.
+ketorolac,lisinopril,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+ketorolac,losartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+ketorolac,methotrexate,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Aumento de la toxicidad por metotrexato (mielosupresion, dano renal) por reduccion de la eliminacion renal, sobre todo con dosis altas o deterioro renal."
+ketorolac,ramipril,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+ketorolac,telmisartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+ketorolac,valsartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+ketorolac,warfarin,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia.
+linezolid,meperidine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+linezolid,naratriptan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+linezolid,nortriptyline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+linezolid,paroxetine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+linezolid,rizatriptan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+linezolid,sertraline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+linezolid,sumatriptan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+linezolid,tramadol,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+linezolid,venlafaxine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+linezolid,zolmitriptan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+lisinopril,meloxicam,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+lisinopril,naproxen,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+lisinopril,potassium chloride,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por aporte externo de potasio.
+lisinopril,spironolactone,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+lorazepam,morphine,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+lorazepam,oxycodone,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+lorazepam,tramadol,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Depresion respiratoria, sedacion profunda y riesgo de muerte por depresion del SNC sumada."
+losartan,meloxicam,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+losartan,naproxen,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+losartan,potassium chloride,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por aporte externo de potasio.
+losartan,spironolactone,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+meloxicam,methotrexate,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Aumento de la toxicidad por metotrexato (mielosupresion, dano renal) por reduccion de la eliminacion renal, sobre todo con dosis altas o deterioro renal."
+meloxicam,ramipril,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+meloxicam,telmisartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+meloxicam,valsartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+meloxicam,warfarin,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia.
+meperidine,paroxetine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+meperidine,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+meperidine,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+meperidine,sertraline,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+meperidine,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+methotrexate,naproxen,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Aumento de la toxicidad por metotrexato (mielosupresion, dano renal) por reduccion de la eliminacion renal, sobre todo con dosis altas o deterioro renal."
+methotrexate,sulfamethoxazole,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Evitar combinacion. Riesgo de pancitopenia, mucositis, nefrotoxicidad y toxicidad grave por metotrexato por efecto antifolato sumado."
+methotrexate,trimethoprim,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Evitar combinacion. Riesgo de pancitopenia, mucositis, nefrotoxicidad y toxicidad grave por metotrexato por efecto antifolato sumado."
+naproxen,ramipril,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+naproxen,telmisartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+naproxen,valsartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,"Deterioro de la funcion renal, hiperpotasemia y menor efecto antihipertensivo. Vigilar funcion renal y potasio; evitar en riesgo renal."
+naproxen,warfarin,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo aumentado de sangrado por efecto sinergico sobre la hemostasia.
+naratriptan,phenelzine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+naratriptan,selegiline,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+naratriptan,tranylcypromine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+nitroglycerin,sildenafil,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Hipotension grave por vasodilatacion sumada: combinacion contraindicada.
+nitroglycerin,tadalafil,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Hipotension grave por vasodilatacion sumada: combinacion contraindicada.
+nitroglycerin,vardenafil,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Hipotension grave por vasodilatacion sumada: combinacion contraindicada.
+nortriptyline,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+nortriptyline,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+nortriptyline,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,Crisis hipertensiva y sindrome serotoninergico por potenciacion adrenergica/serotoninergica. Evitar; respetar periodo de lavado al cambiar entre ellos.
+paroxetine,phenelzine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+paroxetine,selegiline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+paroxetine,tramadol,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+paroxetine,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+phenelzine,rizatriptan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+phenelzine,sertraline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+phenelzine,sumatriptan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+phenelzine,tramadol,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+phenelzine,venlafaxine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+phenelzine,zolmitriptan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+potassium chloride,ramipril,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por aporte externo de potasio.
+potassium chloride,telmisartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por aporte externo de potasio.
+potassium chloride,valsartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por aporte externo de potasio.
+ramipril,spironolactone,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+rizatriptan,selegiline,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+rizatriptan,tranylcypromine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+selegiline,sertraline,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+selegiline,sumatriptan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+selegiline,tramadol,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+selegiline,venlafaxine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+selegiline,zolmitriptan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+sertraline,tramadol,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado.
+sertraline,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+spironolactone,telmisartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+spironolactone,valsartan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de hiperpotasemia por retencion de potasio.
+sulfamethoxazole,warfarin,MAJOR,ONChigh,onchigh-mx-2026-07-08,Sulfametoxazol/trimetoprima potencia el efecto anticoagulante: riesgo de sangrado.
+sumatriptan,tranylcypromine,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+tramadol,tranylcypromine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico o toxicidad opioide. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico y monitorizar estrechamente."
+tranylcypromine,venlafaxine,CONTRAINDICATED,ONChigh,onchigh-mx-2026-07-08,"Sindrome serotoninergico. Evitar; si el IMAO (p. ej. linezolid) es imprescindible, suspender el serotoninergico, valorar periodo de lavado y monitorizar estrechamente."
+tranylcypromine,zolmitriptan,MAJOR,ONChigh,onchigh-mx-2026-07-08,Riesgo de sindrome serotoninergico por efecto serotoninergico sumado. Evitar; separar del IMAO segun el triptan y valorar alternativa.
+trimethoprim,warfarin,MAJOR,ONChigh,onchigh-mx-2026-07-08,Sulfametoxazol/trimetoprima potencia el efecto anticoagulante: riesgo de sangrado.

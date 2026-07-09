@@ -1,0 +1,334 @@
+//! Pipeline de base de medicamentos a escala (paso 25, rebanada 1).
+//!
+//! Corre FUERA de la app (Node), nunca ve datos de pacientes. Toma reglas de
+//! interaccion POR CLASE de fuentes de dominio publico (ONChigh) y las expande
+//! a pares canonicos de ingredientes, en el mismo formato que ya empareja el
+//! motor determinista de Rust (medication.rs) — de modo que el motor NO cambia
+//! su logica de emparejamiento (sigue siendo par canonico de ingredientes).
+//!
+//! Estas funciones son PURAS y deterministas: la misma entrada produce siempre
+//! los mismos artefactos (requisito de reproducibilidad del paso 25).
+
+export type Severity = "CONTRAINDICATED" | "MAJOR" | "MODERATE" | "MINOR";
+
+/** Regla de interaccion por clase terapeutica (forma nativa de ONChigh). */
+export interface ClassRule {
+  classA: string;
+  classB: string;
+  severity: Severity;
+  description: string;
+}
+
+/**
+ * Regla de interaccion de TRES clases (p. ej. el "triple whammy": IECA/ARA2 +
+ * diuretico + AINE). No es expresable como par: el motor la evalua por las
+ * clases presentes en la prescripcion, no expandiendo a tripletas de
+ * ingredientes (evita explosion combinatoria y es fiel a que es un fenomeno
+ * de clases). El artefacto lleva las clases, no los ingredientes.
+ */
+export interface TripleRule {
+  classA: string;
+  classB: string;
+  classC: string;
+  severity: Severity;
+  description: string;
+}
+
+/** Tripleta de clases lista para cargar, en orden canonico y con procedencia. */
+export interface TriplePair {
+  classA: string;
+  classB: string;
+  classC: string;
+  severity: Severity;
+  source: string;
+  sourceVersion: string;
+  description: string;
+}
+
+/** Mapa clase -> ingredientes miembros (derivable de RxClass). */
+export type ClassMembers = Record<string, string[]>;
+
+/** Par de ingredientes listo para cargar, con procedencia real citada. */
+export interface InteractionPair {
+  ingredientA: string;
+  ingredientB: string;
+  severity: Severity;
+  source: string;
+  sourceVersion: string;
+  description: string;
+}
+
+/** Fila de la base de medicamentos: name,ingredient,display_name,drug_class. */
+export interface MedicationRow {
+  name: string;
+  ingredient: string;
+  displayName: string;
+  drugClass?: string;
+}
+
+/** Alias de marca comercial: el nombre que teclea el medico -> ingrediente. */
+export interface BrandAlias {
+  brand: string;
+  ingredient: string;
+}
+
+/**
+ * Espejo de `normalize_name` (medication.rs): colapsa cualquier espacio en
+ * blanco a un solo espacio, pasa a minusculas y PLIEGA los diacriticos latinos
+ * (acentos, dieresis, enie, cedilla) a su letra base. Debe coincidir con el
+ * motor o una interaccion no se encontraria al verificar la receta.
+ */
+const DIACRITIC_FOLD: Record<string, string> = {
+  á: "a", à: "a", ä: "a", â: "a", ã: "a", å: "a",
+  é: "e", è: "e", ë: "e", ê: "e",
+  í: "i", ì: "i", ï: "i", î: "i",
+  ó: "o", ò: "o", ö: "o", ô: "o", õ: "o",
+  ú: "u", ù: "u", ü: "u", û: "u",
+  ñ: "n", ç: "c"
+};
+
+export function normalizeName(raw: string): string {
+  return raw
+    .trim()
+    .split(/\s+/)
+    .join(" ")
+    .toLowerCase()
+    .replace(/[àáäâãåéèëêíìïîóòöôõúùüûñç]/g, (ch) => DIACRITIC_FOLD[ch] ?? ch);
+}
+
+/** Espejo de `canonical_pair` (medication.rs): orden lexicografico a <= b. */
+export function canonicalPair(a: string, b: string): [string, string] {
+  return a <= b ? [a, b] : [b, a];
+}
+
+const SEVERITY_RANK: Record<Severity, number> = {
+  CONTRAINDICATED: 4,
+  MAJOR: 3,
+  MODERATE: 2,
+  MINOR: 1
+};
+
+/** Expande una regla por clase a todos sus pares canonicos de ingredientes. */
+export function expandClassRule(
+  rule: ClassRule,
+  members: ClassMembers,
+  source: string,
+  sourceVersion: string
+): InteractionPair[] {
+  const membersA = members[rule.classA] ?? [];
+  const membersB = members[rule.classB] ?? [];
+  const seen = new Set<string>();
+  const pairs: InteractionPair[] = [];
+
+  for (const rawA of membersA) {
+    for (const rawB of membersB) {
+      const a = normalizeName(rawA);
+      const b = normalizeName(rawB);
+      if (a.length === 0 || b.length === 0 || a === b) {
+        continue; // no se verifica un ingrediente contra si mismo
+      }
+      const [ingredientA, ingredientB] = canonicalPair(a, b);
+      const key = `${ingredientA} ${ingredientB}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      pairs.push({
+        ingredientA,
+        ingredientB,
+        severity: rule.severity,
+        source,
+        sourceVersion,
+        description: rule.description
+      });
+    }
+  }
+  return pairs;
+}
+
+/**
+ * Expande un conjunto de reglas: deduplica pares, conserva la severidad mas
+ * alta en conflicto (y su descripcion) y devuelve el resultado ordenado por
+ * (ingredientA, ingredientB) para que el artefacto sea reproducible.
+ */
+export function expandRuleset(
+  rules: ClassRule[],
+  members: ClassMembers,
+  source: string,
+  sourceVersion: string
+): InteractionPair[] {
+  const byPair = new Map<string, InteractionPair>();
+
+  for (const rule of rules) {
+    for (const pair of expandClassRule(rule, members, source, sourceVersion)) {
+      const key = `${pair.ingredientA} ${pair.ingredientB}`;
+      const existing = byPair.get(key);
+      if (!existing || SEVERITY_RANK[pair.severity] > SEVERITY_RANK[existing.severity]) {
+        byPair.set(key, pair);
+      }
+    }
+  }
+
+  return [...byPair.values()].sort((x, y) =>
+    x.ingredientA === y.ingredientA
+      ? x.ingredientB.localeCompare(y.ingredientB)
+      : x.ingredientA.localeCompare(y.ingredientA)
+  );
+}
+
+/** Orden canonico de una tripleta de clases (a <= b <= c), para que la regla se
+ * encuentre sin importar el orden en que aparezcan en la prescripcion. */
+export function canonicalTriple(a: string, b: string, c: string): [string, string, string] {
+  const [x, y, z] = [a, b, c].sort((m, n) => m.localeCompare(n));
+  return [x, y, z];
+}
+
+/**
+ * Normaliza y deduplica reglas de tres clases, conservando la severidad mas
+ * alta en conflicto, y devuelve el resultado ordenado (reproducible). Descarta
+ * reglas con clases repetidas (una tripleta necesita tres clases distintas).
+ */
+export function expandTripleRuleset(
+  rules: TripleRule[],
+  source: string,
+  sourceVersion: string
+): TriplePair[] {
+  const byKey = new Map<string, TriplePair>();
+  for (const rule of rules) {
+    const [classA, classB, classC] = canonicalTriple(rule.classA, rule.classB, rule.classC);
+    if (classA === classB || classB === classC || classA === classC) {
+      continue; // una tripleta exige tres clases distintas
+    }
+    const key = `${classA}|${classB}|${classC}`;
+    const existing = byKey.get(key);
+    const candidate: TriplePair = {
+      classA,
+      classB,
+      classC,
+      severity: rule.severity,
+      source,
+      sourceVersion,
+      description: rule.description
+    };
+    if (!existing || SEVERITY_RANK[candidate.severity] > SEVERITY_RANK[existing.severity]) {
+      byKey.set(key, candidate);
+    }
+  }
+  return [...byKey.values()].sort((x, y) => `${x.classA}|${x.classB}|${x.classC}`.localeCompare(`${y.classA}|${y.classB}|${y.classC}`));
+}
+
+/** Escapa un campo CSV solo si lo necesita (coma, comilla o salto de linea). */
+function csvField(value: string): string {
+  if (/[",\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+/**
+ * Emite el CSV de interacciones en el formato canonico del paso 25: lleva la
+ * fuente y su version en cada fila, para que el ingest cite la procedencia real
+ * (rebanada 3 generaliza el parser de Rust; hoy `parse_ddinter_csv` hardcodea
+ * "DDInter 2.0", lo que seria incorrecto para datos ONChigh).
+ */
+export function toInteractionsCsv(pairs: InteractionPair[]): string {
+  const header = "ingredient_a,ingredient_b,severity,source,source_version,description";
+  const rows = pairs.map((p) =>
+    [p.ingredientA, p.ingredientB, p.severity, p.source, p.sourceVersion, p.description]
+      .map(csvField)
+      .join(",")
+  );
+  return [header, ...rows].join("\n") + "\n";
+}
+
+/**
+ * Emite el CSV de tripletas de clase del paso 25 (columnas:
+ * class_a,class_b,class_c,severity,source,source_version,description). Clases
+ * en orden canonico; el motor las empareja contra las clases presentes.
+ */
+export function toTriplesCsv(triples: TriplePair[]): string {
+  const header = "class_a,class_b,class_c,severity,source,source_version,description";
+  const rows = triples.map((t) =>
+    [t.classA, t.classB, t.classC, t.severity, t.source, t.sourceVersion, t.description]
+      .map(csvField)
+      .join(",")
+  );
+  return [header, ...rows].join("\n") + "\n";
+}
+
+/**
+ * Convierte alias de marca comercial en filas de la base, resolviendo el
+ * display y la clase desde el catalogo de ingredientes (la primera fila de
+ * cada ingrediente manda). Lanza si una marca apunta a un ingrediente que no
+ * existe en el catalogo: una marca que no resuelve seria un fallo silencioso
+ * de reconocimiento (el peor caso en seguridad de medicacion).
+ */
+export function resolveBrands(brands: BrandAlias[], catalog: MedicationRow[]): MedicationRow[] {
+  const byIngredient = new Map<string, { displayName: string; drugClass?: string }>();
+  for (const row of catalog) {
+    const key = normalizeName(row.ingredient);
+    if (!byIngredient.has(key)) {
+      byIngredient.set(key, { displayName: row.displayName, drugClass: row.drugClass });
+    }
+  }
+  return brands.map((alias) => {
+    const info = byIngredient.get(normalizeName(alias.ingredient));
+    if (!info) {
+      throw new Error(
+        `marca "${alias.brand}": el ingrediente "${alias.ingredient}" no existe en el catalogo`
+      );
+    }
+    return {
+      name: alias.brand,
+      ingredient: alias.ingredient,
+      displayName: info.displayName,
+      drugClass: info.drugClass
+    };
+  });
+}
+
+/** Emite el CSV de medicamentos: name,ingredient,display_name,drug_class. */
+export function toMedicationsCsv(rows: MedicationRow[]): string {
+  const header = "name,ingredient,display_name,drug_class";
+  const lines = rows.map((r) =>
+    [r.name, r.ingredient, r.displayName, r.drugClass ?? ""].map(csvField).join(",")
+  );
+  return [header, ...lines].join("\n") + "\n";
+}
+
+export interface SourceRef {
+  name: string;
+  license: string;
+  url: string;
+}
+
+export interface Manifest {
+  version: string;
+  generatedAt: string;
+  sources: SourceRef[];
+  counts: {
+    medicationRows: number;
+    interactionRows: number;
+    labelRows: number;
+  };
+}
+
+export function buildManifest(input: {
+  version: string;
+  medications: number;
+  interactions: number;
+  labels: number;
+  sources: SourceRef[];
+  generatedAt?: string;
+}): Manifest {
+  return {
+    version: input.version,
+    generatedAt: input.generatedAt ?? new Date().toISOString(),
+    sources: input.sources,
+    counts: {
+      medicationRows: input.medications,
+      interactionRows: input.interactions,
+      labelRows: input.labels
+    }
+  };
+}

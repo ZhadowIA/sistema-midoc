@@ -461,6 +461,20 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE ai_runs ADD COLUMN duration_seconds INTEGER;
     ALTER TABLE ai_runs ADD COLUMN credit_cost INTEGER;
     ALTER TABLE ai_runs ADD COLUMN segments_json TEXT;",
+    // Interacciones de TRES clases terapeuticas (paso 25): el "triple whammy"
+    // (IECA/ARA2 + diuretico + AINE -> lesion renal aguda) no es expresable como
+    // par. Se evalua por las CLASES presentes en la prescripcion. Clase
+    // REFERENCIA publica (no PHI). Vacia hasta que se importe/instale la base.
+    "CREATE TABLE class_triple_interactions (
+        class_a TEXT NOT NULL,               -- orden canonico: a <= b <= c
+        class_b TEXT NOT NULL,
+        class_c TEXT NOT NULL,
+        severity TEXT NOT NULL,              -- CONTRAINDICATED | MAJOR | MODERATE | MINOR
+        description TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_version TEXT NOT NULL,
+        PRIMARY KEY (class_a, class_b, class_c)
+    );",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

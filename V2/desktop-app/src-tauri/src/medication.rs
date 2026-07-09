@@ -79,6 +79,20 @@ pub struct DuplicateTherapyAlert {
     pub drug_class: String,
 }
 
+/// Alerta de interaccion de TRES clases (p. ej. el "triple whammy"): tres
+/// farmacos de tres clases distintas presentes a la vez. No es un par.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TripleInteractionAlert {
+    pub drug_a: String,
+    pub drug_b: String,
+    pub drug_c: String,
+    pub severity: String,
+    pub description: String,
+    pub source: String,
+    pub source_version: String,
+}
+
 /// Nota informativa de respaldo (openFDA): cuando no hay una interaccion
 /// estructurada (DDInter) para un par, pero la etiqueta FDA de uno de los
 /// farmacos menciona al otro. Es evidencia para consultar, no una alerta dura.
@@ -101,6 +115,8 @@ pub struct SafetyReport {
     pub interactions: Vec<InteractionAlert>,
     pub allergy_alerts: Vec<AllergyAlert>,
     pub duplicate_therapy: Vec<DuplicateTherapyAlert>,
+    /// Interacciones de tres clases (triple whammy). Alertas duras.
+    pub triple_interactions: Vec<TripleInteractionAlert>,
     /// Respaldo informativo de openFDA (no cuenta como alerta dura).
     pub label_notes: Vec<LabelNote>,
     pub reference_version: String,
@@ -115,6 +131,26 @@ fn normalize_name(raw: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+        .chars()
+        .map(fold_diacritic)
+        .collect()
+}
+
+/// Pliega los diacriticos latinos comunes en es/pt/fr (acentos, dieresis, enie,
+/// cedilla) a su letra base, para que la entrada acentuada del medico case con
+/// los nombres de la base (guardados sin acento). Debe coincidir con
+/// `normalizeName` del pipeline (reference.ts). Se aplica DESPUES de minusculas.
+fn fold_diacritic(c: char) -> char {
+    match c {
+        'á' | 'à' | 'ä' | 'â' | 'ã' | 'å' => 'a',
+        'é' | 'è' | 'ë' | 'ê' => 'e',
+        'í' | 'ì' | 'ï' | 'î' => 'i',
+        'ó' | 'ò' | 'ö' | 'ô' | 'õ' => 'o',
+        'ú' | 'ù' | 'ü' | 'û' => 'u',
+        'ñ' => 'n',
+        'ç' => 'c',
+        other => other,
+    }
 }
 
 /// Orden canonico de un par de ingredientes (a <= b), para que la interaccion
@@ -125,6 +161,14 @@ fn canonical_pair(a: &str, b: &str) -> (String, String) {
     } else {
         (b.to_string(), a.to_string())
     }
+}
+
+/// Orden canonico de una tripleta de clases (a <= b <= c), para encontrar la
+/// regla sin importar el orden en que aparezcan las clases en la prescripcion.
+fn canonical_triple(a: &str, b: &str, c: &str) -> (String, String, String) {
+    let mut v = [a, b, c];
+    v.sort_unstable();
+    (v[0].to_string(), v[1].to_string(), v[2].to_string())
 }
 
 /// Rango de severidad para ordenar (mayor primero) y priorizar en la UI.
@@ -334,6 +378,59 @@ pub fn check_prescription(
         }
     }
 
+    // 4b. Interacciones de tres clases (triple whammy). Se evalua por las CLASES
+    // presentes: si una regla exige tres clases y las tres estan en la
+    // prescripcion (cada una por un farmaco distinto), se alerta. No es un par.
+    let mut triple_interactions: Vec<TripleInteractionAlert> = Vec::new();
+    {
+        // Primer farmaco representante de cada clase presente (para mostrar).
+        let mut class_rep: std::collections::HashMap<String, &NormalizedDrug> =
+            std::collections::HashMap::new();
+        for drug in &recognized {
+            if let Some(class) = drug.drug_class.as_deref() {
+                if !class.is_empty() {
+                    class_rep.entry(class.to_string()).or_insert(drug);
+                }
+            }
+        }
+        if class_rep.len() >= 3 {
+            let mut stmt = conn.prepare(
+                "SELECT class_a, class_b, class_c, severity, description, source, source_version
+                 FROM class_triple_interactions",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })?;
+            for row in rows {
+                let (class_a, class_b, class_c, severity, description, source, source_version) = row?;
+                if let (Some(a), Some(b), Some(c)) = (
+                    class_rep.get(&class_a),
+                    class_rep.get(&class_b),
+                    class_rep.get(&class_c),
+                ) {
+                    triple_interactions.push(TripleInteractionAlert {
+                        drug_a: a.display_name.clone().unwrap_or_default(),
+                        drug_b: b.display_name.clone().unwrap_or_default(),
+                        drug_c: c.display_name.clone().unwrap_or_default(),
+                        severity,
+                        description,
+                        source,
+                        source_version,
+                    });
+                }
+            }
+            triple_interactions.sort_by_key(|alert| std::cmp::Reverse(severity_rank(&alert.severity)));
+        }
+    }
+
     // 5. Respaldo openFDA: para pares SIN interaccion estructurada, si la
     // etiqueta FDA de un farmaco menciona al otro, se ofrece como evidencia.
     let mut label_notes: Vec<LabelNote> = Vec::new();
@@ -354,9 +451,14 @@ pub fn check_prescription(
         }
     }
 
-    let has_alerts =
-        !interactions.is_empty() || !allergy_alerts.is_empty() || !duplicate_therapy.is_empty();
-    let alert_count = interactions.len() + allergy_alerts.len() + duplicate_therapy.len();
+    let has_alerts = !interactions.is_empty()
+        || !allergy_alerts.is_empty()
+        || !duplicate_therapy.is_empty()
+        || !triple_interactions.is_empty();
+    let alert_count = interactions.len()
+        + allergy_alerts.len()
+        + duplicate_therapy.len()
+        + triple_interactions.len();
     audit(conn, encounter_id, alert_count)?;
 
     Ok(SafetyReport {
@@ -365,6 +467,7 @@ pub fn check_prescription(
         interactions,
         allergy_alerts,
         duplicate_therapy,
+        triple_interactions,
         label_notes,
         reference_version: reference_version(conn)?,
         has_alerts,
@@ -423,6 +526,17 @@ pub struct MedicationRow {
 pub struct InteractionRow {
     pub ingredient_a: String,
     pub ingredient_b: String,
+    pub severity: String,
+    pub description: String,
+    pub source: String,
+}
+
+/// Fila de interaccion de tres clases (tripleta canonica) lista para cargar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TripleRow {
+    pub class_a: String,
+    pub class_b: String,
+    pub class_c: String,
     pub severity: String,
     pub description: String,
     pub source: String,
@@ -558,6 +672,160 @@ pub fn parse_ddinter_csv(csv: &str) -> Result<Vec<InteractionRow>, MedicationErr
     Ok(rows)
 }
 
+/// Separa una linea CSV respetando comillas dobles (`""` escapa una comilla).
+/// A diferencia de `csv_fields`, tolera comas dentro de campos entrecomillados
+/// (p. ej. la descripcion clinica del formato del paso 25). Asume descripciones
+/// de una sola linea (el pipeline no emite saltos de linea dentro de un campo).
+fn csv_fields_quoted(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if in_quotes => {
+                if chars.peek() == Some(&'"') {
+                    field.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            }
+            '"' => in_quotes = true,
+            ',' if !in_quotes => {
+                fields.push(field.trim().to_string());
+                field.clear();
+            }
+            _ => field.push(c),
+        }
+    }
+    fields.push(field.trim().to_string());
+    fields
+}
+
+/// Normaliza la severidad a una de las categorias del motor. Cualquier valor
+/// desconocido cae a UNKNOWN (no se inventa severidad).
+fn normalize_severity(raw: &str) -> &'static str {
+    match raw.trim().to_uppercase().as_str() {
+        "CONTRAINDICATED" | "CONTRAINDICATION" => "CONTRAINDICATED",
+        "MAJOR" => "MAJOR",
+        "MODERATE" => "MODERATE",
+        "MINOR" => "MINOR",
+        _ => "UNKNOWN",
+    }
+}
+
+/// Parsea el CSV de interacciones del pipeline del paso 25 (columnas:
+/// `ingredient_a,ingredient_b,severity,source,source_version,description`).
+/// A diferencia de `parse_ddinter_csv`, conserva la FUENTE real de cada fila
+/// (no la hardcodea) y su descripcion; asi la procedencia citada al medico es
+/// la correcta (ONChigh, openFDA, etc.). El par se guarda en orden canonico.
+/// La `source_version` de la fila es informativa: la version canonica de la base
+/// la aplica `import_reference` desde la version del dataset.
+pub fn parse_interactions_csv(csv: &str) -> Result<Vec<InteractionRow>, MedicationError> {
+    let mut rows = Vec::new();
+    for (idx, line) in csv.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if idx == 0 && line.to_lowercase().starts_with("ingredient_a") {
+            continue; // encabezado
+        }
+        let fields = csv_fields_quoted(line);
+        if fields.len() < 4 {
+            return Err(MedicationError::Invalid(format!(
+                "fila {} del CSV de interacciones invalida: se esperaban al menos 4 columnas",
+                idx + 1
+            )));
+        }
+        let a = normalize_name(&fields[0]);
+        let b = normalize_name(&fields[1]);
+        if a.is_empty() || b.is_empty() || a == b {
+            continue;
+        }
+        let (ingredient_a, ingredient_b) = canonical_pair(&a, &b);
+        let source = fields
+            .get(3)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("ONChigh")
+            .to_string();
+        let description = fields.get(5).map(|s| s.to_string()).unwrap_or_default();
+        rows.push(InteractionRow {
+            ingredient_a,
+            ingredient_b,
+            severity: normalize_severity(&fields[2]).to_string(),
+            description,
+            source,
+        });
+    }
+    Ok(rows)
+}
+
+/// Parsea el CSV de tripletas de clase del paso 25 (columnas:
+/// `class_a,class_b,class_c,severity,source,source_version,description`).
+/// Guarda las clases en orden canonico. Conserva la fuente y la descripcion.
+pub fn parse_triples_csv(csv: &str) -> Result<Vec<TripleRow>, MedicationError> {
+    let mut rows = Vec::new();
+    for (idx, line) in csv.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if idx == 0 && line.to_lowercase().starts_with("class_a") {
+            continue; // encabezado
+        }
+        let fields = csv_fields_quoted(line);
+        if fields.len() < 4 {
+            return Err(MedicationError::Invalid(format!(
+                "fila {} del CSV de tripletas invalida: se esperaban al menos 4 columnas",
+                idx + 1
+            )));
+        }
+        let a = fields[0].trim();
+        let b = fields[1].trim();
+        let c = fields[2].trim();
+        if a.is_empty() || b.is_empty() || c.is_empty() || a == b || b == c || a == c {
+            continue; // una tripleta exige tres clases distintas y no vacias
+        }
+        let (class_a, class_b, class_c) = canonical_triple(a, b, c);
+        let source = fields
+            .get(4)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("ONChigh")
+            .to_string();
+        let description = fields.get(6).map(|s| s.to_string()).unwrap_or_default();
+        rows.push(TripleRow {
+            class_a,
+            class_b,
+            class_c,
+            severity: normalize_severity(&fields[3]).to_string(),
+            description,
+            source,
+        });
+    }
+    Ok(rows)
+}
+
+/// Elige el parser de interacciones segun el encabezado del CSV: el formato del
+/// pipeline del paso 25 (`ingredient_a,...`) conserva la fuente real; el formato
+/// DDInter heredado (`DDInterID_A,...`) se mantiene durante la transicion hasta
+/// que la rebanada 3 retire la semilla DDInter empaquetada.
+pub fn parse_interactions(csv: &str) -> Result<Vec<InteractionRow>, MedicationError> {
+    let header = csv
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .to_lowercase();
+    if header.starts_with("ingredient_a") {
+        parse_interactions_csv(csv)
+    } else {
+        parse_ddinter_csv(csv)
+    }
+}
+
 /// Reemplaza la base de referencia local con los datos importados, dentro de una
 /// transaccion (no deja las tablas a medio reemplazar). Si una lista viene vacia,
 /// no se toca esa tabla. Siempre actualiza la version de la base.
@@ -619,6 +887,39 @@ pub fn import_reference(
         labels: 0,
         version: version.to_string(),
     })
+}
+
+/// Reemplaza las interacciones de tres clases dentro de una transaccion. Si la
+/// lista viene vacia, no toca la tabla (una fuente sin tripletas no borra las
+/// existentes). Las clases se guardan en orden canonico.
+pub fn import_triples(
+    conn: &Connection,
+    triples: &[TripleRow],
+    version: &str,
+) -> Result<usize, MedicationError> {
+    if triples.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM class_triple_interactions", [])?;
+    for triple in triples {
+        tx.execute(
+            "INSERT OR IGNORE INTO class_triple_interactions
+                (class_a, class_b, class_c, severity, description, source, source_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                triple.class_a,
+                triple.class_b,
+                triple.class_c,
+                triple.severity,
+                triple.description,
+                triple.source,
+                version
+            ],
+        )?;
+    }
+    tx.commit()?;
+    Ok(triples.len())
 }
 
 /// Parsea el JSON de la API de etiquetas de openFDA (drug/label). Extrae, por
@@ -701,6 +1002,8 @@ pub fn import_label_text(
 pub struct MedicationDataset {
     pub medications_csv: String,
     pub ddinter_csv: String,
+    /// CSV de tripletas de clase (triple whammy). Vacio si la fuente no lo trae.
+    pub triples_csv: String,
     pub openfda_json: String,
     pub version: String,
 }
@@ -710,16 +1013,24 @@ pub struct MedicationDataset {
 /// pero por debajo del minimo, se aborta la actualizacion completa.
 pub const MIN_MEDICATIONS: usize = 5;
 pub const MIN_INTERACTIONS: usize = 5;
-pub const BUNDLED_REFERENCE_VERSION: &str = "midoc-real-2026-06-14";
+/// Base ONChigh de dominio publico (paso 25, rebanada 3). Reemplaza la semilla
+/// DDInter (CC BY-NC) que se retiro para eliminar el riesgo legal en un SaaS
+/// de pago. Generada de forma reproducible por `scripts/medication-reference/`.
+pub const BUNDLED_REFERENCE_VERSION: &str = "onchigh-mx-2026-07-08";
 
 const BUNDLED_MEDICATIONS_CSV: &str = include_str!("reference_data/medications.csv");
-const BUNDLED_DDINTER_CSV: &str = include_str!("reference_data/ddinter.csv");
+const BUNDLED_INTERACTIONS_CSV: &str = include_str!("reference_data/interactions.csv");
+const BUNDLED_TRIPLES_CSV: &str = include_str!("reference_data/triples.csv");
 const BUNDLED_OPENFDA_JSON: &str = include_str!("reference_data/openfda.json");
 
 pub fn bundled_reference_dataset() -> MedicationDataset {
     MedicationDataset {
         medications_csv: BUNDLED_MEDICATIONS_CSV.to_string(),
-        ddinter_csv: BUNDLED_DDINTER_CSV.to_string(),
+        // Interacciones ONChigh (formato con fuente real); el dispatcher las
+        // reconoce por encabezado. Ya no es DDInter.
+        ddinter_csv: BUNDLED_INTERACTIONS_CSV.to_string(),
+        // Tripletas de clase (triple whammy) de la base ONChigh.
+        triples_csv: BUNDLED_TRIPLES_CSV.to_string(),
         openfda_json: BUNDLED_OPENFDA_JSON.to_string(),
         version: BUNDLED_REFERENCE_VERSION.to_string(),
     }
@@ -759,7 +1070,8 @@ pub fn update_reference(
     min_interactions: usize,
 ) -> Result<ImportSummary, MedicationError> {
     let medications = parse_medication_csv(&dataset.medications_csv)?;
-    let interactions = parse_ddinter_csv(&dataset.ddinter_csv)?;
+    // Acepta el formato del paso 25 (con fuente real) o el DDInter heredado.
+    let interactions = parse_interactions(&dataset.ddinter_csv)?;
 
     if medications.is_empty() && interactions.is_empty() {
         return Err(MedicationError::Invalid(
@@ -780,6 +1092,10 @@ pub fn update_reference(
     }
 
     let mut summary = import_reference(conn, &medications, &interactions, &dataset.version)?;
+    // Tripletas de clase (triple whammy): sin minimo de cordura (son pocas).
+    // Solo se reemplazan si la fuente las trajo.
+    let triples = parse_triples_csv(&dataset.triples_csv)?;
+    import_triples(conn, &triples, &dataset.version)?;
     // El texto de etiquetas (openFDA) es respaldo informativo: sin minimo de
     // cordura. Solo se reemplaza si la fuente trajo datos.
     let labels = parse_openfda_labels(&dataset.openfda_json)?;
@@ -882,6 +1198,19 @@ mod tests {
     #[test]
     fn canonical_pair_is_order_independent() {
         assert_eq!(canonical_pair("warfarina", "ibuprofeno"), canonical_pair("ibuprofeno", "warfarina"));
+    }
+
+    #[test]
+    fn normalize_name_strips_accents_and_case() {
+        // El medico teclea con acentos; la base guarda sin ellos. Sin esta
+        // normalizacion el farmaco saldria "no reconocido" y se perderian sus
+        // interacciones en silencio (el peor caso en seguridad de medicacion).
+        assert_eq!(normalize_name("Losartán"), "losartan");
+        assert_eq!(normalize_name("Codeína"), "codeina");
+        assert_eq!(normalize_name("  ÁCIDO   Acetilsalicílico "), "acido acetilsalicilico");
+        assert_eq!(normalize_name("Niño"), "nino"); // la enie tambien se pliega
+        // Sin acentos no cambia nada (idempotente para ASCII).
+        assert_eq!(normalize_name("Ibuprofeno"), "ibuprofeno");
     }
 
     #[test]
@@ -1011,6 +1340,144 @@ mod tests {
     }
 
     #[test]
+    fn parses_interactions_csv_keeps_real_source_and_quoted_description() {
+        let csv = "ingredient_a,ingredient_b,severity,source,source_version,description\n\
+                   warfarin,ibuprofen,MAJOR,ONChigh,onc-2026,\"Riesgo de sangrado, sinergico\"\n";
+        let rows = parse_interactions_csv(csv).unwrap();
+        assert_eq!(rows.len(), 1);
+        // Orden canonico: ibuprofen < warfarin.
+        assert_eq!(rows[0].ingredient_a, "ibuprofen");
+        assert_eq!(rows[0].ingredient_b, "warfarin");
+        assert_eq!(rows[0].severity, "MAJOR");
+        // La fuente es la REAL de la fila, no el "DDInter 2.0" hardcodeado.
+        assert_eq!(rows[0].source, "ONChigh");
+        // La coma dentro de la descripcion entrecomillada se preserva.
+        assert_eq!(rows[0].description, "Riesgo de sangrado, sinergico");
+    }
+
+    #[test]
+    fn interactions_dispatcher_routes_by_header() {
+        let onchigh = "ingredient_a,ingredient_b,severity,source,source_version,description\n\
+                       sildenafil,nitroglycerin,CONTRAINDICATED,ONChigh,onc-2026,Hipotension grave\n";
+        let ddinter = "DDInterID_A,Drug_A,DDInterID_B,Drug_B,Level\n\
+                       DDInter1,Warfarina,DDInter2,Aspirina,Major\n";
+        assert_eq!(parse_interactions(onchigh).unwrap()[0].source, "ONChigh");
+        assert_eq!(parse_interactions(ddinter).unwrap()[0].source, "DDInter 2.0");
+    }
+
+    #[test]
+    fn update_reference_loads_onchigh_format_with_real_source() {
+        let conn = test_conn("onchigh-update");
+        let dataset = MedicationDataset {
+            medications_csv: "name,ingredient,display_name,drug_class\n\
+                              warfarin,warfarin,Warfarina,Anticoagulante\n\
+                              ibuprofen,ibuprofen,Ibuprofeno,AINE\n\
+                              sildenafil,sildenafil,Sildenafil,Inhibidor PDE5\n\
+                              nitroglycerin,nitroglycerin,Nitroglicerina,Nitrato\n\
+                              enalapril,enalapril,Enalapril,IECA\n"
+                .into(),
+            ddinter_csv: "ingredient_a,ingredient_b,severity,source,source_version,description\n\
+                          ibuprofen,warfarin,MAJOR,ONChigh,onc-2026,Sangrado\n\
+                          nitroglycerin,sildenafil,CONTRAINDICATED,ONChigh,onc-2026,Hipotension\n\
+                          enalapril,ibuprofen,MODERATE,ONChigh,onc-2026,uno\n\
+                          enalapril,warfarin,MINOR,ONChigh,onc-2026,dos\n\
+                          enalapril,sildenafil,MINOR,ONChigh,onc-2026,tres\n"
+                .into(),
+            triples_csv: String::new(),
+            openfda_json: String::new(),
+            version: "onchigh-2026-07".into(),
+        };
+        let summary = update_reference(&conn, &dataset, MIN_MEDICATIONS, MIN_INTERACTIONS).unwrap();
+        assert_eq!(summary.interactions, 5);
+
+        let report = check_prescription(&conn, "enc-1", &meds(&["warfarin", "ibuprofen"]), None).unwrap();
+        assert_eq!(report.interactions.len(), 1);
+        assert_eq!(report.interactions[0].severity, "MAJOR");
+        // La procedencia citada es la real (ONChigh), no DDInter.
+        assert_eq!(report.interactions[0].source, "ONChigh");
+        assert_eq!(report.interactions[0].source_version, "onchigh-2026-07");
+    }
+
+    #[test]
+    fn parses_triples_csv_in_canonical_class_order() {
+        let csv = "class_a,class_b,class_c,severity,source,source_version,description\n\
+                   IECA,Diuretico,AINE,MAJOR,ONChigh,onc-2026,\"Triple whammy, lesion renal\"\n\
+                   AINE,AINE,IECA,MAJOR,ONChigh,onc-2026,repetida\n";
+        let rows = parse_triples_csv(csv).unwrap();
+        assert_eq!(rows.len(), 1); // la de clases repetidas se descarta
+        // Orden canonico: AINE < Diuretico < IECA.
+        assert_eq!(rows[0].class_a, "AINE");
+        assert_eq!(rows[0].class_b, "Diuretico");
+        assert_eq!(rows[0].class_c, "IECA");
+        assert_eq!(rows[0].source, "ONChigh");
+        assert_eq!(rows[0].description, "Triple whammy, lesion renal");
+    }
+
+    /// Dataset ONChigh minimo con una regla de triple whammy, para verificar la
+    /// evaluacion n-aria de extremo a extremo.
+    fn triple_dataset() -> MedicationDataset {
+        MedicationDataset {
+            medications_csv: "name,ingredient,display_name,drug_class\n\
+                              enalapril,enalapril,Enalapril,IECA\n\
+                              furosemida,furosemide,Furosemida,Diuretico\n\
+                              ibuprofeno,ibuprofen,Ibuprofeno,AINE\n\
+                              paracetamol,acetaminophen,Paracetamol,Analgesico\n\
+                              losartan,losartan,Losartan,ARA2\n"
+                .into(),
+            // El par IECA+AINE tambien existe, para distinguir par de tripleta.
+            ddinter_csv: "ingredient_a,ingredient_b,severity,source,source_version,description\n\
+                          enalapril,ibuprofen,MAJOR,ONChigh,onc-2026,IECA mas AINE\n\
+                          ibuprofen,losartan,MAJOR,ONChigh,onc-2026,ARA2 mas AINE\n\
+                          acetaminophen,enalapril,MINOR,ONChigh,onc-2026,relleno\n\
+                          acetaminophen,ibuprofen,MINOR,ONChigh,onc-2026,relleno\n\
+                          acetaminophen,losartan,MINOR,ONChigh,onc-2026,relleno\n"
+                .into(),
+            triples_csv: "class_a,class_b,class_c,severity,source,source_version,description\n\
+                          AINE,Diuretico,IECA,MAJOR,ONChigh,onc-2026,Triple whammy IECA\n\
+                          AINE,ARA2,Diuretico,MAJOR,ONChigh,onc-2026,Triple whammy ARA2\n"
+                .into(),
+            openfda_json: String::new(),
+            version: "onchigh-2026-07".into(),
+        }
+    }
+
+    #[test]
+    fn triple_whammy_alerts_only_when_the_three_classes_are_present() {
+        let conn = test_conn("triple-whammy");
+        update_reference(&conn, &triple_dataset(), MIN_MEDICATIONS, MIN_INTERACTIONS).unwrap();
+
+        // Los tres presentes -> alerta de tripleta, sin importar el orden.
+        let full = check_prescription(
+            &conn,
+            "enc-1",
+            &meds(&["Ibuprofeno", "Enalapril", "Furosemida"]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(full.triple_interactions.len(), 1);
+        let alert = &full.triple_interactions[0];
+        assert_eq!(alert.severity, "MAJOR");
+        assert_eq!(alert.source, "ONChigh");
+        assert_eq!(alert.source_version, "onchigh-2026-07");
+        assert!(full.has_alerts);
+
+        // Solo dos de las tres clases -> NO dispara la tripleta (aunque el par si).
+        let only_two = check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Enalapril"]), None).unwrap();
+        assert_eq!(only_two.triple_interactions.len(), 0);
+        assert_eq!(only_two.interactions.len(), 1); // el par IECA+AINE sigue
+
+        // Sustituir el diuretico por un analgesico neutro -> no hay tripleta.
+        let neutral = check_prescription(
+            &conn,
+            "enc-1",
+            &meds(&["Ibuprofeno", "Enalapril", "Paracetamol"]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(neutral.triple_interactions.len(), 0);
+    }
+
+    #[test]
     fn import_replaces_reference_and_bumps_version() {
         let conn = test_conn("import");
         let medication_rows = vec![
@@ -1084,6 +1551,7 @@ mod tests {
         MedicationDataset {
             medications_csv: meds,
             ddinter_csv: ddinter,
+            triples_csv: String::new(),
             openfda_json: String::new(),
             version: version.to_string(),
         }
@@ -1174,7 +1642,7 @@ mod tests {
     #[test]
     fn update_rejects_empty_source() {
         let conn = test_conn("update-empty");
-        let empty = MedicationDataset { medications_csv: String::new(), ddinter_csv: String::new(), openfda_json: String::new(), version: "x".into() };
+        let empty = MedicationDataset { medications_csv: String::new(), ddinter_csv: String::new(), triples_csv: String::new(), openfda_json: String::new(), version: "x".into() };
         assert!(matches!(
             update_reference(&conn, &empty, MIN_MEDICATIONS, MIN_INTERACTIONS),
             Err(MedicationError::Invalid(_))
@@ -1236,11 +1704,116 @@ mod tests {
         let conn = test_conn("bundled-brand-alias");
         install_bundled_reference(&conn).unwrap();
 
-        let report = check_prescription(&conn, "enc-1", &meds(&["Tylenol", "Warfarina"]), None).unwrap();
-        let tylenol = report.normalized.iter().find(|drug| drug.input == "Tylenol").unwrap();
-        assert_eq!(tylenol.ingredient.as_deref(), Some("acetaminophen"));
-        assert_eq!(tylenol.display_name.as_deref(), Some("Paracetamol"));
+        // Marca comercial (Advil) -> ingrediente canonico; interaccion citada
+        // desde la fuente ONChigh de dominio publico (ya no DDInter).
+        let report = check_prescription(&conn, "enc-1", &meds(&["Advil", "Warfarina"]), None).unwrap();
+        let advil = report.normalized.iter().find(|drug| drug.input == "Advil").unwrap();
+        assert_eq!(advil.ingredient.as_deref(), Some("ibuprofen"));
+        assert_eq!(advil.display_name.as_deref(), Some("Ibuprofeno"));
         assert_eq!(report.interactions.len(), 1);
-        assert_eq!(report.interactions[0].source, "DDInter 2.0");
+        assert_eq!(report.interactions[0].severity, "MAJOR");
+        assert_eq!(report.interactions[0].source, "ONChigh");
+    }
+
+    #[test]
+    fn bundled_reference_has_no_ddinter_source() {
+        // El swap retiro la semilla DDInter (CC BY-NC): ninguna interaccion
+        // empaquetada debe citarla.
+        let conn = test_conn("bundled-no-ddinter");
+        install_bundled_reference(&conn).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM drug_interactions WHERE source LIKE '%DDInter%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn bundled_reference_recognizes_mexican_brand_names() {
+        // Capa de marcas MX (rebanada 4): el medico teclea el nombre comercial
+        // y se reconoce el ingrediente; una interaccion por marca dispara igual.
+        let conn = test_conn("bundled-mx-brands");
+        install_bundled_reference(&conn).unwrap();
+
+        // Marca -> ingrediente canonico.
+        let report = check_prescription(&conn, "enc-1", &meds(&["Tafil", "Tempra"]), None).unwrap();
+        let tafil = report.normalized.iter().find(|d| d.input == "Tafil").unwrap();
+        assert_eq!(tafil.ingredient.as_deref(), Some("alprazolam"));
+        assert_eq!(tafil.display_name.as_deref(), Some("Alprazolam"));
+        assert!(report.unrecognized.is_empty(), "Tempra deberia reconocerse");
+
+        // Interaccion citada por marcas comerciales: Sintrom (acenocumarol,
+        // anticoagulante) + Flanax (naproxeno, AINE) -> sangrado, MAJOR.
+        let bleed = check_prescription(&conn, "enc-1", &meds(&["Sintrom", "Flanax"]), None).unwrap();
+        assert_eq!(bleed.interactions.len(), 1);
+        assert_eq!(bleed.interactions[0].severity, "MAJOR");
+        assert_eq!(bleed.interactions[0].source, "ONChigh");
+    }
+
+    #[test]
+    fn bundled_reference_fires_triple_whammy() {
+        // La base empaquetada ONChigh ya trae las tripletas de clase.
+        let conn = test_conn("bundled-triple");
+        install_bundled_reference(&conn).unwrap();
+        let report = check_prescription(
+            &conn,
+            "enc-1",
+            &meds(&["Enalapril", "Furosemida", "Ibuprofeno"]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(report.triple_interactions.len(), 1);
+        assert_eq!(report.triple_interactions[0].severity, "MAJOR");
+        assert_eq!(report.triple_interactions[0].source, "ONChigh");
+    }
+
+    #[test]
+    fn accented_input_is_recognized_and_still_fires_interactions() {
+        // Entrada con acentos (como la escribe el medico) debe reconocerse contra
+        // la base (que guarda sin acentos) y disparar la interaccion.
+        let conn = test_conn("accented-input");
+        install_bundled_reference(&conn).unwrap();
+
+        // "Losartán" (ARA2) + "Naproxeno" (AINE) -> deterioro renal, MAJOR.
+        let report = check_prescription(&conn, "enc-1", &meds(&["Losartán", "Naproxeno"]), None).unwrap();
+        assert!(report.unrecognized.is_empty(), "Losartán deberia reconocerse pese al acento");
+        assert_eq!(report.interactions.len(), 1);
+        assert_eq!(report.interactions[0].severity, "MAJOR");
+
+        // La extraccion desde texto libre tambien tolera acentos y dosis pegada.
+        let extracted = extract_medications(&conn, "Paciente con Losartán 50 mg y Naproxeno 500 mg").unwrap();
+        assert!(extracted.iter().any(|d| d == "Losartan"));
+        assert!(extracted.iter().any(|d| d == "Naproxeno"));
+    }
+
+    #[test]
+    fn bundled_reference_fires_completed_onchigh_rules() {
+        // Apendice ONChigh completado: las 4 reglas nuevas disparan de extremo a
+        // extremo desde la base empaquetada, con la fuente y severidad correctas.
+        let conn = test_conn("bundled-onchigh-full");
+        install_bundled_reference(&conn).unwrap();
+
+        let contraindicated = |a: &str, b: &str| {
+            let report = check_prescription(&conn, "enc-1", &meds(&[a, b]), None).unwrap();
+            assert_eq!(report.interactions.len(), 1, "{a} + {b} deberia dar 1 interaccion");
+            assert_eq!(report.interactions[0].severity, "CONTRAINDICATED", "{a} + {b}");
+            assert_eq!(report.interactions[0].source, "ONChigh");
+        };
+
+        // Ergotaminico + inhibidor fuerte CYP3A4 (ergotismo).
+        contraindicated("ergotamine", "clarithromycin");
+        // Tizanidina + inhibidor CYP1A2 (hipotension/sedacion).
+        contraindicated("tizanidine", "ciprofloxacin");
+        // Antidepresivo triciclico + IMAO (crisis hipertensiva).
+        contraindicated("amitriptyline", "tranylcypromine");
+
+        // Triptan + IMAO (sindrome serotoninergico): MAJOR.
+        let triptan = check_prescription(&conn, "enc-1", &meds(&["sumatriptan", "phenelzine"]), None).unwrap();
+        assert_eq!(triptan.interactions.len(), 1);
+        assert_eq!(triptan.interactions[0].severity, "MAJOR");
+        assert_eq!(triptan.interactions[0].source, "ONChigh");
     }
 }
