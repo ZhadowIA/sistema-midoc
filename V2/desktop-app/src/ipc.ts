@@ -1303,7 +1303,9 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
           ? `Resumen longitudinal (borrador):\nCon base en el expediente disponible:\n${context}\n\n(Revisar fidelidad antes de compartir.)`
           : usageType === "PATIENT_INSTRUCTIONS"
             ? `Indicaciones para el paciente (borrador):\n- Sigue el plan acordado en consulta.\n- Acude a tu proxima cita.\n\n(Ajustar a lenguaje del paciente y confirmar.)`
-            : `Posibles brechas clinicas a revisar (borrador):\n- Verifica antecedentes y alergias.\n- Confirma seguimiento de diagnosticos previos.\n\n(Estas son sugerencias; el criterio es del medico.)`;
+            : usageType === "DENTAL_EVOLUTION"
+              ? `Nota de evolucion dental (borrador):\nSesion documentada a partir de lo capturado en el odontograma y el plan.\nContexto considerado:\n${context}\nPlantilla dental capturada (JSON): ${JSON.stringify(mockState.encounter.notes[mockState.encounter.notes.length - 1]?.specialty ?? null)}\n\n(Revisar hallazgos, procedimientos y materiales antes de firmar.)`
+              : `Posibles brechas clinicas a revisar (borrador):\n- Verifica antecedentes y alergias.\n- Confirma seguimiento de diagnosticos previos.\n\n(Estas son sugerencias; el criterio es del medico.)`;
       return {
         run_id: textRunId,
         usage_type: usageType,
