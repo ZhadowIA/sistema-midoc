@@ -95,6 +95,8 @@ export interface TreatmentPlanItem {
 export interface DentalPayload {
   odontogram: Record<string, DentalToothRecord>;
   periodontogram: Record<string, PeriodontogramRecord>;
+  /** Indice de placa (O'Leary): caras M/D/V/L con placa por pieza (paso 26). */
+  plaque: Record<string, ToothFace[]>;
   mouthConditions: MouthConditionEntry[];
   treatmentPlan: TreatmentPlanItem[];
   hygienePlan: string;
@@ -104,6 +106,7 @@ export interface DentalPayload {
 export const EMPTY_DENTAL_PAYLOAD: DentalPayload = {
   odontogram: {},
   periodontogram: {},
+  plaque: {},
   mouthConditions: [],
   treatmentPlan: [],
   hygienePlan: "",
@@ -213,6 +216,8 @@ export function coerceDentalPayload(value: unknown): DentalPayload {
   const source = isRecord(value) ? value : {};
   const odontogramSource = isRecord(source.odontogram) ? source.odontogram : {};
   const periodontogramSource = isRecord(source.periodontogram) ? source.periodontogram : {};
+  // Retrocompatible: payloads previos a la seccion de placa validan igual.
+  const plaqueSource = isRecord(source.plaque) ? source.plaque : {};
   const mouthConditionsSource = Array.isArray(source.mouthConditions) ? source.mouthConditions : [];
   const treatmentPlanSource = Array.isArray(source.treatmentPlan) ? source.treatmentPlan : [];
 
@@ -251,9 +256,29 @@ export function coerceDentalPayload(value: unknown): DentalPayload {
     })
   );
 
+  // El O'Leary clasico registra placa en 4 caras (M, D, V, L); la oclusal no
+  // participa. Se filtra cualquier otra cosa y se deduplica.
+  const plaque = Object.fromEntries(
+    Object.entries(plaqueSource)
+      .map(([toothId, faces]) => {
+        const list = Array.isArray(faces) ? faces : [];
+        const valid = [
+          ...new Set(
+            list.filter(
+              (face): face is ToothFace =>
+                face === "M" || face === "D" || face === "V" || face === "L"
+            )
+          )
+        ];
+        return [toothId, valid] as const;
+      })
+      .filter(([, faces]) => faces.length > 0)
+  );
+
   return {
     odontogram,
     periodontogram,
+    plaque,
     mouthConditions: mouthConditionsSource.map((entry, index) => {
       const item = isRecord(entry) ? entry : {};
       return {

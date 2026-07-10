@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DentalNoteEditor } from "./DentalNoteEditor";
+import { DentalBudgetPanel } from "./DentalBudgetPanel";
+import { DentalLabPanel } from "./DentalLabPanel";
 import {
   coerceClinicalProfile,
   coerceDentalPayload,
@@ -1411,11 +1413,28 @@ export function Atencion({
             </p>
           </div>
           {resolvedProfile === "ODONTOLOGY" ? (
-            <DentalNoteEditor
-              payload={coerceDentalPayload(note.specialty)}
-              disabled={busy || signed}
-              onChange={(specialty) => setNote((current) => ({ ...current, specialty }))}
-            />
+            <>
+              <DentalNoteEditor
+                patientId={patientId}
+                encounterId={encounterId}
+                payload={coerceDentalPayload(note.specialty)}
+                disabled={busy || signed}
+                onChange={(specialty) => setNote((current) => ({ ...current, specialty }))}
+              />
+              {/* Operativo, no clinico: el presupuesto se decide y se abona
+                  aun con la nota firmada. */}
+              <DentalBudgetPanel
+                patientId={patientId}
+                encounterId={detail.encounter.id}
+                treatmentPlan={coerceDentalPayload(note.specialty).treatmentPlan}
+                disabled={busy}
+              />
+              <DentalLabPanel
+                patientId={patientId}
+                encounterId={detail.encounter.id}
+                disabled={busy}
+              />
+            </>
           ) : (
             <div className="soap-field-grid">
               {GENERAL_MEDICINE_FIELDS.map(({ key, label, rows }, index) => (

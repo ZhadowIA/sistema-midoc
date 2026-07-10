@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import {
+  isLabOrderOverdue,
+  LAB_STATUS_LABELS,
+  type PendingLabOrder
+} from "./dentalLab.ts";
 import { call } from "./ipc";
 import {
   PatientResolution,
@@ -152,19 +157,23 @@ export function Recepcion({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [resolution, setResolution] = useState<PendingResolution | null>(null);
+  const [labPending, setLabPending] = useState<PendingLabOrder[]>([]);
+  const today = new Date().toISOString().slice(0, 10);
 
   const refresh = useCallback(async () => {
     try {
-      const [visitRows, resourceRows, appts, openSession] = await Promise.all([
+      const [visitRows, resourceRows, appts, openSession, pendingLab] = await Promise.all([
         call<Visit[]>("list_active_visits"),
         call<Resource[]>("list_resources"),
         call<AppointmentRow[]>("list_appointments"),
-        call<CashSession | null>("get_open_cash_session")
+        call<CashSession | null>("get_open_cash_session"),
+        call<PendingLabOrder[]>("dental_pending_lab_orders")
       ]);
       setVisits(visitRows);
       setResources(resourceRows);
       setAppointments(appts);
       setSession(openSession);
+      setLabPending(pendingLab);
       if (openSession) {
         const [cashSummary, sessionPayments] = await Promise.all([
           call<CashSummary>("cash_summary", { sessionId: openSession.id }),
@@ -360,6 +369,43 @@ export function Recepcion({
           run(() => call("register_payment", { payment }), "Cobro registrado.")
         }
       />
+
+      {labPending.length > 0 ? (
+        <section className="panel">
+          <div className="panel-header">
+            <h2>Laboratorio: pendientes por recibir</h2>
+            <p>Trabajos fuera del consultorio, los mas proximos a su fecha prometida primero.</p>
+          </div>
+          <div className="stack">
+            {labPending.map((order) => {
+              const overdue = isLabOrderOverdue(order, today);
+              return (
+                <article
+                  className={`list-row lab-pending-row${overdue ? " lab-order-overdue" : ""}`}
+                  key={order.id}
+                >
+                  <div>
+                    <strong>{order.work_type}</strong>
+                    <span className="meta">
+                      {" "}
+                      · {order.patient_name} · pieza {order.tooth_id} · {order.lab_name}
+                    </span>
+                  </div>
+                  <div className="lab-pending-status">
+                    <span className={`budget-status lab-status-${order.status.toLowerCase()}`}>
+                      {LAB_STATUS_LABELS[order.status] ?? order.status}
+                    </span>
+                    {order.promised_at ? (
+                      <span className="meta">promete {order.promised_at.slice(0, 10)}</span>
+                    ) : null}
+                    {overdue ? <span className="lab-overdue-chip">Vencida</span> : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
       </div>
     </div>
   );

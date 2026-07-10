@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   createEmptyMouthCondition,
   createEmptyTreatmentPlanItem,
@@ -14,6 +15,9 @@ import {
   SURFACE_STATUS_OPTIONS
 } from "./clinicalProfiles";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
+import { OdontogramChart } from "./OdontogramChart";
+import { DentalDictationPanel } from "./DentalDictationPanel";
+import { PlaqueIndexPanel } from "./PlaqueIndexPanel";
 
 const UPPER_TEETH = DENTAL_TOOTH_IDS.slice(0, 16);
 const LOWER_TEETH = DENTAL_TOOTH_IDS.slice(16);
@@ -267,15 +271,20 @@ function PeriodontogramArch({
 }
 
 export function DentalNoteEditor({
+  patientId,
+  encounterId,
   payload,
   disabled,
   onChange
 }: {
+  patientId: string;
+  encounterId: string;
   payload: DentalPayload;
   disabled: boolean;
   onChange: (next: DentalPayload) => void;
 }) {
   const today = new Date().toISOString().slice(0, 10);
+  const [selectedTooth, setSelectedTooth] = useState<string | null>(null);
 
   function addCondition() {
     onChange({
@@ -298,36 +307,55 @@ export function DentalNoteEditor({
           <h3>Odontograma</h3>
           <p>Hallazgos por pieza y superficie para una consulta dental completa.</p>
         </div>
-        <div className="odontogram-arches">
-          <div className="stack">
-            <h4>Arcada superior</h4>
-            <div className="tooth-grid">
-              {UPPER_TEETH.map((toothId) => (
-                <ToothCard
-                  key={toothId}
-                  toothId={toothId}
-                  payload={payload}
-                  disabled={disabled}
-                  onChange={onChange}
-                />
-              ))}
+        <DentalDictationPanel
+          patientId={patientId}
+          encounterId={encounterId}
+          payload={payload}
+          disabled={disabled}
+          onChange={onChange}
+        />
+        <OdontogramChart
+          payload={payload}
+          disabled={disabled}
+          selectedTooth={selectedTooth}
+          onSelectTooth={(toothId: string) =>
+            setSelectedTooth((current) => (current === toothId ? null : toothId))
+          }
+          onChange={onChange}
+        />
+        {selectedTooth ? (
+          <div className="odontogram-detail">
+            <ToothCard
+              toothId={selectedTooth}
+              payload={payload}
+              disabled={disabled}
+              onChange={onChange}
+            />
+            <div className="button-row">
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setSelectedTooth(null)}
+              >
+                Cerrar detalle
+              </button>
             </div>
           </div>
-          <div className="stack">
-            <h4>Arcada inferior</h4>
-            <div className="tooth-grid">
-              {LOWER_TEETH.map((toothId) => (
-                <ToothCard
-                  key={toothId}
-                  toothId={toothId}
-                  payload={payload}
-                  disabled={disabled}
-                  onChange={onChange}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
+        ) : (
+          <p className="odontogram-empty-hint">
+            Selecciona una pieza del odontograma para editar su detalle completo.
+          </p>
+        )}
+      </section>
+
+      <section className="dental-section">
+        <PlaqueIndexPanel
+          patientId={patientId}
+          encounterId={encounterId}
+          payload={payload}
+          disabled={disabled}
+          onChange={onChange}
+        />
       </section>
 
       <section className="dental-section">

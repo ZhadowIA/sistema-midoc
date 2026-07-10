@@ -475,6 +475,57 @@ const MIGRATIONS: &[&str] = &[
         source_version TEXT NOT NULL,
         PRIMARY KEY (class_a, class_b, class_c)
     );",
+    // Presupuestos dentales con saldos por avance (paso 26 rebanada 3). Clase
+    // OPERATIVO: el dinero vive aqui, no en el payload clinico. Los abonos se
+    // asientan en `payments` (caja del paso 10) via la columna nueva
+    // `budget_id`: una sola contabilidad, sin movimientos duplicados.
+    "CREATE TABLE dental_budgets (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        encounter_id TEXT,
+        label TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PROPOSED',
+        discount_cents INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
+        alternative_group TEXT,
+        created_at TEXT NOT NULL,
+        decided_at TEXT
+    );
+    CREATE INDEX idx_dental_budgets_patient ON dental_budgets (patient_id);
+    CREATE TABLE dental_budget_items (
+        id TEXT PRIMARY KEY NOT NULL,
+        budget_id TEXT NOT NULL REFERENCES dental_budgets (id),
+        tooth_id TEXT NOT NULL DEFAULT 'GENERAL',
+        procedure TEXT NOT NULL,
+        price_cents INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PLANNED',
+        completed_at TEXT
+    );
+    CREATE INDEX idx_dental_budget_items_budget ON dental_budget_items (budget_id);
+    ALTER TABLE payments ADD COLUMN budget_id TEXT REFERENCES dental_budgets (id);",
+    // Ordenes de laboratorio dental (paso 26 rebanada 4). Clase OPERATIVO:
+    // el seguimiento de trabajos externos (corona, protesis, guarda) vive
+    // local; el flujo es POR ENVIAR -> ENVIADA -> RECIBIDA -> ENTREGADA con
+    // cancelacion antes de entregar, y fechas selladas por transicion.
+    "CREATE TABLE dental_lab_orders (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        encounter_id TEXT,
+        tooth_id TEXT NOT NULL DEFAULT 'GENERAL',
+        work_type TEXT NOT NULL,
+        lab_name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        promised_at TEXT,
+        sent_at TEXT,
+        received_at TEXT,
+        delivered_at TEXT,
+        cost_cents INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_dental_lab_orders_patient ON dental_lab_orders (patient_id);
+    CREATE INDEX idx_dental_lab_orders_status ON dental_lab_orders (status);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
