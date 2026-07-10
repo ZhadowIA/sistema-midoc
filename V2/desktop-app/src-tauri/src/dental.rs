@@ -437,6 +437,215 @@ pub fn validate_budget_payment(
     Ok(())
 }
 
+/* ---------- Ordenes de laboratorio (rebanada 4) ---------- */
+
+/// Flujo de una orden: POR ENVIAR -> ENVIADA -> RECIBIDA -> ENTREGADA, con
+/// cancelacion permitida mientras no se entregue. Cada transicion sella su
+/// fecha; no hay retrocesos (una equivocacion se cancela y se rehace).
+const LAB_ORDER_STATUSES: &[&str] = &["PENDING", "SENT", "RECEIVED", "DELIVERED", "CANCELLED"];
+
+#[derive(Debug, Deserialize)]
+pub struct NewLabOrder {
+    pub patient_id: String,
+    pub encounter_id: Option<String>,
+    pub tooth_id: String,
+    pub work_type: String,
+    pub lab_name: String,
+    pub promised_at: Option<String>,
+    pub cost_cents: i64,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LabOrder {
+    pub id: String,
+    pub patient_id: String,
+    pub encounter_id: Option<String>,
+    pub tooth_id: String,
+    pub work_type: String,
+    pub lab_name: String,
+    pub status: String,
+    pub promised_at: Option<String>,
+    pub sent_at: Option<String>,
+    pub received_at: Option<String>,
+    pub delivered_at: Option<String>,
+    pub cost_cents: i64,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+/// Pendiente global (por enviar o enviada) con el nombre del paciente, para
+/// la vista de recepcion: que ningun trabajo se pierda entre sesiones.
+#[derive(Debug, Serialize)]
+pub struct PendingLabOrder {
+    #[serde(flatten)]
+    pub order: LabOrder,
+    pub patient_name: String,
+}
+
+const LAB_ORDER_COLUMNS: &str = "id, patient_id, encounter_id, tooth_id, work_type, lab_name,
+    status, promised_at, sent_at, received_at, delivered_at, cost_cents, notes, created_at";
+
+fn lab_order_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LabOrder> {
+    Ok(LabOrder {
+        id: row.get(0)?,
+        patient_id: row.get(1)?,
+        encounter_id: row.get(2)?,
+        tooth_id: row.get(3)?,
+        work_type: row.get(4)?,
+        lab_name: row.get(5)?,
+        status: row.get(6)?,
+        promised_at: row.get(7)?,
+        sent_at: row.get(8)?,
+        received_at: row.get(9)?,
+        delivered_at: row.get(10)?,
+        cost_cents: row.get(11)?,
+        notes: row.get(12)?,
+        created_at: row.get(13)?,
+    })
+}
+
+fn read_lab_order(conn: &Connection, order_id: &str) -> Result<LabOrder, DentalError> {
+    conn.query_row(
+        &format!("SELECT {LAB_ORDER_COLUMNS} FROM dental_lab_orders WHERE id = ?1"),
+        params![order_id],
+        lab_order_from_row,
+    )
+    .optional()?
+    .ok_or(DentalError::NotFound)
+}
+
+pub fn create_lab_order(conn: &Connection, input: &NewLabOrder) -> Result<LabOrder, DentalError> {
+    if input.work_type.trim().is_empty() {
+        return Err(DentalError::Invalid("la orden necesita el tipo de trabajo".into()));
+    }
+    if input.lab_name.trim().is_empty() {
+        return Err(DentalError::Invalid("la orden necesita el laboratorio destino".into()));
+    }
+    if input.cost_cents < 0 {
+        return Err(DentalError::Invalid("el costo no puede ser negativo".into()));
+    }
+    let patient_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM patients WHERE id = ?1",
+            params![input.patient_id],
+            |_| Ok(true),
+        )
+        .optional()?
+        .unwrap_or(false);
+    if !patient_exists {
+        return Err(DentalError::Invalid("paciente no encontrado".into()));
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let timestamp = now();
+    let tooth = input.tooth_id.trim();
+    conn.execute(
+        "INSERT INTO dental_lab_orders
+            (id, patient_id, encounter_id, tooth_id, work_type, lab_name, status,
+             promised_at, cost_cents, notes, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'PENDING', ?7, ?8, ?9, ?10, ?10)",
+        params![
+            id,
+            input.patient_id,
+            input.encounter_id,
+            if tooth.is_empty() { "GENERAL" } else { tooth },
+            input.work_type.trim(),
+            input.lab_name.trim(),
+            input.promised_at,
+            input.cost_cents,
+            input.notes,
+            timestamp
+        ],
+    )?;
+    audit(conn, &id, "lab_order_created", Some(input.lab_name.trim()))?;
+    read_lab_order(conn, &id)
+}
+
+pub fn set_lab_order_status(
+    conn: &Connection,
+    order_id: &str,
+    status: &str,
+) -> Result<LabOrder, DentalError> {
+    let status = status.trim().to_uppercase();
+    if !LAB_ORDER_STATUSES.contains(&status.as_str()) {
+        return Err(DentalError::Invalid("estado de orden invalido".into()));
+    }
+    let order = read_lab_order(conn, order_id)?;
+    let allowed = matches!(
+        (order.status.as_str(), status.as_str()),
+        ("PENDING", "SENT")
+            | ("SENT", "RECEIVED")
+            | ("RECEIVED", "DELIVERED")
+            | ("PENDING", "CANCELLED")
+            | ("SENT", "CANCELLED")
+            | ("RECEIVED", "CANCELLED")
+    );
+    if !allowed {
+        return Err(DentalError::Invalid(format!(
+            "una orden {} no puede pasar a {}",
+            order.status, status
+        )));
+    }
+    let timestamp = now();
+    let stamp_column = match status.as_str() {
+        "SENT" => Some("sent_at"),
+        "RECEIVED" => Some("received_at"),
+        "DELIVERED" => Some("delivered_at"),
+        _ => None,
+    };
+    match stamp_column {
+        Some(column) => conn.execute(
+            &format!(
+                "UPDATE dental_lab_orders SET status = ?1, {column} = ?2, updated_at = ?2
+                 WHERE id = ?3"
+            ),
+            params![status, timestamp, order_id],
+        )?,
+        None => conn.execute(
+            "UPDATE dental_lab_orders SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            params![status, timestamp, order_id],
+        )?,
+    };
+    audit(conn, order_id, "lab_order_status", Some(&status))?;
+    read_lab_order(conn, order_id)
+}
+
+pub fn list_patient_lab_orders(
+    conn: &Connection,
+    patient_id: &str,
+) -> Result<Vec<LabOrder>, DentalError> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT {LAB_ORDER_COLUMNS} FROM dental_lab_orders
+         WHERE patient_id = ?1 ORDER BY created_at DESC, rowid DESC"
+    ))?;
+    let rows = statement
+        .query_map(params![patient_id], lab_order_from_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Trabajos aun fuera del consultorio (por enviar o enviados), los mas
+/// proximos a su fecha prometida primero. Vista global de recepcion.
+pub fn list_pending_lab_orders(conn: &Connection) -> Result<Vec<PendingLabOrder>, DentalError> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT {LAB_ORDER_COLUMNS}, (SELECT TRIM(first_name || ' ' || last_name)
+                FROM patients WHERE id = patient_id) AS patient_name
+         FROM dental_lab_orders
+         WHERE status IN ('PENDING', 'SENT')
+         ORDER BY promised_at IS NULL, promised_at ASC, created_at ASC"
+    ))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(PendingLabOrder {
+                order: lab_order_from_row(row)?,
+                patient_name: row.get(14)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,6 +834,112 @@ mod tests {
 
         // Un presupuesto inexistente no recibe abonos.
         assert!(validate_budget_payment(&conn, "ghost", "PAYMENT", 1).is_err());
+    }
+
+    fn sample_lab_order(patient_id: &str) -> NewLabOrder {
+        NewLabOrder {
+            patient_id: patient_id.into(),
+            encounter_id: None,
+            tooth_id: "11".into(),
+            work_type: "Corona de zirconia".into(),
+            lab_name: "Lab ProDent".into(),
+            promised_at: Some("2026-07-20".into()),
+            cost_cents: 120_000,
+            notes: None,
+        }
+    }
+
+    #[test]
+    fn lab_order_validates_input_and_starts_pending() {
+        let conn = test_conn("lab-create");
+        seed_patient(&conn, "p1");
+
+        let mut no_work = sample_lab_order("p1");
+        no_work.work_type = " ".into();
+        assert!(create_lab_order(&conn, &no_work).is_err());
+
+        let mut no_lab = sample_lab_order("p1");
+        no_lab.lab_name = "".into();
+        assert!(create_lab_order(&conn, &no_lab).is_err());
+
+        let mut negative = sample_lab_order("p1");
+        negative.cost_cents = -1;
+        assert!(create_lab_order(&conn, &negative).is_err());
+
+        assert!(create_lab_order(&conn, &sample_lab_order("ghost")).is_err());
+
+        let mut blank_tooth = sample_lab_order("p1");
+        blank_tooth.tooth_id = "  ".into();
+        let order = create_lab_order(&conn, &blank_tooth).unwrap();
+        assert_eq!(order.status, "PENDING");
+        assert_eq!(order.tooth_id, "GENERAL");
+        assert_eq!(order.sent_at, None);
+    }
+
+    #[test]
+    fn lab_order_lifecycle_stamps_dates_and_blocks_bad_transitions() {
+        let conn = test_conn("lab-flow");
+        seed_patient(&conn, "p1");
+        let order = create_lab_order(&conn, &sample_lab_order("p1")).unwrap();
+
+        // No se puede recibir sin enviar ni entregar sin recibir.
+        assert!(set_lab_order_status(&conn, &order.id, "RECEIVED").is_err());
+        assert!(set_lab_order_status(&conn, &order.id, "DELIVERED").is_err());
+
+        let sent = set_lab_order_status(&conn, &order.id, "SENT").unwrap();
+        assert!(sent.sent_at.is_some());
+        let received = set_lab_order_status(&conn, &order.id, "RECEIVED").unwrap();
+        assert!(received.received_at.is_some());
+        let delivered = set_lab_order_status(&conn, &order.id, "DELIVERED").unwrap();
+        assert!(delivered.delivered_at.is_some());
+
+        // Entregada es terminal (tampoco se cancela).
+        assert!(set_lab_order_status(&conn, &order.id, "SENT").is_err());
+        assert!(set_lab_order_status(&conn, &order.id, "CANCELLED").is_err());
+
+        // Cancelar vale antes de entregar; cancelada es terminal.
+        let other = create_lab_order(&conn, &sample_lab_order("p1")).unwrap();
+        let cancelled = set_lab_order_status(&conn, &other.id, "CANCELLED").unwrap();
+        assert_eq!(cancelled.status, "CANCELLED");
+        assert!(set_lab_order_status(&conn, &other.id, "SENT").is_err());
+
+        assert!(set_lab_order_status(&conn, "ghost", "SENT").is_err());
+        assert!(set_lab_order_status(&conn, &order.id, "INVALID").is_err());
+    }
+
+    #[test]
+    fn pending_lab_orders_lists_out_of_office_work_by_promised_date() {
+        let conn = test_conn("lab-pending");
+        seed_patient(&conn, "p1");
+
+        let mut later = sample_lab_order("p1");
+        later.promised_at = Some("2026-07-25".into());
+        let later = create_lab_order(&conn, &later).unwrap();
+
+        let mut sooner = sample_lab_order("p1");
+        sooner.promised_at = Some("2026-07-12".into());
+        let sooner = create_lab_order(&conn, &sooner).unwrap();
+        set_lab_order_status(&conn, &sooner.id, "SENT").unwrap();
+
+        let mut no_date = sample_lab_order("p1");
+        no_date.promised_at = None;
+        create_lab_order(&conn, &no_date).unwrap();
+
+        // Recibida y entregada ya no son pendientes.
+        let done = create_lab_order(&conn, &sample_lab_order("p1")).unwrap();
+        set_lab_order_status(&conn, &done.id, "SENT").unwrap();
+        set_lab_order_status(&conn, &done.id, "RECEIVED").unwrap();
+
+        let pending = list_pending_lab_orders(&conn).unwrap();
+        assert_eq!(pending.len(), 3);
+        // Fecha prometida mas proxima primero; sin fecha al final.
+        assert_eq!(pending[0].order.id, sooner.id);
+        assert_eq!(pending[1].order.id, later.id);
+        assert_eq!(pending[2].order.promised_at, None);
+        assert_eq!(pending[0].patient_name, "Hugo Paz");
+
+        assert_eq!(list_patient_lab_orders(&conn, "p1").unwrap().len(), 4);
+        assert!(list_patient_lab_orders(&conn, "ghost").unwrap().is_empty());
     }
 
     #[test]

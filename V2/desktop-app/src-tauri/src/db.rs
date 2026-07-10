@@ -503,6 +503,29 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_dental_budget_items_budget ON dental_budget_items (budget_id);
     ALTER TABLE payments ADD COLUMN budget_id TEXT REFERENCES dental_budgets (id);",
+    // Ordenes de laboratorio dental (paso 26 rebanada 4). Clase OPERATIVO:
+    // el seguimiento de trabajos externos (corona, protesis, guarda) vive
+    // local; el flujo es POR ENVIAR -> ENVIADA -> RECIBIDA -> ENTREGADA con
+    // cancelacion antes de entregar, y fechas selladas por transicion.
+    "CREATE TABLE dental_lab_orders (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        encounter_id TEXT,
+        tooth_id TEXT NOT NULL DEFAULT 'GENERAL',
+        work_type TEXT NOT NULL,
+        lab_name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        promised_at TEXT,
+        sent_at TEXT,
+        received_at TEXT,
+        delivered_at TEXT,
+        cost_cents INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_dental_lab_orders_patient ON dental_lab_orders (patient_id);
+    CREATE INDEX idx_dental_lab_orders_status ON dental_lab_orders (status);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

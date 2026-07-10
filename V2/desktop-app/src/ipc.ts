@@ -353,7 +353,34 @@ const ops = {
     }>;
   }>,
   budgetLedger: [] as Array<{ budget_id: string; amount_cents: number; kind: string }>,
-  budgetSeq: 0
+  budgetSeq: 0,
+  // Ordenes de laboratorio dental (paso 26 rebanada 4).
+  labOrders: [] as Array<{
+    id: string;
+    patient_id: string;
+    encounter_id: string | null;
+    tooth_id: string;
+    work_type: string;
+    lab_name: string;
+    status: string;
+    promised_at: string | null;
+    sent_at: string | null;
+    received_at: string | null;
+    delivered_at: string | null;
+    cost_cents: number;
+    notes: string | null;
+    created_at: string;
+  }>,
+  labSeq: 0
+};
+
+// Espejo de las transiciones validas del motor (dental.rs).
+const LAB_TRANSITIONS: Record<string, string[]> = {
+  PENDING: ["SENT", "CANCELLED"],
+  SENT: ["RECEIVED", "CANCELLED"],
+  RECEIVED: ["DELIVERED", "CANCELLED"],
+  DELIVERED: [],
+  CANCELLED: []
 };
 
 function budgetPaidCents(budgetId: string): number {
@@ -707,6 +734,63 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return ops.dentalBudgets
         .filter((budget) => budget.patient_id === patientId)
         .map(budgetWithTotals) as T;
+    }
+    case "dental_create_lab_order": {
+      const input = args?.order as {
+        patient_id: string;
+        encounter_id: string | null;
+        tooth_id: string;
+        work_type: string;
+        lab_name: string;
+        promised_at: string | null;
+        cost_cents: number;
+        notes: string | null;
+      };
+      if (!input.work_type.trim()) throw "la orden necesita el tipo de trabajo";
+      if (!input.lab_name.trim()) throw "la orden necesita el laboratorio destino";
+      if (input.cost_cents < 0) throw "el costo no puede ser negativo";
+      ops.labSeq += 1;
+      const order = {
+        id: `lab-${ops.labSeq}`,
+        patient_id: input.patient_id,
+        encounter_id: input.encounter_id,
+        tooth_id: input.tooth_id.trim() || "GENERAL",
+        work_type: input.work_type.trim(),
+        lab_name: input.lab_name.trim(),
+        status: "PENDING",
+        promised_at: input.promised_at,
+        sent_at: null as string | null,
+        received_at: null as string | null,
+        delivered_at: null as string | null,
+        cost_cents: input.cost_cents,
+        notes: input.notes,
+        created_at: new Date().toISOString()
+      };
+      ops.labOrders.unshift(order);
+      return order as T;
+    }
+    case "dental_set_lab_order_status": {
+      const order = ops.labOrders.find((entry) => entry.id === String(args?.orderId));
+      if (!order) throw "orden no encontrada";
+      const status = String(args?.status).toUpperCase();
+      if (!(LAB_TRANSITIONS[order.status] ?? []).includes(status)) {
+        throw `una orden ${order.status} no puede pasar a ${status}`;
+      }
+      order.status = status;
+      const stamp = new Date().toISOString();
+      if (status === "SENT") order.sent_at = stamp;
+      if (status === "RECEIVED") order.received_at = stamp;
+      if (status === "DELIVERED") order.delivered_at = stamp;
+      return order as T;
+    }
+    case "dental_list_lab_orders":
+      return ops.labOrders.filter((order) => order.patient_id === String(args?.patientId)) as T;
+    case "dental_pending_lab_orders": {
+      const name = `${mockState.encounter.patient.first_name} ${mockState.encounter.patient.last_name}`.trim();
+      return ops.labOrders
+        .filter((order) => order.status === "PENDING" || order.status === "SENT")
+        .map((order) => ({ ...order, patient_name: name }))
+        .sort((a, b) => (a.promised_at ?? "9999") < (b.promised_at ?? "9999") ? -1 : 1) as T;
     }
     case "dental_specialty_history": {
       const enc = mockState.encounter;

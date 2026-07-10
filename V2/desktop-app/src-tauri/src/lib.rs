@@ -1246,6 +1246,42 @@ fn dental_specialty_history(
     with_dental(&state, |conn| dental::specialty_history(conn, &patient_id))
 }
 
+#[tauri::command]
+fn dental_create_lab_order(
+    state: tauri::State<'_, AppDb>,
+    order: dental::NewLabOrder,
+) -> Result<dental::LabOrder, String> {
+    with_dental(&state, |conn| dental::create_lab_order(conn, &order))
+}
+
+#[tauri::command]
+fn dental_set_lab_order_status(
+    state: tauri::State<'_, AppDb>,
+    order_id: String,
+    status: String,
+) -> Result<dental::LabOrder, String> {
+    with_dental(&state, |conn| {
+        dental::set_lab_order_status(conn, &order_id, &status)
+    })
+}
+
+#[tauri::command]
+fn dental_list_lab_orders(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<Vec<dental::LabOrder>, String> {
+    with_dental(&state, |conn| {
+        dental::list_patient_lab_orders(conn, &patient_id)
+    })
+}
+
+#[tauri::command]
+fn dental_pending_lab_orders(
+    state: tauri::State<'_, AppDb>,
+) -> Result<Vec<dental::PendingLabOrder>, String> {
+    with_dental(&state, dental::list_pending_lab_orders)
+}
+
 /* ---------- IA clinica gobernada (paso 11) ---------- */
 
 fn with_ai<T>(
@@ -2398,6 +2434,10 @@ pub fn run() {
             dental_list_budgets,
             dental_patient_balance,
             dental_specialty_history,
+            dental_create_lab_order,
+            dental_set_lab_order_status,
+            dental_list_lab_orders,
+            dental_pending_lab_orders,
             ai_consent_status,
             ai_grant_consent,
             ai_revoke_consent,

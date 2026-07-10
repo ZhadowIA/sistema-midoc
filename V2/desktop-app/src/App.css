@@ -2467,6 +2467,75 @@ body.dictating .encounter-modes:focus-within {
   padding-top: 16px;
 }
 
+.dental-lab-panel {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.lab-order-card.lab-order-overdue,
+.lab-pending-row.lab-order-overdue {
+  border-color: var(--danger);
+}
+
+.lab-overdue-chip {
+  font-size: 0.76rem;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: oklch(1 0 0);
+}
+
+.lab-status-pending {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border-color: transparent;
+}
+
+.lab-status-sent {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: transparent;
+}
+
+.lab-status-received {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+}
+
+.lab-status-delivered {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: transparent;
+}
+
+.lab-status-cancelled {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: transparent;
+}
+
+.lab-order-meta,
+.lab-order-notes {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.lab-pending-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lab-pending-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .plaque-panel {
   display: grid;
   gap: 12px;
