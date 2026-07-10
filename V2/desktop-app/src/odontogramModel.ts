@@ -83,6 +83,44 @@ export function surfaceSlots(toothId: string): Record<ToothFace, SurfaceSlot> {
   };
 }
 
+// Tipo anatomico de la pieza por su digito de posicion FDI (rebanada 6):
+// define la silueta del glifo. En denticion temporal las posiciones 4 y 5
+// son molares (no existen premolares temporales).
+export type ToothType = "INCISOR" | "CANINE" | "PREMOLAR" | "MOLAR";
+
+export function toothType(toothId: string): ToothType {
+  const position = Number(toothId[1] ?? 0);
+  const primary = PRIMARY_ID_SET.has(toothId);
+  if (position <= 2) {
+    return "INCISOR";
+  }
+  if (position === 3) {
+    return "CANINE";
+  }
+  if (primary) {
+    return "MOLAR";
+  }
+  return position <= 5 ? "PREMOLAR" : "MOLAR";
+}
+
+// Curvatura de arcada (rebanada 6): desplazamiento vertical en px por
+// posicion, maximo al centro (linea media) y cero en los extremos, de modo
+// que las filas se curvan una hacia la otra como en la boca. Superior baja,
+// inferior sube.
+export function archCurveOffset(
+  index: number,
+  count: number,
+  arch: "UPPER" | "LOWER",
+  maxOffset = 6
+): number {
+  if (count <= 1) {
+    return 0;
+  }
+  const t = (index - (count - 1) / 2) / ((count - 1) / 2);
+  const magnitude = Math.round(maxOffset * (1 - t * t));
+  return arch === "UPPER" ? magnitude : -magnitude;
+}
+
 // Ciclo rapido al hacer clic en una superficie, en el orden del catalogo:
 // Sano -> Caries -> Restaurado -> Sellador -> Fractura -> Sano.
 export function cycleSurfaceStatus(current: SurfaceStatus | undefined): SurfaceStatus {

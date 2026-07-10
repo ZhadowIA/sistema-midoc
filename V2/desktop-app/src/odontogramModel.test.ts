@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  archCurveOffset,
   archRowsForDentition,
   cycleSurfaceStatus,
   describeTooth,
@@ -11,7 +12,8 @@ import {
   surfaceSlots,
   surfaceStatusClass,
   toothMarker,
-  toothStatusClass
+  toothStatusClass,
+  toothType
 } from "./odontogramModel.ts";
 import {
   DENTAL_TOOTH_IDS,
@@ -157,6 +159,36 @@ test("inferDentition sugiere la vista segun las piezas con hallazgos", () => {
   );
   // Registros sin hallazgos no cambian la sugerencia.
   assert.equal(inferDentition({ "55": record({}) }), "PERMANENT");
+});
+
+test("toothType clasifica por posicion FDI, con molares temporales en 4 y 5", () => {
+  // Permanentes: 1-2 incisivos, 3 canino, 4-5 premolares, 6-8 molares.
+  assert.equal(toothType("11"), "INCISOR");
+  assert.equal(toothType("22"), "INCISOR");
+  assert.equal(toothType("33"), "CANINE");
+  assert.equal(toothType("44"), "PREMOLAR");
+  assert.equal(toothType("25"), "PREMOLAR");
+  assert.equal(toothType("16"), "MOLAR");
+  assert.equal(toothType("48"), "MOLAR");
+  // Temporales: no hay premolares; 4 y 5 son molares.
+  assert.equal(toothType("51"), "INCISOR");
+  assert.equal(toothType("63"), "CANINE");
+  assert.equal(toothType("54"), "MOLAR");
+  assert.equal(toothType("85"), "MOLAR");
+});
+
+test("archCurveOffset curva las arcadas una hacia la otra", () => {
+  const count = 16;
+  // Extremos sin desplazamiento, centro con el maximo.
+  assert.equal(archCurveOffset(0, count, "UPPER"), 0);
+  assert.equal(archCurveOffset(count - 1, count, "UPPER"), 0);
+  const centerUpper = archCurveOffset(7, count, "UPPER");
+  assert.ok(centerUpper >= 5, `centro superior ${centerUpper}`);
+  // Superior baja (positivo), inferior sube (negativo), simetrico.
+  assert.equal(archCurveOffset(7, count, "LOWER"), -centerUpper);
+  assert.equal(archCurveOffset(3, count, "UPPER"), archCurveOffset(12, count, "UPPER"));
+  // Una sola pieza no se desplaza.
+  assert.equal(archCurveOffset(0, 1, "UPPER"), 0);
 });
 
 test("describeTooth resume estado y superficies en espanol", () => {

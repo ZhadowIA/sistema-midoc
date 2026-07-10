@@ -7,26 +7,62 @@ import {
   type ToothFace
 } from "./clinicalProfiles.ts";
 import {
+  archCurveOffset,
   archRowsForDentition,
   cycleSurfaceStatus,
   DENTITION_OPTIONS,
   describeTooth,
   hasFindings,
   inferDentition,
+  isUpperTooth,
   surfaceSlots,
   surfaceStatusClass,
   toothMarker,
   toothStatusClass,
+  toothType,
   type Dentition,
-  type SurfaceSlot
+  type SurfaceSlot,
+  type ToothType
 } from "./odontogramModel.ts";
 
+// Las 5 zonas clicables viven en el espacio 40x40 de la corona (igual que la
+// rebanada 1); la silueta anatomica solo las recorta. La interaccion y el
+// payload no cambian.
 const SLOT_POINTS: Record<SurfaceSlot, string> = {
   top: "1,1 39,1 29,11 11,11",
   right: "39,1 39,39 29,29 29,11",
   bottom: "1,39 11,29 29,29 39,39",
   left: "1,1 11,11 11,29 1,39",
   center: "11,11 29,11 29,29 11,29"
+};
+
+// Corona vista desde oclusal/incisal, por tipo de pieza (rebanada 6):
+// molar cuadrado lobulado, premolar ovalo vestibulo-lingual, canino punta
+// redondeada, incisivo banda mesio-distal delgada.
+const CROWN_PATHS: Record<ToothType, string> = {
+  MOLAR:
+    "M20 3 C30 3 36 7 37 15 C37.7 18.3 37.7 21.7 37 25 C36 33 30 37 20 37 C10 37 4 33 3 25 C2.3 21.7 2.3 18.3 3 15 C4 7 10 3 20 3 Z",
+  PREMOLAR:
+    "M20 4 C28 4 32.5 10 32.5 20 C32.5 30 28 36 20 36 C12 36 7.5 30 7.5 20 C7.5 10 12 4 20 4 Z",
+  CANINE:
+    "M20 3 C28 7 33.5 13 33.5 20 C33.5 27 28 33 20 37 C12 33 6.5 27 6.5 20 C6.5 13 12 7 20 3 Z",
+  INCISOR:
+    "M20 10 C29 10 35 14 35 20 C35 26 29 30 20 30 C11 30 5 26 5 20 C5 14 11 10 20 10 Z"
+};
+
+// Fisuras/cresta de la cara oclusal, decorativas (sin eventos).
+const GROOVE_PATHS: Record<ToothType, string> = {
+  MOLAR: "M13.5 13.5 C17 17 17 23 13.5 26.5 M26.5 13.5 C23 17 23 23 26.5 26.5 M15.5 20 H24.5",
+  PREMOLAR: "M14 20 H26",
+  CANINE: "M20 15.5 V24.5",
+  INCISOR: "M10 20 H30"
+};
+
+// Raices sugeridas (zona de 40x16, apice arriba; se espeja en inferiores).
+const ROOT_PATHS: Record<"SINGLE" | "DOUBLE", string> = {
+  SINGLE: "M13.5 16 C13.5 6 16.5 1.5 20 1.5 C23.5 1.5 26.5 6 26.5 16 Z",
+  DOUBLE:
+    "M8 16 C8 7 10 2 13 2 C16 2 17.5 8 17.5 16 Z M22.5 16 C22.5 8 24 2 27 2 C30 2 32 7 32 16 Z"
 };
 
 function ToothMarkerOverlay({ marker }: { marker: ReturnType<typeof toothMarker> }) {
@@ -117,6 +153,10 @@ function ToothGlyph({
     classes.push("has-findings");
   }
 
+  const upper = isUpperTooth(toothId);
+  const type = toothType(toothId);
+  const clipId = `crown-clip-${toothId}`;
+
   return (
     <button
       type="button"
@@ -127,21 +167,40 @@ function ToothGlyph({
       onClick={() => onSelect(toothId)}
     >
       <span className="tooth-number">{toothId}</span>
-      <svg className={`tooth-glyph ${toothStatusClass(tooth.status)}`} viewBox="0 0 40 40">
-        {TOOTH_FACES.map((face) => (
-          <polygon
-            key={face}
-            points={SLOT_POINTS[slots[face]]}
-            className={surfaceStatusClass(tooth.surfaces[face])}
-            onClick={(event) => {
-              event.stopPropagation();
-              cycleSurface(face);
-            }}
-          >
-            <title>{`${toothId} ${face}`}</title>
-          </polygon>
-        ))}
-        <ToothMarkerOverlay marker={marker} />
+      <svg className={`tooth-glyph ${toothStatusClass(tooth.status)}`} viewBox="0 0 40 54">
+        <defs>
+          <clipPath id={clipId}>
+            <path d={CROWN_PATHS[type]} />
+          </clipPath>
+        </defs>
+        {/* Raiz hacia afuera de la boca: arriba en superiores, abajo en
+            inferiores (espejada). */}
+        <g
+          className="tooth-root"
+          transform={upper ? undefined : "translate(0,54) scale(1,-1)"}
+        >
+          <path d={ROOT_PATHS[type === "MOLAR" ? "DOUBLE" : "SINGLE"]} />
+        </g>
+        <g transform={upper ? "translate(0,14)" : undefined}>
+          <g clipPath={`url(#${clipId})`}>
+            {TOOTH_FACES.map((face) => (
+              <polygon
+                key={face}
+                points={SLOT_POINTS[slots[face]]}
+                className={surfaceStatusClass(tooth.surfaces[face])}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  cycleSurface(face);
+                }}
+              >
+                <title>{`${toothId} ${face}`}</title>
+              </polygon>
+            ))}
+          </g>
+          <path className="tooth-crown-outline" d={CROWN_PATHS[type]} />
+          <path className="tooth-groove" d={GROOVE_PATHS[type]} />
+          <ToothMarkerOverlay marker={marker} />
+        </g>
       </svg>
     </button>
   );
@@ -194,14 +253,21 @@ export function OdontogramChart({
                 {row.teeth.map((toothId, index) => (
                   <span className="odontogram-slot" key={toothId}>
                     {index === midline ? <span className="odontogram-midline" aria-hidden /> : null}
-                    <ToothGlyph
-                      toothId={toothId}
-                      payload={payload}
-                      disabled={disabled}
-                      selected={selectedTooth === toothId}
-                      onSelect={onSelectTooth}
-                      onChange={onChange}
-                    />
+                    <span
+                      className="odontogram-curve"
+                      style={{
+                        transform: `translateY(${archCurveOffset(index, row.teeth.length, row.arch)}px)`
+                      }}
+                    >
+                      <ToothGlyph
+                        toothId={toothId}
+                        payload={payload}
+                        disabled={disabled}
+                        selected={selectedTooth === toothId}
+                        onSelect={onSelectTooth}
+                        onChange={onChange}
+                      />
+                    </span>
                   </span>
                 ))}
               </div>

@@ -2310,10 +2310,10 @@ body.dictating .encounter-modes:focus-within {
 
 .odontogram-rows {
   display: grid;
-  gap: 12px;
+  gap: 16px;
   justify-items: safe center;
   overflow-x: auto;
-  padding: 8px 4px;
+  padding: 12px 4px;
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
   background: linear-gradient(180deg, var(--bg), var(--surface));
@@ -2380,13 +2380,50 @@ body.dictating .encounter-modes:focus-within {
 
 .tooth-glyph {
   width: 32px;
-  height: 32px;
+  height: 43px;
   display: block;
 }
 
 .tooth-glyph polygon {
   stroke: var(--line);
   stroke-width: 1;
+}
+
+.odontogram-curve {
+  display: inline-flex;
+}
+
+.tooth-crown-outline {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.6;
+  pointer-events: none;
+}
+
+.tooth-groove {
+  fill: none;
+  stroke: var(--faint);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.tooth-root {
+  fill: var(--surface);
+  stroke: var(--line);
+  stroke-width: 1.2;
+  pointer-events: none;
+}
+
+.tooth-glyph.tooth-status-missing .tooth-root,
+.tooth-glyph.tooth-status-extraction-indicated .tooth-root,
+.tooth-glyph.tooth-status-missing .tooth-crown-outline,
+.tooth-glyph.tooth-status-extraction-indicated .tooth-crown-outline {
+  opacity: 0.35;
+}
+
+.tooth-glyph.tooth-status-implant .tooth-root {
+  stroke: var(--primary);
 }
 
 .tooth-glyph .surface-status-healthy,
