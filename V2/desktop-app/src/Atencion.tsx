@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DentalNoteEditor } from "./DentalNoteEditor";
 import { DentalBudgetPanel } from "./DentalBudgetPanel";
 import { DentalLabPanel } from "./DentalLabPanel";
+import { DentalEvolutionPanel, PostOpInstructionsPanel } from "./DentalNoteAids";
 import {
   coerceClinicalProfile,
   coerceDentalPayload,
@@ -1421,6 +1422,34 @@ export function Atencion({
                 disabled={busy || signed}
                 onChange={(specialty) => setNote((current) => ({ ...current, specialty }))}
               />
+              <section className="dental-note-aids">
+                <DentalEvolutionPanel
+                  patientId={patientId}
+                  encounterId={encounterId}
+                  payload={coerceDentalPayload(note.specialty)}
+                  disabled={busy || signed}
+                  onInsert={(text) =>
+                    setNote((current) => ({
+                      ...current,
+                      objective: current.objective.trim() === ""
+                        ? text
+                        : `${current.objective.trimEnd()}\n\n${text}`
+                    }))
+                  }
+                />
+                <PostOpInstructionsPanel
+                  treatmentPlan={coerceDentalPayload(note.specialty).treatmentPlan}
+                  disabled={busy || signed}
+                  onInsert={(text) =>
+                    setNote((current) => ({
+                      ...current,
+                      instructions: current.instructions.trim() === ""
+                        ? text
+                        : `${current.instructions.trimEnd()}\n\n${text}`
+                    }))
+                  }
+                />
+              </section>
               {/* Operativo, no clinico: el presupuesto se decide y se abona
                   aun con la nota firmada. */}
               <DentalBudgetPanel

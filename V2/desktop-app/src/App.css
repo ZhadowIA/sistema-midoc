@@ -2509,6 +2509,55 @@ body.dictating .encounter-modes:focus-within {
   padding-top: 16px;
 }
 
+.dental-note-aids {
+  display: grid;
+  gap: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.dental-note-aid {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 12px 14px;
+}
+
+.dental-aid-draft {
+  display: grid;
+  gap: 8px;
+}
+
+.dental-aid-meta {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.postop-kind-list {
+  display: grid;
+  gap: 4px;
+}
+
+.postop-suggested {
+  color: var(--accent);
+  font-style: normal;
+  font-size: 0.8rem;
+}
+
+.postop-preview {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  font-family: inherit;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
 .lab-order-card.lab-order-overdue,
 .lab-pending-row.lab-order-overdue {
   border-color: var(--danger);

@@ -53,17 +53,26 @@ pub const USAGE_SOAP_ASSIST: &str = "SOAP_ASSIST";
 pub const USAGE_SUMMARY: &str = "LONGITUDINAL_SUMMARY";
 pub const USAGE_INSTRUCTIONS: &str = "PATIENT_INSTRUCTIONS";
 pub const USAGE_GAPS: &str = "CLINICAL_GAPS";
+/// Nota de evolucion dental redactada desde lo capturado en la sesion
+/// (paso 26 rebanada 5b). Mismo carril gobernado que los demas textos.
+pub const USAGE_DENTAL_EVOLUTION: &str = "DENTAL_EVOLUTION";
 pub const USAGE_TRANSCRIPTION: &str = "TRANSCRIPTION";
 pub const USAGE_CONSULTATION_STRUCTURING: &str = "CONSULTATION_STRUCTURING";
 pub const USAGE_CLINICAL_AID: &str = "CLINICAL_AID";
 pub const AUDIO_RETENTION_DISCARD: &str = "discarded_after_transcription";
 
-const TEXT_USAGES: &[&str] = &[USAGE_SUMMARY, USAGE_INSTRUCTIONS, USAGE_GAPS];
+const TEXT_USAGES: &[&str] = &[
+    USAGE_SUMMARY,
+    USAGE_INSTRUCTIONS,
+    USAGE_GAPS,
+    USAGE_DENTAL_EVOLUTION,
+];
 
 const PROMPT_VERSION_SOAP: &str = "soap-assist/v1";
 const PROMPT_VERSION_SUMMARY: &str = "summary/v1";
 const PROMPT_VERSION_INSTRUCTIONS: &str = "instructions/v1";
 const PROMPT_VERSION_GAPS: &str = "gaps/v1";
+const PROMPT_VERSION_DENTAL_EVOLUTION: &str = "dental-evolution/v1";
 const PROMPT_VERSION_TRANSCRIPTION: &str = "transcription/v1";
 pub const PROMPT_VERSION_CONSULTATION_STRUCTURING: &str = "consultation-structuring/v1";
 pub const PROMPT_VERSION_CLINICAL_AID: &str = "clinical-aid/v2";
@@ -74,6 +83,7 @@ fn prompt_version_for(usage_type: &str) -> &'static str {
         USAGE_SUMMARY => PROMPT_VERSION_SUMMARY,
         USAGE_INSTRUCTIONS => PROMPT_VERSION_INSTRUCTIONS,
         USAGE_GAPS => PROMPT_VERSION_GAPS,
+        USAGE_DENTAL_EVOLUTION => PROMPT_VERSION_DENTAL_EVOLUTION,
         USAGE_CONSULTATION_STRUCTURING => PROMPT_VERSION_CONSULTATION_STRUCTURING,
         USAGE_CLINICAL_AID => PROMPT_VERSION_CLINICAL_AID,
         _ => PROMPT_VERSION_SOAP,
@@ -312,6 +322,9 @@ impl AiProvider for FakeProvider {
             ),
             USAGE_GAPS => format!(
                 "Posibles brechas clinicas a revisar (borrador):\n- Verifica antecedentes y alergias.\n- Confirma seguimiento de diagnosticos previos.\n- Contexto considerado:\n{context}\n\n(Estas son sugerencias; el criterio es del medico.)"
+            ),
+            USAGE_DENTAL_EVOLUTION => format!(
+                "Nota de evolucion dental (borrador):\nSesion documentada a partir de lo capturado en el odontograma y el plan.\nContexto considerado:\n{context}\n\n(Revisar hallazgos, procedimientos y materiales antes de firmar.)"
             ),
             USAGE_CONSULTATION_STRUCTURING => fake_structuring_output(context)?,
             USAGE_CLINICAL_AID => fake_clinical_aid_output(context)?,
@@ -1689,7 +1702,20 @@ fn run_assist(
     // Control de costo: no se ejecuta IA si el mes ya alcanzo su presupuesto.
     ensure_within_budget(conn)?;
 
-    let context = build_context(&detail);
+    let mut context = build_context(&detail);
+    // La nota de evolucion dental se redacta desde lo capturado en la sesion:
+    // el payload de especialidad (odontograma, plan, placa) entra al contexto
+    // solo para este uso, ya seudonimizado como el resto.
+    if usage_type == USAGE_DENTAL_EVOLUTION {
+        if let Some(note) = &detail.note {
+            if !note.content.specialty.is_null() {
+                context.push_str(&format!(
+                    "\nPlantilla dental capturada (JSON): {}",
+                    note.content.specialty
+                ));
+            }
+        }
+    }
     let redacted = redact(
         &context,
         &detail.patient.first_name,
@@ -3406,6 +3432,43 @@ mod tests {
 
         let runs = list_runs(&conn, &encounter_id).unwrap();
         assert_eq!(runs.len(), 1);
+    }
+
+    #[test]
+    fn dental_evolution_assist_includes_specialty_payload_in_context() {
+        let conn = test_conn("dental-evolution");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        let registry = ProviderRegistry::default_local();
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+
+        // Nota con payload dental capturado en la sesion.
+        let mut content = NoteContent::default();
+        content.specialty = serde_json::json!({
+            "odontogram": { "16": { "status": "MISSING", "surfaces": {}, "notes": "" } },
+            "plaque": { "17": ["M"] }
+        });
+        clinical::save_note(&conn, &encounter_id, &content).unwrap();
+
+        let draft = assist_text(&conn, &encounter_id, USAGE_DENTAL_EVOLUTION, &registry).unwrap();
+        assert_eq!(draft.usage_type, USAGE_DENTAL_EVOLUTION);
+        assert!(draft.text.contains("Nota de evolucion dental"));
+        // El payload dental viajo como contexto (solo para este uso).
+        assert!(draft.text.contains("Plantilla dental capturada"));
+        assert!(draft.text.contains("MISSING"));
+
+        // Los demas asistentes NO arrastran el payload dental.
+        let summary = assist_text(&conn, &encounter_id, USAGE_SUMMARY, &registry).unwrap();
+        assert!(!summary.text.contains("Plantilla dental capturada"));
+
+        // Queda trazado como corrida DRAFT con su prompt version propio.
+        let prompt: String = conn
+            .query_row(
+                "SELECT prompt_version FROM ai_runs WHERE id = ?1",
+                params![draft.run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(prompt, "dental-evolution/v1");
     }
 
     #[test]
