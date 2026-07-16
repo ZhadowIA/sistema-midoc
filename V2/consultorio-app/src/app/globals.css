@@ -1916,7 +1916,328 @@ a.service-card:hover {
 /* ---------- Configuracion del medico ---------- */
 
 .settings-stack {
-  gap: 24px;
+  gap: 20px;
+}
+
+.settings-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.settings-header-main {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-header-main h1 {
+  margin: 0;
+  font-size: 1.44rem;
+}
+
+.settings-header-main p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.settings-header-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Pestañas: mismo vocabulario que .topbar-link (fondo suave = seleccion). */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  /* Las pestañas bajan 1px (margin-bottom: -1px) para pisar la linea del
+     contenedor; sin esto el overflow pinta una barra de scroll de 1px. */
+  scrollbar-width: none;
+}
+
+.settings-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 500;
+  font-size: 0.92rem;
+  color: var(--muted);
+  padding: 10px 14px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--speed) var(--ease), border-color var(--speed) var(--ease);
+}
+
+.settings-tab:hover {
+  color: var(--ink);
+}
+
+.settings-tab[aria-current="true"] {
+  color: var(--primary);
+  font-weight: 600;
+  border-bottom-color: var(--primary);
+}
+
+.settings-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-tab[aria-current="true"] .settings-tab-count {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+/* Contenido de cada pestaña: sin marco de panel, la pestaña ya delimita. */
+.settings-section {
+  padding: 4px 2px 0;
+}
+
+.form-section-title {
+  margin: 8px 0 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.settings-form .form-section-title:first-child {
+  margin-top: 0;
+}
+
+.unsaved-hint {
+  color: var(--warning);
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+/* ---------- Editor de horario semanal ---------- */
+
+.preset-box {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-panel);
+}
+
+.preset-lead {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.week-editor {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+}
+
+.week-day + .week-day {
+  border-top: 1px solid var(--line);
+}
+
+.week-day-row {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 54px;
+  padding: 8px 16px;
+}
+
+.week-day-name {
+  font-weight: 600;
+}
+
+.week-day-name.is-off {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.week-ranges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.week-off {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.range-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  padding: 4px 6px 4px 10px;
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.range-chip.is-paused .range-time {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.range-paused-tag {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.range-action {
+  border: none;
+  background: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--speed) var(--ease), background var(--speed) var(--ease);
+}
+
+.range-action:hover {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.range-remove {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.range-remove:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.week-day-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.week-day-actions .ghost-button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+/* Editores inline (agregar rango / copiar a otros dias) bajo la fila del dia. */
+.week-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  padding: 12px 16px 14px;
+  background: var(--surface);
+  border-top: 1px dashed var(--line);
+}
+
+.week-inline .field {
+  gap: 4px;
+}
+
+.week-inline .field label {
+  font-size: 0.84rem;
+}
+
+.week-inline input[type="time"] {
+  padding: 7px 10px;
+  width: auto;
+}
+
+.week-inline .button-row {
+  align-self: end;
+}
+
+.week-copy-label {
+  align-self: center;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.day-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-self: center;
+}
+
+.day-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  padding: 5px 12px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--speed) var(--ease), background var(--speed) var(--ease),
+    color var(--speed) var(--ease);
+}
+
+.day-chip input[type="checkbox"] {
+  accent-color: var(--primary);
+  margin: 0;
+}
+
+.day-chip:has(input:checked) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+@media (max-width: 640px) {
+  .week-day-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .week-ranges {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }
 
 .list-row {
