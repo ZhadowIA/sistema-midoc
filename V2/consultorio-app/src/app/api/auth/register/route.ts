@@ -11,6 +11,9 @@ const registerSchema = z.object({
   passwordConfirmation: z.string().min(1).optional(),
   firstName: z.string().min(1).max(80),
   lastName: z.string().min(1).max(120),
+  // `phone` se conserva durante la transición para clientes ya publicados.
+  personalPhone: z.string().min(7).max(20).optional(),
+  patientContactPhone: z.string().min(7).max(20).optional(),
   phone: z.string().min(7).max(20).optional(),
   professionalName: z.string().min(5).max(120),
   licenseNumber: z.string().min(5).max(30),

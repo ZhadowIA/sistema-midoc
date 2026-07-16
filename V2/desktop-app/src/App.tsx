@@ -46,6 +46,10 @@ interface SyncStatus {
 
 type AppointmentRow = EncounterAgendaAppointment;
 
+// La URL del portal se configura con cada entorno de despliegue; no forma
+// parte de las opciones que puede modificar el médico desde la aplicación.
+const PORTAL_URL = "http://localhost:3000";
+
 // Desenlace de "Atender" desde la agenda: o se identifico el expediente del
 // paciente (se abre), o hay candidatos a duplicado que el medico debe revisar.
 type ResolveOutcome =
@@ -279,7 +283,6 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
 }
 
 function LinkAccountForm({ onLinked }: { onLinked: () => void }) {
-  const [serverUrl, setServerUrl] = useState("http://localhost:3000");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -289,7 +292,7 @@ function LinkAccountForm({ onLinked }: { onLinked: () => void }) {
     setBusy(true);
     setError("");
     try {
-      await call("link_account", { serverUrl, email, password });
+      await call("link_account", { serverUrl: PORTAL_URL, email, password });
       setPassword("");
       onLinked();
     } catch (e) {
@@ -300,7 +303,7 @@ function LinkAccountForm({ onLinked }: { onLinked: () => void }) {
   }
 
   return (
-    <section className="panel">
+    <section className="link-account-form">
       <div className="panel-header">
         <h2>Vincula tu cuenta MiDoc</h2>
         <p>
@@ -315,15 +318,6 @@ function LinkAccountForm({ onLinked }: { onLinked: () => void }) {
           void link();
         }}
       >
-        <label className="field">
-          <span>Direccion del portal</span>
-          <input
-            type="url"
-            value={serverUrl}
-            onChange={(e) => setServerUrl(e.currentTarget.value)}
-            required
-          />
-        </label>
         <label className="field">
           <span>Correo de tu cuenta</span>
           <input
@@ -650,8 +644,6 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       <header className="app-topbar workspace-topbar">
         <div className="topbar-identity">
           <strong>{unlocked.profile.display_name}</strong>
-          <span aria-hidden="true">·</span>
-          <span className="topbar-context">expediente cifrado · esquema v{unlocked.schema_version}</span>
         </div>
         <div className="button-row topbar-actions">
           {status?.linked ? (

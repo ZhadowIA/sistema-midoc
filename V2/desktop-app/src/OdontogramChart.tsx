@@ -6,10 +6,10 @@ import {
   type DentalPayload,
   type ToothFace
 } from "./clinicalProfiles.ts";
+import type { OdontogramTool, ToothDifference } from "./odontogramWorkspaceModel.ts";
 import {
   archCurveOffset,
   archRowsForDentition,
-  cycleSurfaceStatus,
   DENTITION_OPTIONS,
   describeTooth,
   hasFindings,
@@ -110,39 +110,30 @@ function ToothGlyph({
   payload,
   disabled,
   selected,
+  activeTool,
+  difference,
   onSelect,
-  onChange
+  onApplyTool
 }: {
   toothId: string;
   payload: DentalPayload;
   disabled: boolean;
   selected: boolean;
+  activeTool: OdontogramTool | null;
+  difference?: ToothDifference;
   onSelect: (toothId: string) => void;
-  onChange: (next: DentalPayload) => void;
+  onApplyTool: (toothId: string, face: ToothFace | null) => void;
 }) {
   const tooth = payload.odontogram[toothId] ?? getDefaultDentalToothRecord();
   const slots = surfaceSlots(toothId);
   const marker = toothMarker(tooth.status);
 
-  function cycleSurface(face: ToothFace) {
-    if (disabled) {
+  function handleSurface(face: ToothFace) {
+    if (disabled || !activeTool) {
       onSelect(toothId);
       return;
     }
-    onSelect(toothId);
-    onChange({
-      ...payload,
-      odontogram: {
-        ...payload.odontogram,
-        [toothId]: {
-          ...tooth,
-          surfaces: {
-            ...tooth.surfaces,
-            [face]: cycleSurfaceStatus(tooth.surfaces[face])
-          }
-        }
-      }
-    });
+    onApplyTool(toothId, activeTool.scope === "SURFACE" ? face : null);
   }
 
   const classes = ["odontogram-tooth"];
@@ -152,19 +143,35 @@ function ToothGlyph({
   if (hasFindings(payload.odontogram[toothId])) {
     classes.push("has-findings");
   }
+  if (difference?.changed) {
+    classes.push("has-change");
+  }
 
   const upper = isUpperTooth(toothId);
   const type = toothType(toothId);
   const clipId = `crown-clip-${toothId}`;
+  const description = `${describeTooth(toothId, payload.odontogram[toothId])}${
+    difference?.changed
+      ? `; diferente al estado de llegada en ${difference.changedFaces.length > 0
+        ? `caras ${difference.changedFaces.join(", ")}`
+        : "la pieza"}`
+      : ""
+  }`;
 
   return (
     <button
       type="button"
       className={classes.join(" ")}
-      title={describeTooth(toothId, payload.odontogram[toothId])}
-      aria-label={describeTooth(toothId, payload.odontogram[toothId])}
+      title={description}
+      aria-label={description}
       aria-pressed={selected}
-      onClick={() => onSelect(toothId)}
+      onClick={() => {
+        if (!disabled && activeTool?.scope === "TOOTH") {
+          onApplyTool(toothId, null);
+        } else {
+          onSelect(toothId);
+        }
+      }}
     >
       <span className="tooth-number">{toothId}</span>
       <svg className={`tooth-glyph ${toothStatusClass(tooth.status)}`} viewBox="0 0 40 54">
@@ -187,10 +194,12 @@ function ToothGlyph({
               <polygon
                 key={face}
                 points={SLOT_POINTS[slots[face]]}
-                className={surfaceStatusClass(tooth.surfaces[face])}
+                className={`${surfaceStatusClass(tooth.surfaces[face])}${
+                  difference?.changedFaces.includes(face) ? " surface-changed" : ""
+                }`}
                 onClick={(event) => {
                   event.stopPropagation();
-                  cycleSurface(face);
+                  handleSurface(face);
                 }}
               >
                 <title>{`${toothId} ${face}`}</title>
@@ -210,14 +219,18 @@ export function OdontogramChart({
   payload,
   disabled,
   selectedTooth,
+  activeTool,
+  differences,
   onSelectTooth,
-  onChange
+  onApplyTool
 }: {
   payload: DentalPayload;
   disabled: boolean;
   selectedTooth: string | null;
+  activeTool: OdontogramTool | null;
+  differences?: Map<string, ToothDifference>;
   onSelectTooth: (toothId: string) => void;
-  onChange: (next: DentalPayload) => void;
+  onApplyTool: (toothId: string, face: ToothFace | null) => void;
 }) {
   const [dentition, setDentition] = useState<Dentition>(() =>
     inferDentition(payload.odontogram)
@@ -240,7 +253,9 @@ export function OdontogramChart({
           ))}
         </div>
         <p className="odontogram-hint">
-          Clic en una superficie marca el hallazgo; clic en el numero abre el detalle.
+          {activeTool
+            ? "Aplica la herramienta sobre una superficie o pieza. Escape cancela."
+            : "Selecciona una pieza para abrir su detalle."}
         </p>
       </div>
       <div className="odontogram-rows">
@@ -264,8 +279,10 @@ export function OdontogramChart({
                         payload={payload}
                         disabled={disabled}
                         selected={selectedTooth === toothId}
+                        activeTool={activeTool}
+                        difference={differences?.get(toothId)}
                         onSelect={onSelectTooth}
-                        onChange={onChange}
+                        onApplyTool={onApplyTool}
                       />
                     </span>
                   </span>

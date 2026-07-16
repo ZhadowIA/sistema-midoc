@@ -1,4 +1,5 @@
 import type { SegmentDraft, TemplateSegment } from "./consultationScribe";
+import type { MedicalHistoryProposal } from "./medicalHistoryAi";
 
 export type CompatibilityLevel = "HIGH" | "MEDIUM" | "LOW";
 
@@ -35,6 +36,7 @@ export interface ClinicalAidDraft {
   treatments: Array<{ name: string; reason: string; precautions: string[] }>;
   prescription_draft: string;
   background_updates: BackgroundUpdate[];
+  medical_history_updates: MedicalHistoryProposal[];
   warnings: string[];
 }
 

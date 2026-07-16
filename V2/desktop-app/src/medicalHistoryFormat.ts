@@ -38,7 +38,7 @@ export interface GroupDef {
 
 const SEX_LABELS: Record<string, string> = { F: "Femenino", M: "Masculino" };
 
-const GENERAL_FIELDS: FieldDef[] = [
+export const GENERAL_FIELDS: FieldDef[] = [
   { key: "sex", label: "Sexo biologico" },
   { key: "allergies", label: "Alergias" },
   { key: "currentMedications", label: "Medicamentos cronicos" }
@@ -299,6 +299,59 @@ export function patientMedicalHistoryGroups(sex: string): GroupDef[] {
     (group) =>
       group.audience !== "doctor" && (!group.onlyForSex || group.onlyForSex === sex)
   );
+}
+
+export interface MedicalHistoryAiField {
+  path: string;
+  label: string;
+  kind: FieldKind;
+  options: string[];
+}
+
+/**
+ * Contrato mínimo que puede recibir la IA para proponer antecedentes. Las
+ * rutas provienen exclusivamente del cuestionario compartido; la validación
+ * definitiva vuelve a ejecutarse en Rust antes de mostrar cualquier propuesta.
+ */
+export function medicalHistoryAiFields(): MedicalHistoryAiField[] {
+  const regularFields = [
+    ...GENERAL_FIELDS.map((field) => ({ groupKey: "", groupTitle: "Datos generales", field })),
+    ...MEDICAL_HISTORY_GROUPS.flatMap((group) =>
+      group.key === FAMILY_HISTORY_KEY
+        ? []
+        : group.fields.map((field) => ({ groupKey: group.key, groupTitle: group.title, field }))
+    )
+  ].map(({ groupKey, groupTitle, field }) => ({
+    path: groupKey ? `${groupKey}.${field.key}` : field.key,
+    label: `${groupTitle} · ${field.label}`,
+    kind: field.kind ?? "text",
+    options: field.options?.map((option) => option.value) ?? []
+  }));
+
+  const familyFields = FAMILY_CONDITIONS.flatMap((condition) => [
+    {
+      path: `${FAMILY_HISTORY_KEY}.${condition.key}.relatives`,
+      label: `Antecedentes heredo-familiares · ${condition.label} · familiares`,
+      kind: "select" as FieldKind,
+      options: Object.keys(FAMILY_RELATIVES)
+    },
+    ...(condition.hasType
+      ? [{
+          path: `${FAMILY_HISTORY_KEY}.${condition.key}.type`,
+          label: `Antecedentes heredo-familiares · ${condition.label} · tipo`,
+          kind: "text" as FieldKind,
+          options: []
+        }]
+      : []),
+    {
+      path: `${FAMILY_HISTORY_KEY}.${condition.key}.notes`,
+      label: `Antecedentes heredo-familiares · ${condition.label} · notas`,
+      kind: "text" as FieldKind,
+      options: []
+    }
+  ]);
+
+  return [...regularFields, ...familyFields];
 }
 
 function cleanText(value: unknown): string {

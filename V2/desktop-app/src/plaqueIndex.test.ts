@@ -77,6 +77,7 @@ test("clasificacion O'Leary: ideal hasta 10, aceptable hasta 20, deficiente arri
 test("coerceDentalPayload: retrocompatible y filtra caras invalidas", () => {
   // Payload viejo sin seccion de placa.
   const legacy = coerceDentalPayload({ odontogram: {}, hygienePlan: "cepillado" });
+  assert.equal(legacy.schemaVersion, 2);
   assert.deepEqual(legacy.plaque, {});
   assert.equal(legacy.hygienePlan, "cepillado");
 
@@ -85,4 +86,28 @@ test("coerceDentalPayload: retrocompatible y filtra caras invalidas", () => {
     plaque: { "16": ["M", "O", "M", "X", "L"], "17": ["O"], "18": "no-array" }
   });
   assert.deepEqual(dirty.plaque, { "16": ["M", "L"] });
+});
+
+test("coerceDentalPayload convierte superficies v1 y valida materiales v2", () => {
+  const payload = coerceDentalPayload({
+    odontogram: {
+      "18": {
+        status: "HEALTHY",
+        surfaces: {
+          O: "CARIES",
+          M: { condition: "RESTORED", material: "AMALGAM" },
+          D: { condition: "RESTORED", material: "INVALID" },
+          V: { condition: "CARIES", material: "RESIN" },
+          L: "HEALTHY"
+        },
+        notes: "control"
+      }
+    }
+  });
+  assert.deepEqual(payload.odontogram["18"].surfaces, {
+    O: { condition: "CARIES" },
+    M: { condition: "RESTORED", material: "AMALGAM" },
+    D: { condition: "RESTORED" },
+    V: { condition: "CARIES" }
+  });
 });

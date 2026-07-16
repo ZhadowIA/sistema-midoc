@@ -137,6 +137,11 @@ export async function createDoctorAccount(input: {
   passwordConfirmation?: string;
   firstName: string;
   lastName: string;
+  /** CONTACTO privado: recuperación y comunicación con el médico. */
+  personalPhone?: string;
+  /** CONTACTO público: número que ven y usan los pacientes. */
+  patientContactPhone?: string;
+  /** @deprecated Use `personalPhone`. Conservado para clientes previos. */
   phone?: string;
   professionalName: string;
   licenseNumber: string;
@@ -167,7 +172,8 @@ export async function createDoctorAccount(input: {
   const lastName = normalizePersonName(input.lastName, "lastName");
   const professionalName = normalizeProfessionalName(input.professionalName);
   const licenseNumber = normalizeLicenseNumber(input.licenseNumber);
-  const phone = normalizeMexicanE164Phone(input.phone);
+  const personalPhone = normalizeMexicanE164Phone(input.personalPhone ?? input.phone);
+  const patientContactPhone = normalizeMexicanE164Phone(input.patientContactPhone);
   const existingUser = await prisma.user.findUnique({
     where: { email }
   });
@@ -176,11 +182,11 @@ export async function createDoctorAccount(input: {
     throw new AuthServiceError("An account with this email already exists.", 409);
   }
 
-  if (phone) {
+  if (personalPhone) {
     const phoneTaken = await prisma.user.findFirst({
       where: {
         role: UserRole.DOCTOR,
-        phone
+        phone: personalPhone
       },
       select: { id: true }
     });
@@ -200,13 +206,14 @@ export async function createDoctorAccount(input: {
       status: UserStatus.PENDING_APPROVAL,
       firstName,
       lastName,
-      phone,
+      phone: personalPhone,
       doctorProfile: {
         create: {
           professionalName,
           publicSlug: `doctor-${generateOpaqueToken(8)}`,
           licenseNumber,
           specialty: mapSpecialty(input.specialty),
+          phone: patientContactPhone,
           isPublic: false
         }
       },
@@ -241,8 +248,9 @@ export async function createDoctorAccount(input: {
       status: user.status,
       specialty: user.doctorProfile?.specialty,
       emailDomain: email.split("@")[1] ?? null,
-      hasPhone: Boolean(phone),
-      phoneCountry: phone ? "MX" : null,
+      hasPersonalPhone: Boolean(personalPhone),
+      hasPatientContactPhone: Boolean(patientContactPhone),
+      phoneCountry: personalPhone || patientContactPhone ? "MX" : null,
       termsVersion: input.termsVersion,
       privacyVersion: input.privacyVersion
     }

@@ -26,7 +26,7 @@ test("buildDentalSessionSummary resume hallazgos, placa, plan e higiene", () => 
     ...EMPTY_DENTAL_PAYLOAD,
     odontogram: {
       "16": { status: "MISSING", surfaces: {}, notes: "" },
-      "18": { status: "HEALTHY", surfaces: { O: "CARIES" }, notes: "" },
+      "18": { status: "HEALTHY", surfaces: { O: { condition: "CARIES" } }, notes: "" },
       "17": { status: "HEALTHY", surfaces: {}, notes: "" }
     },
     plaque: { "17": ["M", "V"] },

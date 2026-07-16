@@ -83,12 +83,12 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 16 | Proveedores de IA reales en staging (BAA) | `codex-security:security-scan` | Adaptadores reales de LLM/transcripcion con gobernanza intacta. | 🔜 PLANEADO |
 | 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
 | 18 | Agendado con responsable/tutor | `superpowers:test-driven-development` | El sistema distingue paciente con tutor de paciente sin tutor. | ✅ DONE |
-| 19 | Pulido del flujo publico, preconsulta y sincronizacion | `impeccable` | Perfil/agenda fieles, preconsulta diferida (antecedentes o guiada por IA), recordatorio con cancelacion y sync con aviso. | 🔜 PLANEADO |
+| 19 | Pulido del flujo publico, preconsulta y sincronizacion | `impeccable` | Perfil/agenda fieles, preconsulta diferida (antecedentes o guiada por IA), recordatorio con cancelacion y sync con aviso. | ✅ DONE |
 | 20 | App del medico: multi-perfil y agenda dia/semana | `impeccable` | Varios medicos comparten una computadora con bases cifradas independientes y agenda dia/semana. | ✅ DONE |
-| 21 | Plantillas clinicas asistidas por conversacion | `superpowers:writing-plans` | Consulta grabada/transcrita se acomoda en segmentos revisables de la plantilla activa. | 🧪 EN REVISION (PR #18) |
+| 21 | Plantillas clinicas asistidas por conversacion | `superpowers:writing-plans` | Consulta grabada/transcrita se acomoda en segmentos revisables de la plantilla activa. | ✅ DONE |
 | 22 | Diarizacion local (separacion de hablantes) | `superpowers:writing-plans` | Dialogo Medico/Paciente separado offline con sherpa-onnx; Ruta B anade transcripcion en nube gobernada por el portal. | 🚧 IN PROGRESS (nativo pendiente de staging) |
-| 23 | Anamnesis asistida (cuestionario desde conversacion) | `superpowers:writing-plans` | Antecedentes estructurados propuestos por IA desde la consulta hablada, reconciliados campo por campo y confirmados por el medico. | 🔜 PLANEADO |
-| 24 | Degradacion asistida de proveedor de IA | `superpowers:test-driven-development` | Ante sobrecarga del proveedor (503/429), el medico ve la causa y elige reintentar o generar con otro modelo disponible — nunca fallback silencioso. | 🚧 IN PROGRESS |
+| 23 | Anamnesis asistida (cuestionario desde conversacion) | `superpowers:writing-plans` | Antecedentes estructurados propuestos por IA desde la consulta hablada, reconciliados campo por campo y confirmados por el medico. | ✅ DONE |
+| 24 | Degradacion asistida de proveedor de IA | `superpowers:test-driven-development` | Ante sobrecarga del proveedor (503/429), el medico ve la causa y elige reintentar o generar con otro modelo disponible — nunca fallback silencioso. | ✅ DONE |
 | 25 | Base de medicamentos a escala | `superpowers:writing-plans` | Pipeline reproducible de fuentes publicas + catalogo mexicano de marcas; verificacion con interacciones de par y de tres clases (triple whammy), base ONChigh de dominio publico. | ✅ DONE (swap ONChigh + triple whammy + apendice ONChigh completo sin QT + marcas MX por regla; pendiente: regla QT curada, RxClass reproducible, pipeline BRSDM completo, publicar endpoints/ops) |
 | 26 | Perfil dentista completo (paridad Dentis365 + IA dental) | `superpowers:writing-plans` | Odontograma visual interactivo, indice de placa, plan de tratamiento presupuestado con saldos por avance, ordenes de laboratorio y capa IA dental (dictado al odontograma, nota de evolucion, indicaciones post-operatorias). | ✅ DONE (rebanadas 1-6 completas: odontograma visual y anatomico, indice de placa, presupuesto con saldos, laboratorio, dictado al odontograma, nota de evolucion e indicaciones post-operatorias; el uso DENTAL_EVOLUTION queda listo para el proveedor real del paso 16) |
 
@@ -1074,7 +1074,7 @@ Avance (2026-06-16): rebanada de evidencia de revision agregada; cada segmento m
 
 Avance (2026-06-16): grabacion directa desde la consulta agregada; la app captura microfono, codifica un WAV mono 16 kHz en memoria y reutiliza el mismo flujo de transcripcion, sin persistir el audio.
 
-Estado (2026-06-16): implementacion tecnica del MVP completa en PR #18. Pendiente antes de merge: aceptacion manual con grabacion real/WAV real en desktop, validacion de Gemini con `MIDOC_GEMINI_API_KEY` en staging y decision de mantener el PR como draft o pasarlo a ready-for-review.
+Estado (2026-07-10): ✅ DONE. Las rebanadas 1-4 quedaron integradas y verificadas; la rebanada 5 se cerro con editor local de plantillas personalizadas (segmentos ordenados, destino permitido, obligatoriedad e instrucciones para IA), guardado en la base cifrada por perfil. La validacion con proveedor real sigue siendo compuerta del paso 16, no del flujo manual/local del paso 21.
 
 Rebanadas:
 
@@ -1161,6 +1161,8 @@ Clasificacion de datos: las respuestas propuestas y confirmadas son CLINICO (sol
 
 Decision de alcance que motiva este paso (2026-07-03): la Ayuda IA ya vuelca antecedentes dichos en conversacion a los 3 campos de texto libre del paciente, pero el cuestionario estructurado quedo deliberadamente fuera: tiene contrato compartido con el portal, tipado por campo y versionado inmutable con reconciliacion propia, y merece este diseno dedicado en lugar de un atajo.
 
+Estado (2026-07-10): ✅ DONE. La Ayuda IA recibe un catalogo generado exclusivamente desde el contrato local del cuestionario; Rust rechaza rutas, tipos, opciones o citas de turno invalidas. Las propuestas se muestran campo por campo con su fuente, confianza y valor editable. Aplicarlas solo prepara el editor: el medico debe guardar explicitamente una nueva version `DOCTOR_EDIT`, cuya auditoria referencia el `run_id` de IA sin registrar contenido clinico. Incluye estructuras heredo-familiares y conserva la version anterior inmutable.
+
 ## Paso 24 - Degradacion asistida de proveedor de IA (sobrecarga)
 
 | Campo | Definicion |
@@ -1177,6 +1179,8 @@ Decision de alcance que motiva este paso (2026-07-03): la Ayuda IA ya vuelca ant
 Clasificacion de datos: el error del proveedor y el catalogo de modelos son OPERATIVO (sin contenido clinico); no se agrega ninguna superficie nueva de salida de PHI — el override reutiliza la misma canalizacion seudonimizada existente.
 
 Motivacion (2026-07-04): en uso real, Gemini devolvio `503 Service Unavailable` durante una Ayuda IA y el medico vio el error crudo sin saber si era su sistema, su configuracion o algo temporal, y sin camino de accion. Este paso convierte esa falla externa en una decision informada del medico.
+
+Estado (2026-07-10): ✅ DONE. Gemini y OpenAI clasifican 429/5xx y fallas de red agotadas como sobrecarga tras reintentos acotados; IPC conserva un codigo estructurado; la UI explica la causa y ofrece reintentar o elegir explicitamente otro modelo real configurado. El fake nunca aparece como alternativa y los errores permanentes conservan su tratamiento separado.
 
 ## Paso 25 - Base de medicamentos a escala (pipeline publico + catalogo mexicano)
 

@@ -41,7 +41,8 @@ export function RegistroClient() {
     firstName: "",
     lastName: "",
     email: "",
-    phone: "",
+    personalPhone: "",
+    patientContactPhone: "",
     professionalName: "",
     licenseNumber: "",
     specialty: "GENERAL_MEDICINE",
@@ -83,7 +84,8 @@ export function RegistroClient() {
           lastName: form.lastName.trim().replace(/\s+/g, " "),
           professionalName: form.professionalName.trim().replace(/\s+/g, " "),
           licenseNumber: form.licenseNumber.trim().replace(/\s+/g, " "),
-          phone: normalizePhoneForSubmit(form.phone)
+          personalPhone: normalizePhoneForSubmit(form.personalPhone),
+          patientContactPhone: normalizePhoneForSubmit(form.patientContactPhone)
         })
       });
       const data = await response.json();
@@ -198,14 +200,27 @@ export function RegistroClient() {
           </div>
 
           <div className="field">
-            <label htmlFor="reg-phone">Telefono (opcional)</label>
+            <label htmlFor="reg-personal-phone">Teléfono personal (opcional)</label>
             <input
-              id="reg-phone"
+              id="reg-personal-phone"
               type="tel"
               autoComplete="tel"
-              value={form.phone}
-              onChange={(event) => update("phone", event.currentTarget.value)}
+              value={form.personalPhone}
+              onChange={(event) => update("personalPhone", event.currentTarget.value)}
             />
+            <p className="field-hint">Lo usamos para recuperar tu cuenta y comunicarnos contigo.</p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="reg-patient-contact-phone">Teléfono para pacientes (opcional)</label>
+            <input
+              id="reg-patient-contact-phone"
+              type="tel"
+              autoComplete="tel"
+              value={form.patientContactPhone}
+              onChange={(event) => update("patientContactPhone", event.currentTarget.value)}
+            />
+            <p className="field-hint">Será el número de contacto en tu perfil público; puede ser el mismo.</p>
           </div>
 
           <div className={passwordInvalid ? "field has-error" : "field"}>

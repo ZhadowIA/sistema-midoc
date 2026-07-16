@@ -106,3 +106,12 @@ test("la Ayuda IA es una ruta de la consulta, no un riel lateral", () => {
     /resolvedSection === "ayuda" \?[\s\S]*?<ClinicalAidRail/
   );
 });
+
+test("el paso 21 expone el editor local de plantillas personalizadas", () => {
+  const source = readFileSync(new URL("./ClinicalAidRail.tsx", import.meta.url), "utf8");
+  assert.match(source, /ConsultationTemplateEditor/);
+  const editor = readFileSync(new URL("./ConsultationTemplateEditor.tsx", import.meta.url), "utf8");
+  assert.match(editor, /Guardar plantilla/);
+  assert.match(editor, /Instrucciones para IA/);
+  assert.match(editor, /required/);
+});

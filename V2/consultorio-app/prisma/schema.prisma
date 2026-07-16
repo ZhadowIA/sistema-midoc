@@ -324,6 +324,7 @@ model User {
   status                 UserStatus           @default(ACTIVE)
   firstName              String
   lastName               String
+  // CONTACTO privado de la cuenta; para médicos no se expone en el perfil público.
   phone                  String?
   lastLoginAt            DateTime?
   createdAt              DateTime             @default(now())
@@ -374,6 +375,7 @@ model DoctorProfile {
   licenseNumber        String?
   specialty            ClinicalProfile
   description          String?
+  // CONTACTO público del consultorio, visible para pacientes en el perfil.
   phone                String?
   addressLine1         String?
   addressLine2         String?

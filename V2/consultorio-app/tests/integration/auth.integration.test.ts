@@ -53,7 +53,8 @@ describe("auth service", () => {
         password: "Str0ngPass!123",
         firstName: "Ana",
         lastName: "Ramirez",
-        phone: "6140000000",
+        personalPhone: "6140000000",
+        patientContactPhone: "6140000001",
         professionalName: "Dra. Ana Ramirez",
         licenseNumber: "1234567",
         specialty: "GENERAL_MEDICINE",
@@ -77,6 +78,7 @@ describe("auth service", () => {
       expect(storedUser?.phone).toBe("+526140000000");
       expect(storedUser?.doctorProfile?.professionalName).toBe("Dra. Ana Ramirez");
       expect(storedUser?.doctorProfile?.licenseNumber).toBe("1234567");
+      expect(storedUser?.doctorProfile?.phone).toBe("+526140000001");
       expect(storedUser?.legalAcceptances).toHaveLength(2);
       expect(account.emailVerificationToken).toBeTruthy();
 

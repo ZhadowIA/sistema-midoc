@@ -1,8 +1,11 @@
 import {
   DENTAL_TOOTH_IDS,
+  RESTORATION_MATERIAL_OPTIONS,
   SURFACE_STATUS_OPTIONS,
   TOOTH_STATUS_OPTIONS,
+  type DentalSurfaceRecord,
   type DentalToothRecord,
+  type RestorationMaterial,
   type SurfaceStatus,
   type ToothFace,
   type ToothStatus
@@ -123,9 +126,12 @@ export function archCurveOffset(
 
 // Ciclo rapido al hacer clic en una superficie, en el orden del catalogo:
 // Sano -> Caries -> Restaurado -> Sellador -> Fractura -> Sano.
-export function cycleSurfaceStatus(current: SurfaceStatus | undefined): SurfaceStatus {
+export function cycleSurfaceStatus(
+  current: SurfaceStatus | DentalSurfaceRecord | undefined
+): SurfaceStatus {
   const order = SURFACE_STATUS_OPTIONS.map((option) => option.value);
-  const index = order.indexOf(current ?? "HEALTHY");
+  const condition = typeof current === "string" ? current : current?.condition;
+  const index = order.indexOf(condition ?? "HEALTHY");
   return order[(index + 1) % order.length];
 }
 
@@ -133,8 +139,11 @@ export function toothStatusClass(status: ToothStatus): string {
   return `tooth-status-${status.toLowerCase().replace(/_/g, "-")}`;
 }
 
-export function surfaceStatusClass(status: SurfaceStatus | undefined): string {
-  return `surface-status-${(status ?? "HEALTHY").toLowerCase()}`;
+export function surfaceStatusClass(
+  surface: SurfaceStatus | DentalSurfaceRecord | undefined
+): string {
+  const condition = typeof surface === "string" ? surface : surface?.condition;
+  return `surface-status-${(condition ?? "HEALTHY").toLowerCase()}`;
 }
 
 // Marca de pieza completa sobre el glifo (notacion clasica de odontograma).
@@ -164,7 +173,9 @@ export function hasFindings(record: DentalToothRecord | undefined): boolean {
   if (record.status !== "HEALTHY" || record.notes.trim() !== "") {
     return true;
   }
-  return Object.values(record.surfaces).some((status) => status !== undefined && status !== "HEALTHY");
+  return Object.values(record.surfaces).some(
+    (surface) => surface !== undefined && surface.condition !== "HEALTHY"
+  );
 }
 
 const PRIMARY_ID_SET = new Set<string>(PRIMARY_TOOTH_IDS);
@@ -202,6 +213,10 @@ function surfaceLabel(status: SurfaceStatus): string {
   return SURFACE_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
 }
 
+export function restorationMaterialLabel(material: RestorationMaterial): string {
+  return RESTORATION_MATERIAL_OPTIONS.find((option) => option.value === material)?.label ?? material;
+}
+
 // Resumen corto para tooltip / aria-label del glifo.
 export function describeTooth(toothId: string, record: DentalToothRecord | undefined): string {
   if (!record || !hasFindings(record)) {
@@ -209,8 +224,13 @@ export function describeTooth(toothId: string, record: DentalToothRecord | undef
   }
   const parts: string[] = record.status === "HEALTHY" ? [] : [statusLabel(record.status)];
   const surfaces = Object.entries(record.surfaces)
-    .filter(([, status]) => status !== undefined && status !== "HEALTHY")
-    .map(([face, status]) => `${face} ${surfaceLabel(status as SurfaceStatus).toLowerCase()}`);
+    .filter(([, surface]) => surface !== undefined && surface.condition !== "HEALTHY")
+    .map(([face, surface]) => {
+      const material = surface?.material
+        ? ` de ${restorationMaterialLabel(surface.material).toLowerCase()}`
+        : "";
+      return `${face} ${surfaceLabel(surface!.condition).toLowerCase()}${material}`;
+    });
   if (surfaces.length > 0) {
     parts.push(surfaces.join(", "));
   }

@@ -2,9 +2,11 @@ import {
   DENTAL_TOOTH_IDS,
   getDefaultDentalToothRecord,
   getDefaultPeriodontogramRecord,
+  RESTORATION_MATERIAL_OPTIONS,
   SURFACE_STATUS_OPTIONS,
   TOOTH_STATUS_OPTIONS,
   type DentalPayload,
+  type RestorationMaterial,
   type SurfaceStatus,
   type ToothFace,
   type ToothStatus
@@ -22,7 +24,14 @@ import { PRIMARY_TOOTH_IDS } from "./odontogramModel.ts";
 
 export type DictationProposal =
   | { kind: "TOOTH_STATUS"; toothId: string; status: ToothStatus; source: string }
-  | { kind: "SURFACE_STATUS"; toothId: string; faces: ToothFace[]; status: SurfaceStatus; source: string }
+  | {
+      kind: "SURFACE_STATUS";
+      toothId: string;
+      faces: ToothFace[];
+      status: SurfaceStatus;
+      material?: RestorationMaterial;
+      source: string;
+    }
   | {
       kind: "POCKET_DEPTHS";
       toothId: string;
@@ -124,6 +133,15 @@ const SURFACE_STATUS_WORDS: Record<string, SurfaceStatus> = {
   restauracion: "RESTORED",
   resina: "RESTORED",
   amalgama: "RESTORED",
+  ionomero: "RESTORED",
+  ceramica: "RESTORED",
+  ceramico: "RESTORED",
+  porcelana: "RESTORED",
+  metal: "RESTORED",
+  metalica: "RESTORED",
+  metalico: "RESTORED",
+  provisional: "RESTORED",
+  temporal: "RESTORED",
   obturado: "RESTORED",
   obturada: "RESTORED",
   obturacion: "RESTORED",
@@ -136,6 +154,20 @@ const SURFACE_STATUS_WORDS: Record<string, SurfaceStatus> = {
   fracturada: "FRACTURE",
   sano: "HEALTHY",
   sana: "HEALTHY"
+};
+
+const RESTORATION_MATERIAL_WORDS: Record<string, RestorationMaterial> = {
+  resina: "RESIN",
+  amalgama: "AMALGAM",
+  ionomero: "GLASS_IONOMER",
+  ceramica: "CERAMIC",
+  ceramico: "CERAMIC",
+  porcelana: "CERAMIC",
+  metal: "METAL",
+  metalica: "METAL",
+  metalico: "METAL",
+  provisional: "TEMPORARY",
+  temporal: "TEMPORARY"
 };
 
 const FACE_WORDS: Record<string, ToothFace> = {
@@ -254,6 +286,7 @@ function parseSegment(segment: ToothSegment): DictationProposal[] {
   const tokens = segment.tokens;
   // Hallazgo en curso: estado de superficie esperando caras.
   let pendingStatus: SurfaceStatus | null = null;
+  let pendingMaterial: RestorationMaterial | undefined;
   let pendingFaces: ToothFace[] = [];
   let recognizedAny = false;
 
@@ -267,6 +300,7 @@ function parseSegment(segment: ToothSegment): DictationProposal[] {
         toothId: segment.toothId,
         faces: pendingFaces,
         status: pendingStatus,
+        ...(pendingStatus === "RESTORED" && pendingMaterial ? { material: pendingMaterial } : {}),
         source
       });
     } else {
@@ -280,6 +314,7 @@ function parseSegment(segment: ToothSegment): DictationProposal[] {
       });
     }
     pendingStatus = null;
+    pendingMaterial = undefined;
     pendingFaces = [];
   }
 
@@ -353,6 +388,7 @@ function parseSegment(segment: ToothSegment): DictationProposal[] {
       flushPending();
       recognizedAny = true;
       pendingStatus = SURFACE_STATUS_WORDS[token];
+      pendingMaterial = RESTORATION_MATERIAL_WORDS[token];
       continue;
     }
     const faces = pendingStatus !== null ? facesFromToken(token) : null;
@@ -428,7 +464,13 @@ export function applyProposals(
         const record = toothRecord(proposal.toothId);
         const surfaces = { ...record.surfaces };
         for (const face of proposal.faces) {
-          surfaces[face] = proposal.status;
+          if (proposal.status === "HEALTHY") {
+            delete surfaces[face];
+          } else {
+            surfaces[face] = proposal.material && proposal.status === "RESTORED"
+              ? { condition: proposal.status, material: proposal.material }
+              : { condition: proposal.status };
+          }
         }
         odontogram = { ...odontogram, [proposal.toothId]: { ...record, surfaces } };
         break;
@@ -483,12 +525,20 @@ function surfaceStatusLabel(status: SurfaceStatus): string {
   ).toLowerCase();
 }
 
+function restorationMaterialLabel(material: RestorationMaterial): string {
+  return (
+    RESTORATION_MATERIAL_OPTIONS.find((option) => option.value === material)?.label ?? material
+  ).toLowerCase();
+}
+
 export function describeProposal(proposal: DictationProposal): string {
   switch (proposal.kind) {
     case "TOOTH_STATUS":
       return `Pieza ${proposal.toothId}: ${toothStatusLabel(proposal.status)}`;
     case "SURFACE_STATUS":
-      return `Pieza ${proposal.toothId}: ${surfaceStatusLabel(proposal.status)} en ${proposal.faces
+      return `Pieza ${proposal.toothId}: ${surfaceStatusLabel(proposal.status)}${
+        proposal.material ? ` de ${restorationMaterialLabel(proposal.material)}` : ""
+      } en ${proposal.faces
         .map((face) => FACE_LABELS[face])
         .join(", ")}`;
     case "POCKET_DEPTHS":
