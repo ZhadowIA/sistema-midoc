@@ -2532,7 +2532,6 @@ body.dictating .encounter-modes:focus-within {
 
 .odontogram-workspace-header,
 .odontogram-header-actions,
-.odontogram-tools-heading,
 .tooth-drawer-header,
 .timeline-heading,
 .odontogram-action-bar,
@@ -2547,7 +2546,6 @@ body.dictating .encounter-modes:focus-within {
 }
 
 .odontogram-workspace-header h3,
-.odontogram-tools-heading h4,
 .tooth-drawer-header h4 {
   margin: 0;
 }
@@ -2650,7 +2648,7 @@ body.dictating .encounter-modes:focus-within {
 .odontogram-workspace-grid {
   position: relative;
   display: grid;
-  grid-template-columns: 208px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -2659,24 +2657,73 @@ body.dictating .encounter-modes:focus-within {
 }
 
 .odontogram-workspace-grid.drawer-open {
-  grid-template-columns: 208px minmax(0, 1fr) minmax(360px, 400px);
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 400px);
 }
 
-.odontogram-tools,
 .tooth-drawer {
   min-width: 0;
   background: var(--surface);
 }
 
-.odontogram-tools {
-  display: grid;
-  align-content: start;
-  gap: 16px;
-  border-right: 1px solid var(--line);
-  padding: 14px;
+/* Barra horizontal de herramientas arriba del lienzo: todo a la vista sin
+   scroll vertical; envuelve a dos renglones en pantallas angostas. */
+.odontogram-toolbar-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 8px 12px;
 }
 
-.odontogram-tools-heading,
+.toolbar-tool-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.odontogram-toolbar-tools .clinical-tool {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  min-height: 24px;
+  background: var(--line);
+}
+
+.toolbar-material {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-material select {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 3px 6px;
+}
+
+/* En anchos reducidos la barra pasa a solo iconos (el nombre queda en el
+   tooltip) para conservar 1-2 renglones sin scroll. */
+@media (max-width: 1280px) {
+  .odontogram-toolbar-tools .clinical-tool > span:not(.clinical-tool-mark) {
+    display: none;
+  }
+
+  .odontogram-toolbar-tools .clinical-tool {
+    padding: 3px;
+  }
+}
+
 .tooth-drawer-header,
 .odontogram-action-bar,
 .timeline-heading {
@@ -2700,12 +2747,6 @@ body.dictating .encounter-modes:focus-within {
   border-color: var(--primary);
   background: var(--primary-soft);
   color: var(--primary);
-}
-
-.tool-group,
-.tool-list {
-  display: grid;
-  gap: 7px;
 }
 
 .tool-group-label {
@@ -2787,18 +2828,6 @@ body.dictating .encounter-modes:focus-within {
   border-color: var(--warning);
   background: var(--warning-soft);
   color: var(--warning);
-}
-
-.material-field select {
-  width: 100%;
-  min-width: 0;
-}
-
-.tool-help {
-  margin: 0;
-  color: var(--faint);
-  font-size: 0.72rem;
-  line-height: 1.4;
 }
 
 .odontogram-canvas-region {
