@@ -85,7 +85,12 @@ export function PlaqueIndexPanel({
       .then((entries) => {
         setEvolution(
           entries
-            .filter((entry) => entry.encounter_id !== encounterId)
+            .filter(
+              (entry) =>
+                entry.encounter_id !== encounterId &&
+                entry.status === "SIGNED" &&
+                entry.signed_at !== null
+            )
             .flatMap((entry) => {
               const percent = percentOfEntry(entry);
               return percent === null

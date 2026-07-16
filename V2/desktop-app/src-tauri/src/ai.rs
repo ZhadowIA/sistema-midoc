@@ -1441,7 +1441,7 @@ pub struct TranscriptionDraft {
 fn clinical_aid_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
-        "required": ["soap", "template_segments", "possibilities", "exam_suggestions", "question_suggestions", "studies", "treatments", "prescription_draft", "background_updates", "warnings"],
+        "required": ["soap", "template_segments", "possibilities", "exam_suggestions", "question_suggestions", "studies", "treatments", "prescription_draft", "background_updates", "medical_history_updates", "warnings"],
         "properties": {
             "soap": {
                 "type": "object",
@@ -1475,6 +1475,7 @@ fn clinical_aid_schema() -> serde_json::Value {
             "treatments": {"type":"array","items":{"type":"object","required":["name","reason","precautions"],"properties":{"name":{"type":"string"},"reason":{"type":"string"},"precautions":{"type":"array","items":{"type":"string"}}}}},
             "prescription_draft": {"type":"string"},
             "background_updates": {"type":"array","items":{"type":"object","required":["field","content"],"properties":{"field":{"type":"string","enum":["allergies","medical_background","family_background"]},"content":{"type":"string"}}}},
+            "medical_history_updates": {"type":"array","items":{"type":"object","required":["path","value","source_turns","confidence","warning"],"properties":{"path":{"type":"string"},"value":{"type":["string","number","array"],"items":{"type":"string"}},"source_turns":{"type":"array","items":{"type":"string"}},"confidence":{"type":"string","enum":["high","medium","low"]},"warning":{"type":"string"}}}},
             "warnings":{"type":"array","items":{"type":"string"}}
         }
     })
@@ -1545,6 +1546,7 @@ fn fake_clinical_aid_output(context: &str) -> Result<String, AiError> {
             field: "medical_background".into(),
             content: "Refiere insomnio de larga evolución (mencionado en consulta).".into(),
         }],
+        medical_history_updates: Vec::new(),
         warnings: vec!["Todas las propuestas requieren revisión médica.".into()],
     })
     .map_err(|error| AiError::Invalid(format!("salida clinica invalida: {error}")))
@@ -1585,6 +1587,27 @@ pub struct BackgroundUpdate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MedicalHistoryField {
+    pub path: String,
+    pub label: String,
+    pub kind: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MedicalHistoryUpdate {
+    pub path: String,
+    #[serde(default)]
+    pub label: String,
+    pub value: serde_json::Value,
+    pub source_turns: Vec<String>,
+    pub confidence: String,
+    #[serde(default)]
+    pub warning: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StudySuggestion {
     pub name: String,
     pub reason: String,
@@ -1615,6 +1638,8 @@ struct ClinicalAidOutput {
     prescription_draft: String,
     #[serde(default)]
     background_updates: Vec<BackgroundUpdate>,
+    #[serde(default)]
+    medical_history_updates: Vec<MedicalHistoryUpdate>,
     warnings: Vec<String>,
 }
 
@@ -1635,6 +1660,7 @@ pub struct ClinicalAidDraft {
     pub treatments: Vec<TreatmentSuggestion>,
     pub prescription_draft: String,
     pub background_updates: Vec<BackgroundUpdate>,
+    pub medical_history_updates: Vec<MedicalHistoryUpdate>,
     pub warnings: Vec<String>,
 }
 
@@ -2162,6 +2188,7 @@ fn parse_clinical_aid_output(
     raw: &str,
     template_segments: &[TemplateSegment],
     turns: &[ConsultationTurn],
+    history_fields: &[MedicalHistoryField],
 ) -> Result<ClinicalAidOutput, AiError> {
     let mut output: ClinicalAidOutput = serde_json::from_str(raw)
         .map_err(|error| AiError::Invalid(format!("respuesta de ayuda clinica invalida: {error}")))?;
@@ -2210,6 +2237,29 @@ fn parse_clinical_aid_output(
         .collect();
     let allowed_turns: std::collections::HashSet<&str> =
         turns.iter().map(|turn| turn.id.as_str()).collect();
+    let allowed_history: std::collections::HashMap<&str, &MedicalHistoryField> = history_fields
+        .iter()
+        .map(|field| (field.path.as_str(), field))
+        .collect();
+    for update in &mut output.medical_history_updates {
+        let field = allowed_history.get(update.path.as_str()).ok_or_else(|| {
+            AiError::Invalid(format!("ruta de antecedentes desconocida: {}", update.path))
+        })?;
+        if update.source_turns.is_empty()
+            || update
+                .source_turns
+                .iter()
+                .any(|turn_id| !allowed_turns.contains(turn_id.as_str()))
+            || !matches!(update.confidence.as_str(), "high" | "medium" | "low")
+            || !medical_history_value_is_valid(field, &update.value)
+        {
+            return Err(AiError::Invalid(format!(
+                "propuesta de antecedentes invalida: {}",
+                update.path
+            )));
+        }
+        update.label = field.label.clone();
+    }
     validate_and_repair_segments(
         &mut output.template_segments,
         &allowed,
@@ -2219,10 +2269,49 @@ fn parse_clinical_aid_output(
     Ok(output)
 }
 
+fn medical_history_value_is_valid(
+    field: &MedicalHistoryField,
+    value: &serde_json::Value,
+) -> bool {
+    match field.kind.as_str() {
+        "yesno" => value
+            .as_str()
+            .map(|value| matches!(value, "si" | "no"))
+            .unwrap_or(false),
+        "select" => {
+            let values = if let Some(value) = value.as_str() {
+                vec![value]
+            } else if let Some(values) = value.as_array() {
+                let Some(values) = values
+                    .iter()
+                    .map(|value| value.as_str())
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    return false;
+                };
+                values
+            } else {
+                return false;
+            };
+            !values.is_empty()
+                && values
+                    .iter()
+                    .all(|value| field.options.iter().any(|option| option == value))
+        }
+        "number" => value.is_number() || value.as_str().and_then(|value| value.parse::<f64>().ok()).is_some(),
+        "text" | "textarea" | "date" => value
+            .as_str()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 pub fn generate_clinical_aid(
     conn: &Connection,
     encounter_id: &str,
     template_segments: Vec<TemplateSegment>,
+    history_fields: Vec<MedicalHistoryField>,
     registry: &ProviderRegistry,
 ) -> Result<ClinicalAidDraft, AiError> {
     let detail =
@@ -2240,6 +2329,16 @@ pub fn generate_clinical_aid(
     let reviewed = latest_reviewed_transcription(conn, encounter_id)?
         .ok_or_else(|| AiError::Invalid("revisa la transcripcion antes de usar Ayuda IA".into()))?;
     let template_segments = validate_template_segments(&template_segments)?;
+    if history_fields.iter().any(|field| {
+        field.path.trim().is_empty()
+            || field.label.trim().is_empty()
+            || !matches!(
+                field.kind.as_str(),
+                "text" | "textarea" | "number" | "date" | "select" | "yesno"
+            )
+    }) {
+        return Err(AiError::Invalid("contrato de antecedentes invalido".into()));
+    }
     let input = serde_json::json!({
         "task": "Genera propuestas clinicas revisables, no decisiones.",
         "rules": [
@@ -2250,9 +2349,11 @@ pub fn generate_clinical_aid(
             "En exam_suggestions propone factores de exploracion fisica que convendria revisar segun los sintomas referidos; en question_suggestions, preguntas para completar la anamnesis. Ambas son sugerencias para el criterio del medico, nunca indicaciones.",
             "En prescription_draft redacta un borrador de receta SOLO con medicamentos o indicaciones que el medico menciono o acordo explicitamente en la conversacion, con la dosis, frecuencia y duracion tal como se dijeron; si no se menciono ningun tratamiento, deja el campo vacio.",
             "En background_updates vuelca antecedentes que el paciente respondio durante la conversacion (alergias, antecedentes personales, antecedentes familiares) usando los campos allergies, medical_background o family_background; solo informacion dicha por el paciente, sin inferencias.",
+            "En medical_history_updates propone respuestas estructuradas SOLO para rutas de medical_history_fields. Cada propuesta debe citar al menos un id real de turns; sin cita textual, no propongas el campo.",
             "En cada template_segment cita en source_turns SOLO ids de turnos de la conversacion; la informacion tomada de antecedentes o preconsulta NO se cita ahi: deja source_turns vacio (o solo con turnos reales) y anota la procedencia en warnings."
         ],
         "template_segments": &template_segments,
+        "medical_history_fields": &history_fields,
         "turns": &reviewed.turns,
         "encounter_context": build_context(&detail)
     });
@@ -2271,6 +2372,7 @@ pub fn generate_clinical_aid(
         &response.output,
         &template_segments,
         &reviewed.turns,
+        &history_fields,
     )?;
     let run_id = uuid::Uuid::new_v4().to_string();
     conn.execute(
@@ -2311,6 +2413,7 @@ pub fn generate_clinical_aid(
         treatments: output.treatments,
         prescription_draft: output.prescription_draft,
         background_updates: output.background_updates,
+        medical_history_updates: output.medical_history_updates,
         warnings: output.warnings,
     })
 }
@@ -2328,8 +2431,8 @@ pub fn save_reviewed_transcription(
     {
         return Err(AiError::Invalid(
             "el borrador de transcripcion no puede revisarse".into(),
-        ));
-    }
+            ));
+        }
     let turns = validate_consultation_turns(&turns)?;
     let transcript_text = turns
         .iter()
@@ -4025,7 +4128,7 @@ mod tests {
           "possibilities":[{"title":"Anemia","compatibility":"82%","explanation":"Fatiga","supporting_findings":[],"conflicting_findings":[],"missing_data":[]}],
           "studies":[],"treatments":[],"warnings":[]
         }"#;
-        assert!(parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns()).is_err());
+        assert!(parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns(), &[]).is_err());
     }
 
     #[test]
@@ -4041,12 +4144,12 @@ mod tests {
         let bad_exam = base
             .replace("EXAMS", r#"[{"name":"  ","reason":"Sin datos"}]"#)
             .replace("QUESTIONS", "[]");
-        assert!(parse_clinical_aid_output(&bad_exam, &scribe_segments(), &scribe_turns()).is_err());
+        assert!(parse_clinical_aid_output(&bad_exam, &scribe_segments(), &scribe_turns(), &[]).is_err());
         let bad_question = base
             .replace("EXAMS", "[]")
             .replace("QUESTIONS", r#"[{"question":"¿Desde cuándo?","reason":""}]"#);
         assert!(
-            parse_clinical_aid_output(&bad_question, &scribe_segments(), &scribe_turns()).is_err()
+            parse_clinical_aid_output(&bad_question, &scribe_segments(), &scribe_turns(), &[]).is_err()
         );
     }
 
@@ -4063,7 +4166,7 @@ mod tests {
           "studies":[],"treatments":[],"warnings":[]
         }"#;
         let output =
-            parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns()).unwrap();
+            parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns(), &[]).unwrap();
         let segment = &output.template_segments[0];
         assert_eq!(segment.source_turns, vec!["turn-1".to_string()]);
         assert!(segment
@@ -4082,9 +4185,50 @@ mod tests {
           "background_updates":[{"field":"blood_type","content":"O+"}],
           "warnings":[]
         }"#;
-        assert!(parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns()).is_err());
+        assert!(parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns(), &[]).is_err());
         let valid = raw.replace("blood_type", "allergies");
-        assert!(parse_clinical_aid_output(&valid, &scribe_segments(), &scribe_turns()).is_ok());
+        assert!(parse_clinical_aid_output(&valid, &scribe_segments(), &scribe_turns(), &[]).is_ok());
+    }
+
+    #[test]
+    fn clinical_aid_accepts_only_cited_structured_history_fields() {
+        let raw = r#"{
+          "soap":{"subjective":"","objective":"","assessment":"","plan":"","diagnosis":"","instructions":"","specialty":null},
+          "template_segments":[],"possibilities":[],"studies":[],"treatments":[],
+          "medical_history_updates":[{"path":"pathological.diabetico","value":"si","source_turns":["turn-1"],"confidence":"high","warning":""}],
+          "warnings":[]
+        }"#;
+        let fields = vec![MedicalHistoryField {
+            path: "pathological.diabetico".into(),
+            label: "Diabetes".into(),
+            kind: "yesno".into(),
+            options: Vec::new(),
+        }];
+        let output = parse_clinical_aid_output(
+            raw,
+            &scribe_segments(),
+            &scribe_turns(),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(output.medical_history_updates[0].label, "Diabetes");
+
+        let unknown = raw.replace("pathological.diabetico", "pathological.inventado");
+        assert!(parse_clinical_aid_output(
+            &unknown,
+            &scribe_segments(),
+            &scribe_turns(),
+            &fields,
+        )
+        .is_err());
+        let uncited = raw.replace(r#"["turn-1"]"#, "[]");
+        assert!(parse_clinical_aid_output(
+            &uncited,
+            &scribe_segments(),
+            &scribe_turns(),
+            &fields,
+        )
+        .is_err());
     }
 
     #[test]
@@ -4117,6 +4261,7 @@ mod tests {
             &conn,
             &encounter_id,
             scribe_segments(),
+            Vec::new(),
             &ProviderRegistry::default_local(),
         )
         .unwrap();

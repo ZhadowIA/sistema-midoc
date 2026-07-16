@@ -140,9 +140,9 @@ test("marcadores de pieza completa siguen la notacion clasica", () => {
 test("hasFindings ignora registros por defecto y detecta hallazgos", () => {
   assert.ok(!hasFindings(undefined));
   assert.ok(!hasFindings(record({})));
-  assert.ok(!hasFindings(record({ surfaces: { O: "HEALTHY" } })));
+  assert.ok(!hasFindings(record({ surfaces: {} })));
   assert.ok(hasFindings(record({ status: "CARIES" })));
-  assert.ok(hasFindings(record({ surfaces: { M: "RESTORED" } })));
+  assert.ok(hasFindings(record({ surfaces: { M: { condition: "RESTORED" } } })));
   assert.ok(hasFindings(record({ notes: "seguimiento" })));
 });
 
@@ -153,7 +153,7 @@ test("inferDentition sugiere la vista segun las piezas con hallazgos", () => {
   assert.equal(
     inferDentition({
       "55": record({ status: "CARIES" }),
-      "16": record({ surfaces: { O: "SEALANT" } })
+      "16": record({ surfaces: { O: { condition: "SEALANT" } } })
     }),
     "MIXED"
   );
@@ -196,9 +196,18 @@ test("describeTooth resume estado y superficies en espanol", () => {
   assert.equal(describeTooth("16", record({})), "Pieza 16: sana");
   assert.equal(describeTooth("16", record({ status: "CARIES" })), "Pieza 16: Caries");
   assert.equal(
-    describeTooth("16", record({ status: "RESTORED", surfaces: { O: "RESTORED", M: "CARIES" } })),
-    "Pieza 16: Restaurado — O restaurado, M caries"
+    describeTooth("16", record({
+      status: "RESTORED",
+      surfaces: {
+        O: { condition: "RESTORED", material: "RESIN" },
+        M: { condition: "CARIES" }
+      }
+    })),
+    "Pieza 16: Restaurado — O restaurado de resina, M caries"
   );
   // Pieza sana con hallazgo de superficie: no antepone "Sano".
-  assert.equal(describeTooth("16", record({ surfaces: { O: "CARIES" } })), "Pieza 16: O caries");
+  assert.equal(
+    describeTooth("16", record({ surfaces: { O: { condition: "CARIES" } } })),
+    "Pieza 16: O caries"
+  );
 });

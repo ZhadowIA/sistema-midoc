@@ -8,13 +8,23 @@ import {
   type LabeledAidSegment
 } from "./clinicalAid";
 import type { SegmentDraft, TemplateSegment } from "./consultationScribe";
+import {
+  ConsultationTemplateEditor,
+  type EditableConsultationTemplate
+} from "./ConsultationTemplateEditor";
+import type { ClinicalProfile } from "./clinicalProfiles";
+import {
+  proposalValueText,
+  type MedicalHistoryProposal
+} from "./medicalHistoryAi";
 
 interface Props {
   ready: boolean;
   consent: boolean;
   hasHistory: boolean;
   hasPreconsulta: boolean;
-  templates: Array<{ id: string; name: string }>;
+  templates: EditableConsultationTemplate[];
+  clinicalProfile: ClinicalProfile;
   selectedTemplateId: string;
   /** Definicion de la plantilla activa, para etiquetar y agrupar segmentos. */
   templateSegments: TemplateSegment[];
@@ -24,11 +34,14 @@ interface Props {
   draft: ClinicalAidDraft | null;
   onToggleConsent(): void;
   onTemplateChange(id: string): void;
+  onSaveTemplate(template: EditableConsultationTemplate): void;
+  onDeleteTemplate(id: string): void;
   onGenerate(): void;
   onApplySoap(): void;
   onApplySegment(segment: SegmentDraft): void;
   onApplyPrescription(text: string): void;
   onApplyBackground(update: BackgroundUpdate): void;
+  onApplyMedicalHistory(update: MedicalHistoryProposal, value: unknown): void;
   onDiscard(): void;
 }
 
@@ -91,6 +104,13 @@ export function ClinicalAidRail(props: Props) {
         {blockers.length > 0 ? (
           <p className="meta clinical-aid-blocker">Para generar, {blockers.join(" y ")}.</p>
         ) : null}
+        <ConsultationTemplateEditor
+          profile={props.clinicalProfile}
+          templates={props.templates}
+          disabled={props.busy}
+          onSave={props.onSaveTemplate}
+          onDelete={props.onDeleteTemplate}
+        />
       </div>
 
       {props.draft ? (
@@ -281,9 +301,57 @@ function ClinicalAidResults(props: Props & { draft: ClinicalAidDraft }) {
         </section>
       ) : null}
 
+      {props.draft.medical_history_updates.length > 0 ? (
+        <section className="clinical-aid-background" aria-label="Cuestionario de antecedentes propuesto">
+          <span className="clinical-aid-block-title">Cuestionario estructurado desde la conversación</span>
+          <p className="meta">Cada campo cita el turno que lo sustenta y requiere confirmación médica.</p>
+          {props.draft.medical_history_updates.map((update) => (
+            <MedicalHistoryProposalRow
+              key={`${update.path}:${update.source_turns.join(",")}`}
+              update={update}
+              onApply={props.onApplyMedicalHistory}
+            />
+          ))}
+        </section>
+      ) : null}
+
       <div className="clinical-aid-footer">
         <button className="ghost-button danger-link" onClick={props.onDiscard}>Descartar propuesta</button>
       </div>
+    </div>
+  );
+}
+
+function MedicalHistoryProposalRow(props: {
+  update: MedicalHistoryProposal;
+  onApply(update: MedicalHistoryProposal, value: unknown): void;
+}) {
+  const initial = proposalValueText(props.update.value);
+  const [value, setValue] = useState(initial);
+  const confirmedValue = Array.isArray(props.update.value)
+    ? value.split(",").map((item) => item.trim()).filter(Boolean)
+    : value;
+  return (
+    <div className="aid-background-row">
+      <div>
+        <p><b>{props.update.label}:</b></p>
+        <input
+          value={value}
+          onChange={(event) => setValue(event.currentTarget.value)}
+          aria-label={`Valor propuesto para ${props.update.label}`}
+        />
+        <p className="meta">
+          Fuente: {props.update.source_turns.join(", ")} · confianza {props.update.confidence}
+          {props.update.warning ? ` · ${props.update.warning}` : ""}
+        </p>
+      </div>
+      <button
+        className="ghost-button aid-apply"
+        disabled={!value.trim()}
+        onClick={() => props.onApply(props.update, confirmedValue)}
+      >
+        Revisar y aplicar
+      </button>
     </div>
   );
 }

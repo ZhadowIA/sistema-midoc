@@ -215,15 +215,6 @@ p {
   letter-spacing: -0.01em;
 }
 
-.topbar-context {
-  flex: 1;
-  color: var(--muted);
-  font-size: 0.92rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .content {
   width: min(860px, calc(100% - 40px));
   margin: 0 auto;
@@ -415,6 +406,15 @@ p {
 .panel-plain {
   display: grid;
   gap: 12px;
+  text-align: left;
+}
+
+/* La vinculación conserva el ritmo del formulario, sin presentarse como una
+   tarjeta separada del espacio principal. */
+.link-account-form {
+  display: grid;
+  gap: 12px;
+  padding: 24px;
   text-align: left;
 }
 
@@ -2491,6 +2491,611 @@ body.dictating .encounter-modes:focus-within {
   display: grid;
   gap: 8px;
   max-width: 520px;
+}
+
+.dental-module-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.dental-module-tabs button {
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--speed) var(--ease), border-color var(--speed) var(--ease),
+    background var(--speed) var(--ease);
+}
+
+.dental-module-tabs button:hover {
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.dental-module-tabs button.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.odontogram-workspace {
+  display: grid;
+  gap: 14px;
+}
+
+.odontogram-workspace-header,
+.odontogram-header-actions,
+.odontogram-tools-heading,
+.tooth-drawer-header,
+.timeline-heading,
+.odontogram-action-bar,
+.undo-actions {
+  display: flex;
+  align-items: center;
+}
+
+.odontogram-workspace-header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.odontogram-workspace-header h3,
+.odontogram-tools-heading h4,
+.tooth-drawer-header h4 {
+  margin: 0;
+}
+
+.eyebrow {
+  display: block;
+  color: var(--faint);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.odontogram-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.view-mode-toggle,
+.drawer-tabs {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.view-mode-toggle button,
+.drawer-tabs button {
+  border: 0;
+  background: var(--bg);
+  color: var(--muted);
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.view-mode-toggle button + button,
+.drawer-tabs button + button {
+  border-left: 1px solid var(--line);
+}
+
+.view-mode-toggle button.active,
+.drawer-tabs button.active {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.dictation-toggle.active {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.draft-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.draft-status::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  content: "";
+}
+
+.draft-status.dirty {
+  color: var(--warning);
+}
+
+.draft-status.dirty::before {
+  background: var(--warning);
+}
+
+.odontogram-dictation-region,
+.odontogram-reference-empty {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 12px 14px;
+}
+
+.odontogram-reference-empty {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.odontogram-reference-empty strong {
+  color: var(--ink);
+}
+
+.odontogram-workspace-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+}
+
+.odontogram-workspace-grid.drawer-open {
+  grid-template-columns: 208px minmax(0, 1fr) minmax(360px, 400px);
+}
+
+.odontogram-tools,
+.tooth-drawer {
+  min-width: 0;
+  background: var(--surface);
+}
+
+.odontogram-tools {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  border-right: 1px solid var(--line);
+  padding: 14px;
+}
+
+.odontogram-tools-heading,
+.tooth-drawer-header,
+.odontogram-action-bar,
+.timeline-heading {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tool-pin {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tool-pin.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.tool-group,
+.tool-list {
+  display: grid;
+  gap: 7px;
+}
+
+.tool-group-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.clinical-tool {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink);
+  padding: 6px 7px;
+  text-align: left;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: transform var(--speed) var(--ease), background var(--speed) var(--ease),
+    border-color var(--speed) var(--ease);
+}
+
+.clinical-tool:hover:not(:disabled) {
+  border-color: var(--line);
+  background: var(--bg);
+}
+
+.clinical-tool:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.clinical-tool.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.clinical-tool-mark {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.tool-caries .clinical-tool-mark {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.tool-restored .clinical-tool-mark {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.tool-sealant .clinical-tool-mark {
+  border-color: var(--success);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.tool-fracture .clinical-tool-mark,
+.tool-extraction_indicated .clinical-tool-mark {
+  border-color: var(--warning);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.material-field select {
+  width: 100%;
+  min-width: 0;
+}
+
+.tool-help {
+  margin: 0;
+  color: var(--faint);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.odontogram-canvas-region {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  padding: 14px;
+}
+
+.odontogram-canvas-region .odontogram-rows {
+  min-height: 220px;
+  align-content: center;
+}
+
+.odontogram-action-bar {
+  margin-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 10px;
+  color: var(--faint);
+  font-size: 0.76rem;
+}
+
+.undo-actions {
+  gap: 6px;
+}
+
+.odontogram-tooth.has-change {
+  box-shadow: 0 0 0 1px var(--warning);
+}
+
+.tooth-glyph polygon.surface-changed {
+  stroke: var(--ink);
+  stroke-width: 2.7;
+  stroke-dasharray: 3 2;
+}
+
+.tooth-drawer {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  max-height: 720px;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  padding: 14px;
+}
+
+.drawer-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.drawer-tabs {
+  width: 100%;
+}
+
+.drawer-tabs button {
+  flex: 1;
+}
+
+.tooth-drawer-detail,
+.drawer-surface-list {
+  display: grid;
+  gap: 12px;
+}
+
+.tooth-change-summary {
+  display: grid;
+  gap: 2px;
+  border-left: 3px solid var(--warning);
+  background: var(--warning-soft);
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.tooth-change-summary strong {
+  color: var(--ink);
+}
+
+.tooth-no-change {
+  margin: 0;
+  color: var(--success);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.drawer-surface-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 9px;
+}
+
+.surface-face-label {
+  display: grid;
+  width: 26px;
+  height: 30px;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.drawer-surface-row select {
+  width: 100%;
+  min-width: 0;
+}
+
+.danger-ghost-button {
+  justify-self: start;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--danger);
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tooth-timeline {
+  position: relative;
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tooth-timeline li {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  margin-left: 8px;
+  border-left: 1px solid var(--line);
+  padding: 0 0 18px 18px;
+}
+
+.tooth-timeline li:last-child {
+  border-left-color: transparent;
+}
+
+.timeline-dot {
+  position: absolute;
+  top: 4px;
+  left: -5px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.timeline-heading span,
+.timeline-difference {
+  color: var(--faint);
+  font-size: 0.72rem;
+}
+
+.tooth-timeline p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.tooth-history-skeleton {
+  height: 180px;
+  border-radius: var(--radius-control);
+  background: linear-gradient(90deg, var(--surface), var(--line-soft), var(--surface));
+  background-size: 220% 100%;
+  animation: tooth-history-loading 1.2s ease-in-out infinite;
+}
+
+@keyframes tooth-history-loading {
+  to { background-position: -120% 0; }
+}
+
+.inline-error {
+  margin: 0;
+  border-left: 3px solid var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+  padding: 8px 10px;
+  font-size: 0.8rem;
+}
+
+/* El espacio util de la consulta descuenta la navegacion lateral; por eso el
+   cambio a paleta horizontal ocurre antes que el ancho bruto de la ventana. */
+@media (max-width: 1499px) {
+  .odontogram-workspace-grid,
+  .odontogram-workspace-grid.drawer-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .odontogram-tools {
+    grid-template-columns: minmax(160px, 0.7fr) repeat(2, minmax(230px, 1fr));
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .odontogram-tools .tool-list {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .tool-help {
+    grid-column: 1 / -1;
+  }
+
+  .tooth-drawer {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(400px, 100%);
+    max-height: none;
+    border-left: 1px solid var(--line);
+    box-shadow: var(--shadow-overlay);
+  }
+}
+
+@media (max-width: 1099px) {
+  .odontogram-workspace-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .odontogram-header-actions {
+    justify-content: flex-start;
+  }
+
+  .odontogram-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .odontogram-tools .tool-list {
+    grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  }
+
+  .tool-help {
+    grid-column: auto;
+  }
+
+  .tooth-drawer {
+    position: static;
+    width: auto;
+    max-height: none;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+    box-shadow: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .odontogram-header-actions,
+  .view-mode-toggle,
+  .odontogram-action-bar {
+    width: 100%;
+  }
+
+  .view-mode-toggle button {
+    flex: 1;
+  }
+
+  .odontogram-action-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .drawer-surface-row {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+
+  .drawer-surface-row .field:last-child {
+    grid-column: 2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tooth-history-skeleton {
+    animation: none;
+  }
 }
 
 .odontogram-empty-hint {

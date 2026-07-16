@@ -1339,6 +1339,7 @@ pub struct SavePatientMedicalHistoryInput {
     pub encounter_id: Option<String>,
     pub source_appointment_id: Option<String>,
     pub reconciled_source_hash: Option<String>,
+    pub ai_run_id: Option<String>,
 }
 
 pub fn medical_history_source_hash(payload_json: &str) -> String {
@@ -1414,6 +1415,22 @@ pub fn save_patient_medical_history_version(
         }
         ensure_open(&encounter)?;
     }
+    if let Some(ai_run_id) = input.ai_run_id.as_deref() {
+        let valid_run: bool = conn.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM ai_runs
+                WHERE id = ?1 AND patient_id = ?2 AND encounter_id = ?3
+                  AND usage_type = 'CLINICAL_AID'
+             )",
+            params![ai_run_id, patient_id, input.encounter_id],
+            |row| row.get(0),
+        )?;
+        if !valid_run || input.source != "DOCTOR_EDIT" {
+            return Err(ClinicalError::Invalid(
+                "la propuesta IA no corresponde al paciente y encuentro".into(),
+            ));
+        }
+    }
     if let (Some(appointment_id), Some(expected_hash)) = (
         input.source_appointment_id.as_deref(),
         input.reconciled_source_hash.as_deref(),
@@ -1471,7 +1488,11 @@ pub fn save_patient_medical_history_version(
         "patient_medical_history",
         patient_id,
         "version-saved",
-        Some(&format!("v{next_version};source={}", input.source)),
+        Some(&format!(
+            "v{next_version};source={};ai_run_id={}",
+            input.source,
+            input.ai_run_id.as_deref().unwrap_or("none")
+        )),
     )?;
     tx.commit()?;
 
@@ -1890,6 +1911,7 @@ mod tests {
                 encounter_id: Some(encounter.id.clone()),
                 source_appointment_id: Some("appt-mh".into()),
                 reconciled_source_hash: Some(source_hash.clone()),
+                ai_run_id: None,
             },
         )
         .unwrap();
@@ -1902,6 +1924,7 @@ mod tests {
                 encounter_id: Some(encounter.id),
                 source_appointment_id: Some("appt-mh".into()),
                 reconciled_source_hash: Some(source_hash),
+                ai_run_id: None,
             },
         )
         .unwrap();
@@ -1945,6 +1968,7 @@ mod tests {
             encounter_id: None,
             source_appointment_id: None,
             reconciled_source_hash: None,
+            ai_run_id: None,
         };
         assert!(matches!(
             save_patient_medical_history_version(&mut conn, "missing", &input),

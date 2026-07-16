@@ -4,116 +4,18 @@ import {
   createEmptyTreatmentPlanItem,
   DENTAL_TOOTH_IDS,
   type DentalPayload,
-  getDefaultDentalToothRecord,
   getDefaultPeriodontogramRecord,
   MOUTH_CONDITION_OPTIONS,
-  TOOTH_FACES,
-  TOOTH_STATUS_OPTIONS,
   TREATMENT_PRIORITY_OPTIONS,
-  TREATMENT_STATUS_OPTIONS,
-  type ToothFace,
-  SURFACE_STATUS_OPTIONS
+  TREATMENT_STATUS_OPTIONS
 } from "./clinicalProfiles";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
-import { OdontogramChart } from "./OdontogramChart";
-import { DentalDictationPanel } from "./DentalDictationPanel";
 import { PlaqueIndexPanel } from "./PlaqueIndexPanel";
+import { OdontogramWorkspace } from "./OdontogramWorkspace";
 
 const UPPER_TEETH = DENTAL_TOOTH_IDS.slice(0, 16);
 const LOWER_TEETH = DENTAL_TOOTH_IDS.slice(16);
 const PERIODONTAL_LABELS = ["MB", "B", "DB", "ML", "L", "DL"];
-
-function ToothCard({
-  toothId,
-  payload,
-  disabled,
-  onChange
-}: {
-  toothId: string;
-  payload: DentalPayload;
-  disabled: boolean;
-  onChange: (next: DentalPayload) => void;
-}) {
-  const tooth = payload.odontogram[toothId] ?? getDefaultDentalToothRecord();
-
-  function updateTooth(nextTooth: typeof tooth) {
-    onChange({
-      ...payload,
-      odontogram: {
-        ...payload.odontogram,
-        [toothId]: nextTooth
-      }
-    });
-  }
-
-  return (
-    <article className="tooth-card">
-      <div className="tooth-card-header">
-        <strong>Pieza {toothId}</strong>
-        <span className="meta">Pieza y superficies</span>
-      </div>
-      <label className="field compact-field">
-        <span>Estado</span>
-        <select
-          value={tooth.status}
-          disabled={disabled}
-          onChange={(event) =>
-            updateTooth({
-              ...tooth,
-              status: event.currentTarget.value as typeof tooth.status
-            })
-          }
-        >
-          {TOOTH_STATUS_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="surface-grid">
-        {TOOTH_FACES.map((face) => (
-          <label className="field compact-field" key={face}>
-            <span>{face}</span>
-            <select
-              value={tooth.surfaces[face] ?? "HEALTHY"}
-              disabled={disabled}
-              onChange={(event) =>
-                updateTooth({
-                  ...tooth,
-                  surfaces: {
-                    ...tooth.surfaces,
-                    [face]: event.currentTarget.value as (typeof tooth.surfaces)[ToothFace]
-                  }
-                })
-              }
-            >
-              {SURFACE_STATUS_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        ))}
-      </div>
-      <label className="field compact-field">
-        <span>Notas</span>
-        <AutoGrowTextarea
-          rows={2}
-          value={tooth.notes}
-          disabled={disabled}
-          onChange={(event) =>
-            updateTooth({
-              ...tooth,
-              notes: event.currentTarget.value
-            })
-          }
-        />
-      </label>
-    </article>
-  );
-}
 
 function PeriodontogramArch({
   title,
@@ -274,17 +176,19 @@ export function DentalNoteEditor({
   patientId,
   encounterId,
   payload,
+  persistedPayload,
   disabled,
   onChange
 }: {
   patientId: string;
   encounterId: string;
   payload: DentalPayload;
+  persistedPayload?: DentalPayload | null;
   disabled: boolean;
   onChange: (next: DentalPayload) => void;
 }) {
   const today = new Date().toISOString().slice(0, 10);
-  const [selectedTooth, setSelectedTooth] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"ODONTOGRAM" | "PERIODONTICS" | "PLAQUE" | "PLAN">("ODONTOGRAM");
 
   function addCondition() {
     onChange({
@@ -302,83 +206,73 @@ export function DentalNoteEditor({
 
   return (
     <div className="stack">
-      <section className="dental-section">
-        <div className="panel-header">
-          <h3>Odontograma</h3>
-          <p>Hallazgos por pieza y superficie para una consulta dental completa.</p>
-        </div>
-        <DentalDictationPanel
+      <nav className="dental-module-tabs" aria-label="Secciones del modulo odontologico">
+        {([
+          ["ODONTOGRAM", "Odontograma"],
+          ["PERIODONTICS", "Periodoncia"],
+          ["PLAQUE", "Indice de placa"],
+          ["PLAN", "Condiciones y plan"]
+        ] as Array<[typeof activeTab, string]>).map(([value, label]) => (
+          <button
+            type="button"
+            key={value}
+            className={activeTab === value ? "active" : ""}
+            aria-current={activeTab === value ? "page" : undefined}
+            onClick={() => setActiveTab(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === "ODONTOGRAM" ? (
+        <OdontogramWorkspace
           patientId={patientId}
           encounterId={encounterId}
           payload={payload}
+          persistedPayload={persistedPayload}
           disabled={disabled}
           onChange={onChange}
         />
-        <OdontogramChart
-          payload={payload}
-          disabled={disabled}
-          selectedTooth={selectedTooth}
-          onSelectTooth={(toothId: string) =>
-            setSelectedTooth((current) => (current === toothId ? null : toothId))
-          }
-          onChange={onChange}
-        />
-        {selectedTooth ? (
-          <div className="odontogram-detail">
-            <ToothCard
-              toothId={selectedTooth}
-              payload={payload}
-              disabled={disabled}
-              onChange={onChange}
-            />
-            <div className="button-row">
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={() => setSelectedTooth(null)}
-              >
-                Cerrar detalle
-              </button>
-            </div>
+      ) : null}
+
+      {activeTab === "PLAQUE" ? (
+        <section className="dental-section">
+          <PlaqueIndexPanel
+            patientId={patientId}
+            encounterId={encounterId}
+            payload={payload}
+            disabled={disabled}
+            onChange={onChange}
+          />
+        </section>
+      ) : null}
+
+      {activeTab === "PERIODONTICS" ? (
+        <section className="dental-section">
+          <div className="panel-header">
+            <h3>Periodontograma</h3>
+            <p>Captura periodontal por pieza en seis sitios, con sangrado y movilidad.</p>
           </div>
-        ) : (
-          <p className="odontogram-empty-hint">
-            Selecciona una pieza del odontograma para editar su detalle completo.
-          </p>
-        )}
-      </section>
+          <PeriodontogramArch
+            title="Arcada superior"
+            teeth={UPPER_TEETH}
+            payload={payload}
+            disabled={disabled}
+            onChange={onChange}
+          />
+          <PeriodontogramArch
+            title="Arcada inferior"
+            teeth={LOWER_TEETH}
+            payload={payload}
+            disabled={disabled}
+            onChange={onChange}
+          />
+        </section>
+      ) : null}
 
-      <section className="dental-section">
-        <PlaqueIndexPanel
-          patientId={patientId}
-          encounterId={encounterId}
-          payload={payload}
-          disabled={disabled}
-          onChange={onChange}
-        />
-      </section>
-
-      <section className="dental-section">
-        <div className="panel-header">
-          <h3>Periodontograma</h3>
-          <p>Captura periodontal por pieza en seis sitios, con sangrado y movilidad.</p>
-        </div>
-        <PeriodontogramArch
-          title="Arcada superior"
-          teeth={UPPER_TEETH}
-          payload={payload}
-          disabled={disabled}
-          onChange={onChange}
-        />
-        <PeriodontogramArch
-          title="Arcada inferior"
-          teeth={LOWER_TEETH}
-          payload={payload}
-          disabled={disabled}
-          onChange={onChange}
-        />
-      </section>
-
+      {activeTab === "PLAN" ? (
+        <>
       <section className="dental-section">
         <div className="panel-header">
           <h3>Condiciones bucales</h3>
@@ -709,6 +603,8 @@ export function DentalNoteEditor({
           />
         </label>
       </section>
+        </>
+      ) : null}
     </div>
   );
 }

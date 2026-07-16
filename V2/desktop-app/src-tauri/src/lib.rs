@@ -1690,11 +1690,18 @@ fn ai_generate_clinical_aid(
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
     template: ConsultationTemplatePayload,
+    history_fields: Vec<ai::MedicalHistoryField>,
     model_override: Option<String>,
 ) -> Result<ai::ClinicalAidDraft, String> {
     let registry = resolve_text_registry(model_override)?;
     with_ai(&state, |conn| {
-        ai::generate_clinical_aid(conn, &encounter_id, template.segments, &registry)
+        ai::generate_clinical_aid(
+            conn,
+            &encounter_id,
+            template.segments,
+            history_fields,
+            &registry,
+        )
     })
 }
 

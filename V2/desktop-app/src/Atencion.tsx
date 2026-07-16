@@ -78,6 +78,12 @@ import {
   type MedicalHistoryReconciliation as MedicalHistoryReconciliationState
 } from "./medicalHistoryReconciliation";
 import { formatMedicalHistoryForDisplay } from "./medicalHistoryFormat";
+import { medicalHistoryAiFields } from "./medicalHistoryFormat";
+import {
+  applyMedicalHistoryProposal,
+  type MedicalHistoryProposal
+} from "./medicalHistoryAi";
+import type { EditableConsultationTemplate } from "./ConsultationTemplateEditor";
 
 type SpecialtyPayload = GeneralMedicinePayload | DentalPayload;
 type RecordingState = "idle" | "recording" | "paused" | "stopping";
@@ -345,6 +351,7 @@ export function Atencion({
     Record<string, ConflictDecision>
   >({});
   const [medicalHistorySourceHash, setMedicalHistorySourceHash] = useState<string | null>(null);
+  const [medicalHistoryAiRunId, setMedicalHistoryAiRunId] = useState<string | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -598,7 +605,9 @@ export function Atencion({
   function savePermanentMedicalHistory() {
     if (!detail) return;
     const source =
-      detail.medical_history && !permanentMedicalHistory
+      medicalHistoryAiRunId
+        ? "DOCTOR_EDIT"
+        : detail.medical_history && !permanentMedicalHistory
         ? "PATIENT_INITIAL"
         : hasPendingPatientMedicalHistory
           ? "PATIENT_RECONCILIATION"
@@ -613,13 +622,15 @@ export function Atencion({
           source_appointment_id: medicalHistorySourceHash
             ? detail.encounter.appointment_id
             : null,
-          reconciled_source_hash: medicalHistorySourceHash
+          reconciled_source_hash: medicalHistorySourceHash,
+          ai_run_id: medicalHistoryAiRunId
         }
       });
       setPermanentMedicalHistory(saved);
       setMedicalHistoryMode("read");
       setMedicalHistoryReconciliation(null);
       setMedicalHistoryDecisions({});
+      setMedicalHistoryAiRunId(null);
     });
   }
 
@@ -893,6 +904,7 @@ export function Atencion({
     call<ClinicalAidDraft>("ai_generate_clinical_aid", {
       encounterId,
       template: activeTemplate,
+      historyFields: medicalHistoryAiFields(),
       modelOverride: alternative?.id ?? null
     })
       .then((draft) => {
@@ -959,6 +971,22 @@ export function Atencion({
     setMessage("Antecedente aplicado. Revisa y guarda manualmente.");
   }
 
+  function applyClinicalAidMedicalHistory(update: MedicalHistoryProposal, value: unknown) {
+    if (!detail) return;
+    const isSameAiReview = medicalHistoryAiRunId === clinicalAidDraft?.run_id;
+    const base = isSameAiReview
+      ? medicalHistoryDraft
+      : permanentMedicalHistory
+        ? parseMedicalHistoryPayload(permanentMedicalHistory.payload_json)
+        : legacyMedicalHistory(detail);
+    setMedicalHistoryDraft(applyMedicalHistoryProposal(base, update, value));
+    setMedicalHistoryAiRunId(clinicalAidDraft?.run_id ?? null);
+    setMedicalHistoryMode("edit");
+    setMessage(
+      "Propuesta de antecedente preparada. Revísala y guarda la nueva versión para confirmarla."
+    );
+  }
+
   function discardClinicalAid() {
     if (!clinicalAidDraft) return;
     const runId = clinicalAidDraft.run_id;
@@ -969,6 +997,27 @@ export function Atencion({
   function applyScribeSegment(segment: SegmentDraft) {
     setNote((current) => appendSegmentToNote(current, segment, activeTemplate));
     setMessage("Segmento aplicado al editor. Revisa, ajusta y guarda la nota manualmente.");
+  }
+
+  function saveConsultationTemplate(template: EditableConsultationTemplate) {
+    void run("Plantilla clínica guardada localmente.", async () => {
+      const saved = await call<StoredConsultationTemplate>("save_consultation_template", {
+        template
+      });
+      setConsultationTemplates((current) => [
+        ...current.filter((item) => item.id !== saved.id),
+        saved
+      ]);
+      setSelectedTemplateId(saved.id);
+    });
+  }
+
+  function deleteConsultationTemplate(id: string) {
+    void run("Plantilla clínica eliminada.", async () => {
+      await call("delete_consultation_template", { id });
+      setConsultationTemplates((current) => current.filter((item) => item.id !== id));
+      if (selectedTemplateId === id) setSelectedTemplateId("default");
+    });
   }
 
   function sign() {
@@ -1419,6 +1468,9 @@ export function Atencion({
                 patientId={patientId}
                 encounterId={encounterId}
                 payload={coerceDentalPayload(note.specialty)}
+                persistedPayload={
+                  detail.note ? coerceDentalPayload(detail.note.specialty) : EMPTY_DENTAL_PAYLOAD
+                }
                 disabled={busy || signed}
                 onChange={(specialty) => setNote((current) => ({ ...current, specialty }))}
               />
@@ -1534,10 +1586,8 @@ export function Atencion({
                 consent={aiScribeConsent}
                 hasHistory={medicalHistoryGroups.length > 0}
                 hasPreconsulta={Boolean(detail.preconsulta)}
-                templates={profileTemplates.map((template) => ({
-                  id: template.id,
-                  name: template.name
-                }))}
+                templates={profileTemplates}
+                clinicalProfile={resolvedProfile}
                 selectedTemplateId={selectedTemplateId}
                 templateSegments={activeTemplate.segments}
                 specialtyLabel={moduleLabel}
@@ -1545,11 +1595,14 @@ export function Atencion({
                 draft={clinicalAidDraft}
                 onToggleConsent={() => void toggleScribeConsent()}
                 onTemplateChange={setSelectedTemplateId}
+                onSaveTemplate={saveConsultationTemplate}
+                onDeleteTemplate={deleteConsultationTemplate}
                 onGenerate={() => generateClinicalAid()}
                 onApplySoap={applyClinicalAidSoap}
                 onApplySegment={applyScribeSegment}
                 onApplyPrescription={applyClinicalAidPrescription}
                 onApplyBackground={applyClinicalAidBackground}
+                onApplyMedicalHistory={applyClinicalAidMedicalHistory}
                 onDiscard={discardClinicalAid}
               />
             ) : null}

@@ -40,6 +40,7 @@ test("varias superficies para un estado y varios hallazgos por pieza", () => {
       toothId: "24",
       faces: ["M", "D"],
       status: "RESTORED",
+      material: "RESIN",
       source: undefined
     },
     { kind: "SURFACE_STATUS", toothId: "24", faces: ["O"], status: "CARIES", source: undefined }
@@ -137,7 +138,7 @@ test("applyProposals marca odontograma y periodontograma sin mutar el original",
   const after = applyProposals(EMPTY_DENTAL_PAYLOAD, proposals);
 
   assert.deepEqual(EMPTY_DENTAL_PAYLOAD, before);
-  assert.equal(after.odontogram["18"].surfaces.O, "CARIES");
+  assert.deepEqual(after.odontogram["18"].surfaces.O, { condition: "CARIES" });
   assert.equal(after.odontogram["17"].status, "RESTORED");
   assert.equal(after.odontogram["16"].status, "MISSING");
   assert.deepEqual(after.periodontogram["16"].pocketDepth, [3, 2, 3, 4, 3, 4]);
@@ -148,13 +149,36 @@ test("applyProposals conserva lo ya capturado en la pieza", () => {
   const payload = {
     ...EMPTY_DENTAL_PAYLOAD,
     odontogram: {
-      "18": { status: "HEALTHY" as const, surfaces: { M: "RESTORED" as const }, notes: "previa" }
+      "18": {
+        status: "HEALTHY" as const,
+        surfaces: { M: { condition: "RESTORED" as const } },
+        notes: "previa"
+      }
     }
   };
   const after = applyProposals(payload, parseDentalDictation("18 caries oclusal"));
-  assert.equal(after.odontogram["18"].surfaces.M, "RESTORED");
-  assert.equal(after.odontogram["18"].surfaces.O, "CARIES");
+  assert.deepEqual(after.odontogram["18"].surfaces.M, { condition: "RESTORED" });
+  assert.deepEqual(after.odontogram["18"].surfaces.O, { condition: "CARIES" });
   assert.equal(after.odontogram["18"].notes, "previa");
+});
+
+test("dictado conserva materiales restauradores por superficie", () => {
+  const phrases = [
+    ["resina", "RESIN"],
+    ["amalgama", "AMALGAM"],
+    ["ionomero", "GLASS_IONOMER"],
+    ["ceramica", "CERAMIC"],
+    ["metal", "METAL"],
+    ["provisional", "TEMPORARY"]
+  ] as const;
+  for (const [phrase, material] of phrases) {
+    const proposal = parseDentalDictation(`18 ${phrase} oclusal`)[0];
+    assert.equal(proposal.kind, "SURFACE_STATUS");
+    if (proposal.kind === "SURFACE_STATUS") assert.equal(proposal.material, material);
+  }
+  const generic = parseDentalDictation("18 restauracion oclusal")[0];
+  assert.equal(generic.kind, "SURFACE_STATUS");
+  if (generic.kind === "SURFACE_STATUS") assert.equal(generic.material, undefined);
 });
 
 test("describeProposal resume cada propuesta en espanol", () => {

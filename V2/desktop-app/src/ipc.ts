@@ -1585,6 +1585,14 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
           field: "medical_background",
           content: "Refiere insomnio de larga evolución (mencionado en consulta)."
         }],
+        medical_history_updates: [{
+          path: "pathological.diabetico",
+          label: "Antecedentes personales patológicos · Diabetes",
+          value: "no",
+          source_turns: ["turn-1"],
+          confidence: "high",
+          warning: ""
+        }],
         warnings: ["Todas las propuestas requieren revisión médica."]
       } as T;
     }

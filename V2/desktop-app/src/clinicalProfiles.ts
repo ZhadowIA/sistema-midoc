@@ -53,7 +53,16 @@ export type ToothStatus =
   | "ROOT_CANAL"
   | "FRACTURE"
   | "EXTRACTION_INDICATED";
-export type SurfaceStatus = "HEALTHY" | "CARIES" | "RESTORED" | "SEALANT" | "FRACTURE";
+export type SurfaceCondition = "HEALTHY" | "CARIES" | "RESTORED" | "SEALANT" | "FRACTURE";
+// Alias temporal para consumidores que todavía nombran la condición como estado.
+export type SurfaceStatus = SurfaceCondition;
+export type RestorationMaterial =
+  | "RESIN"
+  | "AMALGAM"
+  | "GLASS_IONOMER"
+  | "CERAMIC"
+  | "METAL"
+  | "TEMPORARY";
 export type MouthCondition = "BRUXISM" | "MALOCCLUSION" | "PERIODONTAL_DISEASE" | "TMJ" | "OTHER";
 export type MouthConditionSeverity = "MILD" | "MODERATE" | "SEVERE";
 export type TreatmentPriority = "URGENT" | "ELECTIVE" | "PREVENTIVE";
@@ -61,8 +70,13 @@ export type TreatmentStatus = "PLANNED" | "IN_PROGRESS" | "COMPLETED";
 
 export interface DentalToothRecord {
   status: ToothStatus;
-  surfaces: Partial<Record<ToothFace, SurfaceStatus>>;
+  surfaces: Partial<Record<ToothFace, DentalSurfaceRecord>>;
   notes: string;
+}
+
+export interface DentalSurfaceRecord {
+  condition: SurfaceCondition;
+  material?: RestorationMaterial;
 }
 
 export interface PeriodontogramRecord {
@@ -93,6 +107,7 @@ export interface TreatmentPlanItem {
 }
 
 export interface DentalPayload {
+  schemaVersion: 2;
   odontogram: Record<string, DentalToothRecord>;
   periodontogram: Record<string, PeriodontogramRecord>;
   /** Indice de placa (O'Leary): caras M/D/V/L con placa por pieza (paso 26). */
@@ -104,6 +119,7 @@ export interface DentalPayload {
 }
 
 export const EMPTY_DENTAL_PAYLOAD: DentalPayload = {
+  schemaVersion: 2,
   odontogram: {},
   periodontogram: {},
   plaque: {},
@@ -131,6 +147,18 @@ export const SURFACE_STATUS_OPTIONS: Array<{ value: SurfaceStatus; label: string
   { value: "RESTORED", label: "Restaurado" },
   { value: "SEALANT", label: "Sellador" },
   { value: "FRACTURE", label: "Fractura" }
+];
+
+export const RESTORATION_MATERIAL_OPTIONS: Array<{
+  value: RestorationMaterial;
+  label: string;
+}> = [
+  { value: "RESIN", label: "Resina" },
+  { value: "AMALGAM", label: "Amalgama" },
+  { value: "GLASS_IONOMER", label: "Ionomero de vidrio" },
+  { value: "CERAMIC", label: "Ceramica" },
+  { value: "METAL", label: "Metal" },
+  { value: "TEMPORARY", label: "Provisional" }
 ];
 
 export const MOUTH_CONDITION_OPTIONS: Array<{ value: MouthCondition; label: string }> = [
@@ -189,10 +217,23 @@ function normalizeToothStatus(value: unknown): ToothStatus {
     : "HEALTHY";
 }
 
-function normalizeSurfaceStatus(value: unknown): SurfaceStatus | undefined {
-  return SURFACE_STATUS_OPTIONS.some((option) => option.value === value)
-    ? (value as SurfaceStatus)
+function normalizeRestorationMaterial(value: unknown): RestorationMaterial | undefined {
+  return RESTORATION_MATERIAL_OPTIONS.some((option) => option.value === value)
+    ? (value as RestorationMaterial)
     : undefined;
+}
+
+function normalizeSurfaceRecord(value: unknown): DentalSurfaceRecord | undefined {
+  const source = isRecord(value) ? value : null;
+  const rawCondition = source?.condition ?? value;
+  const condition = SURFACE_STATUS_OPTIONS.find((option) => option.value === rawCondition)?.value;
+  if (!condition || condition === "HEALTHY") {
+    return undefined;
+  }
+  const material = condition === "RESTORED"
+    ? normalizeRestorationMaterial(source?.material)
+    : undefined;
+  return material ? { condition, material } : { condition };
 }
 
 export function coerceClinicalProfile(value: unknown): ClinicalProfile {
@@ -230,10 +271,10 @@ export function coerceDentalPayload(value: unknown): DentalPayload {
         {
           status: normalizeToothStatus(toothRecord.status),
           surfaces: Object.fromEntries(
-            TOOTH_FACES.map((face) => [face, normalizeSurfaceStatus(surfacesSource[face])]).filter(
-              ([, status]) => status !== undefined
+            TOOTH_FACES.map((face) => [face, normalizeSurfaceRecord(surfacesSource[face])]).filter(
+              ([, surface]) => surface !== undefined
             )
-          ) as Partial<Record<ToothFace, SurfaceStatus>>,
+          ) as Partial<Record<ToothFace, DentalSurfaceRecord>>,
           notes: String(toothRecord.notes ?? "")
         } satisfies DentalToothRecord
       ];
@@ -276,6 +317,7 @@ export function coerceDentalPayload(value: unknown): DentalPayload {
   );
 
   return {
+    schemaVersion: 2,
     odontogram,
     periodontogram,
     plaque,
