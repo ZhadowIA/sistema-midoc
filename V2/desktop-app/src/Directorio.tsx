@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
+import { parseDateFlexible } from "./dateOnly";
 
 interface PatientSummary {
   id: string;
@@ -175,7 +176,7 @@ export function Directorio({
           <p>
             {p.phone ? `Tel: ${p.phone}` : "Sin telefono"}
             {p.email ? ` · ${p.email}` : ""}
-            {p.birth_date ? ` · Nac: ${dateFormatter.format(new Date(p.birth_date))}` : ""}
+            {p.birth_date ? ` · Nac: ${dateFormatter.format(parseDateFlexible(p.birth_date))}` : ""}
           </p>
         </div>
         {p.allergies ? <p className="alert-allergies">Alergias: {p.allergies}</p> : null}

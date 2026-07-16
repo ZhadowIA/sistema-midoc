@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
+import { parseDateFlexible } from "./dateOnly";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { MedicalHistoryGroups } from "./MedicalHistoryGroups";
 import { formatMedicalHistoryForDisplay } from "./medicalHistoryFormat";
@@ -109,7 +110,9 @@ function patientInitials(patient: PatientRecord): string {
 }
 
 function formatEventDate(value: string): string {
-  const parsed = new Date(value);
+  // Fechas sin hora (nacimiento, eventos) se parsean como fecha local para
+  // no retroceder un dia al formatear en UTC-6/7.
+  const parsed = parseDateFlexible(value);
   return Number.isNaN(parsed.getTime()) ? value : dateFormatter.format(parsed);
 }
 
