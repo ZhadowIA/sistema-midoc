@@ -108,51 +108,41 @@ function ToolPalette({
   onTogglePinned: () => void;
 }) {
   const activeKey = toolKey(activeTool);
+  // Barra horizontal arriba del lienzo: el odontograma completo y sus
+  // herramientas quedan a la vista sin scroll vertical.
   return (
-    <aside className="odontogram-tools" aria-label="Herramientas del odontograma">
-      <div className="odontogram-tools-heading">
-        <div>
-          <span className="eyebrow">Captura directa</span>
-          <h4>Herramientas</h4>
-        </div>
-        <button
-          className={`tool-pin${pinned ? " active" : ""}`}
-          type="button"
-          disabled={disabled || !activeTool}
-          aria-pressed={pinned}
-          onClick={onTogglePinned}
-        >
-          {pinned ? "Fijada" : "Fijar"}
-        </button>
-      </div>
-      <div className="tool-group">
+    <div
+      className="odontogram-toolbar-tools"
+      role="toolbar"
+      aria-label="Herramientas del odontograma"
+    >
+      <div className="toolbar-tool-group">
         <span className="tool-group-label">Superficie</span>
-        <div className="tool-list">
-          {SURFACE_TOOLS.map((tool) => {
-            const value: OdontogramTool = {
-              scope: "SURFACE",
-              condition: tool.condition,
-              material: tool.condition === "RESTORED" ? material : undefined
-            };
-            return (
-              <button
-                key={tool.condition}
-                type="button"
-                disabled={disabled}
-                className={`clinical-tool tool-${tool.condition.toLowerCase()}${
-                  activeKey === toolKey(value) ? " active" : ""
-                }`}
-                aria-pressed={activeKey === toolKey(value)}
-                onClick={() => onSelectTool(value)}
-              >
-                <span className="clinical-tool-mark" aria-hidden>{tool.mark}</span>
-                <span>{tool.label}</span>
-              </button>
-            );
-          })}
-        </div>
-        <label className="field compact-field material-field">
-          <span>Material restaurador</span>
+        {SURFACE_TOOLS.map((tool) => {
+          const value: OdontogramTool = {
+            scope: "SURFACE",
+            condition: tool.condition,
+            material: tool.condition === "RESTORED" ? material : undefined
+          };
+          return (
+            <button
+              key={tool.condition}
+              type="button"
+              disabled={disabled}
+              title={tool.label}
+              className={`clinical-tool tool-${tool.condition.toLowerCase()}${
+                activeKey === toolKey(value) ? " active" : ""
+              }`}
+              aria-pressed={activeKey === toolKey(value)}
+              onClick={() => onSelectTool(value)}
+            >
+              <span className="clinical-tool-mark" aria-hidden>{tool.mark}</span>
+              <span>{tool.label}</span>
+            </button>
+          );
+        })}
+        <label className="toolbar-material" title="Material aplicado con la herramienta Restauracion">
+          <span className="tool-group-label">Material</span>
           <select
             value={material}
             disabled={disabled}
@@ -164,31 +154,41 @@ function ToolPalette({
           </select>
         </label>
       </div>
-      <div className="tool-group">
+      <span className="toolbar-divider" aria-hidden />
+      <div className="toolbar-tool-group">
         <span className="tool-group-label">Pieza completa</span>
-        <div className="tool-list tool-list-dense">
-          {TOOTH_STATUS_OPTIONS.map((option) => {
-            const value: OdontogramTool = { scope: "TOOTH", status: option.value };
-            return (
-              <button
-                key={option.value}
-                type="button"
-                disabled={disabled}
-                className={`clinical-tool tool-${option.value.toLowerCase()}${
-                  activeKey === toolKey(value) ? " active" : ""
-                }`}
-                aria-pressed={activeKey === toolKey(value)}
-                onClick={() => onSelectTool(value)}
-              >
-                <span className="clinical-tool-mark" aria-hidden>{TOOTH_TOOL_MARKS[option.value]}</span>
-                <span>{option.label}</span>
-              </button>
-            );
-          })}
-        </div>
+        {TOOTH_STATUS_OPTIONS.map((option) => {
+          const value: OdontogramTool = { scope: "TOOTH", status: option.value };
+          return (
+            <button
+              key={option.value}
+              type="button"
+              disabled={disabled}
+              title={option.label}
+              className={`clinical-tool tool-${option.value.toLowerCase()}${
+                activeKey === toolKey(value) ? " active" : ""
+              }`}
+              aria-pressed={activeKey === toolKey(value)}
+              onClick={() => onSelectTool(value)}
+            >
+              <span className="clinical-tool-mark" aria-hidden>{TOOTH_TOOL_MARKS[option.value]}</span>
+              <span>{option.label}</span>
+            </button>
+          );
+        })}
       </div>
-      <p className="tool-help">Un uso por defecto. Fija una herramienta para aplicarla varias veces.</p>
-    </aside>
+      <span className="toolbar-divider" aria-hidden />
+      <button
+        className={`tool-pin${pinned ? " active" : ""}`}
+        type="button"
+        disabled={disabled || !activeTool}
+        aria-pressed={pinned}
+        title="Un uso por defecto. Fija la herramienta para aplicarla varias veces."
+        onClick={onTogglePinned}
+      >
+        {pinned ? "Fijada" : "Fijar"}
+      </button>
+    </div>
   );
 }
 
@@ -620,21 +620,22 @@ export function OdontogramWorkspace({
         </div>
       ) : null}
 
+      <ToolPalette
+        activeTool={activeTool}
+        pinned={pinned}
+        material={material}
+        disabled={editingDisabled}
+        onMaterialChange={(nextMaterial) => {
+          setMaterial(nextMaterial);
+          if (activeTool?.scope === "SURFACE" && activeTool.condition === "RESTORED") {
+            setActiveTool({ ...activeTool, material: nextMaterial });
+          }
+        }}
+        onSelectTool={selectTool}
+        onTogglePinned={() => setPinned((current) => !current)}
+      />
+
       <div className={`odontogram-workspace-grid${selectedTooth ? " drawer-open" : ""}`}>
-        <ToolPalette
-          activeTool={activeTool}
-          pinned={pinned}
-          material={material}
-          disabled={editingDisabled}
-          onMaterialChange={(nextMaterial) => {
-            setMaterial(nextMaterial);
-            if (activeTool?.scope === "SURFACE" && activeTool.condition === "RESTORED") {
-              setActiveTool({ ...activeTool, material: nextMaterial });
-            }
-          }}
-          onSelectTool={selectTool}
-          onTogglePinned={() => setPinned((current) => !current)}
-        />
         <div className="odontogram-canvas-region">
           <OdontogramChart
             payload={displayedPayload}
