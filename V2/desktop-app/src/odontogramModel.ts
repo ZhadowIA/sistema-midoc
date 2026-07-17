@@ -106,6 +106,49 @@ export function toothType(toothId: string): ToothType {
   return position <= 5 ? "PREMOLAR" : "MOLAR";
 }
 
+// Proporciones relativas por pieza (idea 2 del diseño anatomico): sin
+// dibujar 52 dientes distintos, cada posicion escala su glifo como en la
+// boca — molares anchos (el tercero mas chico), premolares y caninos mas
+// angostos, incisivo central superior mas ancho que el lateral, incisivos
+// inferiores los mas angostos, y denticion temporal reducida.
+export interface ToothProportions {
+  width: number;
+  height: number;
+}
+
+export function toothProportions(toothId: string): ToothProportions {
+  const position = Number(toothId[1] ?? 0);
+  const upper = isUpperTooth(toothId);
+  const primary = PRIMARY_ID_SET.has(toothId);
+  const type = toothType(toothId);
+
+  let width: number;
+  let height = 1;
+  switch (type) {
+    case "MOLAR":
+      // 6 > 7 > 8; los temporales (posiciones 4/5) los reduce el factor comun.
+      width = position === 8 ? 0.86 : position === 7 ? 0.94 : 1;
+      break;
+    case "PREMOLAR":
+      width = 0.8;
+      break;
+    case "CANINE":
+      width = 0.76;
+      height = 1.06;
+      break;
+    default:
+      // Incisivos: central superior ancho, lateral menor; los inferiores son
+      // las piezas mas angostas de la boca.
+      width = upper ? (position === 1 ? 0.84 : 0.7) : 0.6;
+      break;
+  }
+  if (primary) {
+    width *= 0.88;
+    height *= 0.92;
+  }
+  return { width: Math.round(width * 100) / 100, height: Math.round(height * 100) / 100 };
+}
+
 // Curvatura de arcada (rebanada 6): desplazamiento vertical en px por
 // posicion, maximo al centro (linea media) y cero en los extremos, de modo
 // que las filas se curvan una hacia la otra como en la boca. Superior baja,

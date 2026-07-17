@@ -2384,7 +2384,7 @@ body.dictating .encounter-modes:focus-within {
   display: block;
 }
 
-.tooth-glyph polygon {
+.tooth-glyph .tooth-surface {
   stroke: var(--line);
   stroke-width: 1;
 }
@@ -2858,7 +2858,7 @@ body.dictating .encounter-modes:focus-within {
   box-shadow: 0 0 0 1px var(--warning);
 }
 
-.tooth-glyph polygon.surface-changed {
+.tooth-glyph .tooth-surface.surface-changed {
   stroke: var(--ink);
   stroke-width: 2.7;
   stroke-dasharray: 3 2;
