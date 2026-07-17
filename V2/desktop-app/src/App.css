@@ -2380,13 +2380,63 @@ body.dictating .encounter-modes:focus-within {
 
 .tooth-glyph {
   width: 32px;
-  height: 43px;
+  height: 62px;
   display: block;
 }
 
 .tooth-glyph .tooth-surface {
   stroke: var(--line);
   stroke-width: 1;
+}
+
+/* Vista facial (doble vista): corona vestibular + raiz. Los estados de pieza
+   completa se pintan aqui. */
+.facial-crown {
+  fill: var(--bg);
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+
+.tooth-status-caries .facial-crown {
+  fill: var(--danger-soft);
+  stroke: var(--danger);
+}
+
+.tooth-status-restored .facial-crown {
+  fill: var(--primary-soft);
+  stroke: var(--primary);
+}
+
+.tooth-status-fracture .facial-crown {
+  fill: var(--warning-soft);
+  stroke: var(--warning);
+}
+
+.tooth-status-crown .facial-crown,
+.legend-crown-status {
+  fill: var(--warning-soft);
+  stroke: var(--warning);
+  stroke-width: 2.4;
+}
+
+.facial-canal {
+  fill: var(--danger);
+  stroke: none;
+}
+
+.facial-implant path {
+  fill: var(--primary-soft);
+  stroke: var(--primary);
+  stroke-width: 1.4;
+}
+
+.facial-implant .facial-implant-threads {
+  fill: none;
+}
+
+.tooth-status-missing .facial-view,
+.tooth-status-extraction-indicated .facial-view {
+  opacity: 0.35;
 }
 
 .odontogram-curve {

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CROWN_PATHS, crownRegionPaths, GROOVE_PATHS, ROOT_PATHS } from "./toothGeometry.ts";
+import {
+  CROWN_PATHS,
+  crownRegionPaths,
+  FACIAL_CANAL_PATH,
+  FACIAL_CROWN_PATHS,
+  FACIAL_IMPLANT_BODY,
+  GROOVE_PATHS,
+  ROOT_PATHS
+} from "./toothGeometry.ts";
 import { toothProportions, type ToothType } from "./odontogramModel.ts";
 
 const TYPES: ToothType[] = ["MOLAR", "PREMOLAR", "CANINE", "INCISOR"];
@@ -40,6 +48,19 @@ test("la tabla central es distinta por tipo (molar amplia, incisivo banda)", () 
   // El incisivo es mas ancho que alto (banda incisal); el molar es cuadrado.
   assert.ok(crownRegionPaths("INCISOR").center.startsWith("M9 17"));
   assert.ok(crownRegionPaths("MOLAR").center.startsWith("M13 14"));
+});
+
+test("vista facial: corona por tipo distinta y adornos definidos", () => {
+  const crowns = new Set(TYPES.map((type) => FACIAL_CROWN_PATHS[type]));
+  assert.equal(crowns.size, TYPES.length);
+  for (const type of TYPES) {
+    assert.match(FACIAL_CROWN_PATHS[type], /^M[\d. ]/);
+    assert.match(FACIAL_CROWN_PATHS[type], /Z$/);
+    // La corona facial vive en la caja y14..35 (la raiz ocupa y0..16 arriba).
+    assert.ok(FACIAL_CROWN_PATHS[type].includes("14"), `${type} arranca en el cuello`);
+  }
+  assert.match(FACIAL_CANAL_PATH, /^M[\d. ]/);
+  assert.match(FACIAL_IMPLANT_BODY, /^M[\d. ]/);
 });
 
 test("proporciones por pieza: jerarquia anatomica de anchos", () => {
