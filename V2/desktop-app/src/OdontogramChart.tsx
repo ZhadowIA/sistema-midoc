@@ -30,9 +30,14 @@ import {
   FACIAL_CROWN_PATHS,
   FACIAL_IMPLANT_BODY,
   FACIAL_IMPLANT_THREADS,
-  GROOVE_PATHS,
+  OCCLUSAL_ANATOMY,
   ROOT_PATHS
 } from "./toothGeometry.ts";
+import { vendorToothAsset } from "./toothSkinAssets.ts";
+import {
+  vendorToothPlacement,
+  type OdontogramSkin
+} from "./toothSkinModel.ts";
 
 // Doble vista por diente, como en el odontograma en papel (idea 3):
 // - Vista FACIAL (corona desde vestibular + raiz, hacia afuera de la boca):
@@ -74,13 +79,18 @@ function ToothMarkerOverlay({ marker }: { marker: ReturnType<typeof toothMarker>
 
 /** Vista facial: raiz + corona vestibular con los adornos del estado. */
 function FacialView({
+  toothId,
   type,
-  status
+  status,
+  skin
 }: {
+  toothId: string;
   type: ReturnType<typeof toothType>;
   status: string;
+  skin: OdontogramSkin;
 }) {
   const implant = status === "IMPLANT";
+  const vendorPlacement = skin === "ZOLIQUA_MIT" ? vendorToothPlacement(toothId) : null;
   return (
     <>
       {implant ? (
@@ -88,12 +98,69 @@ function FacialView({
           <path d={FACIAL_IMPLANT_BODY} />
           <path className="facial-implant-threads" d={FACIAL_IMPLANT_THREADS} />
         </g>
+      ) : vendorPlacement ? (
+        <g
+          className="facial-vendor-skin"
+          transform={vendorPlacement.mirrorWithinArch ? "translate(40 0) scale(-1 1)" : undefined}
+          aria-hidden="true"
+        >
+          <image
+            href={vendorToothAsset(vendorPlacement.template)}
+            x={0}
+            y={0}
+            width={40}
+            height={35}
+            preserveAspectRatio="xMidYMid meet"
+          />
+        </g>
       ) : (
         <path className="tooth-root" d={ROOT_PATHS[type === "MOLAR" ? "DOUBLE" : "SINGLE"]} />
       )}
       {status === "ROOT_CANAL" ? <path className="facial-canal" d={FACIAL_CANAL_PATH} /> : null}
-      <path className="facial-crown" d={FACIAL_CROWN_PATHS[type]} />
+      <path
+        className={vendorPlacement && !implant ? "facial-state-overlay" : "facial-crown"}
+        d={FACIAL_CROWN_PATHS[type]}
+      />
     </>
+  );
+}
+
+function OcclusalAnatomyLayer({ type }: { type: ReturnType<typeof toothType> }) {
+  const anatomy = OCCLUSAL_ANATOMY[type];
+  return (
+    <g className="tooth-occlusal-anatomy" aria-hidden="true">
+      <path
+        className="tooth-marginal-ridge"
+        data-anatomy="marginal-ridge"
+        d={anatomy.marginalRidge}
+      />
+      {anatomy.cuspRidges.map((path, index) => (
+        <path
+          key={`cusp-${index}`}
+          className="tooth-cusp-ridge"
+          data-anatomy="cusp-ridge"
+          d={path}
+        />
+      ))}
+      {anatomy.grooves.map((path, index) => (
+        <path
+          key={`groove-${index}`}
+          className="tooth-groove"
+          data-anatomy="developmental-groove"
+          d={path}
+        />
+      ))}
+      {anatomy.fossae.map((fossa, index) => (
+        <circle
+          key={`fossa-${index}`}
+          className="tooth-fossa"
+          data-anatomy="fossa"
+          cx={fossa.x}
+          cy={fossa.y}
+          r={fossa.radius}
+        />
+      ))}
+    </g>
   );
 }
 
@@ -104,6 +171,7 @@ function ToothGlyph({
   selected,
   activeTool,
   difference,
+  skin,
   onSelect,
   onApplyTool
 }: {
@@ -113,6 +181,7 @@ function ToothGlyph({
   selected: boolean;
   activeTool: OdontogramTool | null;
   difference?: ToothDifference;
+  skin: OdontogramSkin;
   onSelect: (toothId: string) => void;
   onApplyTool: (toothId: string, face: ToothFace | null) => void;
 }) {
@@ -189,7 +258,7 @@ function ToothGlyph({
           transform={upper ? undefined : `translate(0,${GLYPH_TOTAL}) scale(1,-1)`}
         >
           <title>{`${toothId} pieza completa`}</title>
-          <FacialView type={type} status={tooth.status} />
+          <FacialView toothId={toothId} type={type} status={tooth.status} skin={skin} />
         </g>
         {/* Disco oclusal hacia la linea media, con las regiones por cara. */}
         <g transform={upper ? `translate(0,${OCCLUSAL_OFFSET})` : undefined}>
@@ -197,6 +266,7 @@ function ToothGlyph({
             {TOOTH_FACES.map((face) => (
               <path
                 key={face}
+                data-face={face}
                 d={regions[slots[face]]}
                 className={`tooth-surface ${surfaceStatusClass(tooth.surfaces[face])}${
                   difference?.changedFaces.includes(face) ? " surface-changed" : ""
@@ -210,8 +280,10 @@ function ToothGlyph({
               </path>
             ))}
           </g>
+          <g clipPath={`url(#${clipId})`}>
+            <OcclusalAnatomyLayer type={type} />
+          </g>
           <path className="tooth-crown-outline" d={CROWN_PATHS[type]} />
-          <path className="tooth-groove" d={GROOVE_PATHS[type]} />
         </g>
         <ToothMarkerOverlay marker={marker} />
       </svg>
@@ -239,22 +311,43 @@ export function OdontogramChart({
   const [dentition, setDentition] = useState<Dentition>(() =>
     inferDentition(payload.odontogram)
   );
+  const [skin, setSkin] = useState<OdontogramSkin>("MIDOC");
   const rows = archRowsForDentition(dentition);
 
   return (
     <div className="odontogram-chart">
       <div className="odontogram-toolbar">
-        <div className="dentition-toggle" role="group" aria-label="Denticion">
-          {DENTITION_OPTIONS.map((option) => (
+        <div className="odontogram-view-controls">
+          <div className="dentition-toggle" role="group" aria-label="Denticion">
+            {DENTITION_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={dentition === option.value ? "active" : ""}
+                onClick={() => setDentition(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="dentition-toggle" role="group" aria-label="Aspecto de la vista facial">
             <button
-              key={option.value}
               type="button"
-              className={dentition === option.value ? "active" : ""}
-              onClick={() => setDentition(option.value)}
+              className={skin === "MIDOC" ? "active" : ""}
+              aria-pressed={skin === "MIDOC"}
+              onClick={() => setSkin("MIDOC")}
             >
-              {option.label}
+              Esquema MiDoc
             </button>
-          ))}
+            <button
+              type="button"
+              className={skin === "ZOLIQUA_MIT" ? "active" : ""}
+              aria-pressed={skin === "ZOLIQUA_MIT"}
+              onClick={() => setSkin("ZOLIQUA_MIT")}
+            >
+              Anatomia MIT
+            </button>
+          </div>
         </div>
         <p className="odontogram-hint">
           {activeTool
@@ -285,6 +378,7 @@ export function OdontogramChart({
                         selected={selectedTooth === toothId}
                         activeTool={activeTool}
                         difference={differences?.get(toothId)}
+                        skin={skin}
                         onSelect={onSelectTooth}
                         onApplyTool={onApplyTool}
                       />

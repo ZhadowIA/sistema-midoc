@@ -2276,6 +2276,13 @@ body.dictating .encounter-modes:focus-within {
   gap: 8px;
 }
 
+.odontogram-view-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .odontogram-hint {
   margin: 0;
   font-size: 0.8rem;
@@ -2397,6 +2404,47 @@ body.dictating .encounter-modes:focus-within {
   stroke-width: 1.5;
 }
 
+.facial-vendor-skin,
+.facial-vendor-skin image {
+  pointer-events: none;
+}
+
+.facial-vendor-skin {
+  opacity: 0.96;
+}
+
+.facial-state-overlay {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 1.8;
+  pointer-events: none;
+}
+
+.tooth-status-caries .facial-state-overlay {
+  fill: var(--danger-soft);
+  fill-opacity: 0.72;
+  stroke: var(--danger);
+}
+
+.tooth-status-restored .facial-state-overlay {
+  fill: var(--primary-soft);
+  fill-opacity: 0.72;
+  stroke: var(--primary);
+}
+
+.tooth-status-fracture .facial-state-overlay {
+  fill: var(--warning-soft);
+  fill-opacity: 0.72;
+  stroke: var(--warning);
+}
+
+.tooth-status-crown .facial-state-overlay {
+  fill: var(--warning-soft);
+  fill-opacity: 0.72;
+  stroke: var(--warning);
+  stroke-width: 2.4;
+}
+
 .tooth-status-caries .facial-crown {
   fill: var(--danger-soft);
   stroke: var(--danger);
@@ -2450,11 +2498,39 @@ body.dictating .encounter-modes:focus-within {
   pointer-events: none;
 }
 
+.tooth-occlusal-anatomy {
+  color: var(--ink);
+  pointer-events: none;
+}
+
+.tooth-marginal-ridge,
+.tooth-cusp-ridge,
 .tooth-groove {
   fill: none;
-  stroke: var(--faint);
-  stroke-width: 1.1;
+  stroke: currentColor;
   stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.tooth-marginal-ridge {
+  stroke-width: 0.75;
+  opacity: 0.26;
+}
+
+.tooth-cusp-ridge {
+  stroke-width: 0.7;
+  opacity: 0.32;
+}
+
+.tooth-groove {
+  stroke-width: 0.95;
+  opacity: 0.58;
+}
+
+.tooth-fossa {
+  fill: currentColor;
+  opacity: 0.48;
   pointer-events: none;
 }
 

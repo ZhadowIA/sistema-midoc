@@ -6,7 +6,7 @@ import {
   FACIAL_CANAL_PATH,
   FACIAL_CROWN_PATHS,
   FACIAL_IMPLANT_BODY,
-  GROOVE_PATHS,
+  OCCLUSAL_ANATOMY,
   ROOT_PATHS
 } from "./toothGeometry.ts";
 import { toothProportions, type ToothType } from "./odontogramModel.ts";
@@ -21,9 +21,40 @@ test("cada tipo define sus 5 regiones y su silueta", () => {
       assert.match(regions[slot], /Z$/, `${type} ${slot} cerrada`);
     }
     assert.ok(CROWN_PATHS[type].length > 0);
-    assert.ok(GROOVE_PATHS[type].length > 0);
+    const anatomy = OCCLUSAL_ANATOMY[type];
+    assert.match(anatomy.marginalRidge, /^M[\d. ]/);
+    assert.ok(anatomy.cuspRidges.length > 0);
+    assert.ok(anatomy.grooves.length > 0);
+    assert.ok(anatomy.fossae.length > 0);
   }
   assert.ok(ROOT_PATHS.SINGLE.length > 0 && ROOT_PATHS.DOUBLE.length > 0);
+});
+
+test("cada vista oclusal tiene anatomia propia y capas no vacias", () => {
+  const marginalRidges = new Set(TYPES.map((type) => OCCLUSAL_ANATOMY[type].marginalRidge));
+  assert.equal(marginalRidges.size, TYPES.length);
+
+  assert.equal(OCCLUSAL_ANATOMY.MOLAR.cuspRidges.length, 4);
+  assert.equal(OCCLUSAL_ANATOMY.MOLAR.fossae.length, 3);
+  assert.equal(OCCLUSAL_ANATOMY.PREMOLAR.cuspRidges.length, 2);
+  assert.equal(OCCLUSAL_ANATOMY.PREMOLAR.fossae.length, 2);
+  assert.equal(OCCLUSAL_ANATOMY.CANINE.fossae.length, 1);
+  assert.equal(OCCLUSAL_ANATOMY.INCISOR.fossae.length, 1);
+
+  for (const type of TYPES) {
+    for (const path of [
+      OCCLUSAL_ANATOMY[type].marginalRidge,
+      ...OCCLUSAL_ANATOMY[type].cuspRidges,
+      ...OCCLUSAL_ANATOMY[type].grooves
+    ]) {
+      assert.match(path, /^M[\d. ]/, `${type}: path SVG valido`);
+    }
+    for (const fossa of OCCLUSAL_ANATOMY[type].fossae) {
+      assert.ok(fossa.x > 0 && fossa.x < 40, `${type}: fosa dentro del viewBox en X`);
+      assert.ok(fossa.y > 0 && fossa.y < 40, `${type}: fosa dentro del viewBox en Y`);
+      assert.ok(fossa.radius > 0 && fossa.radius < 2, `${type}: radio legible`);
+    }
+  }
 });
 
 test("el teselado es por construccion: cada borde de la tabla se comparte", () => {
