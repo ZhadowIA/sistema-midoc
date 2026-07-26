@@ -526,6 +526,37 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_dental_lab_orders_patient ON dental_lab_orders (patient_id);
     CREATE INDEX idx_dental_lab_orders_status ON dental_lab_orders (status);",
+    // v24: identidad del paciente separada de lo clinico (paso 27, rebanada 1).
+    // Clase CONTACTO: nombre, telefono, correo, fecha de nacimiento y sexo son
+    // lo minimo para identificar a quien llega al mostrador, y son lo unico que
+    // la estacion de recepcion necesita saber de un paciente. Lo clinico
+    // (alergias, antecedentes) se queda en `patients`, clase CLINICO, y no
+    // viajara nunca a la estacion operativa.
+    //
+    // Migracion en dos tiempos (expand/contract, regla 6 de
+    // REGLAS_DESARROLLO.md): aqui solo se CREA y se POBLA. Las columnas de
+    // identidad siguen en `patients` hasta que todos los lectores se muevan, y
+    // se retiran en una migracion posterior. Asi una actualizacion a medias
+    // nunca deja la base clinica sin identidad legible.
+    "CREATE TABLE patient_identities (
+        id TEXT PRIMARY KEY NOT NULL,
+        first_name TEXT NOT NULL DEFAULT '',
+        last_name TEXT NOT NULL DEFAULT '',
+        phone TEXT,
+        email TEXT,
+        birth_date TEXT,
+        sex TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_patient_identities_name
+        ON patient_identities (last_name, first_name);
+    INSERT INTO patient_identities
+        (id, first_name, last_name, phone, email, birth_date, sex,
+         created_at, updated_at)
+        SELECT id, first_name, last_name, phone, email, birth_date, sex,
+               created_at, updated_at
+        FROM patients;",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
@@ -676,6 +707,90 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn patient_identities_holds_contact_columns_only() {
+        // La identidad (CONTACTO) es lo unico que la estacion de recepcion
+        // necesita; lo clinico no debe tener asiento en esta tabla.
+        let path = temp_db_path("patient-identities-shape");
+        let conn = open_encrypted(&path, "clave-correcta").unwrap();
+
+        let contact: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('patient_identities')
+                 WHERE name IN ('first_name', 'last_name', 'phone', 'email',
+                                'birth_date', 'sex')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(contact, 6);
+
+        let clinical: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('patient_identities')
+                 WHERE name IN ('allergies', 'medical_background', 'family_background')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(clinical, 0, "lo clinico no cruza a la identidad");
+    }
+
+    #[test]
+    fn v24_copies_identity_of_patients_already_captured() {
+        // Regla 6: la migracion debe aplicar sobre una base existente, no solo
+        // desde cero. Se arma una base en la version previa (23) con un
+        // paciente ya capturado y se comprueba que al abrir queda su identidad.
+        let path = temp_db_path("patient-identities-copy");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "key", "clave-correcta").unwrap();
+            for (idx, sql) in MIGRATIONS.iter().take(23).enumerate() {
+                let target = (idx + 1) as i64;
+                conn.execute_batch(&format!(
+                    "BEGIN; {sql}; PRAGMA user_version = {target}; COMMIT;"
+                ))
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO patients
+                    (id, first_name, last_name, phone, email, birth_date, sex,
+                     allergies, created_at, updated_at)
+                 VALUES ('p1', 'Ana', 'Ruiz', '5551234567', 'ana@ejemplo.mx',
+                         '1990-05-02', 'F', 'penicilina', '2026-07-01', '2026-07-01')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let conn = open_encrypted(&path, "clave-correcta").unwrap();
+        assert_eq!(schema_version(&conn).unwrap(), MIGRATIONS.len() as i64);
+
+        let (first, last, phone, birth): (String, String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT first_name, last_name, phone, birth_date
+                 FROM patient_identities WHERE id = 'p1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(first, "Ana");
+        assert_eq!(last, "Ruiz");
+        assert_eq!(phone.as_deref(), Some("5551234567"));
+        assert_eq!(birth.as_deref(), Some("1990-05-02"));
+
+        // Expand/contract: mientras los lectores se mueven, `patients` conserva
+        // sus columnas y lo clinico sigue intacto.
+        let allergies: Option<String> = conn
+            .query_row(
+                "SELECT allergies FROM patients WHERE id = 'p1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(allergies.as_deref(), Some("penicilina"));
     }
 
     #[test]
