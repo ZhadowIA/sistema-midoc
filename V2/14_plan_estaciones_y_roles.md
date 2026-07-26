@@ -83,7 +83,16 @@ estacion clinica es la autoridad y lo empuja; la operativa solo lo lee.
 
 **CONTACTO — replicado a ambas estaciones**
 Identidad del paciente: `id`, `first_name`, `last_name`, `phone`, `email`,
-`birth_date`, `sex`. Hoy viven en `patients` mezcladas con lo clinico.
+`birth_date`, `sex`, mas el responsable/tutor (`guardian_name`,
+`guardian_relationship`, `guardian_phone`, `guardian_email`). Hoy viven en
+`patients` mezcladas con lo clinico.
+
+*Clasificacion del tutor, decidida al implementar (2026-07-26):* el plan
+original no lo habia clasificado. Es CONTACTO: `birth_date` ya vive en la
+identidad, asi que recepcion ya sabe quien es menor de edad y el contacto del
+tutor no agrega inferencia clinica alguna — es contacto de otra persona, la
+misma clase que el telefono del paciente. Dejarlo del lado clinico rompia algo
+real: recepcion no podria llamar al tutor de un menor que llega solo.
 
 **CLINICO — nunca sale de la estacion clinica**
 `encounters`, `note_versions`, `prescriptions`, `documents`, `precheckins`,

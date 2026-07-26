@@ -485,11 +485,15 @@ pub fn fulfill_cancellation(
     // La ficha vive en dos tablas desde el paso 27: la identidad (CONTACTO) y
     // lo clinico. La supresion tiene que cubrir AMBAS o el nombre quedaria
     // legible en la estacion de recepcion.
+    // Incluye al responsable/tutor: es un tercero identificable y sus medios de
+    // contacto no pueden sobrevivir a la supresion del expediente.
     let anonymized_at = now();
     tx.execute(
         "UPDATE patient_identities
          SET first_name = ?2, last_name = '', phone = NULL, email = NULL,
-             birth_date = NULL, sex = NULL, updated_at = ?3
+             birth_date = NULL, sex = NULL,
+             guardian_name = NULL, guardian_relationship = NULL,
+             guardian_phone = NULL, guardian_email = NULL, updated_at = ?3
          WHERE id = ?1",
         params![patient_id, ANON, anonymized_at],
     )?;
@@ -723,6 +727,16 @@ mod tests {
     fn cancellation_deletes_clinical_data_keeps_accounting() {
         let mut conn = test_conn("cancel");
         seed_patient(&conn, "pat-1");
+        // Un menor con tutor: sus datos son personales de un tercero y la
+        // supresion tiene que alcanzarlos igual que a los del paciente.
+        conn.execute(
+            "UPDATE patient_identities
+             SET guardian_name = 'Rosa Paz', guardian_relationship = 'Madre',
+                 guardian_phone = '6143334444', guardian_email = 'rosa@ejemplo.mx'
+             WHERE id = 'pat-1'",
+            [],
+        )
+        .unwrap();
 
         let req = record_arco_request(&conn, "pat-1", "CANCELLATION", None).unwrap();
         let result = fulfill_cancellation(&mut conn, &req.id).unwrap();
@@ -762,6 +776,22 @@ mod tests {
             )
             .unwrap();
         assert_eq!(contact, (None, None), "el contacto tambien se suprime");
+
+        // El tutor es un tercero identificable: su nombre y sus medios de
+        // contacto no pueden sobrevivir a la supresion del expediente.
+        let guardian: (Option<String>, Option<String>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT guardian_name, guardian_relationship, guardian_phone, guardian_email
+                 FROM patient_identities WHERE id='pat-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            guardian,
+            (None, None, None, None),
+            "el tutor tambien se suprime"
+        );
 
         // El registro contable se conserva intacto.
         let payments: i64 = conn
