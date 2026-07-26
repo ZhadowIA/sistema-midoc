@@ -630,7 +630,7 @@ pub fn list_patient_lab_orders(
 pub fn list_pending_lab_orders(conn: &Connection) -> Result<Vec<PendingLabOrder>, DentalError> {
     let mut statement = conn.prepare(&format!(
         "SELECT {LAB_ORDER_COLUMNS}, (SELECT TRIM(first_name || ' ' || last_name)
-                FROM patients WHERE id = patient_id) AS patient_name
+                FROM patient_identities WHERE id = patient_id) AS patient_name
          FROM dental_lab_orders
          WHERE status IN ('PENDING', 'SENT')
          ORDER BY promised_at IS NULL, promised_at ASC, created_at ASC"
@@ -661,8 +661,14 @@ mod tests {
 
     fn seed_patient(conn: &Connection, patient_id: &str) {
         conn.execute(
-            "INSERT INTO patients (id, first_name, last_name, created_at, updated_at)
+            "INSERT INTO patient_identities (id, first_name, last_name, created_at, updated_at)
              VALUES (?1, 'Hugo', 'Paz', '2026-01-01', '2026-01-01')",
+            params![patient_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO patients (id, created_at, updated_at)
+             VALUES (?1, '2026-01-01', '2026-01-01')",
             params![patient_id],
         )
         .unwrap();

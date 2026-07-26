@@ -140,9 +140,16 @@ pub struct PatientRecord {
 }
 
 /// Columnas del expediente del paciente en el orden que espera `patient_from_row`.
-const PATIENT_COLUMNS: &str = "id, first_name, last_name, phone, email, birth_date, \
-    allergies, medical_background, family_background, \
-    guardian_name, guardian_relationship, guardian_phone, guardian_email";
+/// La identidad (CONTACTO) vive en `patient_identities` y lo clinico en
+/// `patients`; el expediente completo es la union de ambas (paso 27).
+const PATIENT_COLUMNS: &str = "p.id, pi.first_name, pi.last_name, pi.phone, pi.email, \
+    pi.birth_date, \
+    p.allergies, p.medical_background, p.family_background, \
+    p.guardian_name, p.guardian_relationship, p.guardian_phone, p.guardian_email";
+
+/// Origen del expediente completo. La estacion clinica es la unica que puede
+/// unir ambas tablas; la de recepcion solo tiene `patient_identities`.
+const PATIENT_SOURCE: &str = "patients p JOIN patient_identities pi ON pi.id = p.id";
 
 fn patient_from_row(row: &rusqlite::Row) -> rusqlite::Result<PatientRecord> {
     let birth_date: Option<String> = row.get(5)?;
@@ -333,17 +340,24 @@ fn import_appointment_patient(
         ClinicalError::Invalid("la cita no tiene paciente asociado".into())
     })?;
 
+    // La identidad (CONTACTO) y el expediente clinico se crean por separado:
+    // la primera es lo unico que la estacion de recepcion llega a ver.
+    let timestamp = now();
+    conn.execute(
+        "INSERT INTO patient_identities
+            (id, first_name, last_name, phone, email, birth_date, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+         ON CONFLICT(id) DO NOTHING",
+        params![patient_id, first_name, last_name, phone, email, birth_date, timestamp],
+    )?;
+
     // El responsable de la cita se conserva en el expediente como entidad propia.
     conn.execute(
-        "INSERT INTO patients (id, first_name, last_name, phone, email, birth_date,
-                guardian_name, guardian_relationship, guardian_phone, guardian_email,
-                created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
+        "INSERT INTO patients (id, guardian_name, guardian_relationship,
+                guardian_phone, guardian_email, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
          ON CONFLICT(id) DO NOTHING",
-        params![
-            patient_id, first_name, last_name, phone, email, birth_date,
-            g_name, g_rel, g_phone, g_email, now()
-        ],
+        params![patient_id, g_name, g_rel, g_phone, g_email, timestamp],
     )?;
 
     Ok(patient_id)
@@ -387,8 +401,11 @@ pub fn open_encounter_for_patient(
     conn: &Connection,
     patient_id: &str,
 ) -> Result<Encounter, ClinicalError> {
+    // La identidad es lo que existe desde recepcion; el expediente clinico nace
+    // aqui, la primera vez que el medico atiende (paso 27). Un walk-in llega
+    // con identidad y sin nada clinico, y esa es justo la ruta que esto abre.
     let exists: bool = conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM patients WHERE id = ?1)",
+        "SELECT EXISTS (SELECT 1 FROM patient_identities WHERE id = ?1)",
         params![patient_id],
         |row| row.get(0),
     )?;
@@ -396,11 +413,18 @@ pub fn open_encounter_for_patient(
         return Err(ClinicalError::NotFound);
     }
 
+    let opened_at = now();
+    conn.execute(
+        "INSERT INTO patients (id, created_at, updated_at) VALUES (?1, ?2, ?2)
+         ON CONFLICT(id) DO NOTHING",
+        params![patient_id, opened_at],
+    )?;
+
     let encounter_id = uuid::Uuid::new_v4().to_string();
     conn.execute(
         "INSERT INTO encounters (id, appointment_id, patient_id, status, opened_at)
          VALUES (?1, NULL, ?2, 'OPEN', ?3)",
-        params![encounter_id, patient_id, now()],
+        params![encounter_id, patient_id, opened_at],
     )?;
 
     audit(conn, "encounter", &encounter_id, "opened", Some("walk-in"))?;
@@ -720,7 +744,7 @@ pub fn get_encounter_detail(
 
     let patient = conn
         .query_row(
-            &format!("SELECT {PATIENT_COLUMNS} FROM patients WHERE id = ?1"),
+            &format!("SELECT {PATIENT_COLUMNS} FROM {PATIENT_SOURCE} WHERE p.id = ?1"),
             params![encounter.patient_id],
             patient_from_row,
         )
@@ -867,20 +891,21 @@ pub fn list_patients(
         .map(|s| format!("%{s}%"));
 
     let mut statement = conn.prepare(
-        "SELECT p.id, p.first_name, p.last_name, p.phone, p.email, p.birth_date,
+        "SELECT p.id, pi.first_name, pi.last_name, pi.phone, pi.email, pi.birth_date,
                 p.allergies,
                 COUNT(e.id) AS encounter_count,
                 MAX(e.opened_at) AS last_visit
          FROM patients p
+         JOIN patient_identities pi ON pi.id = p.id
          LEFT JOIN encounters e ON e.patient_id = p.id
             AND EXISTS (SELECT 1 FROM note_versions nv WHERE nv.encounter_id = e.id)
          WHERE ?1 IS NULL
-            OR p.first_name LIKE ?1
-            OR p.last_name LIKE ?1
-            OR p.phone LIKE ?1
-            OR (p.first_name || ' ' || p.last_name) LIKE ?1
+            OR pi.first_name LIKE ?1
+            OR pi.last_name LIKE ?1
+            OR pi.phone LIKE ?1
+            OR (pi.first_name || ' ' || pi.last_name) LIKE ?1
          GROUP BY p.id
-         ORDER BY p.last_name COLLATE NOCASE, p.first_name COLLATE NOCASE",
+         ORDER BY pi.last_name COLLATE NOCASE, pi.first_name COLLATE NOCASE",
     )?;
 
     let rows = statement
@@ -981,7 +1006,7 @@ pub fn get_patient_profile(
 ) -> Result<PatientProfile, ClinicalError> {
     let patient = conn
         .query_row(
-            &format!("SELECT {PATIENT_COLUMNS} FROM patients WHERE id = ?1"),
+            &format!("SELECT {PATIENT_COLUMNS} FROM {PATIENT_SOURCE} WHERE p.id = ?1"),
             params![patient_id],
             patient_from_row,
         )
@@ -1135,11 +1160,16 @@ pub fn create_patient(
     let birth_date = normalize_optional(&input.birth_date);
     let sex = normalize_optional(&input.sex);
 
+    let timestamp = now();
     conn.execute(
-        "INSERT INTO patients
+        "INSERT INTO patient_identities
             (id, first_name, last_name, phone, email, birth_date, sex, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-        params![id, first_name, last_name, phone, email, birth_date, sex, now()],
+        params![id, first_name, last_name, phone, email, birth_date, sex, timestamp],
+    )?;
+    conn.execute(
+        "INSERT INTO patients (id, created_at, updated_at) VALUES (?1, ?2, ?2)",
+        params![id, timestamp],
     )?;
 
     audit(conn, "patient", &id, "created", Some("manual"))?;
@@ -1604,19 +1634,26 @@ pub fn update_patient_background(
     patient_id: &str,
     input: &PatientBackgroundInput,
 ) -> Result<(), ClinicalError> {
+    // Los antecedentes son CLINICO; la fecha de nacimiento es identidad y vive
+    // del otro lado de la frontera, asi que se actualiza por separado.
+    let timestamp = now();
     let changed = conn.execute(
         "UPDATE patients
          SET allergies = ?2, medical_background = ?3, family_background = ?4,
-             birth_date = ?5, updated_at = ?6
+             updated_at = ?5
          WHERE id = ?1",
         params![
             patient_id,
             input.allergies,
             input.medical_background,
             input.family_background,
-            input.birth_date,
-            now()
+            timestamp
         ],
+    )?;
+
+    conn.execute(
+        "UPDATE patient_identities SET birth_date = ?2, updated_at = ?3 WHERE id = ?1",
+        params![patient_id, input.birth_date, timestamp],
     )?;
 
     if changed == 0 {

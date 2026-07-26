@@ -330,7 +330,9 @@ pub fn register_walk_in(conn: &Connection, input: &WalkInInput) -> Result<Visit,
         ));
     }
 
-    // Paciente local minimo: una consulta sin cita siempre genera expediente.
+    // Recepcion crea la identidad (CONTACTO) y nada mas: el expediente clinico
+    // nace en la estacion clinica al abrir el primer encuentro (paso 27). Este
+    // modulo no escribe ni lee una sola tabla CLINICO.
     let patient_id = uuid::Uuid::new_v4().to_string();
     let (first, last) = match name.split_once(' ') {
         Some((f, l)) => (f.to_string(), l.to_string()),
@@ -338,7 +340,8 @@ pub fn register_walk_in(conn: &Connection, input: &WalkInInput) -> Result<Visit,
     };
     let timestamp = now();
     conn.execute(
-        "INSERT INTO patients (id, first_name, last_name, phone, created_at, updated_at)
+        "INSERT INTO patient_identities
+            (id, first_name, last_name, phone, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
         params![patient_id, first, last, input.patient_phone, timestamp],
     )?;
@@ -373,7 +376,7 @@ pub fn register_walk_in_for_patient(
         ));
     }
     let exists: bool = conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM patients WHERE id = ?1)",
+        "SELECT EXISTS (SELECT 1 FROM patient_identities WHERE id = ?1)",
         params![patient_id],
         |row| row.get(0),
     )?;
@@ -799,32 +802,53 @@ mod tests {
         .unwrap();
         assert!(visit.appointment_id.is_none());
         let patient_id = visit.patient_id.clone().unwrap();
-        let exists: bool = conn
+
+        // Recepcion crea la identidad (CONTACTO) y NADA clinico: el expediente
+        // no existe todavia. Esta es la frontera del paso 27.
+        let has_identity: bool = conn
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM patient_identities WHERE id = ?1)",
+                params![patient_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(has_identity, "recepcion registra la identidad");
+
+        let has_clinical: bool = conn
             .query_row(
                 "SELECT EXISTS (SELECT 1 FROM patients WHERE id = ?1)",
                 params![patient_id],
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(exists);
+        assert!(!has_clinical, "recepcion no abre expediente clinico");
 
-        // Walk-in abre expediente sin cita.
+        // El expediente nace cuando el medico atiende, no antes.
         let encounter = crate::clinical::open_encounter_for_patient(&conn, &patient_id).unwrap();
         assert!(encounter.appointment_id.is_none());
         assert_eq!(encounter.patient_id, patient_id);
+
+        let has_clinical_now: bool = conn
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM patients WHERE id = ?1)",
+                params![patient_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(has_clinical_now, "atender materializa el expediente");
     }
 
     #[test]
     fn walk_in_for_patient_links_without_creating_a_new_patient() {
         let conn = test_conn("walkin-link");
         conn.execute(
-            "INSERT INTO patients (id, first_name, last_name, created_at, updated_at)
+            "INSERT INTO patient_identities (id, first_name, last_name, created_at, updated_at)
              VALUES ('pat-1', 'Ana', 'Lopez', '0', '0')",
             [],
         )
         .unwrap();
         let before: i64 = conn
-            .query_row("SELECT count(*) FROM patients", [], |r| r.get(0))
+            .query_row("SELECT count(*) FROM patient_identities", [], |r| r.get(0))
             .unwrap();
 
         let visit = register_walk_in_for_patient(
@@ -843,7 +867,7 @@ mod tests {
         assert!(visit.appointment_id.is_none());
 
         let after: i64 = conn
-            .query_row("SELECT count(*) FROM patients", [], |r| r.get(0))
+            .query_row("SELECT count(*) FROM patient_identities", [], |r| r.get(0))
             .unwrap();
         assert_eq!(before, after, "no debe crear un paciente nuevo");
 

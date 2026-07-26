@@ -242,10 +242,12 @@ pub fn export_patient_data(
 ) -> Result<PatientDataExport, ArcoError> {
     let patient = conn
         .query_row(
-            "SELECT first_name, last_name, phone, email, birth_date, sex,
-                    allergies, medical_background, family_background,
-                    guardian_name, guardian_relationship, guardian_phone, guardian_email
-             FROM patients WHERE id = ?1",
+            "SELECT pi.first_name, pi.last_name, pi.phone, pi.email, pi.birth_date, pi.sex,
+                    p.allergies, p.medical_background, p.family_background,
+                    p.guardian_name, p.guardian_relationship, p.guardian_phone,
+                    p.guardian_email
+             FROM patients p JOIN patient_identities pi ON pi.id = p.id
+             WHERE p.id = ?1",
             params![patient_id],
             |row| {
                 Ok((
@@ -480,13 +482,24 @@ pub fn fulfill_cancellation(
 
     // Seudonimizar la ficha del paciente (se conserva el id para integridad de
     // los cobros, que solo referencian patient_id sin datos personales).
+    // La ficha vive en dos tablas desde el paso 27: la identidad (CONTACTO) y
+    // lo clinico. La supresion tiene que cubrir AMBAS o el nombre quedaria
+    // legible en la estacion de recepcion.
+    let anonymized_at = now();
+    tx.execute(
+        "UPDATE patient_identities
+         SET first_name = ?2, last_name = '', phone = NULL, email = NULL,
+             birth_date = NULL, sex = NULL, updated_at = ?3
+         WHERE id = ?1",
+        params![patient_id, ANON, anonymized_at],
+    )?;
+
     tx.execute(
         "UPDATE patients
-         SET first_name = ?2, last_name = '', phone = NULL, email = NULL,
-             birth_date = NULL, sex = NULL, allergies = NULL,
-             medical_background = NULL, family_background = NULL, updated_at = ?3
+         SET allergies = NULL, medical_background = NULL,
+             family_background = NULL, updated_at = ?2
          WHERE id = ?1",
-        params![patient_id, ANON, now()],
+        params![patient_id, anonymized_at],
     )?;
 
     tx.execute(
@@ -540,10 +553,15 @@ mod tests {
     /// Siembra un paciente con expediente completo y un cobro contable.
     fn seed_patient(conn: &Connection, patient_id: &str) {
         conn.execute(
-            "INSERT INTO patients (id, first_name, last_name, phone, email,
-                allergies, created_at, updated_at)
-             VALUES (?1, 'Rosa', 'Lima', '6140002222', 'rosa@example.com',
-                'penicilina', '0', '0')",
+            "INSERT INTO patient_identities (id, first_name, last_name, phone, email,
+                created_at, updated_at)
+             VALUES (?1, 'Rosa', 'Lima', '6140002222', 'rosa@example.com', '0', '0')",
+            params![patient_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO patients (id, allergies, created_at, updated_at)
+             VALUES (?1, 'penicilina', '0', '0')",
             params![patient_id],
         )
         .unwrap();
@@ -639,10 +657,16 @@ mod tests {
     fn export_of_a_minor_documents_who_exercises_their_rights() {
         let conn = test_conn("export-minor");
         conn.execute(
-            "INSERT INTO patients (id, first_name, last_name, birth_date,
-                guardian_name, guardian_relationship, guardian_phone, created_at, updated_at)
-             VALUES ('pat-m', 'Lucia', 'Paz', '2018-03-04',
-                'Hugo Paz', 'Padre', '6140002222', '0', '0')",
+            "INSERT INTO patient_identities (id, first_name, last_name, birth_date,
+                created_at, updated_at)
+             VALUES ('pat-m', 'Lucia', 'Paz', '2018-03-04', '0', '0')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO patients (id, guardian_name, guardian_relationship,
+                guardian_phone, created_at, updated_at)
+             VALUES ('pat-m', 'Hugo Paz', 'Padre', '6140002222', '0', '0')",
             [],
         )
         .unwrap();
@@ -717,11 +741,26 @@ mod tests {
             .unwrap();
         assert_eq!(encounters, 0);
 
-        // La identidad quedo seudonimizada.
+        // La identidad quedo seudonimizada. Vive en su propia tabla desde el
+        // paso 27, y la supresion tiene que alcanzarla ahi: si no, el nombre
+        // seguiria legible en la estacion de recepcion.
         let name: String = conn
-            .query_row("SELECT first_name FROM patients WHERE id='pat-1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT first_name FROM patient_identities WHERE id='pat-1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(name, ANON);
+
+        let contact: (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT phone, email FROM patient_identities WHERE id='pat-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(contact, (None, None), "el contacto tambien se suprime");
 
         // El registro contable se conserva intacto.
         let payments: i64 = conn
