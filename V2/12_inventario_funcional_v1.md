@@ -54,7 +54,7 @@ Columna **Destino**: en la arquitectura local-first de V2 (ver `01_contexto_v2.m
 | Perfil publico del medico | Slug, especialidad, cedula, branding, logo (`/doctor/[slug]`) | Conservar (decidido) | Portal nube |
 | Configuracion del medico | `DoctorConfig`: duraciones, precios, reglas de recordatorio, templates | Adaptar (decidido): se divide entre config publica (agenda) y config local (clinica) | Ambos |
 | Catalogo de servicios | `DoctorService`: precio, duracion, activo/inactivo | Conservar (decidido) | Portal nube |
-| Clinica multi-asiento y secretarias | `Clinic`, `clinicSeats.ts`, `api/medico/secretaries` | Diferir (decidido): multi-usuario local-first es complejo; un dispositivo por consultorio en MVP | — |
+| Clinica multi-asiento y secretarias | `Clinic`, `clinicSeats.ts`, `api/medico/secretaries` | ~~Diferir (decidido): multi-usuario local-first es complejo; un dispositivo por consultorio en MVP~~ → **Adaptar (revertido 2026-07-25): paso 27**. El argumento seguia siendo valido, pero al medirlo el bloque OPERATIVO resulto casi autocontenido (referencias suaves sin FK hacia lo clinico), asi que separar bases es la via barata. No se copia el modelo de V1 (asientos en nube): son estaciones locales con llave propia. Ver `14_plan_estaciones_y_roles.md` | App local |
 | Recursos fisicos (consultorios, equipos) | `Resource`, `resourceConflict.ts` | Diferir (decidido): paso 10 | App local |
 
 ## 4. Agenda y disponibilidad del medico
