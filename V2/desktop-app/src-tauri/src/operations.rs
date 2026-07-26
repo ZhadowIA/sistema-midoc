@@ -766,7 +766,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO patients (id, first_name, last_name, created_at, updated_at)
+            "INSERT INTO patient_identities (id, first_name, last_name, created_at, updated_at)
              VALUES (?1, 'Hugo', 'Paz', '0', '0')",
             params![patient_id],
         )

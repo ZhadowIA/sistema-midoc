@@ -557,6 +557,24 @@ const MIGRATIONS: &[&str] = &[
         SELECT id, first_name, last_name, phone, email, birth_date, sex,
                created_at, updated_at
         FROM patients;",
+    // v25: cierre del corte (paso 27, rebanada 1). Los lectores ya usan
+    // `patient_identities`, asi que `patients` se queda solo con lo CLINICO y
+    // el vinculo a la identidad. A partir de aqui la separacion es real: una
+    // base sin `patients` sigue sabiendo a quien atender, y una copia de la
+    // base operativa no contiene una sola linea de expediente.
+    //
+    // Se usa DROP COLUMN y NO la receta de recrear la tabla: nueve tablas
+    // apuntan a patients(id), y recrearla exigiria apagar las llaves foraneas,
+    // cosa que `PRAGMA foreign_keys` no puede hacer dentro de una transaccion
+    // --seria un no-op silencioso y el DROP TABLE arrastraria el expediente--.
+    // Ninguna de estas columnas esta indexada, que es la condicion que pide
+    // SQLite para poder soltarlas.
+    "ALTER TABLE patients DROP COLUMN first_name;
+    ALTER TABLE patients DROP COLUMN last_name;
+    ALTER TABLE patients DROP COLUMN phone;
+    ALTER TABLE patients DROP COLUMN email;
+    ALTER TABLE patients DROP COLUMN birth_date;
+    ALTER TABLE patients DROP COLUMN sex;",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
@@ -791,6 +809,89 @@ mod tests {
             )
             .unwrap();
         assert_eq!(allergies.as_deref(), Some("penicilina"));
+    }
+
+    #[test]
+    fn patients_keeps_only_clinical_columns_after_v25() {
+        // Cierre del corte: la identidad ya no vive en el expediente. Si alguna
+        // de estas columnas vuelve a aparecer aqui, la frontera se erosiono.
+        let path = temp_db_path("patients-clinical-only");
+        let conn = open_encrypted(&path, "clave-correcta").unwrap();
+
+        let identity_left: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('patients')
+                 WHERE name IN ('first_name', 'last_name', 'phone', 'email',
+                                'birth_date', 'sex')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(identity_left, 0, "la identidad salio del expediente");
+
+        let clinical: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('patients')
+                 WHERE name IN ('allergies', 'medical_background', 'family_background')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(clinical, 3, "lo clinico se queda donde estaba");
+    }
+
+    #[test]
+    fn v25_preserves_clinical_record_of_patients_already_captured() {
+        // La migracion que suelta columnas es la que puede perder datos. Se
+        // arma una base en la version previa (23) con expediente completo y se
+        // comprueba que al abrir sobreviven identidad y antecedentes, cada uno
+        // de su lado.
+        let path = temp_db_path("v25-preserves");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "key", "clave-correcta").unwrap();
+            for (idx, sql) in MIGRATIONS.iter().take(23).enumerate() {
+                let target = (idx + 1) as i64;
+                conn.execute_batch(&format!(
+                    "BEGIN; {sql}; PRAGMA user_version = {target}; COMMIT;"
+                ))
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO patients
+                    (id, first_name, last_name, phone, birth_date, allergies,
+                     medical_background, guardian_name, created_at, updated_at)
+                 VALUES ('p1', 'Hugo', 'Paz', '6141112222', '2018-03-04',
+                         'penicilina', 'asma', 'Rosa Paz', '2026-07-01', '2026-07-01')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let conn = open_encrypted(&path, "clave-correcta").unwrap();
+
+        let (first, phone, birth): (String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT first_name, phone, birth_date FROM patient_identities WHERE id = 'p1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(first, "Hugo");
+        assert_eq!(phone.as_deref(), Some("6141112222"));
+        assert_eq!(birth.as_deref(), Some("2018-03-04"));
+
+        let (allergies, background, guardian): (Option<String>, Option<String>, Option<String>) =
+            conn.query_row(
+                "SELECT allergies, medical_background, guardian_name
+                 FROM patients WHERE id = 'p1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(allergies.as_deref(), Some("penicilina"));
+        assert_eq!(background.as_deref(), Some("asma"));
+        assert_eq!(guardian.as_deref(), Some("Rosa Paz"));
     }
 
     #[test]
