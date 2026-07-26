@@ -291,7 +291,7 @@ export function Recepcion({
   );
 
   return (
-    <div className="content">
+    <>
       {message && (
         <p className="form-success" role="status">
           {message}
@@ -317,7 +317,8 @@ export function Recepcion({
         </>
       ) : null}
 
-      <div hidden={resolution !== null}>
+      {resolution === null && (
+      <>
       <WaitingRoom
         visits={visits}
         resources={resources}
@@ -371,7 +372,7 @@ export function Recepcion({
       />
 
       {labPending.length > 0 ? (
-        <section className="panel">
+        <section className="panel panel-flat">
           <div className="panel-header">
             <h2>Laboratorio: pendientes por recibir</h2>
             <p>Trabajos fuera del consultorio, los mas proximos a su fecha prometida primero.</p>
@@ -406,8 +407,9 @@ export function Recepcion({
           </div>
         </section>
       ) : null}
-      </div>
-    </div>
+      </>
+      )}
+    </>
   );
 }
 
@@ -426,7 +428,7 @@ function WaitingRoom({
 }) {
   const activeResources = resources.filter((r) => r.active);
   return (
-    <section className="panel">
+    <section className="panel panel-flat">
       <div className="panel-header">
         <h2>Lista de espera</h2>
         <p>Pacientes presentes hoy, por prioridad y orden de llegada.</p>
@@ -523,7 +525,7 @@ function Reception({
   }
 
   return (
-    <section className="panel">
+    <section className="panel panel-flat">
       <div className="panel-header">
         <h2>Recepcion</h2>
         <p>Registra la llegada de una cita o una consulta sin cita previa.</p>
@@ -589,7 +591,7 @@ function ResourcesPanel({
   const [kind, setKind] = useState("ROOM");
 
   return (
-    <section className="panel">
+    <section className="panel panel-flat">
       <div className="panel-header">
         <h2>Recursos fisicos</h2>
         <p>Consultorios y equipos que asignas a cada visita.</p>
@@ -679,7 +681,7 @@ function CashRegister({
 
   if (!session) {
     return (
-      <section className="panel">
+      <section className="panel panel-flat">
         <div className="panel-header">
           <h2>Caja del dia</h2>
           <p>Abre la caja con el fondo inicial para empezar a cobrar.</p>
@@ -710,7 +712,7 @@ function CashRegister({
   }
 
   return (
-    <section className="panel">
+    <section className="panel panel-flat">
       <div className="panel-header">
         <h2>Caja del dia</h2>
         <p>

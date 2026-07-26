@@ -289,6 +289,29 @@ p {
     color var(--speed) var(--ease);
 }
 
+/* Icono del destino: trazo que hereda el color del texto, así el estado activo y
+   el hover lo tiñen sin reglas extra. Nunca se comprime al truncar la etiqueta. */
+.sidebar-nav-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.75;
+}
+
+.sidebar-nav-item:hover .sidebar-nav-icon,
+.sidebar-nav-item-active .sidebar-nav-icon {
+  opacity: 1;
+}
+
+.sidebar-nav-item-active .sidebar-nav-icon {
+  stroke: var(--primary);
+}
+
 .sidebar-nav-item::before {
   content: "";
   position: absolute;
@@ -407,6 +430,12 @@ p {
   display: grid;
   gap: 12px;
   text-align: left;
+}
+
+/* Secciones de Operacion/Cumplimiento: mismo espaciado que .panel pero sin
+   borde visible entre bloques. */
+.panel-flat {
+  border: none;
 }
 
 /* La vinculación conserva el ritmo del formulario, sin presentarse como una
@@ -4960,4 +4989,39 @@ body.dictating .encounter-modes:focus-within {
   border-radius: 50%;
   background: var(--danger);
   box-shadow: 0 0 0 2px var(--bg, #fff);
+}
+
+/* Configuracion: un solo destino del menu lateral con las secciones en
+   pestañas. Reusa .tab-row sin el sticky ni el padding de la vista de
+   operacion, porque vive dentro del panel. */
+.configuracion-tabs {
+  position: static;
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.configuracion-section {
+  display: grid;
+  gap: 12px;
+}
+
+/* Ajustes de una linea (tema, abrir el portal): texto a la izquierda, accion a
+   la derecha, y en columna cuando la ventana es angosta. */
+.configuracion-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  padding: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.configuracion-block-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  max-width: 62ch;
 }

@@ -69,8 +69,8 @@ export function Benchmark() {
   }
 
   return (
-    <div className="content">
-      <section className="panel">
+    <>
+      <section className="panel panel-flat">
         <div className="panel-header">
           <h2>Benchmark clinico de IA</h2>
           <p>
@@ -101,7 +101,7 @@ export function Benchmark() {
       </section>
 
       {runs.length === 0 ? (
-        <section className="panel">
+        <section className="panel panel-flat">
           <div className="empty-state">
             <strong>Sin corridas todavia</strong>
             <p>Ejecuta un benchmark para comparar proveedores y registrar la decision.</p>
@@ -109,7 +109,7 @@ export function Benchmark() {
         </section>
       ) : (
         runs.map((run) => (
-          <section className="panel" key={run.id}>
+          <section className="panel panel-flat" key={run.id}>
             <div className="panel-header">
               <h3>{run.name}</h3>
               <p>
@@ -142,6 +142,6 @@ export function Benchmark() {
           </section>
         ))
       )}
-    </div>
+    </>
   );
 }

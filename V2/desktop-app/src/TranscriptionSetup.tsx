@@ -162,7 +162,7 @@ export function TranscriptionSetup() {
 
   return (
     <>
-    <section className="panel">
+    <section className="panel panel-flat">
       <div className="panel-header">
         <h2>Transcripcion de consulta</h2>
         <p>
@@ -405,7 +405,7 @@ export function DiarizationModelsSetup() {
   const allReady = models.length > 0 && models.every((m) => m.present);
 
   return (
-    <section className="panel">
+    <section className="panel panel-flat">
       <div className="panel-header">
         <h2>Separacion de voces (medico y paciente)</h2>
         <p>

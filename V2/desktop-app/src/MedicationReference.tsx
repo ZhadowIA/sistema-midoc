@@ -88,7 +88,7 @@ export function MedicationReference() {
   }
 
   return (
-    <section className="panel">
+    <section className="panel panel-flat">
       <div className="panel-header">
         <h2>Base de medicamentos</h2>
         <p>

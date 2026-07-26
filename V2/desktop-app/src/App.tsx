@@ -1,16 +1,14 @@
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { call } from "./ipc";
 import { Atencion } from "./Atencion";
 import { Recepcion } from "./Recepcion";
-import { Benchmark } from "./Benchmark";
-import { TranscriptionSetup } from "./TranscriptionSetup";
-import { MedicationReference } from "./MedicationReference";
-import { Arco } from "./Arco";
+import { Configuracion } from "./Configuracion";
 import { Directorio } from "./Directorio";
 import { Expediente } from "./Expediente";
 import { WeekAgenda } from "./WeekAgenda";
 import type { EncounterAgendaAppointment } from "./encounterAgenda";
-import { THEME_STORAGE_KEY, isNightTheme, nextTheme, themeToggleLabel, type Theme } from "./theme";
+import { THEME_STORAGE_KEY, isNightTheme, type Theme } from "./theme";
 import {
   PatientResolution,
   type PatientMatch,
@@ -45,6 +43,11 @@ interface SyncStatus {
 }
 
 type AppointmentRow = EncounterAgendaAppointment;
+
+// Destinos del menú lateral. Los ajustes (tema, servicios y precios,
+// transcripción, medicamentos, ARCO y benchmark) viven todos dentro de
+// "settings", no como filas propias del menú.
+type WorkspaceView = "agenda" | "patients" | "reception" | "settings";
 
 // La URL del portal se configura con cada entorno de despliegue; no forma
 // parte de las opciones que puede modificar el médico desde la aplicación.
@@ -353,6 +356,47 @@ function LinkAccountForm({ onLinked }: { onLinked: () => void }) {
   );
 }
 
+// Iconos del menú lateral: SVG en línea (sin dependencias) que heredan el color
+// del texto, para que el activo y el hover cambien con el mismo token. Son
+// decorativos: la etiqueta al lado ya nombra el destino.
+function NavIcon({ id }: { id: WorkspaceView }) {
+  return (
+    <svg className="sidebar-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {id === "agenda" ? (
+        <>
+          <rect x="3.5" y="5" width="17" height="15" rx="2.5" />
+          <line x1="3.5" y1="9.5" x2="20.5" y2="9.5" />
+          <line x1="8" y1="3" x2="8" y2="6" />
+          <line x1="16" y1="3" x2="16" y2="6" />
+        </>
+      ) : id === "patients" ? (
+        <>
+          <circle cx="9.5" cy="8.5" r="3.2" />
+          <path d="M3.5 19.5c0-3.1 2.7-5.2 6-5.2s6 2.1 6 5.2" />
+          <path d="M16.2 6.2a3.2 3.2 0 0 1 0 6.1" />
+          <path d="M17.5 14.7c1.9.5 3 2.2 3 4.3" />
+        </>
+      ) : id === "reception" ? (
+        <>
+          <path d="M6 3.5h12v17l-3-1.8-3 1.8-3-1.8-3 1.8z" />
+          <line x1="9" y1="8" x2="15" y2="8" />
+          <line x1="9" y1="11.5" x2="15" y2="11.5" />
+          <line x1="9" y1="15" x2="13" y2="15" />
+        </>
+      ) : (
+        <>
+          <line x1="3.5" y1="7" x2="20.5" y2="7" />
+          <line x1="3.5" y1="12" x2="20.5" y2="12" />
+          <line x1="3.5" y1="17" x2="20.5" y2="17" />
+          <circle cx="9" cy="7" r="2.1" />
+          <circle cx="15.5" cy="12" r="2.1" />
+          <circle cx="7.5" cy="17" r="2.1" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () => void }) {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
@@ -374,9 +418,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [slotMinutes, setSlotMinutes] = useState(30);
   const [workStartMinutes, setWorkStartMinutes] = useState<number | null>(null);
   const [workEndMinutes, setWorkEndMinutes] = useState<number | null>(null);
-  const [view, setView] = useState<
-    "agenda" | "patients" | "reception" | "benchmark" | "transcription" | "medications" | "arco"
-  >("agenda");
+  const [view, setView] = useState<WorkspaceView>("agenda");
   const [theme, setTheme] = useState<Theme>(() => {
     try {
       return isNightTheme(localStorage.getItem(THEME_STORAGE_KEY)) ? "night" : "light";
@@ -469,6 +511,22 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       setError(String(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Los ajustes comerciales (servicios, precios, activar/desactivar preconsulta)
+  // viven en el portal nube, no en el desktop: se abre en el navegador del
+  // sistema para no duplicar esa logica ni el canal de autenticacion. Se invoca
+  // desde Configuración > Servicios y precios.
+  async function openServiciosEnPortal() {
+    if (!status?.server_url) {
+      return;
+    }
+    setError("");
+    try {
+      await openUrl(`${status.server_url}/medico/configuracion`);
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -621,18 +679,14 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     );
   }
 
-  const navClinic = [
-    { id: "agenda" as const, label: "Agenda", badge: appointments.length > 0 ? String(appointments.length) : "" },
-    { id: "patients" as const, label: "Pacientes", badge: "" }
-  ];
-  const navOperation = [
-    { id: "reception" as const, label: "Recepción y caja" },
-    { id: "transcription" as const, label: "Transcripción" },
-    { id: "medications" as const, label: "Medicamentos" }
-  ];
-  const navCompliance = [
-    { id: "arco" as const, label: "Privacidad (ARCO)" },
-    { id: "benchmark" as const, label: "Benchmark IA" }
+  // Cuatro destinos en una sola lista: con este número, agruparlos por rubro
+  // añadía encabezados que ocupaban más que los propios elementos. El icono
+  // identifica cada destino de un vistazo.
+  const navItems: { id: WorkspaceView; label: string; badge: string }[] = [
+    { id: "agenda", label: "Agenda", badge: appointments.length > 0 ? String(appointments.length) : "" },
+    { id: "patients", label: "Pacientes", badge: "" },
+    { id: "reception", label: "Recepción y caja", badge: "" },
+    { id: "settings", label: "Configuración", badge: "" }
   ];
 
   return (
@@ -647,87 +701,45 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
         </div>
         <div className="button-row topbar-actions">
           {status?.linked ? (
-            <>
-              <button className="action-button sync-button" onClick={() => void syncNow()} disabled={busy}>
-                {busy ? "Sincronizando…" : "Sincronizar"}
-                <span
-                  className={pendingSync ? "sync-dot sync-dot-pending" : "sync-dot"}
-                  role="status"
-                  aria-label={pendingSync ? "Cambios pendientes por sincronizar" : "Sincronizado"}
-                />
-              </button>
-            </>
+            <button className="action-button sync-button" onClick={() => void syncNow()} disabled={busy}>
+              {busy ? "Sincronizando…" : "Sincronizar"}
+              <span
+                className={pendingSync ? "sync-dot sync-dot-pending" : "sync-dot"}
+                role="status"
+                aria-label={pendingSync ? "Cambios pendientes por sincronizar" : "Sincronizado"}
+              />
+            </button>
           ) : null}
-          <button
-            className="ghost-button"
-            onClick={() => setTheme(nextTheme(theme))}
-            aria-pressed={theme === "night"}
-            title="Cambia entre tema claro y Cobalto nocturno"
-          >
-            {themeToggleLabel(theme)}
-          </button>
         </div>
       </header>
 
       <aside className="workspace-sidebar" aria-label="Navegación principal">
         {status?.linked ? (
-          <>
-            <div className="sidebar-section">
-              <span className="sidebar-heading">Clínica</span>
-              {navClinic.map((item) => (
+          <div className="sidebar-section">
+            {navItems.map((item) => {
+              // Un expediente abierto se navegó desde Pacientes: ese destino
+              // sigue marcado como el actual mientras el expediente está arriba.
+              const active = view === item.id || (item.id === "patients" && Boolean(activePatient));
+              return (
                 <button
                   key={item.id}
                   type="button"
-                  className={
-                    view === item.id || (item.id === "patients" && activePatient)
-                      ? "sidebar-nav-item sidebar-nav-item-active"
-                      : "sidebar-nav-item"
-                  }
-                  aria-current={
-                    view === item.id || (item.id === "patients" && activePatient) ? "page" : undefined
-                  }
+                  className={active ? "sidebar-nav-item sidebar-nav-item-active" : "sidebar-nav-item"}
+                  aria-current={active ? "page" : undefined}
                   onClick={() => {
                     setActivePatient(null);
                     setView(item.id);
                   }}
                 >
+                  <NavIcon id={item.id} />
                   <span>{item.label}</span>
                   {item.badge ? <span className="sidebar-badge">{item.badge}</span> : null}
                 </button>
-              ))}
-            </div>
-            <div className="sidebar-section">
-              <span className="sidebar-heading">Operación</span>
-              {navOperation.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={view === item.id ? "sidebar-nav-item sidebar-nav-item-active" : "sidebar-nav-item"}
-                  aria-current={view === item.id ? "page" : undefined}
-                  onClick={() => setView(item.id)}
-                >
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </div>
-            <div className="sidebar-section">
-              <span className="sidebar-heading">Cumplimiento</span>
-              {navCompliance.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={view === item.id ? "sidebar-nav-item sidebar-nav-item-active" : "sidebar-nav-item"}
-                  aria-current={view === item.id ? "page" : undefined}
-                  onClick={() => setView(item.id)}
-                >
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </div>
-          </>
+              );
+            })}
+          </div>
         ) : (
           <div className="sidebar-section">
-            <span className="sidebar-heading">Vinculación</span>
             <p className="sidebar-note">Conecta este equipo con el portal para activar agenda y pacientes.</p>
           </div>
         )}
@@ -779,14 +791,13 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 />
               ) : view === "reception" ? (
                 <Recepcion onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)} />
-              ) : view === "benchmark" ? (
-                <Benchmark />
-              ) : view === "transcription" ? (
-                <TranscriptionSetup />
-              ) : view === "medications" ? (
-                <MedicationReference />
-              ) : view === "arco" ? (
-                <Arco />
+              ) : view === "settings" ? (
+                <Configuracion
+                  theme={theme}
+                  onThemeChange={setTheme}
+                  portalUrl={status.server_url}
+                  onOpenServicios={() => void openServiciosEnPortal()}
+                />
               ) : (
                 <section className="panel agenda-panel">
                   {appointments.length === 0 ? (

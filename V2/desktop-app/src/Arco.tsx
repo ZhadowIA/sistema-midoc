@@ -127,8 +127,8 @@ export function Arco() {
   }
 
   return (
-    <div className="content">
-      <section className="panel">
+    <>
+      <section className="panel panel-flat">
         <div className="panel-header">
           <h2>Privacidad — Derechos ARCO</h2>
           <p>
@@ -186,14 +186,14 @@ export function Arco() {
       </section>
 
       {requests.length === 0 ? (
-        <section className="panel">
+        <section className="panel panel-flat">
           <div className="empty-state">
             <strong>Sin solicitudes</strong>
             <p>Registra una solicitud ARCO para empezar a darle seguimiento.</p>
           </div>
         </section>
       ) : (
-        <section className="panel">
+        <section className="panel panel-flat">
           <div className="panel-header">
             <h3>Solicitudes</h3>
           </div>
@@ -242,6 +242,6 @@ export function Arco() {
           </ul>
         </section>
       )}
-    </div>
+    </>
   );
 }
