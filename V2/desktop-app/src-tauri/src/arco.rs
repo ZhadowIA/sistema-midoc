@@ -244,8 +244,8 @@ pub fn export_patient_data(
         .query_row(
             "SELECT pi.first_name, pi.last_name, pi.phone, pi.email, pi.birth_date, pi.sex,
                     p.allergies, p.medical_background, p.family_background,
-                    p.guardian_name, p.guardian_relationship, p.guardian_phone,
-                    p.guardian_email
+                    pi.guardian_name, pi.guardian_relationship, pi.guardian_phone,
+                    pi.guardian_email
              FROM patients p JOIN patient_identities pi ON pi.id = p.id
              WHERE p.id = ?1",
             params![patient_id],
@@ -658,15 +658,16 @@ mod tests {
         let conn = test_conn("export-minor");
         conn.execute(
             "INSERT INTO patient_identities (id, first_name, last_name, birth_date,
+                guardian_name, guardian_relationship, guardian_phone,
                 created_at, updated_at)
-             VALUES ('pat-m', 'Lucia', 'Paz', '2018-03-04', '0', '0')",
+             VALUES ('pat-m', 'Lucia', 'Paz', '2018-03-04',
+                'Hugo Paz', 'Padre', '6140002222', '0', '0')",
             [],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO patients (id, guardian_name, guardian_relationship,
-                guardian_phone, created_at, updated_at)
-             VALUES ('pat-m', 'Hugo Paz', 'Padre', '6140002222', '0', '0')",
+            "INSERT INTO patients (id, created_at, updated_at)
+             VALUES ('pat-m', '0', '0')",
             [],
         )
         .unwrap();

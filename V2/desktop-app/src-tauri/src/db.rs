@@ -575,6 +575,25 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE patients DROP COLUMN email;
     ALTER TABLE patients DROP COLUMN birth_date;
     ALTER TABLE patients DROP COLUMN sex;",
+    // v26: el responsable/tutor es CONTACTO, no CLINICO (paso 27, rebanada 1).
+    // Decision de clasificacion: `birth_date` ya vive en la identidad, asi que
+    // recepcion ya sabe quien es menor de edad; el contacto del tutor no agrega
+    // ninguna inferencia clinica nueva --es contacto de otra persona, la misma
+    // clase que el telefono del paciente--. Dejarlo del lado clinico romperia
+    // algo real: recepcion no podria llamar al tutor de un menor que llega solo.
+    "ALTER TABLE patient_identities ADD COLUMN guardian_name TEXT;
+    ALTER TABLE patient_identities ADD COLUMN guardian_relationship TEXT;
+    ALTER TABLE patient_identities ADD COLUMN guardian_phone TEXT;
+    ALTER TABLE patient_identities ADD COLUMN guardian_email TEXT;
+    UPDATE patient_identities SET
+        guardian_name = (SELECT p.guardian_name FROM patients p WHERE p.id = patient_identities.id),
+        guardian_relationship = (SELECT p.guardian_relationship FROM patients p WHERE p.id = patient_identities.id),
+        guardian_phone = (SELECT p.guardian_phone FROM patients p WHERE p.id = patient_identities.id),
+        guardian_email = (SELECT p.guardian_email FROM patients p WHERE p.id = patient_identities.id);
+    ALTER TABLE patients DROP COLUMN guardian_name;
+    ALTER TABLE patients DROP COLUMN guardian_relationship;
+    ALTER TABLE patients DROP COLUMN guardian_phone;
+    ALTER TABLE patients DROP COLUMN guardian_email;",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
@@ -822,7 +841,9 @@ mod tests {
             .query_row(
                 "SELECT count(*) FROM pragma_table_info('patients')
                  WHERE name IN ('first_name', 'last_name', 'phone', 'email',
-                                'birth_date', 'sex')",
+                                'birth_date', 'sex', 'guardian_name',
+                                'guardian_relationship', 'guardian_phone',
+                                'guardian_email')",
                 [],
                 |row| row.get(0),
             )
@@ -860,9 +881,11 @@ mod tests {
             conn.execute(
                 "INSERT INTO patients
                     (id, first_name, last_name, phone, birth_date, allergies,
-                     medical_background, guardian_name, created_at, updated_at)
+                     medical_background, guardian_name, guardian_phone,
+                     created_at, updated_at)
                  VALUES ('p1', 'Hugo', 'Paz', '6141112222', '2018-03-04',
-                         'penicilina', 'asma', 'Rosa Paz', '2026-07-01', '2026-07-01')",
+                         'penicilina', 'asma', 'Rosa Paz', '6143334444',
+                         '2026-07-01', '2026-07-01')",
                 [],
             )
             .unwrap();
@@ -881,17 +904,27 @@ mod tests {
         assert_eq!(phone.as_deref(), Some("6141112222"));
         assert_eq!(birth.as_deref(), Some("2018-03-04"));
 
-        let (allergies, background, guardian): (Option<String>, Option<String>, Option<String>) =
-            conn.query_row(
-                "SELECT allergies, medical_background, guardian_name
-                 FROM patients WHERE id = 'p1'",
+        let (allergies, background): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT allergies, medical_background FROM patients WHERE id = 'p1'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
         assert_eq!(allergies.as_deref(), Some("penicilina"));
         assert_eq!(background.as_deref(), Some("asma"));
+
+        // El tutor viaja con la identidad (v26): recepcion tiene que poder
+        // llamarlo sin abrir el expediente.
+        let (guardian, guardian_phone): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT guardian_name, guardian_phone FROM patient_identities WHERE id = 'p1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(guardian.as_deref(), Some("Rosa Paz"));
+        assert_eq!(guardian_phone.as_deref(), Some("6143334444"));
     }
 
     #[test]

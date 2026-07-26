@@ -145,7 +145,7 @@ pub struct PatientRecord {
 const PATIENT_COLUMNS: &str = "p.id, pi.first_name, pi.last_name, pi.phone, pi.email, \
     pi.birth_date, \
     p.allergies, p.medical_background, p.family_background, \
-    p.guardian_name, p.guardian_relationship, p.guardian_phone, p.guardian_email";
+    pi.guardian_name, pi.guardian_relationship, pi.guardian_phone, pi.guardian_email";
 
 /// Origen del expediente completo. La estacion clinica es la unica que puede
 /// unir ambas tablas; la de recepcion solo tiene `patient_identities`.
@@ -342,22 +342,26 @@ fn import_appointment_patient(
 
     // La identidad (CONTACTO) y el expediente clinico se crean por separado:
     // la primera es lo unico que la estacion de recepcion llega a ver.
+    // La identidad (CONTACTO) incluye al responsable de la cita: es contacto de
+    // otra persona, no dato clinico, y recepcion necesita poder llamarlo.
     let timestamp = now();
     conn.execute(
         "INSERT INTO patient_identities
-            (id, first_name, last_name, phone, email, birth_date, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+            (id, first_name, last_name, phone, email, birth_date,
+             guardian_name, guardian_relationship, guardian_phone, guardian_email,
+             created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
          ON CONFLICT(id) DO NOTHING",
-        params![patient_id, first_name, last_name, phone, email, birth_date, timestamp],
+        params![
+            patient_id, first_name, last_name, phone, email, birth_date,
+            g_name, g_rel, g_phone, g_email, timestamp
+        ],
     )?;
 
-    // El responsable de la cita se conserva en el expediente como entidad propia.
     conn.execute(
-        "INSERT INTO patients (id, guardian_name, guardian_relationship,
-                guardian_phone, guardian_email, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+        "INSERT INTO patients (id, created_at, updated_at) VALUES (?1, ?2, ?2)
          ON CONFLICT(id) DO NOTHING",
-        params![patient_id, g_name, g_rel, g_phone, g_email, timestamp],
+        params![patient_id, timestamp],
     )?;
 
     Ok(patient_id)
