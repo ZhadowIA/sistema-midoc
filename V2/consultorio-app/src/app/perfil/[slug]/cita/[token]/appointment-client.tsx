@@ -28,6 +28,8 @@ type AppointmentDetails = {
   };
   service: {
     name: string;
+    /** Si es false, se omite la preconsulta guiada (IA): solo antecedentes. */
+    requiresPreconsulta: boolean;
   } | null;
   precheckin: {
     status: string;
@@ -114,10 +116,14 @@ export function AppointmentClient({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // El medico puede desactivar la preconsulta guiada (IA) por servicio. Si no
+  // hay servicio asociado, se mantiene el comportamiento historico (activada).
+  const preconsultaEnabled = details.service?.requiresPreconsulta !== false;
   // Preconsulta diferida: no se muestra el formulario de inicio. Primero un aviso
   // con "Contestar", luego la bifurcacion (primera visita -> antecedentes;
   // ya contesto -> preconsulta guiada). Si ya hay respuestas previas, se entra
-  // directo al formulario.
+  // directo al formulario. Si el servicio desactivo la preconsulta, se salta la
+  // bifurcacion: siempre antecedentes.
   const hasPreviousResponses = Boolean(
     precheckinResponses.motivo ||
       precheckinResponses.antecedentes ||
@@ -127,7 +133,7 @@ export function AppointmentClient({
   );
   const [precheckinStarted, setPrecheckinStarted] = useState(hasPreviousResponses);
   const [firstVisit, setFirstVisit] = useState<boolean | null>(
-    details.precheckinState?.aiPreconsultaSubmitted ? false : null
+    !preconsultaEnabled ? true : details.precheckinState?.aiPreconsultaSubmitted ? false : null
   );
   const [medicalHistorySaved, setMedicalHistorySaved] = useState(
     Boolean(details.precheckinState?.medicalHistorySubmitted)
@@ -475,7 +481,7 @@ export function AppointmentClient({
             <>
               <p className="precheckin-path-note">
                 Primera visita: cuéntenos sus antecedentes.{" "}
-                {!medicalHistorySaved ? (
+                {!medicalHistorySaved && preconsultaEnabled ? (
                   <button className="link-button" type="button" onClick={() => setFirstVisit(null)}>
                     Cambiar
                   </button>

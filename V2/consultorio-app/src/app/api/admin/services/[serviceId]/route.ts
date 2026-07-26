@@ -13,7 +13,8 @@ const updateServiceSchema = z.object({
   currency: z.string().min(3).max(3).optional(),
   durationMinutes: z.number().int().positive().optional(),
   displayOrder: z.number().int().min(0).optional(),
-  status: z.nativeEnum(DoctorServiceStatus).optional()
+  status: z.nativeEnum(DoctorServiceStatus).optional(),
+  requiresPreconsulta: z.boolean().optional()
 });
 
 export async function PATCH(

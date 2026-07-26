@@ -202,6 +202,7 @@ export async function createDoctorService(
     durationMinutes: number;
     displayOrder?: number;
     status?: DoctorServiceStatus;
+    requiresPreconsulta?: boolean;
   }
 ) {
   const { doctor, doctorProfile } = await getDoctorProfileOrThrow(userId);
@@ -219,7 +220,8 @@ export async function createDoctorService(
       currency: input.currency?.trim().toUpperCase() || "MXN",
       durationMinutes: input.durationMinutes,
       displayOrder: input.displayOrder ?? 0,
-      status: input.status ?? DoctorServiceStatus.ACTIVE
+      status: input.status ?? DoctorServiceStatus.ACTIVE,
+      requiresPreconsulta: input.requiresPreconsulta ?? true
     }
   });
 
@@ -249,6 +251,7 @@ export async function updateDoctorService(
     durationMinutes?: number;
     displayOrder?: number;
     status?: DoctorServiceStatus;
+    requiresPreconsulta?: boolean;
   }
 ) {
   const { doctor, doctorProfile } = await getDoctorProfileOrThrow(userId);
@@ -282,7 +285,8 @@ export async function updateDoctorService(
       currency: input.currency?.trim().toUpperCase(),
       durationMinutes: input.durationMinutes,
       displayOrder: input.displayOrder,
-      status: input.status
+      status: input.status,
+      requiresPreconsulta: input.requiresPreconsulta
     }
   });
 

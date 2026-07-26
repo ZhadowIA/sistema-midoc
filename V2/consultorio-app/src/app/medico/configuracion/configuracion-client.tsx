@@ -43,6 +43,7 @@ type Workspace = {
     currency: string;
     durationMinutes: number;
     status: "ACTIVE" | "INACTIVE";
+    requiresPreconsulta: boolean;
   }>;
   availabilityRules: Array<{
     id: string;
@@ -355,7 +356,12 @@ function ServicesPanel({
   workspace: Workspace;
   onChanged: () => void;
 }) {
-  const [form, setForm] = useState({ name: "", price: "", durationMinutes: "30" });
+  const [form, setForm] = useState({
+    name: "",
+    price: "",
+    durationMinutes: "30",
+    requiresPreconsulta: true
+  });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -369,10 +375,11 @@ function ServicesPanel({
           name: form.name,
           priceCents: Math.round(Number(form.price) * 100),
           durationMinutes: Number(form.durationMinutes),
-          displayOrder: workspace.services.length + 1
+          displayOrder: workspace.services.length + 1,
+          requiresPreconsulta: form.requiresPreconsulta
         })
       });
-      setForm({ name: "", price: "", durationMinutes: "30" });
+      setForm({ name: "", price: "", durationMinutes: "30", requiresPreconsulta: true });
       onChanged();
     } catch (addError) {
       setError(addError instanceof Error ? addError.message : "No se pudo agregar.");
@@ -387,6 +394,21 @@ function ServicesPanel({
       await requestJson(`/api/admin/services/${serviceId}`, {
         method: "PATCH",
         body: JSON.stringify({ status })
+      });
+      onChanged();
+    } catch (toggleError) {
+      setError(
+        toggleError instanceof Error ? toggleError.message : "No se pudo actualizar."
+      );
+    }
+  }
+
+  async function togglePreconsulta(serviceId: string, requiresPreconsulta: boolean) {
+    setError("");
+    try {
+      await requestJson(`/api/admin/services/${serviceId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ requiresPreconsulta })
       });
       onChanged();
     } catch (toggleError) {
@@ -439,6 +461,23 @@ function ServicesPanel({
                   }
                 >
                   {service.status === "ACTIVE" ? "Desactivar" : "Activar"}
+                </button>
+                <span
+                  className={
+                    service.requiresPreconsulta ? "pill pill-success" : "pill pill-muted"
+                  }
+                  title="Preconsulta guiada (IA) mostrada tras agendar este servicio. Los antecedentes clinicos siempre se piden."
+                >
+                  {service.requiresPreconsulta ? "Preconsulta activa" : "Sin preconsulta"}
+                </span>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() =>
+                    void togglePreconsulta(service.id, !service.requiresPreconsulta)
+                  }
+                >
+                  {service.requiresPreconsulta ? "Desactivar preconsulta" : "Activar preconsulta"}
                 </button>
               </div>
             </div>
@@ -500,6 +539,24 @@ function ServicesPanel({
               setForm((current) => ({ ...current, durationMinutes: value }));
             }}
           />
+        </div>
+
+        <div className="field field-full checkbox-field">
+          <label htmlFor="service-preconsulta">
+            <input
+              id="service-preconsulta"
+              type="checkbox"
+              checked={form.requiresPreconsulta}
+              onChange={(event) => {
+                const checked = event.currentTarget.checked;
+                setForm((current) => ({ ...current, requiresPreconsulta: checked }));
+              }}
+            />{" "}
+            Mostrar preconsulta guiada (IA) para este servicio
+          </label>
+          <p className="field-hint">
+            Si lo desactivas, el paciente solo llenara el formulario de antecedentes clinicos.
+          </p>
         </div>
 
         {error ? (

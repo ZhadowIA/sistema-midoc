@@ -437,6 +437,9 @@ model DoctorService {
   durationMinutes  Int
   status           DoctorServiceStatus @default(ACTIVE)
   displayOrder     Int                 @default(0)
+  // Si es false, el paciente que agenda este servicio no ve la bifurcacion de
+  // preconsulta guiada (IA): solo se le pide el formulario de antecedentes.
+  requiresPreconsulta Boolean          @default(true)
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
   doctorProfile    DoctorProfile       @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
