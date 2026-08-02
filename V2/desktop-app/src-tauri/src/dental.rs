@@ -551,9 +551,11 @@ pub fn create_lab_order(conn: &Connection, input: &NewLabOrder) -> Result<LabOrd
     if input.cost_cents < 0 {
         return Err(DentalError::Invalid("el costo no puede ser negativo".into()));
     }
+    // Una orden de laboratorio es OPERATIVO: le basta que el paciente exista
+    // como identidad. No exige expediente ni lo consulta.
     let patient_exists: bool = conn
         .query_row(
-            "SELECT 1 FROM patients WHERE id = ?1",
+            "SELECT 1 FROM patient_identities WHERE id = ?1",
             params![input.patient_id],
             |_| Ok(true),
         )

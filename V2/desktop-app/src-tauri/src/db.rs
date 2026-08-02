@@ -711,6 +711,38 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_refund_requests_status ON refund_requests (status);
     CREATE INDEX idx_refund_requests_patient ON refund_requests (patient_id);",
+    // v29: las ordenes de laboratorio dejan de apuntar al expediente (paso 27,
+    // rebanada 1). `dental_lab_orders` es OPERATIVO --seguimiento de trabajos
+    // fuera del consultorio, con su vista en recepcion-- pero su patient_id
+    // referenciaba `patients`, que es CLINICO. Era la segunda arista dura que
+    // cruzaba la frontera, y aparecio al escribir la prueba que la vigila.
+    // Ahora apunta a la identidad, que las dos estaciones tienen.
+    "CREATE TABLE dental_lab_orders_new (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patient_identities (id),
+        encounter_id TEXT,
+        tooth_id TEXT NOT NULL DEFAULT 'GENERAL',
+        work_type TEXT NOT NULL,
+        lab_name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        promised_at TEXT,
+        sent_at TEXT,
+        received_at TEXT,
+        delivered_at TEXT,
+        cost_cents INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    INSERT INTO dental_lab_orders_new
+        SELECT id, patient_id, encounter_id, tooth_id, work_type, lab_name, status,
+               promised_at, sent_at, received_at, delivered_at, cost_cents, notes,
+               created_at, updated_at
+        FROM dental_lab_orders;
+    DROP TABLE dental_lab_orders;
+    ALTER TABLE dental_lab_orders_new RENAME TO dental_lab_orders;
+    CREATE INDEX idx_dental_lab_orders_patient ON dental_lab_orders (patient_id);
+    CREATE INDEX idx_dental_lab_orders_status ON dental_lab_orders (status);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

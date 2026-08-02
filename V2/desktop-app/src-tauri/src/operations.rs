@@ -1943,6 +1943,138 @@ mod tests {
         .unwrap();
     }
 
+    /// Tablas CLINICO. La estacion de recepcion no tendra ninguna cuando la
+    /// rebanada 3 parta el archivo; aqui se simula borrandolas.
+    const CLINICAL_TABLES: &[&str] = &[
+        "note_versions",
+        "prescriptions",
+        "documents",
+        "precheckins",
+        "patient_medical_history_versions",
+        "consultation_transcriptions",
+        "ai_runs",
+        "ai_consents",
+        "ai_benchmark_results",
+        "ai_benchmark_runs",
+        "arco_requests",
+        "timeline_events",
+        "patient_links",
+        "dental_budget_items",
+        "dental_budgets",
+        "encounters",
+        "patients",
+    ];
+
+    /// **Prueba de frontera del paso 27.** No busca texto en el codigo: deja la
+    /// base sin una sola tabla CLINICO y corre la operacion completa de una
+    /// jornada. Si algun dia alguien vuelve a meter el expediente en la caja,
+    /// esto falla con "no such table" y nombra la tabla exacta.
+    ///
+    /// Es la version fuerte de lo que pedia el plan, y prueba por adelantado
+    /// que la rebanada 3 puede partir el archivo sin romper recepcion.
+    #[test]
+    fn the_operational_surface_runs_with_no_clinical_tables_at_all() {
+        let mut conn = test_conn("frontera");
+
+        // Recepcion registra a quien llega: identidad, nada clinico.
+        let visit = register_walk_in(
+            &conn,
+            &WalkInInput {
+                patient_name: "Ana Ruiz".into(),
+                patient_phone: Some("6141112222".into()),
+                reason: Some("Dolor".into()),
+                service_name: None,
+                priority: None,
+            },
+        )
+        .unwrap();
+        let patient_id = visit.patient_id.clone().unwrap();
+        seed_billable(&conn, "bill-1", &patient_id, 100_000);
+
+        // Se corta el expediente de raiz. Sin IF EXISTS a proposito: un nombre
+        // mal escrito tiene que reventar aqui y no volver esta prueba una
+        // mentira que pasa sola.
+        conn.pragma_update(None, "foreign_keys", "OFF").unwrap();
+        for table in CLINICAL_TABLES {
+            conn.execute(&format!("DROP TABLE {table}"), [])
+                .unwrap_or_else(|e| panic!("no se pudo borrar {table}: {e}"));
+        }
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+
+        let left: i64 = conn
+            .query_row(
+                &format!(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ({})",
+                    CLINICAL_TABLES
+                        .iter()
+                        .map(|t| format!("'{t}'"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0, "quedaron tablas clinicas; la prueba no probaria nada");
+
+        // A partir de aqui, todo lo que corra prueba que la caja vive sin el
+        // expediente. Cualquier consulta que lo nombre revienta.
+        let resource = create_resource(&conn, &NewResource { name: "Consultorio 1".into(), kind: "ROOM".into() }).unwrap();
+        assign_resource(&conn, &visit.id, Some(&resource.id)).unwrap();
+        assert!(!list_active_visits(&conn).unwrap().is_empty());
+
+        open_cash_session(&conn, 50_000).unwrap();
+        let payment = register_payment(
+            &conn,
+            &PaymentInput {
+                visit_id: Some(visit.id.clone()),
+                appointment_id: None,
+                patient_id: Some(patient_id.clone()),
+                amount_cents: 60_000,
+                method: "CASH".into(),
+                kind: "PAYMENT".into(),
+                concept: Some("Abono".into()),
+                budget_id: Some("bill-1".into()),
+            },
+        )
+        .unwrap();
+
+        // Cobro, saldo, recibo y reembolso: la jornada entera sin expediente.
+        assert_eq!(billable_paid_cents(&conn, "bill-1").unwrap(), 60_000);
+        assert_eq!(list_session_payments(&conn, &payment.cash_session_id).unwrap().len(), 1);
+
+        let receipt = build_receipt(&conn, &payment.id).unwrap();
+        assert_eq!(receipt.patient_name.as_deref(), Some("Ana Ruiz"));
+        assert_eq!(receipt.amount_cents, 60_000);
+
+        register_payment(
+            &conn,
+            &PaymentInput {
+                visit_id: None,
+                appointment_id: None,
+                patient_id: Some(patient_id.clone()),
+                amount_cents: 20_000,
+                method: "CASH".into(),
+                kind: "DEPOSIT".into(),
+                concept: None,
+                budget_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(patient_credit_cents(&conn, &patient_id).unwrap(), 20_000);
+        apply_credit_to_billable(&mut conn, &patient_id, "bill-1", 20_000).unwrap();
+        assert_eq!(billable_paid_cents(&conn, "bill-1").unwrap(), 80_000);
+
+        let request = request_refund(&conn, &patient_id, 5_000, None, None);
+        assert!(request.is_err(), "sin saldo libre no hay reembolso");
+
+        set_visit_state(&conn, &visit.id, "DONE").unwrap();
+        let summary = close_cash_session(&conn, 130_000, None).unwrap();
+        assert_eq!(summary.payment_count, 2);
+        assert_eq!(summary.net_total_cents, 80_000);
+        assert_eq!(summary.expected_cash_cents, 130_000);
+    }
+
     #[test]
     fn receipt_detail_defaults_to_the_clinical_profile() {
         // Un consultorio recien instalado nunca empieza filtrando de menos:
