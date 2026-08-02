@@ -644,7 +644,9 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         kind: input.kind,
         concept: input.concept,
         budget_id: input.budget_id ?? null,
-        receipt_number: `R-${String(ops.receiptSeq).padStart(6, "0")}`,
+        // Folio con codigo de estacion (paso 27): con dos cajones, un contador
+        // unico haria que ambos emitieran R-000001.
+        receipt_number: `R-A-${String(ops.receiptSeq).padStart(6, "0")}`,
         created_at: new Date().toISOString()
       };
       ops.payments.push(payment);

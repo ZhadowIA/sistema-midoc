@@ -743,6 +743,46 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE dental_lab_orders_new RENAME TO dental_lab_orders;
     CREATE INDEX idx_dental_lab_orders_patient ON dental_lab_orders (patient_id);
     CREATE INDEX idx_dental_lab_orders_status ON dental_lab_orders (status);",
+    // v30: la estacion como entidad, y el folio por estacion (paso 27,
+    // rebanada 1). Se hace aqui y no en la rebanada 3 para no migrar `payments`
+    // dos veces sobre datos contables con folio ya emitido.
+    //
+    // El medico tambien cobra, asi que hay DOS cajones. Eso rompe dos
+    // invariantes que eran locales:
+    //
+    //   - `idx_cash_sessions_open` garantizaba una sesion abierta a la vez.
+    //     Con dos cajones es incorrecto: pasa a ser unico POR ESTACION.
+    //   - el folio vivia en un contador unico y dos equipos chocarian en
+    //     R-000001. El prefijo por estacion deja de ser alternativa: cada serie
+    //     es monotona dentro de su estacion, que es lo que un folio necesita.
+    //
+    // En ESTACION_UNICA hay una estacion y el prefijo es inocuo.
+    "CREATE TABLE stations (
+        id TEXT PRIMARY KEY NOT NULL,
+        code TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        mode TEXT NOT NULL DEFAULT 'SINGLE',
+        created_at TEXT NOT NULL
+    );
+    INSERT INTO stations (id, code, name, mode, created_at)
+        VALUES ('station-local', 'A', 'Esta computadora', 'SINGLE', datetime('now'));
+
+    ALTER TABLE cash_sessions ADD COLUMN station_id TEXT REFERENCES stations (id);
+    UPDATE cash_sessions SET station_id = 'station-local';
+    DROP INDEX IF EXISTS idx_cash_sessions_open;
+    CREATE UNIQUE INDEX idx_cash_sessions_open_per_station
+        ON cash_sessions (station_id) WHERE closed_at IS NULL;
+
+    ALTER TABLE payments ADD COLUMN station_id TEXT REFERENCES stations (id);
+    UPDATE payments SET station_id = 'station-local';
+
+    -- La serie de la estacion continua donde iba el contador unico. Sin esto
+    -- los folios reiniciarian en 1 tras la actualizacion: no chocarian con los
+    -- viejos porque el prefijo los distingue, pero un consultorio no reinicia
+    -- su numeracion de recibos a media contabilidad.
+    INSERT INTO app_meta (key, value)
+        SELECT 'receipt_seq_A', value FROM app_meta WHERE key = 'receipt_seq'
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
@@ -977,6 +1017,50 @@ mod tests {
             )
             .unwrap();
         assert_eq!(allergies.as_deref(), Some("penicilina"));
+    }
+
+    #[test]
+    fn v30_continues_the_receipt_series_instead_of_restarting_it() {
+        // Un consultorio no reinicia su numeracion de recibos a media
+        // contabilidad. Tras la actualizacion la serie sigue donde iba.
+        let path = temp_db_path("v30-folio");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "key", "clave-correcta").unwrap();
+            for (idx, sql) in MIGRATIONS.iter().take(29).enumerate() {
+                let target = (idx + 1) as i64;
+                conn.execute_batch(&format!(
+                    "BEGIN; {sql}; PRAGMA user_version = {target}; COMMIT;"
+                ))
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO app_meta (key, value) VALUES ('receipt_seq', '47')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let conn = open_encrypted(&path, "clave-correcta").unwrap();
+        let seq: String = conn
+            .query_row(
+                "SELECT value FROM app_meta WHERE key = 'receipt_seq_A'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(seq, "47", "la serie de la estacion continua, no reinicia");
+
+        // Y la caja unica pasa a ser unica por estacion.
+        let per_station: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master
+                 WHERE type='index' AND name='idx_cash_sessions_open_per_station'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(per_station, 1);
     }
 
     #[test]

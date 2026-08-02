@@ -56,6 +56,16 @@ const PAYMENT_KINDS: &[&str] = &["PAYMENT", "DEPOSIT", "REFUND"];
 
 /* ---------- Tipos ---------- */
 
+/// Puesto de trabajo con su propio cajon y su propia serie de folios. En
+/// `ESTACION_UNICA` hay una; en el despliegue de dos equipos, una por maquina.
+#[derive(Debug, Serialize)]
+pub struct Station {
+    pub id: String,
+    pub code: String,
+    pub name: String,
+    pub mode: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct Resource {
     pub id: String,
@@ -519,11 +529,15 @@ fn read_session(conn: &Connection, session_id: &str) -> Result<CashSession, Oper
     .ok_or(OperationsError::NotFound)
 }
 
+/// Caja abierta **de esta estacion**. Con dos cajones, que la otra estacion
+/// tenga la suya abierta no es asunto de esta: cada una abre, cobra y cierra la
+/// propia, y ninguna cierra la de la otra.
 pub fn get_open_session(conn: &Connection) -> Result<Option<CashSession>, OperationsError> {
+    let station = local_station(conn)?;
     conn.query_row(
         "SELECT id, opened_at, opening_float_cents, closed_at, closing_counted_cents, notes
-         FROM cash_sessions WHERE closed_at IS NULL",
-        [],
+         FROM cash_sessions WHERE closed_at IS NULL AND station_id = ?1",
+        params![station.id],
         |row| {
             Ok(CashSession {
                 id: row.get(0)?,
@@ -549,10 +563,12 @@ pub fn open_cash_session(
     if get_open_session(conn)?.is_some() {
         return Err(OperationsError::CashSessionAlreadyOpen);
     }
+    let station = local_station(conn)?;
     let id = uuid::Uuid::new_v4().to_string();
     conn.execute(
-        "INSERT INTO cash_sessions (id, opened_at, opening_float_cents) VALUES (?1, ?2, ?3)",
-        params![id, now(), opening_float_cents],
+        "INSERT INTO cash_sessions (id, opened_at, opening_float_cents, station_id)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![id, now(), opening_float_cents, station.id],
     )?;
     audit(conn, "cash_session", &id, "opened", None)?;
     read_session(conn, &id)
@@ -639,11 +655,35 @@ pub struct PaymentInput {
 
 /// Folio de recibo monotono y persistente (sobrevive borrados; aqui no hay
 /// borrados). Se guarda el siguiente valor en `app_meta`.
-fn next_receipt_number(conn: &Connection) -> Result<String, OperationsError> {
+/// La estacion de este equipo. Hoy hay una sola; en el despliegue de dos
+/// equipos cada uno tiene la suya y ese id es el que separa las series de folio
+/// y los cortes de caja.
+pub fn local_station(conn: &Connection) -> Result<Station, OperationsError> {
+    conn.query_row(
+        "SELECT id, code, name, mode FROM stations ORDER BY created_at, id LIMIT 1",
+        [],
+        |row| {
+            Ok(Station {
+                id: row.get(0)?,
+                code: row.get(1)?,
+                name: row.get(2)?,
+                mode: row.get(3)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or(OperationsError::NotFound)
+}
+
+/// Folio monotono **dentro de su estacion**. Con dos cajones un contador unico
+/// haria que ambos emitieran R-000001; el prefijo separa las series y cada una
+/// sigue siendo monotona, que es lo que un folio necesita.
+fn next_receipt_number(conn: &Connection, station: &Station) -> Result<String, OperationsError> {
+    let key = format!("receipt_seq_{}", station.code);
     let current: i64 = conn
         .query_row(
-            "SELECT value FROM app_meta WHERE key = 'receipt_seq'",
-            [],
+            "SELECT value FROM app_meta WHERE key = ?1",
+            params![key],
             |row| row.get::<_, String>(0),
         )
         .optional()?
@@ -651,11 +691,11 @@ fn next_receipt_number(conn: &Connection) -> Result<String, OperationsError> {
         .unwrap_or(0);
     let next = current + 1;
     conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES ('receipt_seq', ?1)
-         ON CONFLICT(key) DO UPDATE SET value = ?1",
-        params![next.to_string()],
+        "INSERT INTO app_meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = ?2",
+        params![key, next.to_string()],
     )?;
-    Ok(format!("R-{next:06}"))
+    Ok(format!("R-{}-{next:06}", station.code))
 }
 
 /// Abonos netos ya aplicados a un extracto de cobro. Vive aqui, del lado
@@ -1193,17 +1233,18 @@ pub fn emit_authorized_refund(
     if !PAYMENT_METHODS.contains(&method.as_str()) {
         return Err(OperationsError::Invalid("metodo de pago invalido".into()));
     }
+    let station = local_station(conn)?;
     let session = get_open_session(conn)?.ok_or(OperationsError::NoOpenCashSession)?;
 
     let tx = conn.transaction()?;
-    let receipt_number = next_receipt_number(&tx)?;
+    let receipt_number = next_receipt_number(&tx, &station)?;
     let id = uuid::Uuid::new_v4().to_string();
     let timestamp = now();
     tx.execute(
         "INSERT INTO payments
             (id, cash_session_id, visit_id, appointment_id, patient_id, amount_cents,
-             method, kind, concept, receipt_number, created_at)
-         VALUES (?1, ?2, NULL, NULL, ?3, ?4, ?5, 'REFUND', ?6, ?7, ?8)",
+             method, kind, concept, receipt_number, created_at, station_id)
+         VALUES (?1, ?2, NULL, NULL, ?3, ?4, ?5, 'REFUND', ?6, ?7, ?8, ?9)",
         params![
             id,
             session.id,
@@ -1212,7 +1253,8 @@ pub fn emit_authorized_refund(
             method,
             request.reason,
             receipt_number,
-            timestamp
+            timestamp,
+            station.id
         ],
     )?;
 
@@ -1286,19 +1328,20 @@ pub fn register_payment(
         validate_billable_payment(conn, billable_id, &kind, input.amount_cents)?;
     }
 
+    let station = local_station(conn)?;
     let session = get_open_session(conn)?.ok_or(OperationsError::NoOpenCashSession)?;
-    let receipt_number = next_receipt_number(conn)?;
+    let receipt_number = next_receipt_number(conn, &station)?;
     let id = uuid::Uuid::new_v4().to_string();
     let timestamp = now();
     conn.execute(
         "INSERT INTO payments
             (id, cash_session_id, visit_id, appointment_id, patient_id, amount_cents,
-             method, kind, concept, receipt_number, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             method, kind, concept, receipt_number, created_at, station_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             id, session.id, input.visit_id, input.appointment_id, input.patient_id,
             input.amount_cents, method, kind, input.concept,
-            receipt_number, timestamp
+            receipt_number, timestamp, station.id
         ],
     )?;
 
@@ -1650,8 +1693,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(p1.receipt_number, "R-000001");
-        assert_eq!(p2.receipt_number, "R-000002");
+        // El folio lleva el codigo de su estacion: con dos cajones, un contador
+        // unico haria que ambos emitieran R-000001.
+        assert_eq!(p1.receipt_number, "R-A-000001");
+        assert_eq!(p2.receipt_number, "R-A-000002");
         assert_eq!(p2.method, "CARD");
         assert_eq!(p2.kind, "DEPOSIT");
 
@@ -2073,6 +2118,77 @@ mod tests {
         assert_eq!(summary.payment_count, 2);
         assert_eq!(summary.net_total_cents, 80_000);
         assert_eq!(summary.expected_cash_cents, 130_000);
+    }
+
+    #[test]
+    fn each_station_keeps_its_own_drawer_and_its_own_receipt_series() {
+        // El medico tambien cobra, asi que hay dos cajones. Las dos garantias
+        // que eran locales -- una caja abierta a la vez, un folio unico -- solo
+        // valen dentro de su estacion.
+        let conn = test_conn("estaciones");
+        conn.execute(
+            "INSERT INTO stations (id, code, name, mode, created_at)
+             VALUES ('station-b', 'B', 'Consultorio del medico', 'CLINICAL', '2030-01-01')",
+            [],
+        )
+        .unwrap();
+
+        // La estacion local es la primera por fecha de alta: la de recepcion.
+        let local = local_station(&conn).unwrap();
+        assert_eq!(local.code, "A");
+
+        open_cash_session(&conn, 0).unwrap();
+        let charge = || {
+            register_payment(
+                &conn,
+                &PaymentInput {
+                    visit_id: None,
+                    appointment_id: None,
+                    patient_id: None,
+                    amount_cents: 10_000,
+                    method: "CASH".into(),
+                    kind: "PAYMENT".into(),
+                    concept: None,
+                    budget_id: None,
+                },
+            )
+            .unwrap()
+        };
+        assert_eq!(charge().receipt_number, "R-A-000001");
+        assert_eq!(charge().receipt_number, "R-A-000002");
+
+        // La otra estacion abre su propia caja: el indice unico es por
+        // estacion, no global. Antes esto habria sido CashSessionAlreadyOpen.
+        conn.execute(
+            "INSERT INTO cash_sessions (id, opened_at, opening_float_cents, station_id)
+             VALUES ('sesion-b', '2030-01-01', 0, 'station-b')",
+            [],
+        )
+        .unwrap();
+
+        let abiertas: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM cash_sessions WHERE closed_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(abiertas, 2, "un cajon por estacion, ambos abiertos");
+
+        // Y ninguna estacion ve la caja de la otra como suya.
+        let mia = get_open_session(&conn).unwrap().unwrap();
+        assert_ne!(mia.id, "sesion-b");
+
+        // Dos cajas abiertas en la MISMA estacion siguen prohibidas.
+        assert!(matches!(
+            open_cash_session(&conn, 0),
+            Err(OperationsError::CashSessionAlreadyOpen)
+        ));
+
+        // El corte del dia es por cajon: solo cuenta lo cobrado en el suyo.
+        let summary = close_cash_session(&conn, 20_000, None).unwrap();
+        assert_eq!(summary.payment_count, 2);
+        assert_eq!(summary.net_total_cents, 20_000);
     }
 
     #[test]
