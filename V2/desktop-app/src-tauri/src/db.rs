@@ -594,6 +594,91 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE patients DROP COLUMN guardian_relationship;
     ALTER TABLE patients DROP COLUMN guardian_phone;
     ALTER TABLE patients DROP COLUMN guardian_email;",
+    // v27: el cobro y su aplicacion dejan de ser la misma cosa (paso 27,
+    // rebanada 1). Hasta aqui `payments.budget_id` significaba dos cosas a la
+    // vez: se recibio este dinero, y este dinero se aplica al presupuesto B.
+    // En cuanto el excedente es posible hay que partirlas, porque tienen
+    // naturalezas opuestas:
+    //
+    //   payments            = HECHO. Dinero recibido, con folio. Inmutable:
+    //                         un recibo emitido no se reescribe nunca.
+    //   payment_allocations = DECISION contable. Como se reparte ese dinero.
+    //                         Mutable y reversible.
+    //
+    // Lo no asignado ES el saldo a favor del paciente: no hace falta tabla ni
+    // campo, se deriva de la diferencia. Y como solo las asignaciones se
+    // recalculan, dos estaciones que cobran a la vez convergen sin coordinarse.
+    //
+    // `billable_items` es el extracto de cobro (clase FACTURABLE): lo minimo
+    // que la estacion operativa necesita para cobrar un presupuesto sin poder
+    // leer el expediente. La estacion clinica es su autoridad y lo empuja.
+    // Con esto desaparece la unica arista dura que cruzaba la frontera
+    // (payments.budget_id -> dental_budgets).
+    "CREATE TABLE billable_items (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL,
+        concept TEXT NOT NULL,
+        total_cents INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'PROPOSED',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_billable_items_patient ON billable_items (patient_id);
+    INSERT INTO billable_items
+        (id, patient_id, concept, total_cents, status, created_at, updated_at)
+        SELECT b.id, b.patient_id, b.label,
+               COALESCE((SELECT SUM(i.price_cents) FROM dental_budget_items i
+                         WHERE i.budget_id = b.id), 0) - b.discount_cents,
+               b.status, b.created_at, COALESCE(b.decided_at, b.created_at)
+        FROM dental_budgets b;
+
+    -- El vinculo se guarda aparte antes de recrear `payments`: la columna
+    -- desaparece con la tabla vieja, y las asignaciones no pueden existir
+    -- todavia porque apuntan a la tabla nueva.
+    CREATE TABLE payment_budget_map AS
+        SELECT id AS payment_id, budget_id, amount_cents, created_at
+        FROM payments WHERE budget_id IS NOT NULL;
+
+    CREATE TABLE payments_new (
+        id TEXT PRIMARY KEY NOT NULL,
+        cash_session_id TEXT NOT NULL REFERENCES cash_sessions (id),
+        visit_id TEXT REFERENCES visits (id),
+        appointment_id TEXT,
+        patient_id TEXT,
+        amount_cents INTEGER NOT NULL,
+        method TEXT NOT NULL DEFAULT 'CASH',
+        kind TEXT NOT NULL DEFAULT 'PAYMENT',
+        concept TEXT,
+        receipt_number TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    INSERT INTO payments_new
+        (id, cash_session_id, visit_id, appointment_id, patient_id, amount_cents,
+         method, kind, concept, receipt_number, created_at)
+        SELECT id, cash_session_id, visit_id, appointment_id, patient_id, amount_cents,
+               method, kind, concept, receipt_number, created_at
+        FROM payments;
+    DROP TABLE payments;
+    ALTER TABLE payments_new RENAME TO payments;
+    CREATE INDEX idx_payments_session ON payments (cash_session_id);
+    CREATE UNIQUE INDEX idx_payments_receipt ON payments (receipt_number);
+
+    CREATE TABLE payment_allocations (
+        id TEXT PRIMARY KEY NOT NULL,
+        payment_id TEXT NOT NULL REFERENCES payments (id),
+        billable_id TEXT NOT NULL REFERENCES billable_items (id),
+        amount_cents INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_payment_allocations_payment ON payment_allocations (payment_id);
+    CREATE INDEX idx_payment_allocations_billable ON payment_allocations (billable_id);
+    -- Cada abono existente se vuelve una asignacion por su monto completo: la
+    -- conducta no cambia, solo queda expresada en el modelo nuevo.
+    INSERT INTO payment_allocations
+        (id, payment_id, billable_id, amount_cents, created_at)
+        SELECT payment_id, payment_id, budget_id, amount_cents, created_at
+        FROM payment_budget_map;
+    DROP TABLE payment_budget_map;",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

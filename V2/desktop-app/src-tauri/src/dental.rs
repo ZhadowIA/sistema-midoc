@@ -127,14 +127,48 @@ fn read_items(conn: &Connection, budget_id: &str) -> Result<Vec<BudgetItem>, Den
     Ok(rows)
 }
 
-/// Abonos netos asentados en caja contra este presupuesto (reembolsos restan).
+/// Abonos netos aplicados a este presupuesto (reembolsos restan). Se leen de
+/// las asignaciones, no de los cobros: un cobro es dinero recibido, y cuanto de
+/// el corresponde a este presupuesto es una decision contable aparte (paso 27).
 fn paid_cents(conn: &Connection, budget_id: &str) -> Result<i64, DentalError> {
     Ok(conn.query_row(
-        "SELECT COALESCE(SUM(CASE WHEN kind = 'REFUND' THEN -amount_cents ELSE amount_cents END), 0)
-         FROM payments WHERE budget_id = ?1",
+        "SELECT COALESCE(SUM(CASE WHEN p.kind = 'REFUND' THEN -a.amount_cents
+                                  ELSE a.amount_cents END), 0)
+         FROM payment_allocations a
+         JOIN payments p ON p.id = a.payment_id
+         WHERE a.billable_id = ?1",
         params![budget_id],
         |row| row.get(0),
     )?)
+}
+
+/// Publica el extracto de cobro (clase FACTURABLE) que la estacion operativa
+/// usa para cobrar sin poder leer el expediente. La estacion clinica es su
+/// autoridad: aqui se crea y aqui se actualiza.
+fn publish_billable(
+    conn: &Connection,
+    budget: &Budget,
+    concept: &str,
+) -> Result<(), DentalError> {
+    conn.execute(
+        "INSERT INTO billable_items
+            (id, patient_id, concept, total_cents, status, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+         ON CONFLICT(id) DO UPDATE SET
+            concept = excluded.concept,
+            total_cents = excluded.total_cents,
+            status = excluded.status,
+            updated_at = excluded.updated_at",
+        params![
+            budget.id,
+            budget.patient_id,
+            concept,
+            budget.total_cents,
+            budget.status,
+            now()
+        ],
+    )?;
+    Ok(())
 }
 
 pub fn read_budget(conn: &Connection, budget_id: &str) -> Result<Budget, DentalError> {
@@ -330,7 +364,11 @@ pub fn create_budget(conn: &Connection, input: &NewBudget) -> Result<Budget, Den
         )?;
     }
     audit(conn, &id, "created", None)?;
-    read_budget(conn, &id)
+    let budget = read_budget(conn, &id)?;
+    // El concepto que vera el recibo sale del nombre que el medico le puso al
+    // presupuesto: es texto que el redacto, no un volcado de la nota.
+    publish_billable(conn, &budget, input.label.trim())?;
+    Ok(budget)
 }
 
 /// Acepta o rechaza un presupuesto propuesto. Aceptar uno rechaza en
@@ -366,7 +404,24 @@ pub fn decide_budget(
         }
     }
     audit(conn, budget_id, "decided", Some(&status))?;
-    read_budget(conn, budget_id)
+    let budget = read_budget(conn, budget_id)?;
+    publish_billable(conn, &budget, &budget.label)?;
+
+    // Aceptar uno rechaza a sus alternativas: sus extractos tienen que
+    // enterarse, o la caja seguiria aceptando abonos contra un presupuesto
+    // que ya no esta vigente.
+    if status == "ACCEPTED" {
+        if let Some(group) = &current.alternative_group {
+            conn.execute(
+                "UPDATE billable_items SET status = 'REJECTED', updated_at = ?1
+                 WHERE id IN (SELECT id FROM dental_budgets
+                              WHERE alternative_group = ?2 AND patient_id = ?3
+                                AND id != ?4 AND status = 'REJECTED')",
+                params![timestamp, group, current.patient_id, budget_id],
+            )?;
+        }
+    }
+    Ok(budget)
 }
 
 /// Avance clinico de una partida. Solo progresa dentro de un presupuesto
@@ -403,39 +458,10 @@ pub fn set_item_status(
     read_budget(conn, &budget_id)
 }
 
-/// Validacion que la caja del paso 10 aplica antes de asentar un movimiento
-/// con `budget_id`: solo presupuestos aceptados, sin abonar mas que el saldo
-/// ni reembolsar mas que lo abonado.
-pub fn validate_budget_payment(
-    conn: &Connection,
-    budget_id: &str,
-    kind: &str,
-    amount_cents: i64,
-) -> Result<(), DentalError> {
-    let budget = read_budget(conn, budget_id)?;
-    if budget.status != "ACCEPTED" {
-        return Err(DentalError::Invalid(
-            "solo se abona a un presupuesto aceptado".into(),
-        ));
-    }
-    match kind {
-        "REFUND" => {
-            if amount_cents > budget.paid_cents {
-                return Err(DentalError::Invalid(
-                    "el reembolso excede lo abonado al presupuesto".into(),
-                ));
-            }
-        }
-        _ => {
-            if amount_cents > budget.balance_cents {
-                return Err(DentalError::Invalid(
-                    "el abono excede el saldo del presupuesto".into(),
-                ));
-            }
-        }
-    }
-    Ok(())
-}
+// La validacion de un movimiento contra el presupuesto ya no vive aqui: se
+// mudo a `operations::validate_billable_payment`, que la resuelve contra el
+// extracto de cobro (FACTURABLE) sin leer una sola tabla clinica. Era la unica
+// puerta por la que la caja entraba al expediente.
 
 /* ---------- Ordenes de laboratorio (rebanada 4) ---------- */
 
@@ -701,7 +727,13 @@ mod tests {
         operations::open_cash_session(conn, 0).unwrap();
     }
 
-    fn pay(conn: &Connection, budget_id: &str, patient_id: &str, amount: i64, kind: &str) {
+    fn try_pay(
+        conn: &Connection,
+        budget_id: &str,
+        patient_id: &str,
+        amount: i64,
+        kind: &str,
+    ) -> Result<crate::operations::Payment, crate::operations::OperationsError> {
         operations::register_payment(
             conn,
             &PaymentInput {
@@ -715,7 +747,10 @@ mod tests {
                 budget_id: Some(budget_id.into()),
             },
         )
-        .unwrap();
+    }
+
+    fn pay(conn: &Connection, budget_id: &str, patient_id: &str, amount: i64, kind: &str) {
+        try_pay(conn, budget_id, patient_id, amount, kind).unwrap();
     }
 
     #[test]
@@ -826,10 +861,13 @@ mod tests {
         assert_eq!(after.paid_cents, 75_000);
         assert_eq!(after.balance_cents, 75_000);
 
-        // El abono no puede exceder el saldo.
-        assert!(validate_budget_payment(&conn, &budget.id, "PAYMENT", 80_000).is_err());
+        // Aviso en captura: el abono que excede el saldo conocido se rechaza en
+        // la puerta. No es garantia -- con dos cajones el excedente puede
+        // colarse y terminar en saldo a favor (paso 27) -- pero el camino
+        // normal si avisa, y ahora avisa desde la caja, sin leer lo clinico.
+        assert!(try_pay(&conn, &budget.id, "p1", 80_000, "PAYMENT").is_err());
         // El reembolso no puede exceder lo abonado.
-        assert!(validate_budget_payment(&conn, &budget.id, "REFUND", 80_000).is_err());
+        assert!(try_pay(&conn, &budget.id, "p1", 80_000, "REFUND").is_err());
         pay(&conn, &budget.id, "p1", 25_000, "REFUND");
 
         let balance = patient_dental_balance(&conn, "p1").unwrap();
@@ -839,7 +877,7 @@ mod tests {
         assert_eq!(balance.balance_cents, 100_000);
 
         // Un presupuesto inexistente no recibe abonos.
-        assert!(validate_budget_payment(&conn, "ghost", "PAYMENT", 1).is_err());
+        assert!(try_pay(&conn, "ghost", "p1", 1, "PAYMENT").is_err());
     }
 
     fn sample_lab_order(patient_id: &str) -> NewLabOrder {

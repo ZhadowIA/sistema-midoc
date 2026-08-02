@@ -658,6 +658,65 @@ fn next_receipt_number(conn: &Connection) -> Result<String, OperationsError> {
     Ok(format!("R-{next:06}"))
 }
 
+/// Abonos netos ya aplicados a un extracto de cobro. Vive aqui, del lado
+/// operativo, porque cobros y asignaciones son ambos OPERATIVO: la caja puede
+/// responder cuanto lleva pagado un presupuesto sin abrir el expediente.
+pub fn billable_paid_cents(
+    conn: &Connection,
+    billable_id: &str,
+) -> Result<i64, OperationsError> {
+    Ok(conn.query_row(
+        "SELECT COALESCE(SUM(CASE WHEN p.kind = 'REFUND' THEN -a.amount_cents
+                                  ELSE a.amount_cents END), 0)
+         FROM payment_allocations a
+         JOIN payments p ON p.id = a.payment_id
+         WHERE a.billable_id = ?1",
+        params![billable_id],
+        |row| row.get(0),
+    )?)
+}
+
+/// Revisa un movimiento contra el extracto de cobro. Es un **aviso en captura**,
+/// no una garantia: con dos cajones cobrando a la vez, dos abonos que por
+/// separado caben en el saldo pueden juntos excederlo, y para cuando el segundo
+/// se entera el dinero ya se recibio. Un cobro es un hecho, no una solicitud
+/// (paso 27, §4.2 del plan). El excedente termina en saldo a favor.
+fn validate_billable_payment(
+    conn: &Connection,
+    billable_id: &str,
+    kind: &str,
+    amount_cents: i64,
+) -> Result<(), OperationsError> {
+    let (status, total): (String, i64) = conn
+        .query_row(
+            "SELECT status, total_cents FROM billable_items WHERE id = ?1",
+            params![billable_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| OperationsError::Invalid("presupuesto no encontrado".into()))?;
+
+    if status != "ACCEPTED" {
+        return Err(OperationsError::Invalid(
+            "solo se abona a un presupuesto aceptado".into(),
+        ));
+    }
+
+    let paid = billable_paid_cents(conn, billable_id)?;
+    if kind == "REFUND" {
+        if amount_cents > paid {
+            return Err(OperationsError::Invalid(
+                "el reembolso excede lo abonado al presupuesto".into(),
+            ));
+        }
+    } else if amount_cents > total - paid {
+        return Err(OperationsError::Invalid(
+            "el abono excede el saldo del presupuesto".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn register_payment(
     conn: &Connection,
     input: &PaymentInput,
@@ -674,11 +733,11 @@ pub fn register_payment(
         return Err(OperationsError::Invalid("tipo de cobro invalido".into()));
     }
 
-    // Un movimiento ligado a un presupuesto dental respeta su saldo: solo
-    // presupuestos aceptados, sin abonar de mas ni reembolsar de mas.
-    if let Some(budget_id) = &input.budget_id {
-        crate::dental::validate_budget_payment(conn, budget_id, &kind, input.amount_cents)
-            .map_err(|e| OperationsError::Invalid(e.to_string()))?;
+    // Un movimiento ligado a un presupuesto se valida contra su extracto de
+    // cobro (FACTURABLE), nunca contra el expediente: este modulo no puede leer
+    // una tabla CLINICO ni llamar a quien la lea (paso 27).
+    if let Some(billable_id) = &input.budget_id {
+        validate_billable_payment(conn, billable_id, &kind, input.amount_cents)?;
     }
 
     let session = get_open_session(conn)?.ok_or(OperationsError::NoOpenCashSession)?;
@@ -688,14 +747,32 @@ pub fn register_payment(
     conn.execute(
         "INSERT INTO payments
             (id, cash_session_id, visit_id, appointment_id, patient_id, amount_cents,
-             method, kind, concept, budget_id, receipt_number, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             method, kind, concept, receipt_number, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             id, session.id, input.visit_id, input.appointment_id, input.patient_id,
-            input.amount_cents, method, kind, input.concept, input.budget_id,
+            input.amount_cents, method, kind, input.concept,
             receipt_number, timestamp
         ],
     )?;
+
+    // El cobro queda asentado; aplicarlo a un presupuesto es un acto aparte y
+    // reversible. Lo que no se asigne es saldo a favor del paciente.
+    if let Some(billable_id) = &input.budget_id {
+        conn.execute(
+            "INSERT INTO payment_allocations
+                (id, payment_id, billable_id, amount_cents, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                id,
+                billable_id,
+                input.amount_cents,
+                timestamp
+            ],
+        )?;
+    }
+
     audit(conn, "payment", &id, "registered", Some(&receipt_number))?;
 
     Ok(Payment {
@@ -717,10 +794,17 @@ pub fn list_session_payments(
     conn: &Connection,
     session_id: &str,
 ) -> Result<Vec<Payment>, OperationsError> {
+    // El presupuesto al que se aplico el cobro ya no es columna suya: sale de
+    // las asignaciones, que pueden cambiar sin reescribir el recibo. Un cobro
+    // repartido entre varios presupuestos reportara el primero; el desglose
+    // completo se lee de `payment_allocations`.
     let mut statement = conn.prepare(
-        "SELECT id, cash_session_id, visit_id, patient_id, amount_cents, method, kind,
-                concept, budget_id, receipt_number, created_at
-         FROM payments WHERE cash_session_id = ?1 ORDER BY created_at DESC",
+        "SELECT p.id, p.cash_session_id, p.visit_id, p.patient_id, p.amount_cents,
+                p.method, p.kind, p.concept,
+                (SELECT a.billable_id FROM payment_allocations a
+                 WHERE a.payment_id = p.id ORDER BY a.created_at, a.id LIMIT 1),
+                p.receipt_number, p.created_at
+         FROM payments p WHERE p.cash_session_id = ?1 ORDER BY p.created_at DESC",
     )?;
     let rows = statement
         .query_map(params![session_id], |row| {
@@ -1095,5 +1179,177 @@ mod tests {
             close_cash_session(&conn, 0, None),
             Err(OperationsError::NoOpenCashSession)
         ));
+    }
+
+    /// Siembra un extracto de cobro aceptado sin tocar nada clinico: es
+    /// exactamente lo que la estacion de recepcion tendra a la mano.
+    fn seed_billable(conn: &Connection, id: &str, patient_id: &str, total: i64) {
+        conn.execute(
+            "INSERT INTO billable_items
+                (id, patient_id, concept, total_cents, status, created_at, updated_at)
+             VALUES (?1, ?2, 'Corona de porcelana', ?3, 'ACCEPTED', '0', '0')",
+            params![id, patient_id, total],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn payment_is_a_fact_and_its_allocation_is_a_separate_decision() {
+        let conn = test_conn("allocation");
+        open_cash_session(&conn, 0).unwrap();
+        seed_billable(&conn, "bill-1", "p1", 150_000);
+
+        let payment = register_payment(
+            &conn,
+            &PaymentInput {
+                visit_id: None,
+                appointment_id: None,
+                patient_id: Some("p1".into()),
+                amount_cents: 50_000,
+                method: "CASH".into(),
+                kind: "PAYMENT".into(),
+                concept: None,
+                budget_id: Some("bill-1".into()),
+            },
+        )
+        .unwrap();
+
+        // El cobro quedo asentado con folio, y su aplicacion es una fila aparte.
+        assert_eq!(billable_paid_cents(&conn, "bill-1").unwrap(), 50_000);
+        let allocated: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(amount_cents), 0) FROM payment_allocations
+                 WHERE payment_id = ?1",
+                params![payment.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(allocated, 50_000);
+
+        // Reasignar es cambiar la decision contable, no el hecho: el cobro y su
+        // folio quedan intactos y lo que se suelta es saldo a favor.
+        conn.execute(
+            "DELETE FROM payment_allocations WHERE payment_id = ?1",
+            params![payment.id],
+        )
+        .unwrap();
+
+        assert_eq!(billable_paid_cents(&conn, "bill-1").unwrap(), 0);
+        let (amount, receipt): (i64, String) = conn
+            .query_row(
+                "SELECT amount_cents, receipt_number FROM payments WHERE id = ?1",
+                params![payment.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(amount, 50_000, "el cobro no se toca nunca");
+        assert_eq!(receipt, payment.receipt_number);
+
+        let credit: i64 = conn
+            .query_row(
+                "SELECT p.amount_cents - COALESCE((SELECT SUM(a.amount_cents)
+                        FROM payment_allocations a WHERE a.payment_id = p.id), 0)
+                 FROM payments p WHERE p.id = ?1",
+                params![payment.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(credit, 50_000, "lo no asignado es saldo a favor");
+    }
+
+    #[test]
+    fn session_payments_report_the_budget_from_the_allocation() {
+        // Ninguna prueba leia la lista de movimientos de la caja, asi que al
+        // soltar payments.budget_id la consulta quedo rota sin que nada
+        // avisara. El presupuesto ahora sale de la asignacion.
+        let conn = test_conn("session-list");
+        let session = open_cash_session(&conn, 0).unwrap();
+        seed_billable(&conn, "bill-1", "p1", 100_000);
+
+        register_payment(
+            &conn,
+            &PaymentInput {
+                visit_id: None,
+                appointment_id: None,
+                patient_id: Some("p1".into()),
+                amount_cents: 40_000,
+                method: "CASH".into(),
+                kind: "PAYMENT".into(),
+                concept: Some("Abono".into()),
+                budget_id: Some("bill-1".into()),
+            },
+        )
+        .unwrap();
+        register_payment(
+            &conn,
+            &PaymentInput {
+                visit_id: None,
+                appointment_id: None,
+                patient_id: Some("p1".into()),
+                amount_cents: 20_000,
+                method: "CARD".into(),
+                kind: "PAYMENT".into(),
+                concept: Some("Consulta".into()),
+                budget_id: None,
+            },
+        )
+        .unwrap();
+
+        let payments = list_session_payments(&conn, &session.id).unwrap();
+        assert_eq!(payments.len(), 2);
+
+        let linked = payments
+            .iter()
+            .find(|p| p.amount_cents == 40_000)
+            .expect("el abono al presupuesto");
+        assert_eq!(linked.budget_id.as_deref(), Some("bill-1"));
+
+        let loose = payments
+            .iter()
+            .find(|p| p.amount_cents == 20_000)
+            .expect("el cobro suelto");
+        assert_eq!(loose.budget_id, None);
+    }
+
+    #[test]
+    fn cash_validates_budgets_without_reading_the_clinical_record() {
+        let conn = test_conn("billable-gate");
+        open_cash_session(&conn, 0).unwrap();
+        seed_billable(&conn, "bill-1", "p1", 100_000);
+
+        let charge = |amount: i64, kind: &str| {
+            register_payment(
+                &conn,
+                &PaymentInput {
+                    visit_id: None,
+                    appointment_id: None,
+                    patient_id: Some("p1".into()),
+                    amount_cents: amount,
+                    method: "CASH".into(),
+                    kind: kind.into(),
+                    concept: None,
+                    budget_id: Some("bill-1".into()),
+                },
+            )
+        };
+
+        // No hay una sola fila en dental_budgets y la caja cobra igual: el
+        // extracto le basta. Esa es la frontera.
+        let budgets: i64 = conn
+            .query_row("SELECT count(*) FROM dental_budgets", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(budgets, 0);
+
+        charge(60_000, "PAYMENT").unwrap();
+        assert!(charge(60_000, "PAYMENT").is_err(), "avisa del sobreabono");
+        assert!(charge(90_000, "REFUND").is_err(), "no reembolsa de mas");
+
+        // Un extracto no aceptado no recibe abonos.
+        conn.execute(
+            "UPDATE billable_items SET status = 'REJECTED' WHERE id = 'bill-1'",
+            [],
+        )
+        .unwrap();
+        assert!(charge(1_000, "PAYMENT").is_err());
     }
 }
