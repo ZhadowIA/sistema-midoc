@@ -329,6 +329,15 @@ const ops = {
     created_at: string;
   }>,
   receiptSeq: 0,
+  // Ajustes del recibo (paso 27). El nivel arranca en detallado porque el mock
+  // simula un consultorio dental.
+  clinic: {
+    name: "Consultorio Dental Ruiz" as string | null,
+    address: "Av. Universidad 1203, Chihuahua" as string | null,
+    phone: "614 413 2200" as string | null,
+    license: "CED-4471902" as string | null,
+    receipt_detail: "DETAILED"
+  },
   // Presupuestos dentales (paso 26). El libro de abonos es acumulado y NO se
   // limpia al reabrir caja, igual que la tabla payments real.
   dentalBudgets: [] as Array<{
@@ -650,6 +659,42 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     }
     case "list_session_payments":
       return [...ops.payments].reverse() as T;
+    case "get_clinic_settings":
+      return { ...ops.clinic } as T;
+    case "save_clinic_settings": {
+      const next = args?.settings as typeof ops.clinic;
+      ops.clinic = { ...next };
+      return undefined as T;
+    }
+    case "build_receipt": {
+      // Espeja la regla del backend: el nivel decide cuanto dice el recibo del
+      // tratamiento, y el concepto detallado sale del presupuesto si lo hay.
+      const payment = ops.payments.find((p) => p.id === args?.paymentId);
+      if (!payment) throw "no se encontro el cobro";
+      const budget = payment.budget_id
+        ? ops.dentalBudgets.find((b) => b.id === payment.budget_id)
+        : null;
+      const detailed = budget?.label ?? payment.concept ?? null;
+      const concept =
+        ops.clinic.receipt_detail === "AMOUNT_ONLY"
+          ? null
+          : ops.clinic.receipt_detail === "GENERIC"
+            ? "Tratamiento dental"
+            : detailed;
+      return {
+        receipt_number: payment.receipt_number,
+        issued_at: payment.created_at,
+        kind: payment.kind,
+        method: payment.method,
+        amount_cents: payment.amount_cents,
+        concept,
+        patient_name: payment.patient_id ? "Ana Ruiz" : null,
+        clinic_name: ops.clinic.name,
+        clinic_address: ops.clinic.address,
+        clinic_phone: ops.clinic.phone,
+        clinic_license: ops.clinic.license
+      } as T;
+    }
     case "dental_create_budget": {
       const input = args?.budget as {
         patient_id: string;

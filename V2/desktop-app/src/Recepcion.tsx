@@ -5,6 +5,8 @@ import {
   type PendingLabOrder
 } from "./dentalLab.ts";
 import { call } from "./ipc";
+import { AjustesRecibo } from "./AjustesRecibo";
+import { Recibo } from "./Recibo";
 import {
   PatientResolution,
   type PatientMatch,
@@ -158,6 +160,7 @@ export function Recepcion({
   const [message, setMessage] = useState("");
   const [resolution, setResolution] = useState<PendingResolution | null>(null);
   const [labPending, setLabPending] = useState<PendingLabOrder[]>([]);
+  const [receiptPaymentId, setReceiptPaymentId] = useState<string | null>(null);
   const today = new Date().toISOString().slice(0, 10);
 
   const refresh = useCallback(async () => {
@@ -292,6 +295,13 @@ export function Recepcion({
 
   return (
     <div className="content">
+      {receiptPaymentId ? (
+        <Recibo
+          paymentId={receiptPaymentId}
+          onClose={() => setReceiptPaymentId(null)}
+        />
+      ) : null}
+
       {message && (
         <p className="form-success" role="status">
           {message}
@@ -356,6 +366,7 @@ export function Recepcion({
         summary={summary}
         payments={payments}
         visits={visits}
+        onOpenReceipt={(paymentId) => setReceiptPaymentId(paymentId)}
         onOpen={(cents) =>
           run(() => call("open_cash_session", { openingFloatCents: cents }), "Caja abierta.")
         }
@@ -369,6 +380,8 @@ export function Recepcion({
           run(() => call("register_payment", { payment }), "Cobro registrado.")
         }
       />
+
+      <AjustesRecibo />
 
       {labPending.length > 0 ? (
         <section className="panel">
@@ -650,12 +663,14 @@ function CashRegister({
   visits,
   onOpen,
   onClose,
-  onPay
+  onPay,
+  onOpenReceipt
 }: {
   session: CashSession | null;
   summary: CashSummary | null;
   payments: Payment[];
   visits: Visit[];
+  onOpenReceipt: (paymentId: string) => void;
   onOpen: (cents: number) => void;
   onClose: (cents: number, notes: string) => void;
   onPay: (payment: {
@@ -822,6 +837,11 @@ function CashRegister({
                   {p.concept ? ` · ${p.concept}` : ""} ·{" "}
                   {timeFormatter.format(new Date(p.created_at))}
                 </span>
+              </div>
+              <div className="row-actions">
+                <button className="ghost-button" onClick={() => onOpenReceipt(p.id)}>
+                  Ver recibo
+                </button>
               </div>
             </li>
           ))}
