@@ -159,6 +159,11 @@ La autorizacion va atada a `(patient_id, amount_cents, request_id)` y es **de
 un solo uso**: se consume al crear la fila de `payments`. Sin eso, una
 aprobacion podria aplicarse dos veces — una en cada camino.
 
+*Vigencia, fijada al implementar (2026-07-26):* **7 dias**. Una autorizacion
+vieja no deberia poder cobrarse semanas despues, cuando el saldo pudo gastarse
+y el contexto cambio. Al entregar se revalida el saldo de todas formas: entre
+la firma y el mostrador el paciente pudo aplicarlo a un tratamiento.
+
 Bitacora: el reembolso registra **dos actores**, quien autorizo y quien entrego
 el efectivo. Es el unico movimiento de caja con responsabilidad de dos personas,
 y es justo el que la necesita.

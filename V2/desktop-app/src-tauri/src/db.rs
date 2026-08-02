@@ -679,6 +679,38 @@ const MIGRATIONS: &[&str] = &[
         SELECT payment_id, payment_id, budget_id, amount_cents, created_at
         FROM payment_budget_map;
     DROP TABLE payment_budget_map;",
+    // v28: solicitud de reembolso del saldo a favor (paso 27, rebanada 1).
+    //
+    // El dinero que ENTRA es un hecho: cuando el sistema se entera ya ocurrio y
+    // no se puede rechazar. El que SALE es una decision, y por eso admite una
+    // compuerta sin mentirle a la contabilidad. De ahi que el reembolso sea la
+    // unica operacion de caja que pide autorizacion del medico.
+    //
+    // Dos caminos, misma fila: con el medico presente la solicitud se autoriza
+    // y se emite de corrido; con el medico ausente queda PENDING y no sale
+    // dinero. En ESTACION_UNICA el medico es ambos actores y el flujo se
+    // colapsa, pero la fila se escribe igual para que la bitacora sea uniforme
+    // en los dos despliegues.
+    //
+    // `requested_by` y `authorized_by` quedan nulos hasta que la rebanada 2
+    // traiga identidad de usuario; la columna existe desde ya para no volver a
+    // migrar la tabla.
+    "CREATE TABLE refund_requests (
+        id TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL,
+        amount_cents INTEGER NOT NULL,
+        reason TEXT,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        requested_by TEXT,
+        requested_at TEXT NOT NULL,
+        authorized_by TEXT,
+        authorized_at TEXT,
+        payment_id TEXT REFERENCES payments (id),
+        resolved_at TEXT,
+        expires_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_refund_requests_status ON refund_requests (status);
+    CREATE INDEX idx_refund_requests_patient ON refund_requests (patient_id);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

@@ -846,6 +846,252 @@ pub fn apply_credit_to_billable(
     Ok(amount_cents)
 }
 
+/* ---------- Reembolso del saldo a favor ---------- */
+
+/// Vigencia de una solicitud. Una autorizacion vieja no deberia poder cobrarse
+/// semanas despues: para entonces el saldo pudo gastarse y el contexto cambio.
+const REFUND_REQUEST_TTL_DAYS: i64 = 7;
+
+// Estados: PENDING -> AUTHORIZED -> EMITTED, con REJECTED como salida. No hay
+// constante que los valide porque nunca entran desde fuera: los fija el propio
+// flujo, a diferencia de los metodos y tipos de cobro, que si vienen del cliente.
+
+#[derive(Debug, Serialize)]
+pub struct RefundRequest {
+    pub id: String,
+    pub patient_id: String,
+    pub amount_cents: i64,
+    pub reason: Option<String>,
+    pub status: String,
+    pub requested_by: Option<String>,
+    pub requested_at: String,
+    pub authorized_by: Option<String>,
+    pub authorized_at: Option<String>,
+    pub payment_id: Option<String>,
+    pub expires_at: String,
+}
+
+fn read_refund_request(
+    conn: &Connection,
+    request_id: &str,
+) -> Result<RefundRequest, OperationsError> {
+    conn.query_row(
+        "SELECT id, patient_id, amount_cents, reason, status, requested_by,
+                requested_at, authorized_by, authorized_at, payment_id, expires_at
+         FROM refund_requests WHERE id = ?1",
+        params![request_id],
+        |row| {
+            Ok(RefundRequest {
+                id: row.get(0)?,
+                patient_id: row.get(1)?,
+                amount_cents: row.get(2)?,
+                reason: row.get(3)?,
+                status: row.get(4)?,
+                requested_by: row.get(5)?,
+                requested_at: row.get(6)?,
+                authorized_by: row.get(7)?,
+                authorized_at: row.get(8)?,
+                payment_id: row.get(9)?,
+                expires_at: row.get(10)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or(OperationsError::NotFound)
+}
+
+/// Captura la intencion de devolver saldo a favor. **No sale dinero aqui**: sin
+/// la autorizacion del medico la solicitud se queda esperando.
+pub fn request_refund(
+    conn: &Connection,
+    patient_id: &str,
+    amount_cents: i64,
+    reason: Option<&str>,
+    requested_by: Option<&str>,
+) -> Result<RefundRequest, OperationsError> {
+    if amount_cents <= 0 {
+        return Err(OperationsError::Invalid(
+            "el monto del reembolso debe ser mayor que cero".into(),
+        ));
+    }
+    if amount_cents > patient_credit_cents(conn, patient_id)? {
+        return Err(OperationsError::Invalid(
+            "el paciente no tiene saldo a favor suficiente".into(),
+        ));
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let requested_at = chrono::Utc::now();
+    let expires_at = requested_at + chrono::Duration::days(REFUND_REQUEST_TTL_DAYS);
+    conn.execute(
+        "INSERT INTO refund_requests
+            (id, patient_id, amount_cents, reason, status, requested_by,
+             requested_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, 'PENDING', ?5, ?6, ?7)",
+        params![
+            id,
+            patient_id,
+            amount_cents,
+            reason,
+            requested_by,
+            requested_at.to_rfc3339(),
+            expires_at.to_rfc3339()
+        ],
+    )?;
+    audit(conn, "refund_request", &id, "requested", None)?;
+    read_refund_request(conn, &id)
+}
+
+/// Autoriza o rechaza la solicitud. Solo el medico llega aqui: la compuerta de
+/// comandos de la rebanada 2 lo hara cumplir por rol; hoy queda registrado
+/// quien autorizo para que la bitacora ya sea la definitiva.
+pub fn decide_refund_request(
+    conn: &Connection,
+    request_id: &str,
+    authorize: bool,
+    authorized_by: Option<&str>,
+) -> Result<RefundRequest, OperationsError> {
+    let request = read_refund_request(conn, request_id)?;
+    if request.status != "PENDING" {
+        return Err(OperationsError::Invalid(
+            "solo una solicitud pendiente puede decidirse".into(),
+        ));
+    }
+    let now_ts = chrono::Utc::now();
+    if is_expired(&request.expires_at, now_ts) {
+        return Err(OperationsError::Invalid("la solicitud expiro".into()));
+    }
+
+    let status = if authorize { "AUTHORIZED" } else { "REJECTED" };
+    conn.execute(
+        "UPDATE refund_requests
+         SET status = ?2, authorized_by = ?3, authorized_at = ?4,
+             resolved_at = CASE WHEN ?2 = 'REJECTED' THEN ?4 ELSE resolved_at END
+         WHERE id = ?1",
+        params![request_id, status, authorized_by, now_ts.to_rfc3339()],
+    )?;
+    audit(
+        conn,
+        "refund_request",
+        request_id,
+        "decided",
+        Some(status),
+    )?;
+    read_refund_request(conn, request_id)
+}
+
+fn is_expired(expires_at: &str, now_ts: chrono::DateTime<chrono::Utc>) -> bool {
+    match chrono::DateTime::parse_from_rfc3339(expires_at) {
+        Ok(deadline) => now_ts > deadline.with_timezone(&chrono::Utc),
+        // Una fecha ilegible se trata como vencida: es el lado seguro cuando de
+        // por medio hay dinero saliendo.
+        Err(_) => true,
+    }
+}
+
+/// Emite el reembolso ya autorizado y entrega el efectivo. La autorizacion es
+/// **de un solo uso**: se consume al crear la fila de `payments`, de modo que
+/// una misma aprobacion no pueda aplicarse dos veces por los dos caminos
+/// (medico presente y solicitud pendiente).
+pub fn emit_authorized_refund(
+    conn: &mut Connection,
+    request_id: &str,
+    method: &str,
+) -> Result<Payment, OperationsError> {
+    let request = read_refund_request(conn, request_id)?;
+    if request.status != "AUTHORIZED" {
+        return Err(OperationsError::Invalid(
+            "el reembolso necesita autorizacion del medico".into(),
+        ));
+    }
+    if is_expired(&request.expires_at, chrono::Utc::now()) {
+        return Err(OperationsError::Invalid(
+            "la autorizacion expiro; hay que pedirla de nuevo".into(),
+        ));
+    }
+
+    // El saldo pudo aplicarse a un tratamiento entre la autorizacion y la
+    // entrega. Sale dinero: se revalida, no se asume.
+    if request.amount_cents > patient_credit_cents(conn, &request.patient_id)? {
+        return Err(OperationsError::Invalid(
+            "el saldo a favor ya no alcanza para este reembolso".into(),
+        ));
+    }
+
+    let method = method.trim().to_uppercase();
+    if !PAYMENT_METHODS.contains(&method.as_str()) {
+        return Err(OperationsError::Invalid("metodo de pago invalido".into()));
+    }
+    let session = get_open_session(conn)?.ok_or(OperationsError::NoOpenCashSession)?;
+
+    let tx = conn.transaction()?;
+    let receipt_number = next_receipt_number(&tx)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let timestamp = now();
+    tx.execute(
+        "INSERT INTO payments
+            (id, cash_session_id, visit_id, appointment_id, patient_id, amount_cents,
+             method, kind, concept, receipt_number, created_at)
+         VALUES (?1, ?2, NULL, NULL, ?3, ?4, ?5, 'REFUND', ?6, ?7, ?8)",
+        params![
+            id,
+            session.id,
+            request.patient_id,
+            request.amount_cents,
+            method,
+            request.reason,
+            receipt_number,
+            timestamp
+        ],
+    )?;
+
+    // Consumir la autorizacion es parte de la misma transaccion que emite el
+    // pago: o quedan ambas cosas, o ninguna.
+    let consumed = tx.execute(
+        "UPDATE refund_requests
+         SET status = 'EMITTED', payment_id = ?2, resolved_at = ?3
+         WHERE id = ?1 AND status = 'AUTHORIZED'",
+        params![request_id, id, timestamp],
+    )?;
+    if consumed != 1 {
+        return Err(OperationsError::Invalid(
+            "la autorizacion ya se habia usado".into(),
+        ));
+    }
+
+    audit(&tx, "payment", &id, "refund_emitted", Some(request_id))?;
+    tx.commit()?;
+
+    Ok(Payment {
+        id,
+        cash_session_id: session.id,
+        visit_id: None,
+        patient_id: Some(request.patient_id),
+        amount_cents: request.amount_cents,
+        method,
+        kind: "REFUND".into(),
+        concept: request.reason,
+        budget_id: None,
+        receipt_number,
+        created_at: timestamp,
+    })
+}
+
+pub fn list_pending_refund_requests(
+    conn: &Connection,
+) -> Result<Vec<RefundRequest>, OperationsError> {
+    let mut statement = conn.prepare(
+        "SELECT id FROM refund_requests
+         WHERE status IN ('PENDING', 'AUTHORIZED') ORDER BY requested_at",
+    )?;
+    let ids = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.iter()
+        .map(|id| read_refund_request(conn, id))
+        .collect()
+}
+
 pub fn register_payment(
     conn: &Connection,
     input: &PaymentInput,
@@ -1505,6 +1751,126 @@ mod tests {
 
         deposit(15_000, "REFUND");
         assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 25_000);
+    }
+
+    /// Deja al paciente con saldo a favor y la caja abierta.
+    fn seed_credit(conn: &Connection, amount: i64) {
+        open_cash_session(conn, 0).unwrap();
+        register_payment(
+            conn,
+            &PaymentInput {
+                visit_id: None,
+                appointment_id: None,
+                patient_id: Some("p1".into()),
+                amount_cents: amount,
+                method: "CASH".into(),
+                kind: "DEPOSIT".into(),
+                concept: None,
+                budget_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_refund_needs_the_doctors_authorization_before_any_cash_leaves() {
+        let mut conn = test_conn("refund-gate");
+        seed_credit(&conn, 40_000);
+
+        let request = request_refund(&conn, "p1", 15_000, Some("Cancelo tratamiento"), None).unwrap();
+        assert_eq!(request.status, "PENDING");
+
+        // Sin autorizar no sale un peso.
+        assert!(emit_authorized_refund(&mut conn, &request.id, "CASH").is_err());
+        assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 40_000);
+
+        let authorized =
+            decide_refund_request(&conn, &request.id, true, Some("dra-ruiz")).unwrap();
+        assert_eq!(authorized.status, "AUTHORIZED");
+        assert_eq!(authorized.authorized_by.as_deref(), Some("dra-ruiz"));
+
+        let payment = emit_authorized_refund(&mut conn, &request.id, "CASH").unwrap();
+        assert_eq!(payment.kind, "REFUND");
+        assert_eq!(payment.amount_cents, 15_000);
+        assert!(!payment.receipt_number.is_empty(), "el reembolso lleva folio");
+
+        // El saldo bajo por el reembolso entregado.
+        assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 25_000);
+    }
+
+    #[test]
+    fn an_authorization_can_only_be_spent_once() {
+        // Sin esto, la misma aprobacion podria cobrarse dos veces: una por el
+        // camino del medico presente y otra por la solicitud pendiente.
+        let mut conn = test_conn("refund-once");
+        seed_credit(&conn, 50_000);
+
+        let request = request_refund(&conn, "p1", 10_000, None, None).unwrap();
+        decide_refund_request(&conn, &request.id, true, Some("dra-ruiz")).unwrap();
+
+        emit_authorized_refund(&mut conn, &request.id, "CASH").unwrap();
+        assert!(
+            emit_authorized_refund(&mut conn, &request.id, "CASH").is_err(),
+            "la autorizacion se consume al emitir"
+        );
+
+        // Un solo movimiento de reembolso, no dos.
+        let refunds: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM payments WHERE kind = 'REFUND'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(refunds, 1);
+        assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 40_000);
+    }
+
+    #[test]
+    fn a_rejected_request_never_becomes_money() {
+        let mut conn = test_conn("refund-rejected");
+        seed_credit(&conn, 30_000);
+
+        let request = request_refund(&conn, "p1", 10_000, None, None).unwrap();
+        let decided = decide_refund_request(&conn, &request.id, false, Some("dra-ruiz")).unwrap();
+        assert_eq!(decided.status, "REJECTED");
+
+        assert!(emit_authorized_refund(&mut conn, &request.id, "CASH").is_err());
+        // Decidir dos veces tampoco: ya no esta pendiente.
+        assert!(decide_refund_request(&conn, &request.id, true, None).is_err());
+        assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 30_000);
+    }
+
+    #[test]
+    fn credit_spent_between_authorization_and_delivery_blocks_the_refund() {
+        // Sale dinero: el saldo se revalida al entregar, no se asume. Entre la
+        // firma del medico y el mostrador el paciente pudo aplicarlo a un
+        // tratamiento.
+        let mut conn = test_conn("refund-stale");
+        seed_credit(&conn, 20_000);
+        seed_billable(&conn, "bill-1", "p1", 20_000);
+
+        let request = request_refund(&conn, "p1", 20_000, None, None).unwrap();
+        decide_refund_request(&conn, &request.id, true, Some("dra-ruiz")).unwrap();
+
+        apply_credit_to_billable(&mut conn, "p1", "bill-1", 20_000).unwrap();
+        assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 0);
+
+        assert!(emit_authorized_refund(&mut conn, &request.id, "CASH").is_err());
+    }
+
+    #[test]
+    fn a_refund_request_cannot_exceed_the_available_credit() {
+        let conn = test_conn("refund-limit");
+        seed_credit(&conn, 10_000);
+
+        assert!(request_refund(&conn, "p1", 15_000, None, None).is_err());
+        assert!(request_refund(&conn, "p1", 0, None, None).is_err());
+        assert!(request_refund(&conn, "p1", 10_000, None, None).is_ok());
+
+        let pending = list_pending_refund_requests(&conn).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].amount_cents, 10_000);
     }
 
     #[test]

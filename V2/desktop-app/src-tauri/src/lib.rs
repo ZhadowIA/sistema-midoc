@@ -1199,6 +1199,61 @@ fn apply_patient_credit(
         .map_err(|e| e.to_string())
 }
 
+/// Captura la intencion de devolver saldo a favor. No sale dinero: sin la
+/// autorizacion del medico la solicitud se queda esperando.
+#[tauri::command]
+fn request_refund(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+    amount_cents: i64,
+    reason: Option<String>,
+    requested_by: Option<String>,
+) -> Result<operations::RefundRequest, String> {
+    with_ops(&state, |conn| {
+        operations::request_refund(
+            conn,
+            &patient_id,
+            amount_cents,
+            reason.as_deref(),
+            requested_by.as_deref(),
+        )
+    })
+}
+
+/// Autoriza o rechaza una solicitud. Solo el medico; la compuerta por rol
+/// llega en la rebanada 2.
+#[tauri::command]
+fn decide_refund_request(
+    state: tauri::State<'_, AppDb>,
+    request_id: String,
+    authorize: bool,
+    authorized_by: Option<String>,
+) -> Result<operations::RefundRequest, String> {
+    with_ops(&state, |conn| {
+        operations::decide_refund_request(conn, &request_id, authorize, authorized_by.as_deref())
+    })
+}
+
+/// Emite el reembolso autorizado y entrega el efectivo. La autorizacion es de
+/// un solo uso.
+#[tauri::command]
+fn emit_authorized_refund(
+    state: tauri::State<'_, AppDb>,
+    request_id: String,
+    method: String,
+) -> Result<operations::Payment, String> {
+    let mut guard = state.0.lock().unwrap();
+    let conn = guard.as_mut().ok_or("la base no esta abierta")?;
+    operations::emit_authorized_refund(conn, &request_id, &method).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_pending_refund_requests(
+    state: tauri::State<'_, AppDb>,
+) -> Result<Vec<operations::RefundRequest>, String> {
+    with_ops(&state, operations::list_pending_refund_requests)
+}
+
 #[tauri::command]
 fn list_session_payments(
     state: tauri::State<'_, AppDb>,
@@ -2460,6 +2515,10 @@ pub fn run() {
             register_payment,
             patient_credit,
             apply_patient_credit,
+            request_refund,
+            decide_refund_request,
+            emit_authorized_refund,
+            list_pending_refund_requests,
             list_session_payments,
             dental_create_budget,
             dental_decide_budget,
