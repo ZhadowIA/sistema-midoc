@@ -1175,6 +1175,30 @@ fn register_payment(
     with_ops(&state, |conn| operations::register_payment(conn, &payment))
 }
 
+/// Dinero del paciente que aun no se aplica a ningun presupuesto. Es OPERATIVO:
+/// las dos estaciones pueden consultarlo sin abrir el expediente.
+#[tauri::command]
+fn patient_credit(state: tauri::State<'_, AppDb>, patient_id: String) -> Result<i64, String> {
+    with_ops(&state, |conn| {
+        operations::patient_credit_cents(conn, &patient_id)
+    })
+}
+
+/// Aplica saldo a favor a un presupuesto aceptado. No emite recibo: el dinero
+/// ya se cobro y ya tiene folio; esto solo decide a que se destina.
+#[tauri::command]
+fn apply_patient_credit(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+    billable_id: String,
+    amount_cents: i64,
+) -> Result<i64, String> {
+    let mut guard = state.0.lock().unwrap();
+    let conn = guard.as_mut().ok_or("la base no esta abierta")?;
+    operations::apply_credit_to_billable(conn, &patient_id, &billable_id, amount_cents)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn list_session_payments(
     state: tauri::State<'_, AppDb>,
@@ -2434,6 +2458,8 @@ pub fn run() {
             close_cash_session,
             cash_summary,
             register_payment,
+            patient_credit,
+            apply_patient_credit,
             list_session_payments,
             dental_create_budget,
             dental_decide_budget,

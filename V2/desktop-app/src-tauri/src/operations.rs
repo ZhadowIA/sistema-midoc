@@ -717,6 +717,135 @@ fn validate_billable_payment(
     Ok(())
 }
 
+/* ---------- Saldo a favor del paciente ---------- */
+
+/// Dinero recibido del paciente que aun no se aplica a ningun presupuesto.
+///
+/// No es una tabla ni un campo: es la diferencia entre lo cobrado y lo
+/// asignado, asi que no hay nada que mantener sincronizado entre estaciones y
+/// no puede quedar desalineado con la caja. Los reembolsos restan.
+pub fn patient_credit_cents(
+    conn: &Connection,
+    patient_id: &str,
+) -> Result<i64, OperationsError> {
+    Ok(conn.query_row(
+        "SELECT COALESCE(SUM(
+                (CASE WHEN p.kind = 'REFUND' THEN -1 ELSE 1 END) *
+                (p.amount_cents - COALESCE((SELECT SUM(a.amount_cents)
+                    FROM payment_allocations a WHERE a.payment_id = p.id), 0))
+            ), 0)
+         FROM payments p WHERE p.patient_id = ?1",
+        params![patient_id],
+        |row| row.get(0),
+    )?)
+}
+
+/// Aplica saldo a favor a un presupuesto aceptado. **No hay cobro ni folio
+/// nuevo**: el dinero ya se recibio y ya tiene su recibo; esto solo decide a
+/// que se destina, creando asignaciones contra los cobros que aun tienen
+/// remanente, del mas viejo al mas nuevo.
+///
+/// A diferencia de un cobro --que es un hecho consumado y solo admite aviso--
+/// aplicar saldo es una decision, y por eso si se valida en firme.
+pub fn apply_credit_to_billable(
+    conn: &mut Connection,
+    patient_id: &str,
+    billable_id: &str,
+    amount_cents: i64,
+) -> Result<i64, OperationsError> {
+    if amount_cents <= 0 {
+        return Err(OperationsError::Invalid(
+            "el monto a aplicar debe ser mayor que cero".into(),
+        ));
+    }
+
+    let (status, total): (String, i64) = conn
+        .query_row(
+            "SELECT status, total_cents FROM billable_items WHERE id = ?1",
+            params![billable_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| OperationsError::Invalid("presupuesto no encontrado".into()))?;
+    if status != "ACCEPTED" {
+        return Err(OperationsError::Invalid(
+            "solo se aplica saldo a un presupuesto aceptado".into(),
+        ));
+    }
+
+    let pending = total - billable_paid_cents(conn, billable_id)?;
+    if amount_cents > pending {
+        return Err(OperationsError::Invalid(
+            "el monto excede el saldo del presupuesto".into(),
+        ));
+    }
+    if amount_cents > patient_credit_cents(conn, patient_id)? {
+        return Err(OperationsError::Invalid(
+            "el paciente no tiene saldo a favor suficiente".into(),
+        ));
+    }
+
+    let remainders: Vec<(String, i64)> = {
+        let mut statement = conn.prepare(
+            "SELECT p.id,
+                    p.amount_cents - COALESCE((SELECT SUM(a.amount_cents)
+                        FROM payment_allocations a WHERE a.payment_id = p.id), 0)
+             FROM payments p
+             WHERE p.patient_id = ?1 AND p.kind != 'REFUND'
+             ORDER BY p.created_at, p.id",
+        )?;
+        let rows = statement
+            .query_map(params![patient_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+
+    let tx = conn.transaction()?;
+
+    let timestamp = now();
+    let mut left = amount_cents;
+    for (payment_id, remainder) in remainders {
+        if left == 0 {
+            break;
+        }
+        if remainder <= 0 {
+            continue;
+        }
+        let take = remainder.min(left);
+        tx.execute(
+            "INSERT INTO payment_allocations
+                (id, payment_id, billable_id, amount_cents, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                payment_id,
+                billable_id,
+                take,
+                timestamp
+            ],
+        )?;
+        left -= take;
+    }
+
+    if left > 0 {
+        // El saldo alcanzaba pero no cabe en los remanentes disponibles: algo
+        // se movio entre la lectura y el reparto. Se deshace todo.
+        return Err(OperationsError::Invalid(
+            "el saldo a favor cambio durante la aplicacion".into(),
+        ));
+    }
+
+    audit(
+        &tx,
+        "billable",
+        billable_id,
+        "credit_applied",
+        Some(&amount_cents.to_string()),
+    )?;
+    tx.commit()?;
+    Ok(amount_cents)
+}
+
 pub fn register_payment(
     conn: &Connection,
     input: &PaymentInput,
@@ -1255,6 +1384,127 @@ mod tests {
             )
             .unwrap();
         assert_eq!(credit, 50_000, "lo no asignado es saldo a favor");
+    }
+
+    #[test]
+    fn unallocated_money_becomes_credit_and_can_be_applied_elsewhere() {
+        let mut conn = test_conn("credit");
+        open_cash_session(&conn, 0).unwrap();
+        seed_billable(&conn, "bill-1", "p1", 100_000);
+        seed_billable(&conn, "bill-2", "p1", 80_000);
+
+        // Un cobro sin presupuesto es dinero recibido sin destino: saldo a favor.
+        register_payment(
+            &conn,
+            &PaymentInput {
+                visit_id: None,
+                appointment_id: None,
+                patient_id: Some("p1".into()),
+                amount_cents: 30_000,
+                method: "CASH".into(),
+                kind: "DEPOSIT".into(),
+                concept: Some("Anticipo".into()),
+                budget_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 30_000);
+
+        // Aplicarlo no emite recibo nuevo: el folio sigue siendo uno solo.
+        let receipts_before: i64 = conn
+            .query_row("SELECT count(*) FROM payments", [], |r| r.get(0))
+            .unwrap();
+        apply_credit_to_billable(&mut conn, "p1", "bill-1", 20_000).unwrap();
+        let receipts_after: i64 = conn
+            .query_row("SELECT count(*) FROM payments", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(receipts_before, receipts_after, "no nace un cobro nuevo");
+
+        assert_eq!(billable_paid_cents(&conn, "bill-1").unwrap(), 20_000);
+        assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 10_000);
+
+        // El resto puede ir a otro presupuesto del mismo paciente.
+        apply_credit_to_billable(&mut conn, "p1", "bill-2", 10_000).unwrap();
+        assert_eq!(billable_paid_cents(&conn, "bill-2").unwrap(), 10_000);
+        assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 0);
+
+        // Sin saldo no se aplica nada.
+        assert!(apply_credit_to_billable(&mut conn, "p1", "bill-1", 1).is_err());
+    }
+
+    #[test]
+    fn applying_credit_is_a_decision_and_is_validated_in_full() {
+        // Un cobro es un hecho consumado y solo admite aviso; aplicar saldo es
+        // una decision y por eso si se valida en firme (paso 27, §4.2).
+        let mut conn = test_conn("credit-gate");
+        open_cash_session(&conn, 0).unwrap();
+        seed_billable(&conn, "bill-1", "p1", 50_000);
+
+        register_payment(
+            &conn,
+            &PaymentInput {
+                visit_id: None,
+                appointment_id: None,
+                patient_id: Some("p1".into()),
+                amount_cents: 90_000,
+                method: "CASH".into(),
+                kind: "DEPOSIT".into(),
+                concept: None,
+                budget_id: None,
+            },
+        )
+        .unwrap();
+
+        // Hay saldo de sobra, pero el presupuesto no admite mas que su total.
+        assert!(apply_credit_to_billable(&mut conn, "p1", "bill-1", 60_000).is_err());
+        apply_credit_to_billable(&mut conn, "p1", "bill-1", 50_000).unwrap();
+        assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 40_000);
+
+        // Un presupuesto que no esta aceptado no recibe saldo.
+        conn.execute(
+            "UPDATE billable_items SET status = 'PROPOSED' WHERE id = 'bill-1'",
+            [],
+        )
+        .unwrap();
+        assert!(apply_credit_to_billable(&mut conn, "p1", "bill-1", 1).is_err());
+
+        // Y montos no positivos se rechazan.
+        conn.execute(
+            "UPDATE billable_items SET status = 'ACCEPTED' WHERE id = 'bill-1'",
+            [],
+        )
+        .unwrap();
+        assert!(apply_credit_to_billable(&mut conn, "p1", "bill-1", 0).is_err());
+        assert!(apply_credit_to_billable(&mut conn, "p1", "bill-1", -5).is_err());
+    }
+
+    #[test]
+    fn a_refund_takes_credit_back() {
+        let conn = test_conn("credit-refund");
+        open_cash_session(&conn, 0).unwrap();
+
+        let deposit = |amount: i64, kind: &str| {
+            register_payment(
+                &conn,
+                &PaymentInput {
+                    visit_id: None,
+                    appointment_id: None,
+                    patient_id: Some("p1".into()),
+                    amount_cents: amount,
+                    method: "CASH".into(),
+                    kind: kind.into(),
+                    concept: None,
+                    budget_id: None,
+                },
+            )
+            .unwrap()
+        };
+
+        deposit(40_000, "DEPOSIT");
+        assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 40_000);
+
+        deposit(15_000, "REFUND");
+        assert_eq!(patient_credit_cents(&conn, "p1").unwrap(), 25_000);
     }
 
     #[test]
