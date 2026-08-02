@@ -1199,6 +1199,69 @@ fn apply_patient_credit(
         .map_err(|e| e.to_string())
 }
 
+/// Todo lo que el recibo imprime. Lee identidad y extracto de cobro, nunca el
+/// expediente.
+#[tauri::command]
+fn build_receipt(
+    state: tauri::State<'_, AppDb>,
+    payment_id: String,
+) -> Result<operations::Receipt, String> {
+    with_ops(&state, |conn| operations::build_receipt(conn, &payment_id))
+}
+
+/// Datos del consultorio que encabezan el recibo, mas el nivel de detalle del
+/// concepto. Viven solo en este equipo.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ClinicSettings {
+    name: Option<String>,
+    address: Option<String>,
+    phone: Option<String>,
+    license: Option<String>,
+    receipt_detail: String,
+}
+
+#[tauri::command]
+fn get_clinic_settings(state: tauri::State<'_, AppDb>) -> Result<ClinicSettings, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base no esta abierta")?;
+    let read = |key: &str| {
+        sync::get_state(conn, key)
+            .map_err(|e| e.to_string())
+            .map(|value| value.filter(|text| !text.trim().is_empty()))
+    };
+    let clinical_profile = read("clinical_profile")?;
+    Ok(ClinicSettings {
+        name: read("clinic_name")?,
+        address: read("clinic_address")?,
+        phone: read("clinic_phone")?,
+        license: read("clinic_license")?,
+        receipt_detail: operations::ReceiptDetail::from_stored(
+            read("receipt_detail")?.as_deref(),
+            clinical_profile.as_deref(),
+        )
+        .as_str()
+        .to_string(),
+    })
+}
+
+#[tauri::command]
+fn save_clinic_settings(
+    state: tauri::State<'_, AppDb>,
+    settings: ClinicSettings,
+) -> Result<(), String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base no esta abierta")?;
+    let write = |key: &str, value: Option<&String>| {
+        sync::set_state(conn, key, value.map(|v| v.trim()).unwrap_or("")).map_err(|e| e.to_string())
+    };
+    write("clinic_name", settings.name.as_ref())?;
+    write("clinic_address", settings.address.as_ref())?;
+    write("clinic_phone", settings.phone.as_ref())?;
+    write("clinic_license", settings.license.as_ref())?;
+    sync::set_state(conn, "receipt_detail", &settings.receipt_detail).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Captura la intencion de devolver saldo a favor. No sale dinero: sin la
 /// autorizacion del medico la solicitud se queda esperando.
 #[tauri::command]
@@ -2515,6 +2578,9 @@ pub fn run() {
             register_payment,
             patient_credit,
             apply_patient_credit,
+            build_receipt,
+            get_clinic_settings,
+            save_clinic_settings,
             request_refund,
             decide_refund_request,
             emit_authorized_refund,

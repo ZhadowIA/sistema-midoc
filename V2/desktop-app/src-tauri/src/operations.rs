@@ -846,6 +846,177 @@ pub fn apply_credit_to_billable(
     Ok(amount_cents)
 }
 
+/* ---------- Recibo entregable al paciente ---------- */
+
+/// Cuanto dice el recibo sobre el tratamiento. El recibo se entrega al
+/// paciente, asi que el concepto sale de la estacion clinica hacia la
+/// operativa: es la clase FACTURABLE, y su nivel se decide a proposito.
+///
+/// En odontologia el detalle es normal y esperado. En medicina general un
+/// recibo que nombra el procedimiento es un problema de privacidad, y por eso
+/// el default fuera de odontologia es generico: un consultorio recien instalado
+/// nunca empieza filtrando de menos.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReceiptDetail {
+    /// "Corona de porcelana, pieza 26"
+    Detailed,
+    /// "Tratamiento dental", "Consulta medica"
+    Generic,
+    /// Sin concepto: solo el monto.
+    AmountOnly,
+}
+
+impl ReceiptDetail {
+    pub fn from_stored(value: Option<&str>, clinical_profile: Option<&str>) -> Self {
+        match value {
+            Some("DETAILED") => Self::Detailed,
+            Some("GENERIC") => Self::Generic,
+            Some("AMOUNT_ONLY") => Self::AmountOnly,
+            // Sin ajuste explicito manda el perfil clinico.
+            _ => match clinical_profile {
+                Some("ODONTOLOGY") => Self::Detailed,
+                _ => Self::Generic,
+            },
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Detailed => "DETAILED",
+            Self::Generic => "GENERIC",
+            Self::AmountOnly => "AMOUNT_ONLY",
+        }
+    }
+}
+
+/// Texto del concepto segun el nivel. Puro y probado: es la regla que decide
+/// que sale de la estacion clinica, y no debe depender de la base.
+pub fn receipt_concept(
+    detail: ReceiptDetail,
+    billable_concept: Option<&str>,
+    payment_concept: Option<&str>,
+    clinical_profile: Option<&str>,
+) -> Option<String> {
+    match detail {
+        ReceiptDetail::AmountOnly => None,
+        ReceiptDetail::Generic => Some(
+            match clinical_profile {
+                Some("ODONTOLOGY") => "Tratamiento dental",
+                _ => "Consulta medica",
+            }
+            .to_string(),
+        ),
+        ReceiptDetail::Detailed => billable_concept
+            .or(payment_concept)
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty()),
+    }
+}
+
+/// Ajuste local guardado en `sync_state`. Se lee aqui en vez de pasar por
+/// `sync::get_state` para no arrastrar su tipo de error a este modulo.
+fn setting(conn: &Connection, key: &str) -> Result<Option<String>, OperationsError> {
+    Ok(conn
+        .query_row(
+            "SELECT value FROM sync_state WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+#[derive(Debug, Serialize)]
+pub struct Receipt {
+    pub receipt_number: String,
+    pub issued_at: String,
+    pub kind: String,
+    pub method: String,
+    pub amount_cents: i64,
+    pub concept: Option<String>,
+    pub patient_name: Option<String>,
+    pub clinic_name: Option<String>,
+    pub clinic_address: Option<String>,
+    pub clinic_phone: Option<String>,
+    pub clinic_license: Option<String>,
+}
+
+/// Reune todo lo que el recibo imprime. Lee identidad (CONTACTO) y el extracto
+/// de cobro (FACTURABLE), nunca el expediente.
+pub fn build_receipt(conn: &Connection, payment_id: &str) -> Result<Receipt, OperationsError> {
+    let (receipt_number, issued_at, kind, method, amount_cents, payment_concept, patient_id): (
+        String,
+        String,
+        String,
+        String,
+        i64,
+        Option<String>,
+        Option<String>,
+    ) = conn
+        .query_row(
+            "SELECT receipt_number, created_at, kind, method, amount_cents, concept, patient_id
+             FROM payments WHERE id = ?1",
+            params![payment_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(OperationsError::NotFound)?;
+
+    let patient_name: Option<String> = match &patient_id {
+        Some(id) => conn
+            .query_row(
+                "SELECT TRIM(first_name || ' ' || last_name)
+                 FROM patient_identities WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?,
+        None => None,
+    };
+
+    let billable_concept: Option<String> = conn
+        .query_row(
+            "SELECT b.concept FROM payment_allocations a
+             JOIN billable_items b ON b.id = a.billable_id
+             WHERE a.payment_id = ?1 ORDER BY a.created_at, a.id LIMIT 1",
+            params![payment_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    let stored_detail = setting(conn, "receipt_detail")?;
+    let clinical_profile = setting(conn, "clinical_profile")?;
+    let detail = ReceiptDetail::from_stored(stored_detail.as_deref(), clinical_profile.as_deref());
+
+    Ok(Receipt {
+        receipt_number,
+        issued_at,
+        kind,
+        method,
+        amount_cents,
+        concept: receipt_concept(
+            detail,
+            billable_concept.as_deref(),
+            payment_concept.as_deref(),
+            clinical_profile.as_deref(),
+        ),
+        patient_name,
+        clinic_name: setting(conn, "clinic_name")?,
+        clinic_address: setting(conn, "clinic_address")?,
+        clinic_phone: setting(conn, "clinic_phone")?,
+        clinic_license: setting(conn, "clinic_license")?,
+    })
+}
+
 /* ---------- Reembolso del saldo a favor ---------- */
 
 /// Vigencia de una solicitud. Una autorizacion vieja no deberia poder cobrarse
@@ -1770,6 +1941,126 @@ mod tests {
             },
         )
         .unwrap();
+    }
+
+    #[test]
+    fn receipt_detail_defaults_to_the_clinical_profile() {
+        // Un consultorio recien instalado nunca empieza filtrando de menos:
+        // fuera de odontologia el default es generico.
+        assert_eq!(
+            ReceiptDetail::from_stored(None, Some("ODONTOLOGY")),
+            ReceiptDetail::Detailed
+        );
+        assert_eq!(
+            ReceiptDetail::from_stored(None, Some("GENERAL_MEDICINE")),
+            ReceiptDetail::Generic
+        );
+        assert_eq!(ReceiptDetail::from_stored(None, None), ReceiptDetail::Generic);
+
+        // El ajuste explicito del consultorio manda sobre el default.
+        assert_eq!(
+            ReceiptDetail::from_stored(Some("AMOUNT_ONLY"), Some("ODONTOLOGY")),
+            ReceiptDetail::AmountOnly
+        );
+        assert_eq!(
+            ReceiptDetail::from_stored(Some("DETAILED"), Some("GENERAL_MEDICINE")),
+            ReceiptDetail::Detailed
+        );
+    }
+
+    #[test]
+    fn the_concept_says_only_what_its_level_allows() {
+        let treatment = Some("Corona de porcelana, pieza 26");
+
+        // Detallado deja pasar el tratamiento; es la decision del consultorio.
+        assert_eq!(
+            receipt_concept(ReceiptDetail::Detailed, treatment, None, Some("ODONTOLOGY")),
+            Some("Corona de porcelana, pieza 26".to_string())
+        );
+
+        // Generico lo reemplaza: el recibo cuadra sin nombrar el procedimiento.
+        assert_eq!(
+            receipt_concept(ReceiptDetail::Generic, treatment, None, Some("ODONTOLOGY")),
+            Some("Tratamiento dental".to_string())
+        );
+        assert_eq!(
+            receipt_concept(ReceiptDetail::Generic, treatment, None, Some("GENERAL_MEDICINE")),
+            Some("Consulta medica".to_string())
+        );
+
+        // Solo monto no dice nada, ni siquiera generico.
+        assert_eq!(
+            receipt_concept(ReceiptDetail::AmountOnly, treatment, None, Some("ODONTOLOGY")),
+            None
+        );
+
+        // Sin presupuesto detras, el detalle cae al concepto que capturo la caja.
+        assert_eq!(
+            receipt_concept(ReceiptDetail::Detailed, None, Some("Consulta de control"), None),
+            Some("Consulta de control".to_string())
+        );
+        // Y un concepto en blanco no se imprime como cadena vacia.
+        assert_eq!(
+            receipt_concept(ReceiptDetail::Detailed, None, Some("   "), None),
+            None
+        );
+    }
+
+    #[test]
+    fn receipt_gathers_folio_patient_and_concept_without_touching_the_record() {
+        let conn = test_conn("receipt");
+        conn.execute(
+            "INSERT INTO patient_identities (id, first_name, last_name, created_at, updated_at)
+             VALUES ('p1', 'Ana', 'Ruiz', '0', '0')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sync_state (key, value) VALUES
+                ('clinic_name', 'Consultorio Ruiz'),
+                ('clinic_license', 'CED-12345'),
+                ('receipt_detail', 'DETAILED'),
+                ('clinical_profile', 'ODONTOLOGY')",
+            [],
+        )
+        .unwrap();
+        open_cash_session(&conn, 0).unwrap();
+        seed_billable(&conn, "bill-1", "p1", 150_000);
+
+        let payment = register_payment(
+            &conn,
+            &PaymentInput {
+                visit_id: None,
+                appointment_id: None,
+                patient_id: Some("p1".into()),
+                amount_cents: 50_000,
+                method: "CARD".into(),
+                kind: "PAYMENT".into(),
+                concept: None,
+                budget_id: Some("bill-1".into()),
+            },
+        )
+        .unwrap();
+
+        let receipt = build_receipt(&conn, &payment.id).unwrap();
+        assert_eq!(receipt.receipt_number, payment.receipt_number);
+        assert_eq!(receipt.patient_name.as_deref(), Some("Ana Ruiz"));
+        assert_eq!(receipt.concept.as_deref(), Some("Corona de porcelana"));
+        assert_eq!(receipt.amount_cents, 50_000);
+        assert_eq!(receipt.method, "CARD");
+        assert_eq!(receipt.clinic_name.as_deref(), Some("Consultorio Ruiz"));
+        assert_eq!(receipt.clinic_license.as_deref(), Some("CED-12345"));
+
+        // Bajar el nivel oculta el tratamiento sin tocar el cobro.
+        conn.execute(
+            "UPDATE sync_state SET value = 'AMOUNT_ONLY' WHERE key = 'receipt_detail'",
+            [],
+        )
+        .unwrap();
+        let discreet = build_receipt(&conn, &payment.id).unwrap();
+        assert_eq!(discreet.concept, None);
+        assert_eq!(discreet.amount_cents, 50_000);
+        assert_eq!(discreet.receipt_number, payment.receipt_number);
     }
 
     #[test]
