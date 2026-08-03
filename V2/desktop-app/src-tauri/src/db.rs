@@ -16,6 +16,8 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
     #[error("error de E/S: {0}")]
     Io(#[from] std::io::Error),
+    #[error("error con el archivo de llaves: {0}")]
+    Keyring(String),
 }
 
 /// Schema migrations, applied in order via `PRAGMA user_version`.
@@ -816,6 +818,70 @@ pub fn schema_version(conn: &Connection) -> Result<i64, DbError> {
     Ok(conn.query_row("PRAGMA user_version", [], |r| r.get(0))?)
 }
 
+/// Abre con una llave ya derivada (la DEK), sin aplicar migraciones. Se usa
+/// durante el recifrado, cuando hay que comprobar si la base ya quedo con la
+/// llave nueva antes de decidir que hacer.
+fn probe_key(path: &Path, key: &str) -> Result<Connection, DbError> {
+    let conn = Connection::open(path)?;
+    conn.pragma_update(None, "key", key)?;
+    match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
+        Ok(_) => Ok(conn),
+        Err(err) => match err.sqlite_error_code() {
+            Some(rusqlite::ErrorCode::NotADatabase) => Err(DbError::InvalidKey),
+            _ => Err(DbError::Sqlite(err)),
+        },
+    }
+}
+
+/// Recifra una base que hoy usa la passphrase como llave para que pase a usar
+/// una DEK envuelta (paso 27, rebanada 2).
+///
+/// El orden importa y es lo unico que evita perder el expediente: la envoltura
+/// se escribe **antes** del `rekey`. Si el proceso muere entre ambos pasos, la
+/// base sigue abriendose con la passphrase y el siguiente arranque reintenta;
+/// al reves, un corte dejaria una base recifrada cuya llave nadie tiene.
+pub fn rekey_to_wrapped_dek(
+    path: &Path,
+    passphrase: &str,
+    display_name: &str,
+) -> Result<(crate::keyring::Actor, [u8; 32]), DbError> {
+    // Si ya hay envolturas y abren la base, no hay nada que migrar.
+    if let Some(file) = crate::keyring::read_key_file(path).map_err(|e| DbError::Keyring(e.to_string()))? {
+        if let Ok((dek, actor)) = crate::keyring::unlock(&file, passphrase) {
+            if probe_key(path, &crate::keyring::dek_to_pragma(&dek)).is_ok() {
+                return Ok((actor, dek));
+            }
+            // Hay envoltura pero la base aun no se recifro: es un intento
+            // anterior que murio a medias. Se retoma con esa misma DEK.
+            let conn = probe_key(path, passphrase)?;
+            conn.pragma_update(None, "rekey", crate::keyring::dek_to_pragma(&dek))?;
+            return Ok((actor, dek));
+        }
+    }
+
+    // Primera vez: la base todavia abre con la passphrase.
+    let conn = probe_key(path, passphrase)?;
+
+    // Respaldo antes de tocar la llave. Queda cifrado con la passphrase, que la
+    // persona sigue conociendo, asi que es recuperable aunque todo lo demas
+    // falle.
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let backup = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("backups")
+        .join(format!("pre-rekey-{stamp}.db"));
+    create_encrypted_backup(&conn, &backup)?;
+
+    let dek = crate::keyring::generate_dek();
+    let actor = crate::keyring::provision(path, &dek, passphrase, display_name)
+        .map_err(|e| DbError::Keyring(e.to_string()))?;
+
+    // Solo ahora, con la envoltura ya en disco.
+    conn.pragma_update(None, "rekey", crate::keyring::dek_to_pragma(&dek))?;
+    Ok((actor, dek))
+}
+
 /// Creates a consistent encrypted backup of the currently unlocked database.
 ///
 /// SQLCipher applies the active connection key to the `VACUUM INTO` output, so
@@ -854,12 +920,17 @@ mod tests {
     use super::*;
     use std::io::Read;
 
+    /// Cada prueba recibe su **propio directorio**, no solo su propio archivo:
+    /// desde el paso 27 el archivo de llaves vive junto a la base, y un
+    /// directorio compartido haria que las pruebas se pisaran el `keys.json`
+    /// unas a otras.
     fn temp_db_path(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join("midoc-db-tests");
+        let dir = std::env::temp_dir()
+            .join("midoc-db-tests")
+            .join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(format!("{name}-{}.db", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        path
+        dir.join("midoc.db")
     }
 
     #[test]
@@ -1017,6 +1088,89 @@ mod tests {
             )
             .unwrap();
         assert_eq!(allergies.as_deref(), Some("penicilina"));
+    }
+
+    #[test]
+    fn rekey_moves_the_base_to_a_wrapped_key_without_losing_anything() {
+        let path = temp_db_path("rekey");
+        {
+            let conn = open_encrypted(&path, "clave-del-medico").unwrap();
+            conn.execute(
+                "INSERT INTO app_meta (key, value) VALUES ('probe', 'expediente-real')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let (actor, _) = rekey_to_wrapped_dek(&path, "clave-del-medico", "Dra. Ruiz").unwrap();
+        assert_eq!(actor.role, crate::keyring::ROLE_DOCTOR);
+
+        // La passphrase ya no es la llave de la base.
+        assert!(matches!(
+            probe_key(&path, "clave-del-medico"),
+            Err(DbError::InvalidKey)
+        ));
+
+        // Pero sigue abriendo la envoltura, y con ella la base intacta.
+        let file = crate::keyring::read_key_file(&path).unwrap().unwrap();
+        let (dek, _) = crate::keyring::unlock(&file, "clave-del-medico").unwrap();
+        let conn = probe_key(&path, &crate::keyring::dek_to_pragma(&dek)).unwrap();
+        let value: String = conn
+            .query_row("SELECT value FROM app_meta WHERE key = 'probe'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(value, "expediente-real");
+
+        // Y queda respaldo previo, cifrado con la passphrase que la persona
+        // sigue conociendo.
+        let backups = path.parent().unwrap().join("backups");
+        let pre: Vec<_> = std::fs::read_dir(&backups)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("pre-rekey-"))
+            .collect();
+        assert_eq!(pre.len(), 1, "falta el respaldo previo al recifrado");
+    }
+
+    #[test]
+    fn rekey_is_idempotent_and_survives_dying_halfway() {
+        // El riesgo real: morir entre escribir la envoltura y recifrar. Se
+        // simula escribiendo la envoltura sin recifrar y comprobando que el
+        // siguiente arranque retoma con esa MISMA llave en vez de generar otra
+        // (que dejaria la base inabrible para siempre).
+        let path = temp_db_path("rekey-a-medias");
+        {
+            let conn = open_encrypted(&path, "clave-del-medico").unwrap();
+            conn.execute(
+                "INSERT INTO app_meta (key, value) VALUES ('probe', 'sobrevive')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let dek = crate::keyring::generate_dek();
+        crate::keyring::provision(&path, &dek, "clave-del-medico", "Dra. Ruiz").unwrap();
+        // Aqui "muere el proceso": hay envoltura, la base sigue con passphrase.
+
+        rekey_to_wrapped_dek(&path, "clave-del-medico", "Dra. Ruiz").unwrap();
+
+        let file = crate::keyring::read_key_file(&path).unwrap().unwrap();
+        let (recovered, _) = crate::keyring::unlock(&file, "clave-del-medico").unwrap();
+        assert_eq!(recovered, dek, "se genero una DEK nueva y la vieja quedo huerfana");
+
+        let conn = probe_key(&path, &crate::keyring::dek_to_pragma(&recovered)).unwrap();
+        let value: String = conn
+            .query_row("SELECT value FROM app_meta WHERE key = 'probe'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(value, "sobrevive");
+
+        // Correrlo de nuevo sobre una base ya migrada no la toca.
+        rekey_to_wrapped_dek(&path, "clave-del-medico", "Dra. Ruiz").unwrap();
+        let file = crate::keyring::read_key_file(&path).unwrap().unwrap();
+        assert_eq!(file.users.len(), 1, "el reintento duplico envolturas");
     }
 
     #[test]

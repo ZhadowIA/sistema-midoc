@@ -9,6 +9,7 @@ mod db;
 mod dental;
 mod diarization;
 mod diarization_model;
+mod keyring;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature
 // `diarization-local`; sin el feature, un stub degrada sin separar hablantes.
 mod sherpa_diarization;
@@ -35,8 +36,21 @@ use std::sync::Mutex;
 use base64::Engine;
 use tauri::Manager;
 
-/// Open database connection, held for the lifetime of the unlocked session.
-struct AppDb(Mutex<Option<rusqlite::Connection>>);
+/// Sesion abierta: la conexion y **quien** la abrio. El actor viene de la
+/// envoltura que la credencial pudo abrir (paso 27, rebanada 2); sin el, la
+/// bitacora no puede decir quien hizo que y la compuerta por rol no tendria
+/// contra que decidir.
+struct Session {
+    conn: rusqlite::Connection,
+    actor: keyring::Actor,
+    /// La llave de la base, en memoria mientras dura la sesion. Se necesita
+    /// para envolverla con la credencial de alguien mas al dar acceso; sin
+    /// ella habria que pedirle al medico su passphrase otra vez.
+    dek: [u8; 32],
+    db_path: PathBuf,
+}
+
+struct AppDb(Mutex<Option<Session>>);
 
 /// Progreso de descarga de modelos Whisper por `model_id`. Vive fuera de la base
 /// cifrada: los pesos son REFERENCIA publica, no datos clinicos. El frontend lo
@@ -68,6 +82,8 @@ struct UnlockResult {
     db_path: String,
     backup_path: String,
     profile: DoctorProfile,
+    /// Quien abrio. La UI filtra por su rol; la bitacora lo registra.
+    actor: keyring::Actor,
 }
 
 #[derive(serde::Serialize)]
@@ -288,7 +304,18 @@ fn unlock_database(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let conn = db::open_encrypted(&path, &passphrase).map_err(|e| e.to_string())?;
+    // Quien abre sale de la envoltura que su credencial pudo abrir. Una base
+    // que todavia usa la passphrase como llave se recifra aqui, con respaldo
+    // previo y escribiendo las envolturas antes de tocar la llave.
+    if !path.exists() {
+        // Base nueva: se crea con la passphrase y en seguida se recifra, para
+        // que nunca llegue a existir una base cuya llave sea la credencial.
+        drop(db::open_encrypted(&path, &passphrase).map_err(|e| e.to_string())?);
+    }
+    let (actor, dek) = db::rekey_to_wrapped_dek(&path, &passphrase, &profile.display_name)
+        .map_err(|e| e.to_string())?;
+    let conn = db::open_encrypted(&path, &keyring::dek_to_pragma(&dek))
+        .map_err(|e| e.to_string())?;
     let schema_version = db::schema_version(&conn).map_err(|e| e.to_string())?;
     // Primer arranque: instala el catalogo real de medicamentos empaquetado si la
     // base sigue en la version sembrada. No debe bloquear el acceso al expediente,
@@ -296,12 +323,18 @@ fn unlock_database(
     let _ = medication::ensure_bundled_reference_installed(&conn);
     let backup_path = backup_path(&app, &profile.id)?;
     db::create_encrypted_backup(&conn, &backup_path).map_err(|e| e.to_string())?;
-    *state.0.lock().unwrap() = Some(conn);
+    *state.0.lock().unwrap() = Some(Session {
+        conn,
+        actor: actor.clone(),
+        dek,
+        db_path: path.clone(),
+    });
     Ok(UnlockResult {
         schema_version,
         db_path: path.display().to_string(),
         backup_path: backup_path.display().to_string(),
         profile,
+        actor,
     })
 }
 
@@ -310,10 +343,78 @@ fn lock_database(state: tauri::State<'_, AppDb>) {
     *state.0.lock().unwrap() = None;
 }
 
+/// Quien tiene su propia credencial sobre esta base. No expone envolturas ni
+/// sales: solo nombre, rol y desde cuando.
+#[derive(serde::Serialize)]
+struct AccessEntry {
+    id: String,
+    name: String,
+    role: String,
+    created_at: String,
+}
+
+#[tauri::command]
+fn list_access(state: tauri::State<'_, AppDb>) -> Result<Vec<AccessEntry>, String> {
+    let guard = state.0.lock().unwrap();
+    let session = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let file = keyring::read_key_file(&session.db_path)
+        .map_err(|e| e.to_string())?
+        .ok_or("no hay archivo de llaves")?;
+    Ok(file
+        .users
+        .into_iter()
+        .map(|u| AccessEntry {
+            id: u.id,
+            name: u.name,
+            role: u.role,
+            created_at: u.created_at,
+        })
+        .collect())
+}
+
+/// Da acceso a alguien mas con su propia credencial. **Solo el medico**: quien
+/// puede repartir accesos a un expediente es su dueño, no la recepcion.
+#[tauri::command]
+fn grant_access(
+    state: tauri::State<'_, AppDb>,
+    name: String,
+    role: String,
+    passphrase: String,
+) -> Result<keyring::Actor, String> {
+    let guard = state.0.lock().unwrap();
+    let session = guard.as_ref().ok_or("la base esta bloqueada")?;
+    if session.actor.role != keyring::ROLE_DOCTOR {
+        return Err("solo el medico puede dar acceso".into());
+    }
+    if role != keyring::ROLE_DOCTOR && role != keyring::ROLE_RECEPCION {
+        return Err("rol invalido".into());
+    }
+    if name.trim().is_empty() {
+        return Err("hace falta el nombre de la persona".into());
+    }
+    validate_passphrase(&passphrase, true)?;
+
+    keyring::add_user(&session.db_path, &session.dek, &passphrase, name.trim(), &role)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn revoke_access(state: tauri::State<'_, AppDb>, user_id: String) -> Result<(), String> {
+    let guard = state.0.lock().unwrap();
+    let session = guard.as_ref().ok_or("la base esta bloqueada")?;
+    if session.actor.role != keyring::ROLE_DOCTOR {
+        return Err("solo el medico puede retirar accesos".into());
+    }
+    if session.actor.id == user_id {
+        return Err("no puedes retirarte el acceso a ti mismo".into());
+    }
+    keyring::remove_user(&session.db_path, &user_id).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn sync_status(state: tauri::State<'_, AppDb>) -> Result<SyncStatus, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
 
     let server_url = sync::get_state(conn, "server_url").map_err(|e| e.to_string())?;
     let linked = sync::get_state(conn, "device_token")
@@ -350,7 +451,7 @@ fn sync_status(state: tauri::State<'_, AppDb>) -> Result<SyncStatus, String> {
 #[tauri::command]
 fn unlink_device(state: tauri::State<'_, AppDb>) -> Result<(), String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     sync::delete_state(conn, "device_token").map_err(|e| e.to_string())?;
     sync::delete_state(conn, "server_url").map_err(|e| e.to_string())?;
     sync::delete_state(conn, "cursor").map_err(|e| e.to_string())?;
@@ -375,7 +476,7 @@ async fn link_account(
     // sin retener el lock durante la llamada de red.
     let document_public_key = {
         let guard = state.0.lock().unwrap();
-        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
         crypto::ensure_keypair(conn).map_err(|e| e.to_string())?
     };
 
@@ -390,7 +491,7 @@ async fn link_account(
     .map_err(|e| e.to_string())?;
 
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     sync::set_state(conn, "server_url", server_url.trim_end_matches('/'))
         .map_err(|e| e.to_string())?;
     sync::set_state(conn, "device_token", &link.device_token).map_err(|e| e.to_string())?;
@@ -431,7 +532,7 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
     // Leer credenciales sin retener el lock durante las llamadas de red.
     let (server_url, token, mut cursor) = {
         let guard = state.0.lock().unwrap();
-        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
         let server_url = sync::get_state(conn, "server_url")
             .map_err(|e| e.to_string())?
             .ok_or("la app no esta vinculada a una cuenta")?;
@@ -502,7 +603,7 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
 
         {
             let mut guard = state.0.lock().unwrap();
-            let conn = guard.as_mut().ok_or("la base esta bloqueada")?;
+            let conn = &mut guard.as_mut().ok_or("la base esta bloqueada")?.conn;
             sync::apply_batch(conn, &inbox.events).map_err(|e| e.to_string())?;
             // Descifrar y guardar los documentos descargados.
             for (doc_id, patient_id, appointment_id, ciphertext) in &documents {
@@ -542,7 +643,7 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
     loop {
         let reports = {
             let guard = state.0.lock().unwrap();
-            let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+            let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
             ai::pending_usage_reports(conn, 100).map_err(|e| e.to_string())?
         };
 
@@ -559,7 +660,7 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
             .collect();
         {
             let guard = state.0.lock().unwrap();
-            let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+            let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
             ai::mark_usage_reports_sent(conn, &run_ids).map_err(|e| e.to_string())?;
         }
         ai_usage_reported += result.reported;
@@ -572,7 +673,7 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
         .map_err(|e| e.to_string())?;
     {
         let guard = state.0.lock().unwrap();
-        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
         persist_profile_metadata(conn, &metadata)?;
     }
 
@@ -598,7 +699,7 @@ struct SyncPending {
 async fn sync_pending(state: tauri::State<'_, AppDb>) -> Result<SyncPending, String> {
     let (server_url, token, cursor, pending_upload) = {
         let guard = state.0.lock().unwrap();
-        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
         let server_url = sync::get_state(conn, "server_url").map_err(|e| e.to_string())?;
         let token = sync::get_state(conn, "device_token").map_err(|e| e.to_string())?;
         let (Some(server_url), Some(token)) = (server_url, token) else {
@@ -647,7 +748,7 @@ async fn publish_authorized_summary(
 
     let (server_url, token) = {
         let guard = state.0.lock().unwrap();
-        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
         let server_url = sync::get_state(conn, "server_url")
             .map_err(|e| e.to_string())?
             .ok_or("la app no esta vinculada a una cuenta")?;
@@ -675,7 +776,7 @@ async fn publish_authorized_summary(
 #[tauri::command]
 fn list_appointments(state: tauri::State<'_, AppDb>) -> Result<Vec<AppointmentRow>, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     load_appointments(conn)
 }
 
@@ -722,7 +823,7 @@ fn with_conn<T>(
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, clinical::ClinicalError>,
 ) -> Result<T, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     f(conn).map_err(|e| e.to_string())
 }
 
@@ -932,7 +1033,7 @@ fn save_patient_medical_history(
     input: clinical::SavePatientMedicalHistoryInput,
 ) -> Result<clinical::PatientMedicalHistoryVersion, String> {
     let mut guard = state.0.lock().unwrap();
-    let conn = guard.as_mut().ok_or("la base esta bloqueada")?;
+    let conn = &mut guard.as_mut().ok_or("la base esta bloqueada")?.conn;
     clinical::save_patient_medical_history_version(conn, &patient_id, &input)
         .map_err(|error| error.to_string())
 }
@@ -959,7 +1060,7 @@ fn with_ops<T>(
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, operations::OperationsError>,
 ) -> Result<T, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     f(conn).map_err(|e| e.to_string())
 }
 
@@ -1021,7 +1122,7 @@ fn register_walk_in(
     force_new: bool,
 ) -> Result<WalkInOutcome, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
 
     // El recepcionista identifico al paciente: vincula a su expediente.
     if let Some(patient_id) = &link_patient_id {
@@ -1099,7 +1200,7 @@ fn start_visit_encounter(
     force_new: bool,
 ) -> Result<clinical::AttendOutcome, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
 
     let visit = operations::read_active_visit(conn, &visit_id).map_err(|e| e.to_string())?;
     match (&visit.appointment_id, &visit.patient_id) {
@@ -1194,7 +1295,7 @@ fn apply_patient_credit(
     amount_cents: i64,
 ) -> Result<i64, String> {
     let mut guard = state.0.lock().unwrap();
-    let conn = guard.as_mut().ok_or("la base no esta abierta")?;
+    let conn = &mut guard.as_mut().ok_or("la base no esta abierta")?.conn;
     operations::apply_credit_to_billable(conn, &patient_id, &billable_id, amount_cents)
         .map_err(|e| e.to_string())
 }
@@ -1223,7 +1324,7 @@ struct ClinicSettings {
 #[tauri::command]
 fn get_clinic_settings(state: tauri::State<'_, AppDb>) -> Result<ClinicSettings, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base no esta abierta")?;
+    let conn = &guard.as_ref().ok_or("la base no esta abierta")?.conn;
     let read = |key: &str| {
         sync::get_state(conn, key)
             .map_err(|e| e.to_string())
@@ -1250,7 +1351,7 @@ fn save_clinic_settings(
     settings: ClinicSettings,
 ) -> Result<(), String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base no esta abierta")?;
+    let conn = &guard.as_ref().ok_or("la base no esta abierta")?.conn;
     let write = |key: &str, value: Option<&String>| {
         sync::set_state(conn, key, value.map(|v| v.trim()).unwrap_or("")).map_err(|e| e.to_string())
     };
@@ -1306,7 +1407,7 @@ fn emit_authorized_refund(
     method: String,
 ) -> Result<operations::Payment, String> {
     let mut guard = state.0.lock().unwrap();
-    let conn = guard.as_mut().ok_or("la base no esta abierta")?;
+    let conn = &mut guard.as_mut().ok_or("la base no esta abierta")?.conn;
     operations::emit_authorized_refund(conn, &request_id, &method).map_err(|e| e.to_string())
 }
 
@@ -1334,7 +1435,7 @@ fn with_dental<T>(
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, dental::DentalError>,
 ) -> Result<T, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     f(conn).map_err(|e| e.to_string())
 }
 
@@ -1431,7 +1532,7 @@ fn with_ai<T>(
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, ai::AiError>,
 ) -> Result<T, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     f(conn).map_err(ai_error_to_ipc)
 }
 
@@ -1660,7 +1761,7 @@ fn ai_transcribe_audio(
         // server_url y el device_token viven en el estado de sync cifrado.
         let (server_url, device_token) = {
             let guard = state.0.lock().unwrap();
-            let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+            let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
             let server_url = sync::get_state(conn, "server_url").map_err(|e| e.to_string())?;
             let token = sync::get_state(conn, "device_token").map_err(|e| e.to_string())?;
             let (Some(server_url), Some(token)) = (server_url, token) else {
@@ -1877,7 +1978,7 @@ fn with_consultation_templates<T>(
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, consultation_templates::TemplateError>,
 ) -> Result<T, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     f(conn).map_err(|e| e.to_string())
 }
 
@@ -1962,7 +2063,7 @@ fn check_medication_safety(
     medications: Vec<String>,
 ) -> Result<medication::SafetyReport, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     let detail = clinical::get_encounter_detail(conn, &encounter_id).map_err(|e| e.to_string())?;
     medication::check_prescription(
         conn,
@@ -1979,7 +2080,7 @@ fn medication_reference_status(
     state: tauri::State<'_, AppDb>,
 ) -> Result<medication::ReferenceStatus, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     medication::reference_status(conn).map_err(|e| e.to_string())
 }
 
@@ -1999,7 +2100,7 @@ fn import_medication_reference(
     let interactions = medication::parse_ddinter_csv(&ddinter_csv).map_err(|e| e.to_string())?;
     let labels = medication::parse_openfda_labels(&openfda_json).map_err(|e| e.to_string())?;
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     let mut summary =
         medication::import_reference(conn, &medications, &interactions, &version).map_err(|e| e.to_string())?;
     summary.labels = medication::import_label_text(conn, &labels, &version).map_err(|e| e.to_string())?;
@@ -2038,7 +2139,7 @@ async fn update_medication_reference(
     };
 
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     medication::update_reference(
         conn,
         &dataset,
@@ -2088,7 +2189,7 @@ async fn update_medication_reference_from_midoc(
         };
 
         let guard = state.0.lock().unwrap();
-        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
         medication::update_reference(
             conn,
             &dataset,
@@ -2098,7 +2199,7 @@ async fn update_medication_reference_from_midoc(
         .map_err(|e| e.to_string())?
     } else {
         let guard = state.0.lock().unwrap();
-        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
         medication::install_bundled_reference(conn).map_err(|e| e.to_string())?
     };
 
@@ -2136,7 +2237,7 @@ fn extract_prescription_medications(
     prescription: String,
 ) -> Result<Vec<String>, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     medication::extract_medications(conn, &prescription).map_err(|e| e.to_string())
 }
 
@@ -2469,7 +2570,7 @@ fn with_arco<T>(
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, arco::ArcoError>,
 ) -> Result<T, String> {
     let guard = state.0.lock().unwrap();
-    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let conn = &guard.as_ref().ok_or("la base esta bloqueada")?.conn;
     f(conn).map_err(|e| e.to_string())
 }
 
@@ -2515,7 +2616,7 @@ fn arco_fulfill_cancellation(
     request_id: String,
 ) -> Result<arco::CancellationResult, String> {
     let mut guard = state.0.lock().unwrap();
-    let conn = guard.as_mut().ok_or("la base esta bloqueada")?;
+    let conn = &mut guard.as_mut().ok_or("la base esta bloqueada")?.conn;
     arco::fulfill_cancellation(conn, &request_id).map_err(|e| e.to_string())
 }
 
@@ -2535,6 +2636,9 @@ pub fn run() {
             create_doctor_profile,
             unlock_database,
             lock_database,
+            list_access,
+            grant_access,
+            revoke_access,
             sync_status,
             link_account,
             unlink_device,
