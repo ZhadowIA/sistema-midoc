@@ -80,7 +80,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 13 | Directorio y expediente longitudinal | `impeccable` | Directorio de pacientes y linea del tiempo clinica editable. | ✅ DONE |
 | 14 | Seguridad de medicacion determinista | `codex-security:security-scan` | Interacciones, alergias cruzadas y duplicidad sin IA, con fuente citada. | ✅ DONE |
 | 15 | Transcripcion local real (Whisper) | `superpowers:writing-plans` | whisper.cpp real, descarga de modelo y respaldo en nube gobernado. | ✅ DONE (backends nativos se validan en staging) |
-| 16 | Proveedores de IA reales en staging (BAA) | `codex-security:security-scan` | Adaptadores reales de LLM/transcripcion con gobernanza intacta. | 🔜 PLANEADO |
+| 16 | Habilitacion legal y contractual de los proveedores de IA | `codex-security:security-scan` | Adendas de tratamiento de datos, nivel sin entrenamiento, subencargados publicados y aviso de privacidad; los adaptadores ya existen. Bloquea a 11, 15, 21, 22, 26 y 28. | 🔜 PLANEADO (replanteado 2026-08-17: tramite, no codigo) |
 | 17 | Produccion: notificaciones y pago reales | `superpowers:test-driven-development` | Twilio, Resend y pasarela de pago con dominios propios. | 🔜 PLANEADO |
 | 18 | Agendado con responsable/tutor | `superpowers:test-driven-development` | El sistema distingue paciente con tutor de paciente sin tutor. | ✅ DONE |
 | 19 | Pulido del flujo publico, preconsulta y sincronizacion | `impeccable` | Perfil/agenda fieles, preconsulta diferida (antecedentes o guiada por IA), recordatorio con cancelacion y sync con aviso. | ✅ DONE |
@@ -779,20 +779,69 @@ Verificacion (rebanada 7): `effective_backend` cubierto por pruebas puras (degra
 
 Verificacion (rebanadas 4-6): **187 pruebas de Rust en verde** (politica por backend, clasificacion dedicada/integrada/Apple/ninguna, agregador por prioridad, assets Q5 con tamanos exactos, catalogo con VAD resoluble bajo `models/`), `cargo clippy --lib` sin advertencias nuevas, `tsc + vite build` ok. La inferencia real con VAD (`enable_vad` + modelo Silero) y la compilacion de los backends (`whisper-vulkan`/`whisper-metal`/`whisper-openblas`) se validan en staging con la cadena nativa (regla 5), igual que el binding de Whisper.
 
-## Paso 16 - Proveedores de IA reales en staging (BAA)
+## Paso 16 - Habilitacion legal y contractual de los proveedores de IA
 
 | Campo | Definicion |
 |---|---|
-| Objetivo | Cablear los proveedores reales de LLM y transcripcion en staging bajo BAA/contrato, manteniendo intacta la gobernanza local (consentimiento, seudonimizacion, trazas, control de costo, fallback y revision humana). |
-| Requisitos relacionados | RF41, RNF15. |
-| Entrada necesaria | Capa multi-proveedor y benchmark (paso 11); seguridad de medicacion (paso 14), para no delegar lo critico a IA. |
-| Skills IA recomendadas | `superpowers:writing-plans`, `coding-standards`, `superpowers:test-driven-development`, `superpowers:verification-before-completion`, `codex-security:security-scan` |
-| Se construye | Adaptadores reales: LLM base **Gemini 3 Flash** con fallback (Gemini 3.1 Pro / GPT-5.5) para SOAP, resumen, instrucciones y documentacion; configuracion de costo real por proveedor; benchmark con casos representativos autorizados o simulados para confirmar la eleccion. Solo en staging con BAA; nunca en local sin acuerdo (regla 4). |
-| Se valida con | El benchmark compara los proveedores reales por calidad/costo/latencia/cumplimiento y documenta la decision; las salidas siguen siendo borrador con revision humana. |
-| Compuerta de avance | No se envia PHI a ningun proveedor sin BAA/contrato y seudonimizacion; la seleccion se hace con evidencia propia, no por marketing del proveedor (RNF15). |
-| Push recomendado | Hacer push cuando los adaptadores reales pasen el contrato contra fakes, el benchmark documente la decision y la gobernanza siga intacta. |
+| Objetivo | Poner los proveedores de IA ya cableados en condicion de recibir contenido clinico seudonimizado de pacientes reales: contrato de tratamiento de datos aceptado, entrenamiento y retencion apagados, subencargados publicados y aviso de privacidad actualizado. **El trabajo dominante de este paso es administrativo y legal, no de codigo.** |
+| Replanteamiento (2026-08-17) | Este paso se llamaba "Proveedores de IA reales en staging (BAA)" y estaba planteado como *construir adaptadores* mientras se esperaba un BAA. Las dos premisas resultaron equivocadas. **Primera: los adaptadores ya existen** — `GeminiProvider` y `OpenAiProvider` estan cableados, con catalogo de modelos, reintentos, esquemas JSON y degradacion asistida (paso 24). No hay adaptador que construir. **Segunda: "BAA" es probablemente el instrumento equivocado.** BAA es figura de HIPAA, ley de Estados Unidos; un consultorio mexicano que atiende pacientes mexicanos no es *covered entity* salvo que trate pacientes de EE. UU. o facture a aseguradoras de alla. El marco aplicable es la **LFPDPPP** mas las NOM sanitarias, y ahi el instrumento equivalente es el **contrato o adenda de tratamiento de datos con el encargado**, que Google y OpenAI publican de adhesion y **no se negocia: se acepta**. Replanteado asi, el paso deja de ser una espera indefinida y pasa a ser una lista de tramites acotada. |
+| Requisitos relacionados | RF41, RNF15, RNF06 (privacidad, retencion y consentimiento). |
+| Entrada necesaria | Capa multi-proveedor operativa (pasos 11 y 24, ambos entregados); consentimiento por alcance en la app (`ai_consents`); seguridad de medicacion determinista (paso 14), para no delegar lo critico a IA. |
+| Skills IA recomendadas | `codex-security:security-scan`, `superpowers:verification-before-completion` |
+| Se construye | Poco codigo y varios documentos. Codigo: verificacion del nivel de servicio contratado, gates de activacion por proveedor (`MIDOC_OPENAI_TEXT_ZDR_APPROVED` y `MIDOC_GEMINI_DPA_APPROVED`, ambos ya implementados), pantalla de subencargados en la app, y el benchmark clinico con casos representativos para documentar la eleccion con evidencia propia y no por marketing del proveedor. Documentos: adendas de tratamiento de datos aceptadas y archivadas, lista de subencargados, aviso de privacidad del medico hacia su paciente, y el apartado de terminos y condiciones que fija la cadena responsable → encargado → subencargado. |
+| Se valida con | Un contenido clinico real seudonimizado sale a un proveedor con las cinco condiciones cumplidas: adenda aceptada y archivada, nivel de servicio que no entrena con los datos, retencion apagada o acotada, consentimiento del paciente registrado, y el proveedor listado en el aviso de privacidad que el paciente pudo leer. |
+| Compuerta de avance | Ningun proveedor recibe contenido de pacientes reales sin las cuatro piezas de "Lista de habilitacion" completas y archivadas. El gate de cada proveedor sigue siendo auto-declarado por variable de entorno: evita la activacion accidental, pero **no verifica nada** — la barrera real es que alguien haya hecho el tramite. |
+| Push recomendado | El codigo (gates, pantalla de subencargados, benchmark) se puede entregar antes que los tramites; la activacion posterior es un cambio de configuracion, no de version. |
 
-Decision de base (2026-06-13, doc 11): Gemini 3 Flash como base por costo; los LLM generalistas superan a las herramientas clinicas especializadas en benchmark (Nature Medicine 2026), por lo que MedLM/HealthScribe quedan descartados para el MVP. GPT-5.5 / Gemini Pro / Opus se reservan como fallback de seguridad para casos delicados.
+### Hallazgo que motiva la urgencia (2026-08-17)
+
+El proveedor primario apunta a `generativelanguage.googleapis.com` con una API key simple (`ai.rs`), es decir **Google AI Studio, no Vertex AI**. En el nivel **gratuito** de AI Studio, Google usa el contenido enviado para mejorar sus productos. Si la llave en uso esta en ese nivel, hoy sale contenido clinico seudonimizado hacia entrenamiento, y ninguna clausula de los terminos y condiciones de MiDoc lo impide: esos terminos obligan al medico, no a Google.
+
+**Primera accion del paso: verificar el nivel de la llave y, si aplica, migrar a nivel de pago o a Vertex AI.** No es un riesgo teorico ni se resuelve con documentos.
+
+### Por que los terminos y condiciones no sustituyen a la adenda
+
+Hay dos patas contractuales y se confunden con facilidad:
+
+- **Medico ↔ MiDoc** — los terminos y condiciones. Aqui MiDoc pone las reglas.
+- **MiDoc ↔ Google / OpenAI** — la adenda de tratamiento de datos. Aqui las reglas las pone el proveedor.
+
+Una clausula en los terminos **no crea ninguna obligacion para el proveedor**, que no es parte de ese contrato. Lo unico que consigue es trasladar el riesgo al medico, que es el cliente y el expuesto frente a su paciente y frente a la autoridad; ademas, una clausula que le endose toda la responsabilidad al usuario es candidata a considerarse abusiva. Los terminos **si** hacen falta, pero para la pata correcta: fijar que el medico es responsable y MiDoc encargado, informar los subencargados, y obligar al medico a recabar el consentimiento del paciente (que la app ya implementa y registra).
+
+### Lista de habilitacion (lo que realmente cierra el paso)
+
+Por proveedor, cuatro piezas. Ninguna requiere negociacion:
+
+1. **Adenda de tratamiento de datos aceptada y archivada** — la que el proveedor publica de adhesion.
+2. **Nivel de servicio que no entrena con los datos** — Gemini de pago o Vertex AI en lugar de AI Studio gratuito; en OpenAI, **Zero Data Retention** solicitado para la API.
+3. **Subencargado publicado** en la lista visible, con compromiso de aviso ante cambios.
+4. **Aviso de privacidad del medico actualizado** — que hay apoyo de IA, con que proveedores y para que.
+
+### Gate de Gemini implementado (2026-08-17)
+
+`MIDOC_GEMINI_DPA_APPROVED` cierra el hueco que dejaba al proveedor **primario** activandose con solo tener la llave puesta, mientras el alternativo (OpenAI) si exigia declaracion. Declara dos cosas: que se acepto la adenda de tratamiento de datos del proveedor, y que la llave apunta a un nivel de servicio que **no entrena con el contenido enviado** (Gemini de pago o Vertex AI, nunca AI Studio gratuito).
+
+La consecuencia de no declararlo es distinta a la de OpenAI, y a proposito. OpenAI es alternativo: sin gate simplemente no se ofrece. Gemini es el primario, asi que con clave presente y gate ausente **no se degrada a nada**: un `BlockedProvider` devuelve un error legible que dice exactamente que falta. Caer al proveedor fake ahi habria sido lo peor de ambos mundos — el equipo creeria tener IA real y el medico recibiria una plantilla de demostracion sin saberlo, que es justo el riesgo que el paso 24 ya habia decidido evitar. Sin clave alguna, el fake sigue siendo legitimo: es desarrollo sin proveedor y nadie espera IA real.
+
+El gate se revalida al elegir un modelo alternativo, no solo al construir el catalogo, por si cambia entre una cosa y otra. Como todo gate auto-declarado, **no verifica nada** con el proveedor: evita la activacion accidental, pero la barrera real es que alguien haya hecho el tramite.
+
+### Marco legal aplicable (a confirmar con abogado mexicano)
+
+Esta seccion orienta el trabajo del abogado; **no es asesoria legal** y debe validarse antes de redactar nada.
+
+- El **medico es el responsable** de los datos de su paciente; **MiDoc es encargado**; los proveedores de IA son **subencargados**.
+- Los datos de salud son **sensibles** bajo LFPDPPP: exigen **consentimiento expreso y por escrito** del paciente. La app ya lo registra por alcance (`ai_consents`); falta confirmar que la forma cumpla lo que la ley exige.
+- Enviar datos a un encargado es una **remision**, no una transferencia: no requiere consentimiento adicional, pero **si** exige que el responsable garantice por contrato que el encargado cumple. Esa es la funcion que cumple aqui la adenda.
+- Aplica ademas la normativa sanitaria del expediente clinico (NOM-004, NOM-024).
+- **Verificar el estado vigente de la autoridad**: la reforma de 2025 disolvio el INAI y traslado la supervision. Confirmarlo antes de citar procedimientos o plazos.
+
+### Limite que no desaparece con ningun documento
+
+La seudonimizacion de `redact()` **no es anonimizacion**. Quitar el nombre de una narrativa clinica no la vuelve anonima: el relato de un caso identifica a la persona para quien la conoce. Por eso el consentimiento del paciente sigue siendo la pieza central, y por eso ningun documento de MiDoc debe afirmar que los datos viajan "anonimizados": viajan **seudonimizados y de mejor esfuerzo**, y asi debe decirlo el aviso de privacidad. Endurecer `redact()` (ver paso 28) reduce el riesgo pero no cambia esta afirmacion.
+
+Decision de base (2026-06-13, doc 11): Gemini 3 Flash como base por costo; los LLM generalistas superan a las herramientas clinicas especializadas en benchmark (Nature Medicine 2026), por lo que MedLM y HealthScribe quedan descartados para el MVP. GPT-5.5 / Gemini Pro / Opus se reservan como fallback de seguridad para casos delicados.
+
+Pasos bloqueados por este, y razon por la que conviene desatorarlo antes que nada: 11 (adaptador real), 15 (respaldo de transcripcion en nube), 21, 22 (transcripcion en nube de la Ruta B), 26 (uso `DENTAL_EVOLUTION`) y 28 (chat con pacientes reales).
 
 ## Paso 17 - Produccion: notificaciones y pago reales
 

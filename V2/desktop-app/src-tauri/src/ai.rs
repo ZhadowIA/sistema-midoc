@@ -215,14 +215,32 @@ impl ProviderRegistry {
         }
         #[cfg(not(test))]
         {
-            if let Some(gemini) = GeminiProvider::from_env_with_model(None) {
-                // Proveedor real configurado: NO se agrega el fake como respaldo.
-                // Sustituir IA real por un borrador de demostracion en silencio es
-                // peligroso (el medico podria tomarlo por una sugerencia clinica
-                // real). Si Gemini falla, el error se reporta y el medico lo ve.
-                Self::new(vec![Box::new(gemini)])
-            } else {
-                Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))])
+            let has_key = has_content(&std::env::var("MIDOC_GEMINI_API_KEY").ok());
+            let gate = gate_declared(&std::env::var(GEMINI_GATE_ENV).ok());
+            match (has_key, gate) {
+                // Clave + gate de gobernanza: proveedor real. NO se agrega el fake
+                // como respaldo. Sustituir IA real por un borrador de demostracion
+                // en silencio es peligroso (el medico podria tomarlo por una
+                // sugerencia clinica real). Si Gemini falla, el medico ve el error.
+                (true, true) => match GeminiProvider::from_env_with_model(None) {
+                    Some(gemini) => Self::new(vec![Box::new(gemini)]),
+                    None => Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))]),
+                },
+                // Clave configurada pero tramite sin declarar: se BLOQUEA con un
+                // mensaje legible. Caer al fake aqui seria lo peor de ambos mundos
+                // — el equipo cree tener IA real y el medico recibe una plantilla
+                // de demostracion sin saberlo (misma razon que arriba).
+                (true, false) => Self::new(vec![Box::new(BlockedProvider::new(
+                    PROVIDER_GEMINI,
+                    format!(
+                        "La IA esta configurada pero no habilitada: falta declarar {GEMINI_GATE_ENV}=true. \
+                         Antes de activarla hay que aceptar la adenda de tratamiento de datos del proveedor \
+                         y usar un nivel de servicio que no entrene con el contenido enviado (paso 16)."
+                    ),
+                ))]),
+                // Sin clave: entorno de desarrollo sin proveedor. El fake es
+                // legitimo aqui porque nadie espera IA real.
+                (false, _) => Self::new(vec![Box::new(FakeProvider::new("fake-clinico"))]),
             }
         }
     }
@@ -242,6 +260,9 @@ impl ProviderRegistry {
             match option.provider.as_str() {
                 PROVIDER_OPENAI => OpenAiProvider::from_env_with_model(Some(option.model.clone()))
                     .map(|provider| Self::new(vec![Box::new(provider) as Box<dyn AiProvider>])),
+                // El gate se revalida aqui y no solo al construir el catalogo:
+                // la opcion elegida pudo listarse antes de que el gate cambiara.
+                _ if !gate_declared(&std::env::var(GEMINI_GATE_ENV).ok()) => None,
                 _ => GeminiProvider::from_env_with_model(Some(option.model.clone()))
                     .map(|provider| Self::new(vec![Box::new(provider) as Box<dyn AiProvider>])),
             }
@@ -260,6 +281,34 @@ impl ProviderRegistry {
             }
         }
         Err(last_err.unwrap_or(AiError::AllProvidersFailed))
+    }
+}
+
+/// Proveedor que no genera nada y explica por que. Se usa cuando hay credencial
+/// de un proveedor real pero su gate de gobernanza no esta declarado: el envio
+/// de contenido clinico queda bloqueado y el medico recibe la causa en lenguaje
+/// claro, en vez de un borrador de demostracion que podria confundir con IA real.
+pub struct BlockedProvider {
+    name: String,
+    reason: String,
+}
+
+impl BlockedProvider {
+    pub fn new(name: &str, reason: String) -> Self {
+        Self {
+            name: name.to_string(),
+            reason,
+        }
+    }
+}
+
+impl AiProvider for BlockedProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn generate(&self, _request: &AiRequest) -> Result<AiResponse, AiError> {
+        Err(AiError::Invalid(self.reason.clone()))
     }
 }
 
@@ -430,6 +479,7 @@ pub struct TextModelOption {
 pub fn text_model_options() -> Vec<TextModelOption> {
     let mut options = gemini_text_model_options(
         std::env::var("MIDOC_GEMINI_API_KEY").ok(),
+        std::env::var(GEMINI_GATE_ENV).ok(),
         std::env::var("MIDOC_GEMINI_MODEL").ok(),
         std::env::var("MIDOC_GEMINI_FALLBACK_MODELS").ok(),
     );
@@ -452,6 +502,35 @@ fn has_content(value: &Option<String>) -> bool {
         .unwrap_or(false)
 }
 
+/// Gate de gobernanza del proveedor primario de texto (Gemini). Espejo del
+/// patron de OpenAI, pero con una consecuencia distinta: Gemini **es** el
+/// primario, asi que cuando hay clave y falta el gate no se degrada a nada —
+/// se bloquea con un error legible (`BlockedProvider`).
+///
+/// Que declara: que la organizacion acepto la adenda de tratamiento de datos
+/// del proveedor y que la llave apunta a un nivel de servicio que **no entrena
+/// con el contenido enviado** — Gemini de pago o Vertex AI, nunca el nivel
+/// gratuito de AI Studio, donde Google usa el contenido para mejorar sus
+/// productos. Ver paso 16 de `10_linea_de_desarrollo.md`.
+///
+/// Como todo gate auto-declarado, **no verifica nada** con el proveedor: su
+/// unica funcion es que nadie active por accidente un envio de contenido
+/// clinico cuyo tramite no se hizo. La barrera real es administrativa.
+pub const GEMINI_GATE_ENV: &str = "MIDOC_GEMINI_DPA_APPROVED";
+
+/// Un gate auto-declarado esta activo solo con `true` o `1` explicitos.
+/// Ausente, vacio o cualquier otro valor cuenta como no declarado: la falta de
+/// tramite nunca se interpreta a favor de enviar datos.
+fn gate_declared(value: &Option<String>) -> bool {
+    value
+        .as_ref()
+        .map(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            value == "true" || value == "1"
+        })
+        .unwrap_or(false)
+}
+
 fn gemini_option(model: &str, is_default: bool) -> TextModelOption {
     TextModelOption {
         id: format!("gemini:{model}"),
@@ -462,12 +541,17 @@ fn gemini_option(model: &str, is_default: bool) -> TextModelOption {
     }
 }
 
+/// Gemini exige DOS condiciones, igual que OpenAI: la clave
+/// (`MIDOC_GEMINI_API_KEY`) y el gate de gobernanza (`MIDOC_GEMINI_DPA_APPROVED`).
+/// Sin el gate el catalogo queda vacio: no se ofrece un modelo que no se puede
+/// usar. El bloqueo con mensaje lo da `ProviderRegistry` (`BlockedProvider`).
 fn gemini_text_model_options(
     api_key: Option<String>,
+    gate: Option<String>,
     model: Option<String>,
     fallback_models: Option<String>,
 ) -> Vec<TextModelOption> {
-    if !has_content(&api_key) {
+    if !has_content(&api_key) || !gate_declared(&gate) {
         return Vec::new();
     }
     let default_model = model
@@ -500,13 +584,7 @@ fn openai_text_model_options(
     if !has_content(&api_key) {
         return Vec::new();
     }
-    let approved = zdr_approved
-        .map(|value| {
-            let value = value.trim().to_ascii_lowercase();
-            value == "true" || value == "1"
-        })
-        .unwrap_or(false);
-    if !approved {
+    if !gate_declared(&zdr_approved) {
         return Vec::new();
     }
     let model = model
@@ -3446,13 +3524,57 @@ mod tests {
 
     #[test]
     fn text_model_catalog_requires_real_provider() {
-        assert!(gemini_text_model_options(None, None, None).is_empty());
-        assert!(gemini_text_model_options(Some("  ".into()), None, None).is_empty());
+        assert!(gemini_text_model_options(None, Some("true".into()), None, None).is_empty());
+        assert!(
+            gemini_text_model_options(Some("  ".into()), Some("true".into()), None, None).is_empty()
+        );
+    }
+
+    #[test]
+    fn gemini_text_models_require_key_and_governance_gate() {
+        // Con clave pero sin el gate declarado: catalogo vacio (paso 16). Es el
+        // caso peligroso — antes bastaba la clave para enviar contenido clinico.
+        assert!(gemini_text_model_options(Some("key".into()), None, None, None).is_empty());
+        assert!(
+            gemini_text_model_options(Some("key".into()), Some("false".into()), None, None)
+                .is_empty()
+        );
+        // Un valor cualquiera no cuenta como declaracion.
+        assert!(
+            gemini_text_model_options(Some("key".into()), Some("pendiente".into()), None, None)
+                .is_empty()
+        );
+
+        // Con clave + gate: el catalogo aparece con el primario por defecto.
+        let options =
+            gemini_text_model_options(Some("key".into()), Some("true".into()), None, None);
+        assert_eq!(options[0].model, DEFAULT_GEMINI_MODEL);
+        assert!(options[0].is_default);
+        // `1` tambien declara el gate, igual que en OpenAI.
+        assert!(
+            !gemini_text_model_options(Some("key".into()), Some("1".into()), None, None).is_empty()
+        );
+    }
+
+    #[test]
+    fn blocked_provider_reports_reason_instead_of_generating() {
+        let provider = BlockedProvider::new(PROVIDER_GEMINI, "falta el gate".into());
+        let request = AiRequest {
+            usage_type: USAGE_SUMMARY.into(),
+            prompt_version: PROMPT_VERSION_SUMMARY.into(),
+            redacted_input: "contexto".into(),
+        };
+        match provider.generate(&request) {
+            Err(AiError::Invalid(message)) => assert!(message.contains("falta el gate")),
+            Err(other) => panic!("esperaba Invalid con la causa, obtuve {other:?}"),
+            Ok(_) => panic!("un proveedor bloqueado nunca debe producir salida"),
+        }
     }
 
     #[test]
     fn text_model_catalog_defaults_and_dedupes() {
-        let options = gemini_text_model_options(Some("key".into()), None, None);
+        let options =
+            gemini_text_model_options(Some("key".into()), Some("true".into()), None, None);
         assert_eq!(options[0].model, DEFAULT_GEMINI_MODEL);
         assert_eq!(options[0].id, format!("gemini:{DEFAULT_GEMINI_MODEL}"));
         assert_eq!(options[0].provider, PROVIDER_GEMINI);
@@ -3463,6 +3585,7 @@ mod tests {
         // El primario no se repite como alternativa y los vacios se ignoran.
         let options = gemini_text_model_options(
             Some("key".into()),
+            Some("true".into()),
             Some("gemini-custom".into()),
             Some("gemini-custom, , gemini-alt".into()),
         );
