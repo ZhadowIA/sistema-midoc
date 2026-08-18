@@ -91,6 +91,8 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 24 | Degradacion asistida de proveedor de IA | `superpowers:test-driven-development` | Ante sobrecarga del proveedor (503/429), el medico ve la causa y elige reintentar o generar con otro modelo disponible — nunca fallback silencioso. | ✅ DONE |
 | 25 | Base de medicamentos a escala | `superpowers:writing-plans` | Pipeline reproducible de fuentes publicas + catalogo mexicano de marcas; verificacion con interacciones de par y de tres clases (triple whammy), base ONChigh de dominio publico. | ✅ DONE (swap ONChigh + triple whammy + apendice ONChigh completo sin QT + marcas MX por regla; pendiente: regla QT curada, RxClass reproducible, pipeline BRSDM completo, publicar endpoints/ops) |
 | 26 | Perfil dentista completo (paridad Dentis365 + IA dental) | `superpowers:writing-plans` | Odontograma visual interactivo, indice de placa, plan de tratamiento presupuestado con saldos por avance, ordenes de laboratorio y capa IA dental (dictado al odontograma, nota de evolucion, indicaciones post-operatorias). | ✅ DONE (rebanadas 1-6 completas: odontograma visual y anatomico, indice de placa, presupuesto con saldos, laboratorio, dictado al odontograma, nota de evolucion e indicaciones post-operatorias; el uso DENTAL_EVOLUTION queda listo para el proveedor real del paso 16) |
+| 27 | Estaciones y separacion de roles (recepcion / clinica) | `superpowers:writing-plans` | Recepcion opera caja y agenda sin acceso al expediente; frontera de datos sellada, llaves por persona y relevo cifrado entre estaciones. | 🚧 IN PROGRESS (rebanada 1 entregada; restan 2, 3 y 4) |
+| 28 | Conversacion clinica con IA por paciente | `superpowers:writing-plans` | Hilo de IA por paciente que conserva el contexto entre consultas, se abre dentro de la consulta y no escribe en el expediente por si mismo. | 🔜 PLANEADO |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -1309,6 +1311,111 @@ Rebanada 1 (2026-08-02): frontera sellada, migraciones v24-v30. **Identidad sepa
 Compuerta cubierta por la **prueba de frontera**: borra las 17 tablas CLINICO y corre la jornada operativa completa encima. Comprobada por inversion —al inyectar a proposito una consulta a `patients`, falla nombrando la tabla—, asi que vigila algo real. Prueba ademas por adelantado que la rebanada 3 puede partir el archivo sin romper recepcion.
 
 Verificacion: 263 pruebas de Rust, 111 de TS, tsc y clippy sin warnings nuevos, ensayo de restauracion de respaldo, y **prueba manual en la app nativa** (no solo el mock): migraciones aplicando desde cero y sobre base con datos contables reales, walk-in que crea identidad sin expediente, cobro, recibo con los tres niveles de detalle y folio que continua la serie (`R-A-000002` despues de `R-000001`). Bug encontrado y corregido en el camino: `list_session_payments` quedo leyendo la columna soltada y ninguna prueba lo ejercitaba.
+
+## Paso 28 - Conversacion clinica con IA por paciente (hilo longitudinal)
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Dar al medico un interlocutor de IA sobre el caso: un hilo de conversacion **por paciente** que conserva el contexto entre consultas y se abre desde dentro de la consulta en curso. Sirve para razonar en voz alta, pedir que le repregunten, explorar posibilidades y revisar el historial — nunca para decidir ni para escribir en el expediente por su cuenta. |
+| Decision de alcance (2026-08-17) | **Continuidad por paciente, registro por consulta.** El hilo es uno solo y atraviesa todas las visitas del paciente (esa continuidad es su valor), pero **cada mensaje se ancla al encuentro en que se dijo y se conserva ahi verbatim, para siempre**. La consulta es la unidad de registro: al abrir una cita pasada desde el historial del paciente, el medico ve integra la conversacion que tuvo con la IA ese dia. La alternativa (hilo aislado por consulta) obligaba a reconstruir el contexto del caso cada visita: mas caro y peor clinicamente. La alternativa opuesta (hilo suelto sin ancla) perdia el rastro de que se discutio en que consulta. Se abre desde la Estacion Clinica durante la atencion y desde el historial de citas y el expediente longitudinal (paso 13) fuera de ella. |
+| Requisitos relacionados | RF13, RF29 (creditos, uso, trazas y feedback de IA), RF31 y RNF06 (privacidad, retencion, consentimiento), RNF02 (trazabilidad). Extiende el paso 11 (IA gobernada: consentimiento, trazas, presupuesto, multi-proveedor), el paso 13 (expediente longitudinal), el paso 21/23 (Ayuda IA y transcripcion revisada) y el paso 24 (degradacion asistida de proveedor). Sujeto al paso 27: el hilo es CLINICO y vive en el archivo clinico, jamas en la estacion de recepcion. |
+| Entrada necesaria | Paso 11 con proveedor real configurado; expediente longitudinal del paso 13; `redact()`, `ai_consents`, `ai_runs` y `ensure_within_budget` existentes; catalogo de modelos del paso 24 (`ai_list_text_models`). |
+| Skills IA recomendadas | `superpowers:writing-plans`, `superpowers:test-driven-development`, `codex-security:security-scan` |
+| Se construye | (1) **Uso nuevo `CASE_CHAT`** sobre el carril gobernado existente: un `ai_runs` por turno (con el `encounter_id` donde ocurrio), presupuesto y trazas reusados tal cual. **Requiere ampliar el contrato de uso con el portal** (ver "Contrato con el portal" abajo): no es un uso local mas. (2) **Tablas `ai_chat_threads` (por `patient_id`) y `ai_chat_messages`** en la base clinica cifrada: cada mensaje guarda verbatim su contenido, su `encounter_id`, su fecha, el modelo que lo produjo y el `run_id`. Los resumenes derivados van en tabla aparte (`ai_chat_encounter_digests`), nunca sustituyendo mensajes. (3) **`AiRequest` con historial**: `history: Vec<ChatTurn>` y `cached_prefix: Option<String>`; Gemini lo mapea a `contents[]` y OpenAI a `messages[]`; los siete usos de LLM actuales pasan historial vacio y no cambian. (4) **Contexto en tres capas** (ver abajo) con compactacion por consulta cerrada. (5) **Tokens reales de uso**: leer `usageMetadata` (Gemini) / `usage` (OpenAI), incluidos los cacheados, y sustituir la estimacion `1 + len/4000` — con un chat, esa heuristica deja de proteger el presupuesto. (6) **Enrutamiento por profundidad**: modelo barato por defecto, escalada explicita a modelo fuerte con boton "segunda opinion", reusando el selector del paso 24 y mostrando el costo acumulado del hilo. (7) UI de hilo en la Estacion Clinica durante la atencion y **vista de solo lectura del tramo de conversacion dentro de cada cita pasada**, alcanzable desde el historial de citas del paciente, con el mismo camino de propuesta→revision→aplicar que ya existe para llevar algo a la nota. |
+| Se valida con | El medico atiende a un paciente recurrente, abre el hilo desde la consulta, y la IA responde con conocimiento de las consultas anteriores sin que el medico le repita nada. Pregunta, discute, pide una segunda opinion en un punto concreto (y solo ahi paga modelo caro), y decide llevar una sugerencia a la nota, que entra como borrador editable. En la siguiente consulta, semanas despues, el hilo sigue ahi y el costo del turno no crecio con la antiguedad del paciente. Meses mas tarde abre esa cita desde el historial del paciente y relee integra la conversacion de aquel dia, tal como ocurrio, sin poder alterarla. |
+| Compuerta de avance | **Ningun mensaje guardado se pierde ni se degrada**: compactar el contexto no altera el registro, y una prueba lo verifica reconstruyendo el tramo verbatim de una consulta despues de varias compactaciones. El tramo de una consulta firmada es de solo lectura y se alcanza desde el historial de citas. El hilo nunca escribe en el expediente por si mismo; toda salida es opinion revisable. Ningun turno sale sin consentimiento vigente del paciente, y revocarlo cierra el hilo a nuevos turnos sin borrar lo ya registrado. Todo texto que sale al proveedor pasa por `redact()`, incluida la pregunta que teclea el medico. El costo por turno **no crece** con la antiguedad del paciente (probado con un hilo simulado de 40 turnos y 6 consultas). El contenido del hilo es CLINICO: no aparece en `operativo.db` ni viaja a la nube — al portal solo va la referencia de uso, como los demas runs. El modelo caro nunca se usa sin eleccion explicita del medico. |
+| Push recomendado | Por rebanada cerrada, ramas `v2/paso28-<rebanada>` hacia `dev`. La rebanada 1 no se publica sin el cambio de contrato del portal ya desplegado. |
+
+Clasificacion de datos: el contenido del hilo (preguntas del medico y respuestas de la IA) es **CLINICO** — reside solo en la base local cifrada del medico, dentro del archivo clinico del paso 27, y no se sincroniza. La traza del run (proveedor, modelo, version de prompt, tokens, costo, latencia) es **OPERATIVO** local y se reporta al portal por referencia, como ya hace `pending_usage_reports`. El prompt que sale al proveedor va seudonimizado; no es residencia local, y por eso depende del consentimiento y del BAA/ZDR del paso 16, igual que la Ayuda IA.
+
+### Registro y contexto son dos cosas distintas
+
+La distincion que gobierna todo el paso, y la que evita perder informacion:
+
+- **Registro** = lo que queda guardado en la base local. Es **integro y permanente**: cada mensaje del medico y cada respuesta de la IA, verbatim, con su encuentro, su fecha, el modelo que lo produjo y su `run_id`. No se resume, no se poda, no se borra al cerrar la consulta. Es lo que el medico vuelve a leer meses despues al abrir esa cita.
+- **Contexto** = lo que se le manda al proveedor en un turno concreto para que responda. Ese si se comprime (ver las tres capas), porque enviar seis consultas verbatim en cada pregunta seria caro y ademas peor: el modelo se pierde en el ruido.
+
+Comprimir el contexto **nunca** toca el registro. El resumen por consulta es un artefacto derivado que se guarda aparte, junto a los mensajes originales, y se puede regenerar; si el resumen quedo pobre, los mensajes siguen completos abajo. La compuerta de avance lo exige: borrar o degradar un mensaje guardado es un fallo del paso, no una optimizacion.
+
+**Consulta cerrada = hilo de solo lectura.** Cuando la nota se firma, el tramo de conversacion de esa consulta se congela: se lee completo, no admite turnos nuevos. Si el medico abre una cita vieja y quiere preguntar algo a partir de lo que ahi ve, el turno nuevo se escribe en la consulta en curso (o en un tramo sin encuentro si no esta atendiendo), citando el tramo anterior. Asi el registro de cada consulta refleja lo que realmente paso ese dia y no se reescribe hacia atras — mismo principio que la nota firmada.
+
+**Que ve el paciente:** nada. El tramo de conversacion es material de trabajo del medico, no documentacion clinica, y queda **fuera** del resumen autorizado que se comparte al portal del paciente (paso 6) y fuera del recibo y de cualquier salida a la estacion de recepcion. Para ARCO (paso 12) se trata como parte del expediente del medico, residente y local: **el hilo hereda la retencion y el borrado del paciente**. "Verbatim para siempre" significa que ninguna optimizacion interna lo degrada, no que sobreviva a una cancelacion ejercida por el paciente ni a la politica de retencion — al borrar un paciente, su hilo cae con el, y eso se prueba.
+
+### Contrato con el portal (no es un uso local mas)
+
+Auditoria del codigo (2026-08-17): el reporte de uso de IA al portal **no acepta un tipo nuevo sin cambiar el contrato en ambos lados**. `aiUsageReportSchema` (`consultorio-app/src/services/sync/sync-service.ts`) valida `usageType` con un `z.enum` cerrado de nueve valores y `status` con `["DRAFT","APPROVED","DISCARDED","FAILED"]`, ambos `.strict()`. Si la app manda `CASE_CHAT`, **el lote entero de uso falla con "Datos invalidos."** — mismo modo de fallo que el bug ya documentado por mandar `null` en un opcional. Lo que hay que decidir y cambiar:
+
+- **Tipo de uso.** Agregar `CASE_CHAT` al `z.enum` y a `mapAiUsageType`. Puede mapear a `AiUsageType.OTHER` en Prisma (como ya hacen `CLINICAL_AID` y `CONSULTATION_STRUCTURING`) y evitar migracion del enum de base, a costa de no poder distinguir el chat en los reportes comerciales. Si se quiere medirlo aparte —y conviene, porque es el uso que mas turnos genera— hace falta valor propio en el enum Prisma y su migracion.
+- **Estado del run.** Un turno de chat no tiene ciclo borrador→aprobado: no encaja en `DRAFT/APPROVED/DISCARDED`. Se propone reportarlo como `APPROVED` solo si se documenta que ahi significa "turno completado", o agregar `COMPLETED` al contrato. Lo segundo es mas honesto y cuesta lo mismo.
+- **Regla de version.** El portal debe aceptar el tipo nuevo **antes** de que salga una app que lo emita, o los medicos con app nueva y portal viejo pierden todo su reporte de uso, no solo el del chat.
+
+### Creditos comerciales: decision tomada (provisional)
+
+`AI_CREDIT_COSTS` (`ai-credits.ts`) cobra **por run**, y el chat produce un run por turno. Una conversacion de 20 turnos consumiria 20 creditos, contra 1 de una Ayuda IA — con la tarifa actual de `OTHER`. La cuota mensual de cada plan se dimensiono para generaciones de un solo tiro, asi que el chat la agota en pocas consultas. No bloquea (`shouldBlockUsage: false`, el excedente se factura), lo cual lo vuelve exposicion comercial en vez de tope tecnico. Tres salidas posibles, **a decidir antes de la rebanada 1**:
+
+1. Cobrar por **hilo-sesion** (primer turno cobra, los siguientes de la misma consulta no) — simple de explicar al medico, dificil de alinear con el costo real.
+2. Cobrar **fraccion de credito por turno** — proporcional al costo real, exige creditos decimales.
+3. **Bolsa separada** de turnos de chat en el plan, independiente de los creditos de generacion.
+
+**Decision (2026-08-17): opcion 1, por hilo-sesion, explicitamente provisional.** Un credito por consulta en la que se abre el chat; los turnos de esa consulta no cobran, con tope (al pasar de 30 turnos en una misma consulta se cobra otro credito). Se elige por tres razones: no migra nada (`creditCost` sigue `Int`), se le explica al medico en una frase, y no le pone taximetro a la conversacion clinica, que es justo donde castigar el uso seria contraproducente. Se asume el subcobro: un hilo de 20 turnos son ~2 MXN de API contra un credito de valor imputado ~0.8-1.7 MXN; el tope acota la perdida.
+
+La decision **entre la opcion 2 (fraccion de credito por turno) y la 3 (bolsa separada de turnos) se pospone a proposito hasta tener uso real medido** — hoy no hay un solo dato de cuantos turnos dura un hilo. Por eso la instrumentacion de la rebanada 2 (tokens reales por turno) no es opcional: es la que produce la evidencia para reemplazar esta decision. Los datos concretos a recolectar y su gobernanza estan en `15_plan_datos_de_uso.md`. Criterio de revision: al reunir tres meses de uso o 200 hilos, lo que ocurra primero.
+
+Mientras tanto, el presupuesto local (`ai_monthly_budget_cents`) sigue siendo la unica proteccion dura, y protege al medico, no al negocio.
+
+### Superficie de PHI: el chat es texto libre, lo demas no
+
+Todos los usos actuales arman su prompt **desde estructuras del sistema** (segmentos de plantilla, turnos de transcripcion revisada, campos del expediente). El chat es la primera superficie donde el medico **teclea lo que quiera** y eso sale a un proveedor. Dos consecuencias:
+
+- **`redact()` se queda corto.** Hoy solo sustituye las palabras del nombre y apellido del paciente (>=3 caracteres). En texto libre el medico puede escribir el apodo del paciente, el nombre de un familiar, un telefono, una direccion, o el nombre de **otro** paciente al comparar casos — nada de eso se redacta. Endurecerlo es parte del paso, no un pendiente: agregar apodo y nombre del responsable/tutor a los tokens, y detectar patrones de telefono, correo y CURP/RFC. Documentar explicitamente que la seudonimizacion es de mejor esfuerzo y no sustituye al BAA.
+- **Texto de origen del paciente dentro del contexto.** La capa 3 incluye la transcripcion revisada (habla del paciente) y el expediente puede traer texto que el paciente escribio en la preconsulta. En una extraccion de un solo tiro con esquema JSON el radio de daño es minimo; en una conversacion abierta, ese texto convive con las instrucciones. Mitigacion: el texto de origen del paciente va en bloques delimitados y marcados como datos, y la instruccion de sistema dice que nada dentro de ellos son ordenes. El riesgo queda acotado porque ninguna salida se aplica sola y el medico lee todo, pero se nombra en vez de suponerlo.
+
+### Alcance de consentimiento y presupuesto
+
+**Consentimiento (a fijar en la rebanada 1).** El paso hereda los tres alcances existentes y no inventa uno: se exige `TEXT_ASSIST` para todo turno, y **ademas** `CONSULTATION_SCRIBE` cuando la capa 3 incluye la transcripcion revisada del dia — que es el mismo criterio que ya aplica `generate_clinical_aid`. Un alcance nuevo dedicado obligaria a recolectar otro consentimiento por paciente sin ganar nada: el chat no expone una clase de dato que esos dos no cubran ya.
+
+**Presupuesto.** `ensure_within_budget` corta con `BudgetExceeded` **antes** de ejecutar. En una generacion de un tiro eso es aceptable; en una conversacion significa quedarse mudo a mitad del razonamiento clinico, en consulta y con el paciente enfrente. La UI debe avisar al **entrar** al hilo si el presupuesto esta cerca del limite y al cruzar un umbral (p. ej. 80%), no solo al chocar. El corte se mantiene —es la proteccion de costo del medico— pero deja de ser una sorpresa.
+
+### Contexto en tres capas (la pieza que hace viable el alcance por paciente)
+
+Un hilo por paciente que reenviara todo su historial en cada turno creceria sin limite y seria el gasto mas alto del sistema. Se estructura el prompt en tres bloques, del mas estable al mas volatil, porque solo un prefijo **identico byte a byte** entre turnos se beneficia del cache de prompt del proveedor:
+
+1. **Linea base del paciente** (estable durante semanas): resumen del expediente longitudinal hasta la ultima nota firmada. Se regenera **solo** cuando se firma una nota nueva, con el modelo barato. Es el bloque grande y es el que se cachea.
+2. **Resumenes por consulta anterior** (crece un parrafo por visita): al cerrar cada consulta, los turnos del hilo ocurridos en ella se compactan a un resumen. Asi el hilo del turno 40 no arrastra 39 turnos verbatim.
+3. **Consulta en curso** (volatil): transcripcion revisada del dia, si la hay, mas los turnos verbatim de la conversacion actual.
+
+Con esto, el costo de un turno depende de la consulta en curso, no de cuantos años lleve el paciente en el consultorio — que es exactamente la compuerta de avance. La recuperacion de notas antiguas concretas se resuelve con busqueda de texto sobre el SQLite local (gratis) cuando el medico cita algo puntual; no se usan embeddings ni almacen vectorial. Nota de verificacion: hoy **nada** en la app usa FTS5 y `rusqlite` se compila solo con `bundled-sqlcipher`, asi que **hay que comprobar que FTS5 este compilado** antes de depender de el; si no lo esta, el respaldo es filtrar por fecha/diagnostico y buscar con `LIKE` sobre un conjunto ya reducido, que a la escala de un paciente basta.
+
+### Modelos y costo
+
+Alineado con `11_recomendaciones_ia_medica.md`, sin proveedor nuevo:
+
+| Rol en el hilo | Modelo | Por que |
+|---|---|---|
+| Turno normal (default) | Gemini 3 Flash | Calidad clinica suficiente a $0.50/$3.00 por 1M tokens. |
+| Linea base, resumenes por consulta, titulos | Gemini 3.1 Flash-Lite | Tarea mecanica; $0.10/$0.40. |
+| "Segunda opinion" pedida por el medico | Gemini 3.1 Pro (fallback GPT-5.5) | ~10x mas caro; solo bajo boton explicito. |
+| Interacciones, dosis, duplicidad, alergias | Ninguno — herramientas deterministas | Paso 14/25; auditable y citable, sin alucinacion. |
+
+Orden de magnitud: un hilo de 10 turnos ronda 5 centavos de dolar (unos 8k tokens de entrada por turno mas ~500 de salida), y con cache aproximadamente la mitad. Poner el modelo fuerte como default lo llevaria a ~40 centavos por hilo: ahi, y no en el volumen de consultas, es donde se dispara el gasto. Los precios se re-verifican al cablear (los del doc 11 son de junio 2026).
+
+### Rebanadas verticales
+
+**Rebanada 1 — Hilo gobernado con un turno, anclado al encuentro.** Tablas, uso `CASE_CHAT`, alcance de consentimiento decidido, **contrato de uso del portal ampliado y desplegado primero** (tipo y estado), un turno de ida y vuelta contra el proveedor fake, traza en `ai_runs` y presupuesto respetado, con endurecimiento de `redact()` para texto libre. El mensaje ya nace con su `encounter_id` y su registro verbatim. Sin historial todavia: prueba que el carril aguanta el uso nuevo.
+
+**Rebanada 2 — Historial real en el protocolo.** `AiRequest` con `history` y `cached_prefix`; mapeo en `GeminiProvider` y `OpenAiProvider`; tokens reales de uso sustituyendo la estimacion por longitud. Los usos existentes quedan intactos y probados como tales.
+
+**Rebanada 3 — Las tres capas.** Linea base regenerada al firmar nota, compactacion al cerrar consulta (a tabla de resumenes aparte, sin tocar los mensajes), cache de prefijo. Aqui se prueban las dos compuertas duras: la de costo con el hilo simulado de 40 turnos, y la de integridad reconstruyendo el tramo verbatim de una consulta antigua despues de varias compactaciones.
+
+**Rebanada 4 — Estacion Clinica e historial de citas.** UI del hilo dentro de la consulta en curso; vista de solo lectura del tramo de conversacion en cada cita pasada, alcanzable desde el historial de citas del paciente y desde el expediente longitudinal; selector de profundidad, costo del hilo visible, manejo de sobrecarga reusando el paso 24.
+
+**Rebanada 5 — Puente al expediente.** "Llevar esto a la nota" por el camino de propuesta→revision→aplicar ya existente; nada se guarda sin accion explicita del medico.
+
+Orden recomendado: 1 → 2 → 3 → 4 → 5. La 3 es la que decide si el paso es sostenible en costo; conviene no construir la UI antes de haberla probado.
+
+Segundo riesgo, comercial y no tecnico: el chat multiplica por diez los runs de IA por consulta. Sin la decision de creditos tomada, el paso puede ser un exito de producto y una perdida por cliente. Riesgo mayor del paso: que el hilo se convierta de hecho en expediente paralelo — contenido clinico relevante que solo vive en la conversacion y no en la nota firmada. Se mitiga con la rebanada 5 (puente explicito) y dejando visible en la UI que el hilo es material de trabajo, no documento clinico.
+
+Estado: 🔜 PLANEADO. Depende del paso 16 (proveedor real bajo BAA) para uso con pacientes reales; se puede construir y probar completo contra el proveedor fake antes de eso. Sin decisiones abiertas tras la revision del 2026-08-17: alcance por paciente con registro por consulta, consentimiento `TEXT_ASSIST` + `CONSULTATION_SCRIBE`, ampliacion del contrato de uso del portal, y creditos por hilo-sesion (opcion 1, provisional y con criterio de revision explicito).
 
 ## MVP recomendado
 
