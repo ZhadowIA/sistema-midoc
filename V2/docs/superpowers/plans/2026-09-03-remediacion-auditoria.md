@@ -1,7 +1,7 @@
 # Plan de remediación — auditoría del 2026-09-03
 
 Fecha: 2026-09-03
-Estado: EN EJECUCION — paquete A entregado en `v2/paso17-cron-y-purga` (2026-09-03); B-H pendientes
+Estado: EN EJECUCION — paquetes A y B entregados (2026-09-03; B va en la misma rama `v2/paso17-cron-y-purga` por ser cambios pequeños sin conflicto); C-H pendientes
 Superficies: `V2/consultorio-app`, `V2/desktop-app`, `.github/workflows`, documentación V2
 Origen: revisión completa del repositorio (docs, portal, app de escritorio, CI). Estado verificado al auditar: portal con tipos, lint y 89 pruebas unitarias en verde; escritorio con tipos, 111 pruebas de TS y 273 de Rust en verde. Las pruebas de integración del portal no se ejecutaron por falta de Postgres local.
 
@@ -84,6 +84,8 @@ Hallazgos que cierra: 2 (PFX versionado), 3 (scripts peligrosos), 14 (artefactos
 - Quitar `openai` de `optionalDependencies` del portal (ningún import lo usa; el proveedor se implementa contra `fetch`). `npm install` para actualizar el lockfile.
 
 **DoD del paquete:** `git ls-files` sin `.pfx`; `npm run build` del portal sin cambios; docs del paso 9 sin secretos en claro.
+
+**Entregado (2026-09-03).** B1: PFX retirado del repo, `V2/certs/` eliminado, `.gitignore` raíz con `*.pfx`, `*.p12`, `*.key`, `*.pem` y `V2/certs/`; la contraseña desapareció de los seis documentos y del script `generate-signing-keys.ps1`, donde `-Password` pasó a obligatorio. Hallazgo extra: esa misma contraseña era también la de la llave minisign del updater (`~/.tauri/midoc-updater.key`); la llave no está en el repo, pero la contraseña sí lo estuvo, así que conviene regenerarla junto con el PFX. La regeneración y la carga a secretos quedan al propietario (instrucciones en `paso-9-firma-codigo-staging.md`); no se reescribió el historial. B2: `check-users.ts` eliminado; `reset-admin.ts` movido a `scripts/dev/` con guarda común `assert-dev-database.ts` (aborta en producción o contra hosts no locales) y contraseña desde `RESET_ADMIN_PASSWORD`; la misma guarda se aplicó a `scripts/seed-simple.ts`, que traía `password123` fijo. B3: canvas de diseño movido a `V2/design-propuesta/canvas-rediseno/`, `.codex-audits/` ignorado, `openai` fuera de `optionalDependencies` con lockfile actualizado. Verificación: `tsc`, `eslint` y pruebas unitarias en verde.
 
 ---
 
