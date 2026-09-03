@@ -1,6 +1,12 @@
 import { PrismaClient, ClinicalProfile, UserRole } from "@prisma/client";
 
 import { hashPassword } from "../src/lib/security/password";
+import { assertDevDatabase, requirePasswordFromEnv } from "./dev/assert-dev-database";
+
+// Semilla de desarrollo (REGLAS §6): solo contra base local y sin contrasena fija.
+//   SEED_DOCTOR_PASSWORD='...' npx tsx --env-file=.env.local scripts/seed-simple.ts
+assertDevDatabase("seed-simple");
+const seedPassword = requirePasswordFromEnv("SEED_DOCTOR_PASSWORD", "seed-simple");
 
 const prisma = new PrismaClient();
 
@@ -46,7 +52,7 @@ async function main() {
       console.log(added > 0 ? `Added ${added} gallery images` : "Gallery already present");
     } else {
       // Create a new test doctor user (scrypt, igual que el flujo de registro real)
-      const hashedPassword = await hashPassword("password123");
+      const hashedPassword = await hashPassword(seedPassword);
 
       const user = await prisma.user.create({
         data: {
