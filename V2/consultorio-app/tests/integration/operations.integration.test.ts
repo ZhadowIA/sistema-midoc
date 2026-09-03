@@ -9,12 +9,18 @@ import {
   NotificationStatus,
   PasswordResetStatus,
   PatientStatus,
+  PrecheckinKind,
+  PrecheckinStatus,
   PrismaClient,
+  SyncEventType,
   UploadLinkStatus
 } from "@prisma/client";
 
 import { GET as healthGET } from "../../src/app/api/health/route";
 import { GET as readinessGET } from "../../src/app/api/readiness/route";
+import { POST as cleanupPOST } from "../../src/app/api/internal/maintenance/cleanup/route";
+import { POST as dispatchPOST } from "../../src/app/api/internal/notifications/dispatch/route";
+import { env } from "../../src/lib/env";
 import { getHealthStatus, getReadinessStatus } from "../../src/services/operations/health-service";
 import { runPilotCleanup } from "../../src/services/operations/maintenance-service";
 
@@ -41,14 +47,23 @@ async function cleanupUserByEmail(email: string) {
   }
 
   await prisma.auditLog.deleteMany({ where: { doctorId: user.id } });
+  await prisma.syncEvent.deleteMany({ where: { doctorId: user.id } });
   await prisma.mailboxDocument.deleteMany({ where: { doctorId: user.id } });
   await prisma.authorizedSummary.deleteMany({ where: { doctorId: user.id } });
   await prisma.notification.deleteMany({ where: { doctorId: user.id } });
   await prisma.shortLink.deleteMany({ where: { doctorId: user.id } });
   await prisma.documentUploadLink.deleteMany({ where: { doctorId: user.id } });
   await prisma.appointmentHold.deleteMany({ where: { doctorId: user.id } });
+  await prisma.appointment.deleteMany({ where: { doctorId: user.id } });
   await prisma.patient.deleteMany({ where: { ownerDoctorId: user.id } });
   await prisma.user.delete({ where: { id: user.id } });
+}
+
+function internalRequest(path: string, authorization?: string) {
+  return new Request(`http://localhost${path}`, {
+    method: "POST",
+    headers: authorization ? { authorization } : {}
+  });
 }
 
 beforeAll(async () => {
@@ -94,6 +109,7 @@ describe("pilot maintenance cleanup (paso 9)", () => {
     const now = new Date("2026-06-11T12:00:00.000Z");
     const expiredAt = new Date(now.getTime() - 60_000);
     const staleMailboxDate = new Date(now.getTime() - 31 * 24 * 3_600_000);
+    const stillValidAt = new Date(now.getTime() + 24 * 3_600_000);
 
     try {
       const account = await prisma.user.create({
@@ -195,6 +211,62 @@ describe("pilot maintenance cleanup (paso 9)", () => {
         }
       });
 
+      // Preconsultas selladas en el buzon: una vencida sin ACK (se purga) y una
+      // vigente (se conserva). El evento de sync de la vencida debe vaciarse.
+      const appointment = await prisma.appointment.create({
+        data: {
+          doctorId: account.id,
+          patientId: patient.id,
+          scheduledStart: new Date(now.getTime() + 7_200_000),
+          scheduledEnd: new Date(now.getTime() + 9_000_000)
+        }
+      });
+
+      const expiredPrecheckin = await prisma.precheckinSubmission.create({
+        data: {
+          appointmentId: appointment.id,
+          patientId: patient.id,
+          status: PrecheckinStatus.SUBMITTED,
+          kind: PrecheckinKind.MEDICAL_HISTORY,
+          ciphertext: new Uint8Array(randomBytes(64)),
+          sizeBytes: 64,
+          submittedAt: staleMailboxDate,
+          expiresAt: expiredAt
+        }
+      });
+
+      const validPrecheckin = await prisma.precheckinSubmission.create({
+        data: {
+          appointmentId: appointment.id,
+          patientId: patient.id,
+          status: PrecheckinStatus.SUBMITTED,
+          kind: PrecheckinKind.AI_PRECONSULTA,
+          ciphertext: new Uint8Array(randomBytes(64)),
+          sizeBytes: 64,
+          submittedAt: now,
+          expiresAt: stillValidAt
+        }
+      });
+
+      const [expiredEvent, validEvent] = await Promise.all([
+        prisma.syncEvent.create({
+          data: {
+            doctorId: account.id,
+            seq: 1,
+            type: SyncEventType.PRECHECKIN_SUBMITTED,
+            payload: { appointmentId: appointment.id, precheckinId: expiredPrecheckin.id, sealed: true }
+          }
+        }),
+        prisma.syncEvent.create({
+          data: {
+            doctorId: account.id,
+            seq: 2,
+            type: SyncEventType.PRECHECKIN_SUBMITTED,
+            payload: { appointmentId: appointment.id, precheckinId: validPrecheckin.id, sealed: true }
+          }
+        })
+      ]);
+
       const stats = await runPilotCleanup({ now, mailboxRetentionDays: 30 });
       expect(stats).toEqual({
         expiredHolds: 1,
@@ -202,7 +274,8 @@ describe("pilot maintenance cleanup (paso 9)", () => {
         expiredUploadLinks: 1,
         cancelledExpiredLinkNotifications: 1,
         purgedAuthorizedSummaries: 1,
-        purgedMailboxDocuments: 1
+        purgedMailboxDocuments: 1,
+        purgedPrecheckins: 1
       });
 
       await expect(prisma.appointmentHold.findUniqueOrThrow({ where: { id: hold.id } })).resolves.toMatchObject({
@@ -226,6 +299,33 @@ describe("pilot maintenance cleanup (paso 9)", () => {
       expect(purgedMailbox.ciphertext).toBeNull();
       expect(purgedMailbox.purgedAt).toEqual(now);
 
+      // TTL de preconsultas: la vencida queda sin contenido y sin entrega; la
+      // vigente sigue intacta. El evento vencido pierde el payload, el vigente no.
+      const purgedPrecheckin = await prisma.precheckinSubmission.findUniqueOrThrow({
+        where: { id: expiredPrecheckin.id }
+      });
+      expect(purgedPrecheckin.ciphertext).toBeNull();
+      expect(purgedPrecheckin.purgedAt).toEqual(now);
+      expect(purgedPrecheckin.deliveredAt).toBeNull();
+
+      const keptPrecheckin = await prisma.precheckinSubmission.findUniqueOrThrow({
+        where: { id: validPrecheckin.id }
+      });
+      expect(keptPrecheckin.ciphertext).not.toBeNull();
+      expect(keptPrecheckin.purgedAt).toBeNull();
+
+      await expect(prisma.syncEvent.findUniqueOrThrow({ where: { id: expiredEvent.id } })).resolves.toMatchObject({
+        payload: null,
+        purgedAt: now
+      });
+      const keptEvent = await prisma.syncEvent.findUniqueOrThrow({ where: { id: validEvent.id } });
+      expect(keptEvent.purgedAt).toBeNull();
+      expect(keptEvent.payload).toMatchObject({ precheckinId: validPrecheckin.id });
+
+      // Idempotente: una segunda pasada no vuelve a contar lo ya purgado.
+      const again = await runPilotCleanup({ now, mailboxRetentionDays: 30 });
+      expect(again.purgedPrecheckins).toBe(0);
+
       const audit = await prisma.auditLog.findFirstOrThrow({
         where: {
           entityType: "PilotMaintenance",
@@ -234,6 +334,7 @@ describe("pilot maintenance cleanup (paso 9)", () => {
         orderBy: { createdAt: "desc" }
       });
       expect(JSON.stringify(audit.metadata)).toContain("purgedMailboxDocuments");
+      expect(JSON.stringify(audit.metadata)).toContain("purgedPrecheckins");
       expect(JSON.stringify(audit.metadata)).not.toContain("Tomas");
       expect(JSON.stringify(audit.metadata)).not.toContain("ciphertext");
     } finally {
@@ -242,19 +343,28 @@ describe("pilot maintenance cleanup (paso 9)", () => {
   });
 
   it("protects the internal cleanup endpoint with the cron secret", async () => {
-    process.env.NOTIFICATION_CRON_SECRET = "test-cleanup-secret";
-    const { POST: cleanupPOST } = await import(
-      "../../src/app/api/internal/maintenance/cleanup/route"
-    );
-
-    const rejected = await cleanupPOST(new Request("http://localhost/api/internal/maintenance/cleanup"));
+    const rejected = await cleanupPOST(internalRequest("/api/internal/maintenance/cleanup"));
     expect(rejected.status).toBe(401);
 
+    const wrongHeader = await cleanupPOST(
+      internalRequest("/api/internal/maintenance/cleanup", `Bearer ${env.NOTIFICATION_CRON_SECRET}x`)
+    );
+    expect(wrongHeader.status).toBe(401);
+
     const accepted = await cleanupPOST(
-      new Request("http://localhost/api/internal/maintenance/cleanup", {
-        method: "POST",
-        headers: { authorization: "Bearer test-cleanup-secret" }
-      })
+      internalRequest("/api/internal/maintenance/cleanup", `Bearer ${env.NOTIFICATION_CRON_SECRET}`)
+    );
+
+    expect(accepted.status).toBe(200);
+    await expect(accepted.json()).resolves.toMatchObject({ stats: expect.any(Object) });
+  });
+
+  it("protects the notification dispatcher with the same cron secret", async () => {
+    const rejected = await dispatchPOST(internalRequest("/api/internal/notifications/dispatch"));
+    expect(rejected.status).toBe(401);
+
+    const accepted = await dispatchPOST(
+      internalRequest("/api/internal/notifications/dispatch", `Bearer ${env.NOTIFICATION_CRON_SECRET}`)
     );
 
     expect(accepted.status).toBe(200);

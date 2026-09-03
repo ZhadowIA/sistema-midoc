@@ -732,6 +732,9 @@ model PrecheckinSubmission {
   sizeBytes    Int?
   deliveredAt  DateTime?
   purgedAt     DateTime?
+  // TTL del buzon (13_contrato §2): si la app nunca confirma con ACK, el
+  // mantenimiento purga el contenido a los 30 dias. Se renueva en cada reenvio.
+  expiresAt    DateTime?
   submittedAt  DateTime?
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
@@ -739,6 +742,7 @@ model PrecheckinSubmission {
   encounter    Encounter?      @relation(fields: [encounterId], references: [id], onDelete: SetNull)
   patient      Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
+  @@index([expiresAt])
   // Un solo precheckin por cita+paciente+tipo: el envio de antecedentes se
   // sobreescribe (upsert) y la preconsulta IA se rechaza si ya existe. Cierra la
   // carrera del findFirst+create ante envios casi simultaneos (doble pestana).

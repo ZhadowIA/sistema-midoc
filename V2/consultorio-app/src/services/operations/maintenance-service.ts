@@ -4,13 +4,14 @@ import {
   MailboxDocumentStatus,
   NotificationStatus,
   PasswordResetStatus,
+  Prisma,
+  SyncEventType,
   UploadLinkStatus
 } from "@prisma/client";
 
 import { writeAuditLog } from "../../lib/audit";
+import { MAILBOX_RETENTION_DAYS, mailboxRetentionCutoff } from "../../lib/mailbox-retention";
 import { prisma } from "../../lib/prisma";
-
-const DEFAULT_MAILBOX_RETENTION_DAYS = 30;
 
 export type PilotCleanupInput = {
   now?: Date;
@@ -24,19 +25,39 @@ export type PilotCleanupStats = {
   cancelledExpiredLinkNotifications: number;
   purgedAuthorizedSummaries: number;
   purgedMailboxDocuments: number;
+  purgedPrecheckins: number;
 };
-
-function retentionCutoff(now: Date, retentionDays: number) {
-  return new Date(now.getTime() - retentionDays * 24 * 3_600_000);
-}
 
 export async function runPilotCleanup(input: PilotCleanupInput = {}): Promise<PilotCleanupStats> {
   const now = input.now ?? new Date();
   const mailboxRetentionDays = Math.max(
     1,
-    input.mailboxRetentionDays ?? DEFAULT_MAILBOX_RETENTION_DAYS
+    input.mailboxRetentionDays ?? MAILBOX_RETENTION_DAYS
   );
-  const mailboxCutoff = retentionCutoff(now, mailboxRetentionDays);
+  const mailboxCutoff = mailboxRetentionCutoff(now, mailboxRetentionDays);
+
+  // Preconsultas que la app nunca confirmo con ACK y ya excedieron su TTL
+  // (13_contrato §2). Se resuelven antes de la transaccion para purgar tambien
+  // el evento de sync que las referencia: el inbox seguira entregando el evento
+  // (sin payload) y la app lo ignora sin romper, como tras un ACK.
+  const expiredPrecheckins = await prisma.precheckinSubmission.findMany({
+    where: {
+      purgedAt: null,
+      expiresAt: { lte: now }
+    },
+    select: { id: true }
+  });
+  const expiredPrecheckinIds = expiredPrecheckins.map((row) => row.id);
+  const expiredPrecheckinEventFilter: Prisma.SyncEventWhereInput =
+    expiredPrecheckinIds.length > 0
+      ? {
+          type: SyncEventType.PRECHECKIN_SUBMITTED,
+          purgedAt: null,
+          OR: expiredPrecheckinIds.map((id) => ({
+            payload: { path: ["precheckinId"], equals: id }
+          }))
+        }
+      : { id: { in: [] } };
 
   const [
     expiredHolds,
@@ -44,7 +65,8 @@ export async function runPilotCleanup(input: PilotCleanupInput = {}): Promise<Pi
     expiredUploadLinks,
     cancelledExpiredLinkNotifications,
     purgedAuthorizedSummaries,
-    purgedMailboxDocuments
+    purgedMailboxDocuments,
+    purgedPrecheckins
   ] = await prisma.$transaction([
     prisma.appointmentHold.updateMany({
       where: {
@@ -110,6 +132,16 @@ export async function runPilotCleanup(input: PilotCleanupInput = {}): Promise<Pi
         ciphertext: null,
         purgedAt: now
       }
+    }),
+    // Purga por TTL: mismo resultado que el ACK (respuestas vacias, ciphertext
+    // nulo, purgedAt), pero `deliveredAt` queda nulo: nunca llego a la app.
+    prisma.precheckinSubmission.updateMany({
+      where: { id: { in: expiredPrecheckinIds } },
+      data: { responses: {}, ciphertext: null, purgedAt: now }
+    }),
+    prisma.syncEvent.updateMany({
+      where: expiredPrecheckinEventFilter,
+      data: { payload: Prisma.DbNull, purgedAt: now }
     })
   ]);
 
@@ -119,7 +151,8 @@ export async function runPilotCleanup(input: PilotCleanupInput = {}): Promise<Pi
     expiredUploadLinks: expiredUploadLinks.count,
     cancelledExpiredLinkNotifications: cancelledExpiredLinkNotifications.count,
     purgedAuthorizedSummaries: purgedAuthorizedSummaries.count,
-    purgedMailboxDocuments: purgedMailboxDocuments.count
+    purgedMailboxDocuments: purgedMailboxDocuments.count,
+    purgedPrecheckins: purgedPrecheckins.count
   };
 
   await writeAuditLog({

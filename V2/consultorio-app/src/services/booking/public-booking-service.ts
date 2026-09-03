@@ -14,6 +14,7 @@ import { Prisma } from "@prisma/client";
 
 import { env } from "../../lib/env";
 import { ServiceError } from "../../lib/errors";
+import { mailboxExpiresAt } from "../../lib/mailbox-retention";
 import { prisma } from "../../lib/prisma";
 import { generateOpaqueToken } from "../../lib/security/token";
 import { writeAuditLog } from "../../lib/audit";
@@ -850,7 +851,8 @@ export async function bookPublicAppointment(input: {
       appointmentId: appointment.id,
       patientId: patient.id,
       status: PrecheckinStatus.DRAFT,
-      responses: {}
+      responses: {},
+      expiresAt: mailboxExpiresAt()
     }
   });
 
@@ -1343,6 +1345,7 @@ export async function submitPrecheckin(input: {
     }
   });
 
+  const submittedAt = new Date();
   const submission = existing
     ? await prisma.precheckinSubmission.update({
         where: {
@@ -1351,7 +1354,10 @@ export async function submitPrecheckin(input: {
         data: {
           status: PrecheckinStatus.SUBMITTED,
           responses: jsonResponses,
-          submittedAt: new Date()
+          submittedAt,
+          // Reenvio: reinicia el TTL del buzon y reabre el envio si ya se purgo.
+          purgedAt: null,
+          expiresAt: mailboxExpiresAt(submittedAt)
         }
       })
     : await prisma.precheckinSubmission.create({
@@ -1360,7 +1366,8 @@ export async function submitPrecheckin(input: {
           patientId: appointment.patientId,
           status: PrecheckinStatus.SUBMITTED,
           responses: jsonResponses,
-          submittedAt: new Date()
+          submittedAt,
+          expiresAt: mailboxExpiresAt(submittedAt)
         }
       });
 
@@ -1471,6 +1478,8 @@ async function submitSealedPrecheckin(input: {
   }
 
   // CLINICO: `responses` queda nulo; el contenido vive solo en `ciphertext`.
+  // `expiresAt`: TTL del buzon (13_contrato §2); un reenvio lo reinicia.
+  const submittedAt = new Date();
   const data = {
     status: PrecheckinStatus.SUBMITTED,
     kind: input.kind,
@@ -1479,7 +1488,8 @@ async function submitSealedPrecheckin(input: {
     sizeBytes: sealed.length,
     deliveredAt: null,
     purgedAt: null,
-    submittedAt: new Date()
+    submittedAt,
+    expiresAt: mailboxExpiresAt(submittedAt)
   };
 
   // Antecedentes: upsert atomico para permitir que el paciente los actualice.

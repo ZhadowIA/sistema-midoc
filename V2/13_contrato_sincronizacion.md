@@ -24,8 +24,8 @@ La app de escritorio es la fuente de verdad clinica; el portal es agenda publica
 | Entidad | Direccion | Contenido | Purga tras ACK |
 |---|---|---|---|
 | Cita nueva / reagendada / cancelada / confirmada | nube → app | id, horario, estado, servicio, motivo, datos de contacto del paciente | No (la cita operativa vive en ambos lados; solo metadatos no clinicos) |
-| Preconsulta enviada | nube → app | respuestas del cuestionario | **Si** — es dato clinico |
-| Documento subido por paciente | nube → app | archivo cifrado + metadatos | **Si** — es dato clinico |
+| Preconsulta enviada | nube → app | respuestas del cuestionario | **Si** — es dato clinico; ademas purga por TTL a los 30 dias sin ACK |
+| Documento subido por paciente | nube → app | archivo cifrado + metadatos | **Si** — es dato clinico; ademas purga por TTL a los 30 dias sin ACK |
 | Disponibilidad (reglas y bloqueos) | app → nube | reglas semanales, excepciones, bloqueos | n/a (estado publicado) |
 | Estado de cita decidido por el medico | app → nube | COMPLETED / CANCELLED / reagendada por el medico | n/a |
 | Resumen autorizado al paciente | app → nube | PDF cifrado con enlace temporal y expiracion | Si — al expirar el enlace |
@@ -59,6 +59,8 @@ Confirma la recepcion hasta `seq <= cursor`. El portal entonces:
 2. **Purga el contenido clinico** referenciado (respuestas de preconsulta, archivos del buzon) y deja solo un registro de auditoria sin contenido (`purgedAt`, tipo, ids).
 
 El ACK es la frontera legal: antes del ACK el dato clinico existe cifrado en nube con TTL; despues solo existe en el equipo del medico.
+
+**Purga por TTL (sin ACK).** Si la app nunca confirma (equipo apagado, dispositivo desvinculado), el mantenimiento programado (`POST /api/internal/maintenance/cleanup`, cada hora desde `.github/workflows/cron-jobs.yml`) purga el contenido clinico a los 30 dias (`MAILBOX_RETENTION_DAYS`): documentos del buzon por fecha de alta y preconsultas por `expiresAt`, que cada reenvio del paciente reinicia. La purga deja el mismo rastro que el ACK (`purgedAt`, sin contenido) pero con `deliveredAt` nulo, y vacia el `payload` del `SyncEvent` asociado: el inbox sigue entregando el evento sin contenido y la app lo ignora sin romper; si pide el elemento por id recibe `410`.
 
 ### `PUT /api/sync/availability`
 
