@@ -23,11 +23,11 @@
 ### ✅ COMPLETADO: Paso 2 — Certificado auto-firmado para código-signing
 
 **Artefacto generado**:
-- **Ruta**: `V2/certs/staging-code-signing.pfx`
+- **Ruta**: local, fuera del repo (retirado de `V2/certs/` el 2026-09-03; ver `paso-9-firma-codigo-staging.md`)
 - **Tipo**: Code Signing (DigitalSignature)
 - **Válido**: 2026-2031
 - **Tamaño**: 2.58 KB
-- **Contraseña**: `midoc-staging-2026` (guardar en secretos del pipeline)
+- **Contraseña**: solo en el secreto `CODE_SIGNING_PASSWORD` del pipeline
 
 **Script listo**:
 - `V2/desktop-app/scripts/sign-windows-installer.ps1` (existente)
@@ -49,7 +49,7 @@
 
 **Script creado**: `V2/desktop-app/scripts/generate-signing-keys.ps1`
 - Automatiza la generación sin entrada interactiva manual
-- Parámetros: `-Password` (defecto: `midoc-staging-2026`), `-OutputDir` (defecto: `~/.tauri`)
+- Parámetros: `-Password` (obligatorio, sin valor por defecto), `-OutputDir` (defecto: `~/.tauri`)
 
 **Resultado esperado**:
 - Archivo `~/.tauri/midoc-updater.key` con par completo (privada + pública)
@@ -70,7 +70,7 @@
 | Requisito | Status | Artefacto | Documentación |
 |-----------|--------|-----------|----------------|
 | Drill de restauración probado | ✅ | `restore_drill.rs` (test) | `paso-9-drill-restauracion.md` |
-| Certificado auto-firmado (staging) | ✅ | `certs/staging-code-signing.pfx` | `paso-9-firma-codigo-staging.md` |
+| Certificado auto-firmado (staging) | 🔁 regenerar | local, fuera del repo (retirado de `V2/certs/` el 2026-09-03) | `paso-9-firma-codigo-staging.md` |
 | Llaves minisign generadas | ⏳ | `~/.tauri/midoc-updater.key` | `paso-9-actualizacion-minisign.md` |
 | Script de firma de código | ✅ | `scripts/sign-windows-installer.ps1` | Inline en documentación |
 | Script de generación de llaves | ✅ | `scripts/generate-signing-keys.ps1` | Inline en documentación |
@@ -88,9 +88,6 @@ V2/docs/
   ├── paso-9-firma-codigo-staging.md    (NUEVO)
   ├── paso-9-actualizacion-minisign.md  (NUEVO)
   └── PASO9-RESUMEN.md                  (NUEVO - este archivo)
-
-V2/certs/
-  └── staging-code-signing.pfx          (NUEVO)
 
 V2/desktop-app/scripts/
   ├── sign-windows-installer.ps1        (existente, documentado)

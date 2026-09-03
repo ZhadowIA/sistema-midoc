@@ -52,7 +52,7 @@ Una vez generadas las llaves, extraer la llave **pública** e insertarla en:
 En el pipeline de builds, exportar:
 
 ```bash
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="midoc-staging-2026"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="<contrasena en secretos del pipeline>"
 export TAURI_SIGNING_PRIVATE_KEY="~/.tauri/midoc-updater.key"
 
 # Luego:
