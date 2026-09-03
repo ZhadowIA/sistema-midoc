@@ -809,6 +809,8 @@ Decisiones (2026-06-13, doc 08; aclaracion 2026-06-15): SMS = Twilio, WhatsApp B
 
 Implementado (2026-06-15): la cola de notificaciones soporta `WHATSAPP` como canal separado y lo entrega por Twilio WhatsApp Business/API (`whatsapp:+E164`) cuando `WHATSAPP_PROVIDER=twilio`. `PHONE_NOTIFICATION_CHANNEL=SMS|WHATSAPP` decide si las notificaciones a telefono se encolan como SMS (default) o WhatsApp; usar WhatsApp solo con consentimiento/politica lista.
 
+Corregido (2026-09-03, paquete A de `docs/superpowers/plans/2026-09-03-remediacion-auditoria.md`): el cron de produccion (`.github/workflows/cron-jobs.yml`) llamaba a rutas inexistentes (`notifications/process`, `ops/cleanup-short-links`) con cabeceras que ninguna ruta leia, asi que en produccion la cola no se procesaba y el buzon no se purgaba. Ahora llama a `notifications/dispatch` cada 5 minutos y a `maintenance/cleanup` cada hora con `Authorization: Bearer`, ambas rutas comparten `lib/auth/cron-auth.ts`, y una prueba de contrato (`tests/unit/cron-workflow.test.ts`) falla si el workflow referencia una ruta que no existe. En el mismo paquete: TTL de 30 dias para preconsultas no reclamadas (`PrecheckinSubmission.expiresAt`, purga en `runPilotCleanup` con vaciado del `SyncEvent`, contrato 13 actualizado) y la cookie de logout se borra con los mismos atributos con que se creo.
+
 ## Paso 18 - Agendado con responsable/tutor
 
 | Campo | Definicion |
