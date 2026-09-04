@@ -1,6 +1,6 @@
 # Plan — Estaciones y separacion de roles (recepcion / clinica)
 
-Estado: PLANEADO (2026-07-25). No implementado. Decisiones cerradas.
+Estado: EN EJECUCION (plan 2026-07-25; decisiones cerradas). Fase 0 entregada el 2026-08-02 y Fase 1 el 2026-09-03 (`keyring.rs`, `authz.rs`, migracion v31, `rolePolicy.ts`); Fases 2 y 3 pendientes. El detalle de lo entregado vive en `10_linea_de_desarrollo.md`, paso 27.
 Abierto como **paso 27** en `10_linea_de_desarrollo.md`.
 
 Nomenclatura: lo que aqui son **Fases 0-3** son las **Rebanadas 1-4** del paso

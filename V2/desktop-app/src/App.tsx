@@ -17,6 +17,17 @@ import {
   type ResolutionPatient
 } from "./PatientResolution";
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
+import {
+  ACTIVITY_EVENTS,
+  INACTIVITY_LOCK_MS,
+  coerceRole,
+  defaultViewForRole,
+  isDoctor,
+  roleLabel,
+  viewAllowedForRole,
+  type SessionActor,
+  type WorkspaceView
+} from "./rolePolicy";
 import "./App.css";
 
 interface UnlockResult {
@@ -24,6 +35,8 @@ interface UnlockResult {
   db_path: string;
   backup_path: string;
   profile: DoctorProfile;
+  /** Quien abrio (paso 27, rebanada 2): la UI filtra por su rol. */
+  actor?: SessionActor;
 }
 
 interface DoctorProfile {
@@ -374,9 +387,12 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [slotMinutes, setSlotMinutes] = useState(30);
   const [workStartMinutes, setWorkStartMinutes] = useState<number | null>(null);
   const [workEndMinutes, setWorkEndMinutes] = useState<number | null>(null);
-  const [view, setView] = useState<
-    "agenda" | "patients" | "reception" | "benchmark" | "transcription" | "medications" | "arco"
-  >("agenda");
+  // Rol de quien abrio (paso 27, rebanada 2): decide que se MUESTRA. La
+  // compuerta real vive en el proceso nativo (authz.rs); aqui solo se evita
+  // ensenar puertas que no abren.
+  const role = coerceRole(unlocked.actor?.role);
+  const doctor = isDoctor(role);
+  const [view, setView] = useState<WorkspaceView>(defaultViewForRole(role));
   const [theme, setTheme] = useState<Theme>(() => {
     try {
       return isNightTheme(localStorage.getItem(THEME_STORAGE_KEY)) ? "night" : "light";
@@ -444,6 +460,29 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     // syncNow es estable dentro del componente; solo re-evaluamos al cambiar el vinculo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status?.linked, refreshPending]);
+
+  // Bloqueo por inactividad (plan 14, fase 1.15): sin actividad durante
+  // INACTIVITY_LOCK_MS la sesion se cierra y vuelve la pantalla de acceso.
+  // Sin esto la separacion de roles es teatro: el medico deja su sesion
+  // abierta y recepcion opera con sus permisos.
+  useEffect(() => {
+    let timer = window.setTimeout(() => void lock(), INACTIVITY_LOCK_MS);
+    const reset = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void lock(), INACTIVITY_LOCK_MS);
+    };
+    for (const name of ACTIVITY_EVENTS) {
+      window.addEventListener(name, reset, { passive: true });
+    }
+    return () => {
+      window.clearTimeout(timer);
+      for (const name of ACTIVITY_EVENTS) {
+        window.removeEventListener(name, reset);
+      }
+    };
+    // lock es estable dentro del componente.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function syncNow() {
     setBusy(true);
@@ -621,19 +660,20 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     );
   }
 
+  // Cada seccion se filtra por rol; una seccion vacia no se dibuja.
   const navClinic = [
     { id: "agenda" as const, label: "Agenda", badge: appointments.length > 0 ? String(appointments.length) : "" },
     { id: "patients" as const, label: "Pacientes", badge: "" }
-  ];
+  ].filter((item) => viewAllowedForRole(role, item.id));
   const navOperation = [
     { id: "reception" as const, label: "Recepción y caja" },
     { id: "transcription" as const, label: "Transcripción" },
     { id: "medications" as const, label: "Medicamentos" }
-  ];
+  ].filter((item) => viewAllowedForRole(role, item.id));
   const navCompliance = [
     { id: "arco" as const, label: "Privacidad (ARCO)" },
     { id: "benchmark" as const, label: "Benchmark IA" }
-  ];
+  ].filter((item) => viewAllowedForRole(role, item.id));
 
   return (
     <div className="workspace-shell">
@@ -644,6 +684,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       <header className="app-topbar workspace-topbar">
         <div className="topbar-identity">
           <strong>{unlocked.profile.display_name}</strong>
+          <span className="pill" aria-label="Rol de la sesión">{roleLabel(role)}</span>
         </div>
         <div className="button-row topbar-actions">
           {status?.linked ? (
@@ -672,6 +713,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       <aside className="workspace-sidebar" aria-label="Navegación principal">
         {status?.linked ? (
           <>
+            {navClinic.length > 0 ? (
             <div className="sidebar-section">
               <span className="sidebar-heading">Clínica</span>
               {navClinic.map((item) => (
@@ -696,6 +738,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 </button>
               ))}
             </div>
+            ) : null}
             <div className="sidebar-section">
               <span className="sidebar-heading">Operación</span>
               {navOperation.map((item) => (
@@ -710,6 +753,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 </button>
               ))}
             </div>
+            {navCompliance.length > 0 ? (
             <div className="sidebar-section">
               <span className="sidebar-heading">Cumplimiento</span>
               {navCompliance.map((item) => (
@@ -724,6 +768,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 </button>
               ))}
             </div>
+            ) : null}
           </>
         ) : (
           <div className="sidebar-section">
@@ -736,7 +781,17 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
           <span className="sidebar-avatar" aria-hidden="true">{profileInitials(unlocked.profile.display_name)}</span>
           <span className="sidebar-profile-text">
             <strong>{unlocked.profile.display_name}</strong>
+            <span className="meta">
+              {unlocked.actor?.name ?? unlocked.profile.display_name} · {roleLabel(role)}
+            </span>
             <button type="button" onClick={() => void lock()}>Bloquear</button>
+            <button
+              type="button"
+              onClick={() => void lock()}
+              title="Cierra esta sesión y vuelve a la pantalla de acceso para abrir con otra credencial"
+            >
+              Cambiar de usuario
+            </button>
             {status?.linked ? (
               <button type="button" onClick={() => void unlink()} disabled={busy}>
                 Desvincular
@@ -765,7 +820,11 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
             <LinkAccountForm onLinked={() => void refresh()} />
           ) : (
             <>
-              {activePatient ? (
+              {!doctor ? (
+                // Recepcion: una sola vista. No hay camino al expediente ni al
+                // encuentro; el proceso nativo lo rechazaria de todos modos.
+                <Recepcion onOpenEncounter={() => undefined} canAttend={false} />
+              ) : activePatient ? (
                 <Expediente
                   patientId={activePatient}
                   onBack={() => setActivePatient(null)}

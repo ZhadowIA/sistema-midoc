@@ -146,9 +146,13 @@ const money = (cents: number) => moneyFormatter.format(cents / 100);
 const pesosToCents = (value: string) => Math.round(Number(value) * 100);
 
 export function Recepcion({
-  onOpenEncounter
+  onOpenEncounter,
+  canAttend = true
 }: {
   onOpenEncounter: (encounterId: string) => void;
+  /** Solo el medico abre el expediente desde la sala (paso 27, rebanada 2);
+   *  recepcion marca llegadas, cobra y cierra visitas. */
+  canAttend?: boolean;
 }) {
   const [visits, setVisits] = useState<Visit[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
@@ -331,6 +335,7 @@ export function Recepcion({
       <WaitingRoom
         visits={visits}
         resources={resources}
+        canAttend={canAttend}
         onAttend={attend}
         onSetState={(visitId, state) =>
           run(
@@ -427,12 +432,14 @@ export function Recepcion({
 function WaitingRoom({
   visits,
   resources,
+  canAttend,
   onAttend,
   onSetState,
   onAssignResource
 }: {
   visits: Visit[];
   resources: Resource[];
+  canAttend: boolean;
   onAttend: (visit: Visit) => void;
   onSetState: (visitId: string, state: string) => void;
   onAssignResource: (visitId: string, resourceId: string) => void;
@@ -484,9 +491,11 @@ function WaitingRoom({
                 >
                   {VISIT_STATE_LABELS[visit.state] ?? visit.state}
                 </span>
-                <button className="action-button" onClick={() => onAttend(visit)}>
-                  {visit.encounter_id ? "Continuar" : "Atender"}
-                </button>
+                {canAttend ? (
+                  <button className="action-button" onClick={() => onAttend(visit)}>
+                    {visit.encounter_id ? "Continuar" : "Atender"}
+                  </button>
+                ) : null}
                 <button className="ghost-button" onClick={() => onSetState(visit.id, "DONE")}>
                   Cerrar
                 </button>

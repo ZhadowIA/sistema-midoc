@@ -936,11 +936,17 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
           labels: 64
         };
       }
+      // Rol de demostracion: una frase que contenga "recepcion" abre como
+      // recepcionista para trabajar esa vista sin la app nativa.
+      const receptionDemo = /recepcion/i.test(String(args?.passphrase ?? ""));
       return {
         schema_version: 3,
         db_path: `C:\\...\\${profile.id}\\midoc.db (demo)`,
         backup_path: `C:\\...\\${profile.id}\\backups\\midoc-demo.db`,
-        profile
+        profile,
+        actor: receptionDemo
+          ? { id: "demo-recepcion", name: "Recepción (demo)", role: "RECEPCION" }
+          : { id: "demo-doctor", name: profile.display_name, role: "DOCTOR" }
       } as T;
     }
     case "lock_database":
