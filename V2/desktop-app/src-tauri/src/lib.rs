@@ -1,5 +1,6 @@
 mod ai;
 mod arco;
+mod authz;
 mod audio;
 mod clinical;
 mod cloud_transcription;
@@ -315,6 +316,12 @@ fn unlock_database(
     let (actor, dek) = db::rekey_to_wrapped_dek(&path, &passphrase, &profile.display_name)
         .map_err(|e| e.to_string())?;
     let conn = db::open_encrypted(&path, &keyring::dek_to_pragma(&dek))
+        .map_err(|e| e.to_string())?;
+    // Sella la conexion con quien la abrio: cada fila de clinical_audit lleva
+    // actor, rol y estacion (plan 14, fase 1.14) sin cambiar la firma de los
+    // `audit()` de cada modulo.
+    let station_id = operations::local_station(&conn).ok().map(|station| station.id);
+    db::set_session_actor(&conn, &actor.id, &actor.role, station_id.as_deref())
         .map_err(|e| e.to_string())?;
     let schema_version = db::schema_version(&conn).map_err(|e| e.to_string())?;
     // Primer arranque: instala el catalogo real de medicamentos empaquetado si la
@@ -1273,7 +1280,12 @@ fn register_payment(
     state: tauri::State<'_, AppDb>,
     payment: operations::PaymentInput,
 ) -> Result<operations::Payment, String> {
-    with_ops(&state, |conn| operations::register_payment(conn, &payment))
+    let guard = state.0.lock().unwrap();
+    let session = guard.as_ref().ok_or("la base esta bloqueada")?;
+    // La compuerta por nombre deja pasar a recepcion; el REFUND directo depende
+    // del argumento y se decide aqui (authz::ARGUMENT_CHECKS).
+    authz::deny_refund_for(&session.actor.role, &payment.kind)?;
+    operations::register_payment(&session.conn, &payment).map_err(|e| e.to_string())
 }
 
 /// Dinero del paciente que aun no se aplica a ningun presupuesto. Es OPERATIVO:
@@ -2620,6 +2632,31 @@ fn arco_fulfill_cancellation(
     arco::fulfill_cancellation(conn, &request_id).map_err(|e| e.to_string())
 }
 
+/// Compuerta central de comandos (paso 27, rebanada 2). Envuelve el
+/// despachador que genera `generate_handler!`: por cada invocacion lee el rol
+/// de la sesion abierta y consulta `authz::decide` ANTES de despachar. Un
+/// comando negado se rechaza con el motivo y nunca llega a tocar la base.
+fn gated<R: tauri::Runtime>(
+    dispatch: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        let command = invoke.message.command().to_string();
+        let role = {
+            let webview = invoke.message.webview();
+            let db = webview.state::<AppDb>();
+            let guard = db.0.lock().unwrap();
+            guard.as_ref().map(|session| session.actor.role.clone())
+        };
+        match authz::decide(role.as_deref(), &command) {
+            Ok(()) => dispatch(invoke),
+            Err(reason) => {
+                invoke.resolver.reject(reason);
+                true
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Carga `src-tauri/.env` (si existe) antes de cualquier lectura de env vars
@@ -2631,7 +2668,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(AppDb(Mutex::new(None)))
         .manage(ModelDownloads(Mutex::new(HashMap::new())))
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(gated(tauri::generate_handler![
             list_doctor_profiles,
             create_doctor_profile,
             unlock_database,
@@ -2744,7 +2781,7 @@ pub fn run() {
             arco_mark_fulfilled,
             arco_export_patient_data,
             arco_fulfill_cancellation
-        ])
+        ]))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
