@@ -1150,10 +1150,11 @@ fn audit(
     action: &str,
     details: Option<&str>,
 ) -> Result<(), AiError> {
+    let stamp = crate::db::session_actor(conn);
     conn.execute(
-        "INSERT INTO clinical_audit (entity, entity_id, action, at, details)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![entity, entity_id, action, now(), details],
+        "INSERT INTO clinical_audit (entity, entity_id, action, at, details, actor_id, actor_role, station_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![entity, entity_id, action, now(), details, stamp.actor_id, stamp.actor_role, stamp.station_id],
     )?;
     Ok(())
 }

@@ -1,9 +1,10 @@
 //! Encrypted local database (SQLCipher).
 //!
 //! All clinical data in MiDoc V2 lives in this database, on the doctor's
-//! machine. The passphrase is handed to SQLCipher's PRAGMA key, which runs
-//! its own PBKDF2-HMAC-SHA512 derivation with a per-database salt; we never
-//! store the passphrase or a derived key on disk.
+//! machine. Since paso 27 (rebanada 2) the database key is a random DEK: each
+//! person's credential unwraps it via Argon2id from `keys.json` (see
+//! `keyring.rs`) and the DEK is handed to SQLCipher's PRAGMA key. Neither the
+//! credential nor the DEK is ever stored in clear on disk.
 
 use rusqlite::Connection;
 use std::path::Path;
@@ -785,7 +786,66 @@ const MIGRATIONS: &[&str] = &[
     INSERT INTO app_meta (key, value)
         SELECT 'receipt_seq_A', value FROM app_meta WHERE key = 'receipt_seq'
         ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+    // v31: actor en la bitacora (paso 27, rebanada 2; plan 14, fase 1.14).
+    // Con dos personas sobre la misma base -y luego dos cajones- la bitacora
+    // tiene que decir QUIEN abrio la caja, cobro cada folio o cerro, y en un
+    // reembolso quien AUTORIZO ademas de quien entrego. Las columnas son
+    // nulables: las filas anteriores no tienen actor y las pruebas sin sesion
+    // tampoco. Clase: OPERATIVO (ids, nunca contenido).
+    "ALTER TABLE clinical_audit ADD COLUMN actor_id TEXT;
+    ALTER TABLE clinical_audit ADD COLUMN actor_role TEXT;
+    ALTER TABLE clinical_audit ADD COLUMN station_id TEXT;
+    ALTER TABLE clinical_audit ADD COLUMN authorized_by TEXT;",
 ];
+
+/// Quien opera esta conexion (paso 27, rebanada 2). Vive en una tabla TEMP de
+/// la propia conexion: muere con la sesion y no viaja en el respaldo (`VACUUM
+/// INTO` copia solo `main`). Los `audit()` de cada modulo la leen para sellar
+/// cada fila con actor, rol y estacion sin cambiar sus firmas.
+#[derive(Clone, Debug, Default)]
+pub struct ActorStamp {
+    pub actor_id: Option<String>,
+    pub actor_role: Option<String>,
+    pub station_id: Option<String>,
+}
+
+pub fn set_session_actor(
+    conn: &Connection,
+    actor_id: &str,
+    actor_role: &str,
+    station_id: Option<&str>,
+) -> Result<(), DbError> {
+    conn.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS session_actor (
+            actor_id TEXT NOT NULL,
+            actor_role TEXT NOT NULL,
+            station_id TEXT
+        );
+        DELETE FROM temp.session_actor;",
+    )?;
+    conn.execute(
+        "INSERT INTO temp.session_actor (actor_id, actor_role, station_id) VALUES (?1, ?2, ?3)",
+        rusqlite::params![actor_id, actor_role, station_id],
+    )?;
+    Ok(())
+}
+
+/// Sello del actor para la bitacora. Sin sesion (pruebas, migraciones) devuelve
+/// todo `None`: la bitacora sigue escribiendose, solo que sin firmar.
+pub fn session_actor(conn: &Connection) -> ActorStamp {
+    conn.query_row(
+        "SELECT actor_id, actor_role, station_id FROM temp.session_actor LIMIT 1",
+        [],
+        |row| {
+            Ok(ActorStamp {
+                actor_id: row.get(0)?,
+                actor_role: row.get(1)?,
+                station_id: row.get(2)?,
+            })
+        },
+    )
+    .unwrap_or_default()
+}
 
 /// Opens (creating if needed) the encrypted database and applies pending
 /// migrations. Fails with `DbError::InvalidKey` when the passphrase does not

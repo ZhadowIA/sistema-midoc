@@ -36,10 +36,11 @@ fn audit(
     action: &str,
     details: Option<&str>,
 ) -> Result<(), DentalError> {
+    let stamp = crate::db::session_actor(conn);
     conn.execute(
-        "INSERT INTO clinical_audit (entity, entity_id, action, at, details)
-         VALUES ('dental_budget', ?1, ?2, ?3, ?4)",
-        params![entity_id, action, now(), details],
+        "INSERT INTO clinical_audit (entity, entity_id, action, at, details, actor_id, actor_role, station_id)
+         VALUES ('dental_budget', ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![entity_id, action, now(), details, stamp.actor_id, stamp.actor_role, stamp.station_id],
     )?;
     Ok(())
 }

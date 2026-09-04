@@ -9,7 +9,8 @@
 //!   cargo test --lib restore_drill -- --nocapture
 
 use crate::clinical::{open_encounter_for_appointment, save_note, sign_encounter, NoteContent};
-use crate::db::{create_encrypted_backup, open_encrypted, schema_version};
+use crate::db::{create_encrypted_backup, open_encrypted, rekey_to_wrapped_dek, schema_version};
+use crate::keyring::{dek_to_pragma, keys_path, read_key_file, unlock, ROLE_DOCTOR};
 use rusqlite::{params, Connection};
 use std::io::Read;
 
@@ -139,4 +140,94 @@ fn restore_drill_recovers_clinical_data_with_evidence() {
     println!("===== DRILL OK: contenido clinico recuperado =====\n");
 
     let _ = std::fs::remove_file(&backup);
+}
+
+/// Drill post-rekey (paso 27, rebanada 2). Desde que la base se cifra con una
+/// DEK envuelta por persona, restaurar exige DOS archivos: el respaldo `.db` y
+/// el `keys.json` que vive junto a el. Este drill prueba que (a) la passphrase
+/// ya no abre la base tras el rekey, (b) el respaldo cifrado con la DEK se
+/// restaura en otra carpeta con su `keys.json`, (c) sin `keys.json` la
+/// passphrase no sirve, y (d) el respaldo pre-rekey sigue abriendo con la
+/// passphrase, como red de seguridad.
+#[test]
+fn restore_drill_recovers_after_rekey_to_wrapped_dek() {
+    let dir = drill_dir().join(format!("rekey-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("midoc.db");
+
+    println!("
+===== DRILL DE RESTAURACION POST-REKEY (paso 27) =====");
+
+    // 1. Base con passphrase (estado previo a la rebanada 2) y expediente firmado.
+    let conn = open_encrypted(&source, PASSPHRASE).unwrap();
+    let encounter_id = seed_clinical(&conn);
+    drop(conn);
+    println!("1) base con passphrase creada y poblada");
+
+    // 2. Rekey a DEK envuelta: lo mismo que hace unlock_database al abrir.
+    let (actor, dek) = rekey_to_wrapped_dek(&source, PASSPHRASE, "Dra. Drill").unwrap();
+    assert_eq!(actor.role, ROLE_DOCTOR);
+    assert!(keys_path(&source).exists(), "keys.json debe quedar junto a la base");
+    assert!(
+        open_encrypted(&source, PASSPHRASE).is_err(),
+        "tras el rekey la passphrase no debe abrir la base directamente"
+    );
+    println!("2) rekey aplicado: la passphrase ya no es la llave; keys.json escrito");
+
+    // 3. Respaldo cifrado con la DEK (el respaldo automatico de cada unlock).
+    let conn = open_encrypted(&source, &dek_to_pragma(&dek)).unwrap();
+    let restore_dir = dir.join("restore");
+    std::fs::create_dir_all(&restore_dir).unwrap();
+    let backup = restore_dir.join("midoc.db");
+    create_encrypted_backup(&conn, &backup).unwrap();
+    drop(conn);
+    // El respaldo necesita su keys.json al lado: es la mitad de la llave.
+    std::fs::copy(keys_path(&source), keys_path(&backup)).unwrap();
+    println!("3) respaldo cifrado con la DEK + copia de keys.json");
+
+    // 4. Perdida total de la carpeta original.
+    std::fs::remove_file(&source).unwrap();
+    std::fs::remove_file(keys_path(&source)).unwrap();
+    println!("4) perdida simulada: base y keys.json originales eliminados");
+
+    // 5. Restauracion: la credencial abre la envoltura restaurada y la DEK el
+    //    respaldo. El contenido clinico esta intacto.
+    let file = read_key_file(&backup).unwrap().expect("keys.json restaurado");
+    let (restored_dek, who) = unlock(&file, PASSPHRASE).unwrap();
+    assert_eq!(restored_dek, dek);
+    assert_eq!(who.id, actor.id);
+    let restored = open_encrypted(&backup, &dek_to_pragma(&restored_dek)).unwrap();
+    let diagnosis: String = restored
+        .query_row(
+            "SELECT diagnosis FROM note_versions WHERE encounter_id = ?1 ORDER BY version DESC LIMIT 1",
+            params![encounter_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(diagnosis, "Lumbalgia");
+    println!("5) restauracion verificada: {} abrio como {} ({})", who.name, who.role, encounter_id);
+    drop(restored);
+
+    // 6. Sin keys.json la passphrase no abre el respaldo: hay que respaldar ambos.
+    assert!(open_encrypted(&backup, PASSPHRASE).is_err());
+    println!("6) el respaldo no se abre con la passphrase sola (hace falta keys.json)");
+
+    // 7. Red de seguridad: el respaldo pre-rekey sigue abriendo con la passphrase.
+    let pre_rekey = std::fs::read_dir(dir.join("backups"))
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("pre-rekey-"))
+        })
+        .expect("rekey_to_wrapped_dek deja un respaldo pre-rekey");
+    let legacy = open_encrypted(&pre_rekey, PASSPHRASE).unwrap();
+    assert_eq!(count(&legacy, "encounters"), 1);
+    println!("7) respaldo pre-rekey abre con la passphrase: {}", pre_rekey.display());
+
+    println!("===== DRILL OK: restauracion post-rekey =====
+");
+    let _ = std::fs::remove_dir_all(&dir);
 }

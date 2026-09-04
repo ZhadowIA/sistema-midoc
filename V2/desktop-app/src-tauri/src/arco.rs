@@ -39,10 +39,11 @@ fn audit(
     action: &str,
     details: Option<&str>,
 ) -> Result<(), ArcoError> {
+    let stamp = crate::db::session_actor(conn);
     conn.execute(
-        "INSERT INTO clinical_audit (entity, entity_id, action, at, details)
-         VALUES ('ArcoRequest', ?1, ?2, ?3, ?4)",
-        params![entity_id, action, now(), details],
+        "INSERT INTO clinical_audit (entity, entity_id, action, at, details, actor_id, actor_role, station_id)
+         VALUES ('ArcoRequest', ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![entity_id, action, now(), details, stamp.actor_id, stamp.actor_role, stamp.station_id],
     )?;
     Ok(())
 }
@@ -514,14 +515,14 @@ pub fn fulfill_cancellation(
         params![request_id, now()],
     )?;
 
+    let stamp = crate::db::session_actor(&tx);
     tx.execute(
-        "INSERT INTO clinical_audit (entity, entity_id, action, at, details)
-         VALUES ('ArcoRequest', ?1, 'arco.cancellation.fulfilled', ?2, ?3)",
+        "INSERT INTO clinical_audit (entity, entity_id, action, at, details, actor_id, actor_role, station_id)
+         VALUES ('ArcoRequest', ?1, 'arco.cancellation.fulfilled', ?2, ?3, ?4, ?5, ?6)",
         params![
             request_id,
             now(),
-            format!("patient={patient_id}; encounters={deleted_encounters}")
-        ],
+            format!("patient={patient_id}; encounters={deleted_encounters}"), stamp.actor_id, stamp.actor_role, stamp.station_id],
     )?;
 
     tx.commit()?;

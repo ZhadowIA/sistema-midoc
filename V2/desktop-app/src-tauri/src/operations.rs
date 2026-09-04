@@ -38,10 +38,36 @@ fn audit(
     action: &str,
     details: Option<&str>,
 ) -> Result<(), OperationsError> {
+    audit_authorized(conn, entity, entity_id, action, details, None)
+}
+
+/// Igual que `audit`, mas quien AUTORIZO la operacion cuando no es la misma
+/// persona que la ejecuta (reembolso: el medico autoriza, recepcion entrega).
+/// Actor, rol y estacion salen del sello de la sesion (paso 27, rebanada 2).
+fn audit_authorized(
+    conn: &Connection,
+    entity: &str,
+    entity_id: &str,
+    action: &str,
+    details: Option<&str>,
+    authorized_by: Option<&str>,
+) -> Result<(), OperationsError> {
+    let stamp = crate::db::session_actor(conn);
     conn.execute(
-        "INSERT INTO clinical_audit (entity, entity_id, action, at, details)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![entity, entity_id, action, now(), details],
+        "INSERT INTO clinical_audit
+            (entity, entity_id, action, at, details, actor_id, actor_role, station_id, authorized_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            entity,
+            entity_id,
+            action,
+            now(),
+            details,
+            stamp.actor_id,
+            stamp.actor_role,
+            stamp.station_id,
+            authorized_by
+        ],
     )?;
     Ok(())
 }
@@ -1272,7 +1298,14 @@ pub fn emit_authorized_refund(
         ));
     }
 
-    audit(&tx, "payment", &id, "refund_emitted", Some(request_id))?;
+    audit_authorized(
+        &tx,
+        "payment",
+        &id,
+        "refund_emitted",
+        Some(request_id),
+        request.authorized_by.as_deref(),
+    )?;
     tx.commit()?;
 
     Ok(Payment {
@@ -2506,5 +2539,53 @@ mod tests {
         )
         .unwrap();
         assert!(charge(1_000, "PAYMENT").is_err());
+    }
+
+    /// Paso 27, rebanada 2: cada fila de la bitacora lleva quien la produjo.
+    /// El sello sale de la tabla TEMP de la sesion; sin sesion queda nulo y la
+    /// bitacora sigue escribiendose.
+    #[test]
+    fn audit_rows_carry_the_session_actor_and_station() {
+        let conn = test_conn("audit-actor");
+
+        // Sin sesion (como las pruebas de antes): fila sin actor, no un error.
+        open_cash_session(&conn, 10_000).unwrap();
+        let (actor, role): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT actor_id, actor_role FROM clinical_audit ORDER BY id DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(actor, None);
+        assert_eq!(role, None);
+        close_cash_session(&conn, 10_000, None).unwrap();
+
+        // Con sesion: la recepcionista abre caja y la fila la nombra.
+        let station = local_station(&conn).unwrap();
+        crate::db::set_session_actor(&conn, "user-recepcion", "RECEPCION", Some(&station.id))
+            .unwrap();
+        open_cash_session(&conn, 20_000).unwrap();
+        let (actor, role, station_id): (Option<String>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT actor_id, actor_role, station_id FROM clinical_audit
+                 ORDER BY id DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(actor.as_deref(), Some("user-recepcion"));
+        assert_eq!(role.as_deref(), Some("RECEPCION"));
+        assert_eq!(station_id, Some(station.id));
+
+        // El sello vive en la conexion, no en el archivo: no viaja al respaldo.
+        let backup = std::env::temp_dir()
+            .join("midoc-operations-tests")
+            .join(format!("audit-actor-backup-{}.db", std::process::id()));
+        crate::db::create_encrypted_backup(&conn, &backup).unwrap();
+        let restored = crate::db::open_encrypted(&backup, "clave-de-prueba").unwrap();
+        let stamp = crate::db::session_actor(&restored);
+        assert_eq!(stamp.actor_id, None);
+        let _ = std::fs::remove_file(&backup);
     }
 }
