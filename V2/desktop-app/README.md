@@ -13,6 +13,8 @@ Aplicacion instalable local-first de MiDoc V2: todo el dato clinico vive en una 
 ```bash
 npm install             # primera vez
 npm run tauri:dev       # app con Whisper local en desarrollo
+npm run lint            # ESLint (JS/TS recomendado + reglas de hooks)
+npm test                # pruebas del frontend (node --test)
 npm run build           # typecheck + build del frontend
 npm run tauri:build     # instalador de produccion con Whisper local
 npm run tauri:dev:cuda  # Whisper acelerado con NVIDIA CUDA
@@ -22,6 +24,28 @@ cd src-tauri
 cargo test           # pruebas de la capa Rust (incluye cifrado y migraciones)
 cargo clippy         # lint de Rust
 ```
+
+## Frontera IPC: un contrato por comando
+
+Toda respuesta del proceso nativo pasa por `src/ipc.ts`, que la valida con el
+esquema Zod declarado en `src/ipcSchemas.ts` antes de entregarla a la UI
+(REGLAS §3: validacion en las fronteras). Reglas de la casa:
+
+- **La tabla es exhaustiva.** Cada comando de `tauri::generate_handler!` tiene su
+  esquema; `src/ipcSchemas.test.ts` lee `lib.rs` y falla si falta alguno. Un
+  comando nuevo en Rust obliga a declarar su contrato aqui.
+- **Los objetos son laxos** (`z.looseObject`): se valida lo declarado y las
+  claves desconocidas se conservan. Un esquema incompleto nunca puede borrar
+  datos que la UI ya lee.
+- **Los errores no llevan contenido.** El mensaje nombra el campo y el tipo de
+  problema, jamas el valor recibido (REGLAS §4.2).
+- **El mock de navegador** (`src/ipcMock.ts`) valida contra los mismos esquemas y
+  se carga solo en desarrollo, con `import()` dinamico: no viaja en el
+  instalador. La prueba lo recorre entero para cazar deriva contra Rust.
+
+El webview corre bajo una **CSP estricta** (`src-tauri/tauri.conf.json`): sin
+scripts externos y sin red desde la pagina — todo el trafico sale por Rust. La
+variante `devCsp` afloja lo justo para Vite y su recarga en caliente.
 
 Requisitos de build en Windows: Rust (rustup, toolchain MSVC), VS Build Tools 2022 con C++, CMake, LLVM/libclang, Strawberry Perl y NASM (estos dos ultimos solo para compilar OpenSSL/SQLCipher la primera vez). Los scripts `tauri:dev` y `tauri:build` activan el feature nativo `whisper-local`; `cargo test` permanece liviano y no lo activa por defecto.
 

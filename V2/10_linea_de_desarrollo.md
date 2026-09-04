@@ -378,6 +378,15 @@ Checklist de salida:
 - Respaldo automatico cifrado de la base local y prueba de restauracion documentada.
 - Pruebas E2E de registro, agenda, sincronizacion, consulta, documentos, notificaciones y recuperacion.
 
+Endurecimiento del escritorio (2026-09-04, paquete D de la remediacion de la auditoria 2026-09-03): la app del medico tenia el webview sin CSP, la frontera IPC sin validacion y ningun lint, pese a que la regla 8 lo exige en todo cambio.
+
+- **CSP del webview.** `tauri.conf.json` deja de tener `csp: null`: sin scripts externos, sin `object-src`, sin marcos, y `connect-src` limitado al canal IPC — la red sale por Rust, no por la pagina. `devCsp` afloja lo justo para Vite y su recarga en caliente. Con mas de cien comandos expuestos, un XSS en texto renderizado (transcripcion, salida de IA) tenia acceso al expediente.
+- **Contrato por comando en la frontera IPC.** `src/ipcSchemas.ts` declara con Zod la forma de la respuesta de los 112 comandos y `call()` la valida antes de entregarla a la UI (REGLAS §3). Objetos laxos: se valida lo declarado y las claves desconocidas se conservan, para que un esquema incompleto no pueda borrar datos que la UI ya lee. Los mensajes de error nombran campo y problema, nunca el valor recibido (REGLAS §4.2).
+- **El mock de navegador sale del instalador.** `ipc.ts` adelgaza de 2080 a 51 lineas: el mock vive en `src/ipcMock.ts` y se carga con `import()` dinamico solo en desarrollo. Verificado sobre `dist/`: no se emite su chunk ni queda ninguna de sus cadenas. El bundle igual crece ~53 kB porque Zod pesa mas que el mock retirado; irrelevante en una app instalable.
+- **Lint.** `eslint.config.mjs` con recomendado de JS/TS y reglas de hooks, y script `npm run lint`. Los tres `any` que quedaban (`MedicalHistoryPayload` y el editor de antecedentes) pasan a `unknown` sin tocar el tipado del resto.
+
+Verificacion: `eslint` sin errores (4 avisos preexistentes de dependencias de hooks), `tsc` limpio, 119 pruebas de TS (+5: tabla exhaustiva contra `lib.rs`, rechazo de comando sin contrato, error que no arrastra contenido clinico, objetos laxos, y un barrido que corre el mock entero contra sus esquemas) y `vite build` ok. **Deriva encontrada por la prueba nueva:** el mock devolvia candidatos de paciente sin `birth_date`/`allergies`, encuentros con solo el `id`, pacientes sin responsable/tutor, ejecuciones de IA incompletas y una exportacion ARCO sin tutor — cinco desviaciones respecto a lo que Rust devuelve de verdad, corregidas. Pendiente de comprobacion en la app nativa: que la CSP no rompa impresion de recibo, descarga de modelos ni tema nocturno.
+
 ## Paso 10 - Operacion presencial
 
 | Campo | Definicion |
