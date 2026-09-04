@@ -91,10 +91,19 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      # La suite de integracion consulta tablas reales: sin este paso corria
+      # contra una base vacia. El servicio de Postgres del job arranca limpio en
+      # cada ejecucion, asi que las migraciones se aplican desde cero.
+      - name: Apply database migrations
+        run: npx prisma migrate deploy
+
       - name: Unit tests
-        run: npm test
+        run: npm run test:unit
 
       - name: Integration tests
+        run: npm run test:integration
+
+      - name: End-to-end tests
         run: npm run test:e2e
 
       - name: Production dependency audit

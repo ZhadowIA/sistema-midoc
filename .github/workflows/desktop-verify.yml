@@ -1,0 +1,105 @@
+name: Verify desktop-app
+
+# La app del medico no tenia integracion continua: el portal se verificaba en
+# cada push a main, pero el escritorio (frontend + capa Rust) solo se probaba a
+# mano, pese a que la regla 8 exige lint, tipos y pruebas en todo cambio.
+#
+# Este workflow NO construye el instalador: eso vive en el proceso del paso 9 y
+# necesita la cadena nativa (CMake, LLVM) que los features `whisper-local` y
+# `diarization-local` arrastran. Aqui se verifica el build por defecto, que es
+# liviano y no requiere esa cadena.
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - "V2/desktop-app/**"
+      - ".github/workflows/desktop-verify.yml"
+  pull_request:
+    paths:
+      - "V2/desktop-app/**"
+      - ".github/workflows/desktop-verify.yml"
+  workflow_dispatch:
+
+env:
+  APP_DIR: V2/desktop-app
+  # Node 24: `npm test` corre `node --test src/*.test.ts` sobre TypeScript y
+  # depende del borrado de tipos sin bandera experimental.
+  NODE_VERSION: "24.x"
+
+jobs:
+  frontend:
+    name: Frontend (lint, tipos, pruebas y build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ env.APP_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Frontend tests
+        run: npm test
+
+      # `npm run build` repetiria el typecheck que ya corrio arriba.
+      - name: Build
+        run: npx vite build
+
+  rust:
+    name: Rust (pruebas y clippy, sin features nativos)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri enlaza contra WebKitGTK en Linux, y `bundled-sqlcipher` y reqwest
+      # contra el OpenSSL del sistema (en Windows eso lo resuelve el
+      # `.cargo/config.toml` local, que no se versiona).
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev
+
+      - name: Rust toolchain
+        run: rustup component add clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ${{ env.APP_DIR }}/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('V2/desktop-app/src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Tests
+        run: cargo test
+
+      # Se exige cero advertencias en la biblioteca, que es el codigo que se
+      # distribuye. El codigo de prueba arrastra 12 advertencias menores
+      # (agrupacion de digitos, un cast redundante) todavia sin limpiar, asi que
+      # `--all-targets` no se puede exigir sin arreglarlas primero.
+      - name: Clippy
+        run: cargo clippy --lib -- -D warnings
