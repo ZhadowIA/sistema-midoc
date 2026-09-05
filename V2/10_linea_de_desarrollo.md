@@ -11,6 +11,8 @@
 - IA gobernada: capa multi-proveedor, consentimiento, seudonimización, trazas, revisión humana, costo/créditos, benchmark, transcripción de voz y reporte de uso al portal por referencia
 - SaaS/compliance: suscripción con gating por capacidad, 2FA con códigos de recuperación, incidentes, exportación de auditoría, retención y derechos ARCO (residencia local)
 
+**Correccion de residencia (2026-09-05):** se retiro del portal el expediente clinico que quedaba persistido en PostgreSQL desde el commit inicial de V2 (11 tablas, tres rutas y la pantalla `/medico/atencion`). Detalle en el paso 4. Pendiente propuesto: `PaymentRecord`, `CashDrawerSession` y `WaitlistEntry`, el mismo vestigio.
+
 **Paso 13 completado** (post-MVP, app del médico): directorio clínico de pacientes y expediente longitudinal con línea del tiempo editable. Rebanadas 1 (directorio), 2 (línea del tiempo), 3 (independencia agenda/directorio + anti-duplicados) y 4 (agenda semanal por bloques + "Atender" abre expediente) entregadas el 2026-06-12/13.
 
 **Decisiones de proveedores (2026-06-13):** SMS = **Twilio**, correo = **Resend** (doc 08), dominio web = **midocapp.com.mx** (2026-06-15). IA: base **Gemini 3 Flash** por costo con fallback (Gemini 3.1 Pro / GPT-5.5); transcripción **Whisper local** primero y nube (AssemblyAI/Deepgram) como respaldo con consentimiento; MedLM/HealthScribe descartados para MVP porque los generalistas los superan en benchmark (doc 11). La seguridad de medicación se resuelve con herramientas **deterministas** (DDInter, openFDA, RxNorm/RxClass), no con IA.
@@ -265,6 +267,25 @@ Checklist de salida:
 - Receta e indicaciones.
 - Cierre, firma y versionado de nota.
 - Auditoria de cambios criticos.
+
+### Correccion de residencia (2026-09-05): retiro del expediente clinico de la nube
+
+El portal en la nube arrastraba desde el commit inicial de V2 (`0bc949e`, 2026-06-09 — el mismo dia de la decision local-first) una estacion clinica completa que **persistia expediente en PostgreSQL**, en contra de la residencia 1 (`REGLAS_DESARROLLO.md` §2 y §4.1). Este paso 4 se reimplemento en la app del medico, pero la version nube nunca se retiro.
+
+Lo retirado en `v2/retirar-expediente-nube`:
+
+- **11 modelos Prisma y sus tablas**: `ClinicalRecord`, `Encounter`, `ClinicalNote`, `ClinicalNoteVersion`, `Prescription`, `PrescriptionItem`, `PatientInstruction`, `ClinicalDocument`, `DentalChart`, `DentalChartEntry`, `PeriodontalChartEntry`. Migracion destructiva `20260905120000_remove_cloud_clinical_records`. Conteo previo en desarrollo local: **0 filas en las 11**.
+- **8 enums** que solo servian a esas tablas (`EncounterStatus`, `EncounterSource`, `ClinicalRecordStatus`, `NoteType`, `NoteStatus`, `PrescriptionStatus`, `InstructionStatus`, `UploadSource`).
+- **Tres rutas montadas**: `POST|GET /api/admin/appointments/[appointmentId]/encounter`, `PATCH /api/admin/encounters/[encounterId]` y `POST /api/admin/encounters/[encounterId]/close`.
+- **`src/services/clinical/encounter-service.ts`** (unico escritor) y su prueba `tests/integration/clinical-encounter.integration.test.ts`.
+- **La pantalla `/medico/atencion/[appointmentId]`**, unica consumidora de esas rutas, y su enlace desde la agenda del portal (`/medico/agenda`). La agenda sobrevive como vista de solo lectura; la atencion clinica se hace en la app del medico.
+- **Las FK colgantes `encounterId`** de cuatro tablas vivas (`AiUsageLog`, `Consent`, `DocumentUploadLink`, `PrecheckinSubmission`). En `AiUsageLog` la columna ya se guardaba siempre nula: el reporte de uso de IA que llega por sync descarta el id local del encuentro (`sync-service.ts` lo acepta en el payload y no lo persiste), asi que el contrato con la app de escritorio no cambia.
+
+La app de escritorio nunca dependio de estas rutas: `src-tauri/src/sync.rs` solo consume `/api/admin/profile`, `/api/admin/services` y `/api/admin/availability`.
+
+Lo que la nube conserva y sigue siendo legitimo: el buzon temporal cifrado (`MailboxDocument`, sealed box X25519 purgado tras el ACK), los resumenes autorizados (`AuthorizedSummary`, secretbox con la llave solo en el fragmento del enlace) y `PrecheckinSubmission` con antecedentes sellados. Todos son contenido clinico **en transito**, cifrado de punta a punta y purgado, no expediente persistido.
+
+**Deuda relacionada, no ejecutada aqui:** `PaymentRecord`, `CashDrawerSession` y `WaitlistEntry` son el mismo vestigio de `0bc949e` — la caja y la lista de espera autoritativas viven en la app del medico desde el paso 10 y estos tres modelos no tienen **ninguna** referencia en `src/` ni en `tests/`. Se propone retirarlos en una rama aparte.
 
 ## Paso 5 - Medicina familiar/general
 
