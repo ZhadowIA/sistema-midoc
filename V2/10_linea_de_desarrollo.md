@@ -1,26 +1,23 @@
 # 10 - Linea de desarrollo V2
 
-## Estado actual (actualizado 2026-06-12)
+## Estado actual (actualizado 2026-09-04)
 
-**Pasos 0-12 completados.** Toda la implementación del MVP + piloto seguro + operación presencial + IA gobernada + SaaS/compliance está lista:
-- Portal nube (Next.js + PostgreSQL) con identidad, perfil, agenda, documentos, notificaciones
-- App del médico (Tauri 2 + React + SQLite cifrado) con expediente, SOAP, receta, sincronización E2E
-- Cifrado de extremo a extremo en buzón temporal y resúmenes autorizados
-- Pruebas E2E y validación del flujo completo desde registro hasta consulta
-- Operación presencial: recepción, lista de espera, consulta sin cita, recursos, caja diaria, cobros y recibos (todo local, clase OPERATIVO)
-- IA gobernada: capa multi-proveedor, consentimiento, seudonimización, trazas, revisión humana, costo/créditos, benchmark, transcripción de voz y reporte de uso al portal por referencia
-- SaaS/compliance: suscripción con gating por capacidad, 2FA con códigos de recuperación, incidentes, exportación de auditoría, retención y derechos ARCO (residencia local)
+**Entregados: pasos 0-15, 18-21 y 23-26.** El sistema completo de MiDoc V2 esta construido y probado:
 
-**Paso 13 completado** (post-MVP, app del médico): directorio clínico de pacientes y expediente longitudinal con línea del tiempo editable. Rebanadas 1 (directorio), 2 (línea del tiempo), 3 (independencia agenda/directorio + anti-duplicados) y 4 (agenda semanal por bloques + "Atender" abre expediente) entregadas el 2026-06-12/13.
+- **Portal nube** (Next.js 16 + PostgreSQL minimo): identidad y legal, perfil publico, agenda con hold, cuenta del paciente, preconsulta (antecedentes sellados o guiada por IA), buzon cifrado de documentos, notificaciones SMS/correo, suscripcion con gating por capacidad, 2FA e incidentes.
+- **App del medico** (Tauri 2 + React + SQLite cifrado): expediente longitudinal, notas SOAP firmadas, recetas con seguridad de medicacion determinista, odontologia completa (odontograma, indice de placa, presupuestos con saldos, laboratorio), operacion presencial con caja y recibos, IA gobernada con consentimiento y creditos, transcripcion local con Whisper y anamnesis asistida.
+- **Entre ambos:** sincronizacion con cifrado de extremo a extremo, buzon que se purga tras el ACK y por TTL, y reporte de uso de IA por referencia.
 
-**Decisiones de proveedores (2026-06-13):** SMS = **Twilio**, correo = **Resend** (doc 08), dominio web = **midocapp.com.mx** (2026-06-15). IA: base **Gemini 3 Flash** por costo con fallback (Gemini 3.1 Pro / GPT-5.5); transcripción **Whisper local** primero y nube (AssemblyAI/Deepgram) como respaldo con consentimiento; MedLM/HealthScribe descartados para MVP porque los generalistas los superan en benchmark (doc 11). La seguridad de medicación se resuelve con herramientas **deterministas** (DDInter, openFDA, RxNorm/RxClass), no con IA.
+**En progreso:**
 
-**Extensión de la línea (pasos 14-17, planeados 2026-06-13):** estos pasos llevan a producción los pendientes acordados, en orden de dependencia:
+- **Paso 22 — Diarizacion local.** Logica y UI entregadas; los backends nativos (sherpa-onnx) esperan validacion en staging.
+- **Paso 27 — Estaciones y separacion de roles.** Rebanadas 1 (frontera de datos sellada, 2026-08-02) y 2 (llave por persona, compuerta de comandos, actor en bitacora, 2026-09-03) entregadas; restan 3 (dos bases fisicas) y 4 (relevo cifrado entre estaciones).
 
-- **Paso 14 — Seguridad de medicación determinista (sin IA).** Interacciones, alergias cruzadas y duplicidad terapéutica con fuentes públicas auditables. No depende de contratos externos; puede arrancar de inmediato.
-- **Paso 15 — Transcripción local real (Whisper) y descarga de modelo.** Sustituye el proveedor fake por whisper.cpp real, con descarga gestionada del modelo recomendado y respaldo en nube. Construye sobre la recomendación de modelo ya entregada (paso 11 rebanada 7).
-- **Paso 16 — Cableado de proveedores de IA reales en staging (BAA).** Adaptadores reales de LLM (Gemini base + fallback) y transcripción en nube, bajo BAA/contrato, con la gobernanza local intacta.
-- **Paso 17 — Endurecimiento de producción: notificaciones y pago reales.** Twilio y Resend reales con dominios propios, y pasarela de pago real para la suscripción.
+**Planeados:** paso 16 (habilitacion legal de los proveedores de IA — tramite, no codigo; **bloquea el uso con pacientes reales** de 11, 15, 21, 22, 26 y 28), paso 17 (notificaciones y pago reales) y paso 28 (conversacion clinica por paciente).
+
+**Decisiones de proveedores (2026-06-13):** SMS = **Twilio**, correo = **Resend** (doc 08), dominio web = **midocapp.com.mx** (2026-06-15). IA: base **Gemini 3 Flash** por costo con fallback (Gemini 3.1 Pro / GPT-5.5); transcripcion **Whisper local** primero y nube (OpenAI/Deepgram) como respaldo con consentimiento, mediada por el portal; MedLM/HealthScribe descartados para MVP porque los generalistas los superan en benchmark (doc 11). La seguridad de medicacion se resuelve con herramientas **deterministas** (DDInter, openFDA, RxNorm/RxClass), no con IA.
+
+**Remediacion de la auditoria (2026-09-03/04).** Una revision completa del repositorio encontro catorce hallazgos; el plan de correccion vive en `docs/superpowers/plans/2026-09-03-remediacion-auditoria.md`. Entregados: **A** (el cron de produccion llamaba a rutas inexistentes, asi que la cola de notificaciones no corria ni se purgaba el buzon; ademas TTL de preconsultas), **B** (certificado de firma y contrasenas fuera del repositorio), **C** (compuerta de comandos por rol, rebanada 2 del paso 27), **D** (CSP del webview, contrato Zod en la frontera IPC, mock fuera del instalador, lint), **E** (integracion continua del escritorio y suites separadas) y **H** (documentacion al dia). Pendientes: **F** (IA de texto mediada por el portal — decidido, se implementa con el paso 16) y **G** (paquete de contratos compartidos y reorganizacion de carpetas).
 
 ## Por que usar linea de desarrollo y no roadmap
 
@@ -75,7 +72,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 8 | Odontologia | `ui-ux-pro-max` | Consulta dental con odontograma, periodontograma y plan. | ✅ DONE |
 | 9 | Piloto seguro | `playwright` | Version lista para piloto real controlado. | ✅ DONE |
 | 10 | Operacion presencial | `impeccable` | Recepcion, caja, lista de espera y consulta sin cita. | ✅ DONE |
-| 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | 🚧 IN PROGRESS (fundacion + SOAP asistido) |
+| 11 | IA gobernada | `codex-security:security-scan` | IA clinica con trazas, consentimiento, feedback y creditos. | ✅ DONE (rebanadas 1-6; el proveedor real depende del paso 16) |
 | 12 | SaaS/compliance | `analytics` | Planes, gating, ARCO, retencion, incidentes y 2FA. | ✅ DONE |
 | 13 | Directorio y expediente longitudinal | `impeccable` | Directorio de pacientes y linea del tiempo clinica editable. | ✅ DONE |
 | 14 | Seguridad de medicacion determinista | `codex-security:security-scan` | Interacciones, alergias cruzadas y duplicidad sin IA, con fuente citada. | ✅ DONE |
@@ -91,7 +88,7 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 24 | Degradacion asistida de proveedor de IA | `superpowers:test-driven-development` | Ante sobrecarga del proveedor (503/429), el medico ve la causa y elige reintentar o generar con otro modelo disponible — nunca fallback silencioso. | ✅ DONE |
 | 25 | Base de medicamentos a escala | `superpowers:writing-plans` | Pipeline reproducible de fuentes publicas + catalogo mexicano de marcas; verificacion con interacciones de par y de tres clases (triple whammy), base ONChigh de dominio publico. | ✅ DONE (swap ONChigh + triple whammy + apendice ONChigh completo sin QT + marcas MX por regla; pendiente: regla QT curada, RxClass reproducible, pipeline BRSDM completo, publicar endpoints/ops) |
 | 26 | Perfil dentista completo (paridad Dentis365 + IA dental) | `superpowers:writing-plans` | Odontograma visual interactivo, indice de placa, plan de tratamiento presupuestado con saldos por avance, ordenes de laboratorio y capa IA dental (dictado al odontograma, nota de evolucion, indicaciones post-operatorias). | ✅ DONE (rebanadas 1-6 completas: odontograma visual y anatomico, indice de placa, presupuesto con saldos, laboratorio, dictado al odontograma, nota de evolucion e indicaciones post-operatorias; el uso DENTAL_EVOLUTION queda listo para el proveedor real del paso 16) |
-| 27 | Estaciones y separacion de roles (recepcion / clinica) | `superpowers:writing-plans` | Recepcion opera caja y agenda sin acceso al expediente; frontera de datos sellada, llaves por persona y relevo cifrado entre estaciones. | 🚧 IN PROGRESS (rebanada 1 entregada; restan 2, 3 y 4) |
+| 27 | Estaciones y separacion de roles (recepcion / clinica) | `superpowers:writing-plans` | Recepcion opera caja y agenda sin acceso al expediente; frontera de datos sellada, llaves por persona y relevo cifrado entre estaciones. | 🚧 IN PROGRESS (rebanadas 1 y 2 entregadas; restan 3 y 4) |
 | 28 | Conversacion clinica con IA por paciente | `superpowers:writing-plans` | Hilo de IA por paciente que conserva el contexto entre consultas, se abre dentro de la consulta y no escribe en el expediente por si mismo. | 🔜 PLANEADO |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
@@ -859,6 +856,23 @@ La seudonimizacion de `redact()` **no es anonimizacion**. Quitar el nombre de un
 Decision de base (2026-06-13, doc 11): Gemini 3 Flash como base por costo; los LLM generalistas superan a las herramientas clinicas especializadas en benchmark (Nature Medicine 2026), por lo que MedLM y HealthScribe quedan descartados para el MVP. GPT-5.5 / Gemini Pro / Opus se reservan como fallback de seguridad para casos delicados.
 
 Pasos bloqueados por este, y razon por la que conviene desatorarlo antes que nada: 11 (adaptador real), 15 (respaldo de transcripcion en nube), 21, 22 (transcripcion en nube de la Ruta B), 26 (uso `DENTAL_EVOLUTION`) y 28 (chat con pacientes reales).
+
+### Decision (2026-09-04): la IA de texto tambien sale por el portal
+
+Hallazgo de la auditoria del 2026-09-03: `ai.rs` llama a Gemini y a OpenAI **directamente desde la maquina del medico**, con la llave en `MIDOC_GEMINI_API_KEY` / `MIDOC_OPENAI_API_KEY` leidas de un `.env` local. Eso contradice lo que ya se habia decidido para la transcripcion (`docs/superpowers/plans/2026-06-30-ruta-b-faseado.md`, "Ruta B"), donde se descarto el adaptador directo por dos razones que valen igual para el texto.
+
+**Se extiende la Ruta B al texto.** La llamada al proveedor sale del portal (`POST /api/sync/ai/text`, autenticada con el device token), que verifica creditos **antes** de gastar, guarda la llave en Key Vault y devuelve la respuesta **sin persistirla** — misma garantia que `cloud-transcription-service.ts`. La seudonimizacion, el consentimiento y las trazas de run siguen ocurriendo en la app del medico, que es donde vive el expediente.
+
+Por que esta es la opcion correcta y no la contraria:
+
+1. **La llave no se puede repartir.** Un instalable no puede llevar la llave dentro (es extraible) ni exigirle a cada medico que edite un `.env`. La alternativa —que cada medico contrate su propia llave— le traslada el tramite del paso 16 a cada consultorio, uno por uno.
+2. **La cadena contractual solo cierra asi.** Este paso fija responsable (medico) → encargado (MiDoc) → subencargado (proveedor). Si quien llama al proveedor es la maquina del medico con su propia llave, MiDoc deja de ser encargado en esa llamada y el medico queda contratando directo, que es justo lo que el paso quiere evitar.
+3. **El cobro por creditos exige medir antes de gastar.** Hoy la app reporta el uso *despues* (`sync/ai-usage`), asi que el limite se comprueba tarde y del lado del cliente.
+4. **Cambiar de proveedor deja de exigir una version nueva** de la app instalada en cada consultorio.
+
+Lo que **no** cambia: nada clinico se persiste en la nube (el portal es un paso, no un almacen), el flujo manual no depende de IA, y la degradacion asistida del paso 24 se conserva — el portal devuelve la causa y los modelos alternos, y el medico sigue eligiendo.
+
+Alcance: la implementacion pertenece a este paso 16 y no se adelanta (REGLAS §1). Incluye el servicio de texto en el portal con su contrato de proveedor intercambiable y sus creditos, el `PortalTextProvider` en `ai.rs`, y degradar `MIDOC_*_API_KEY` a **modo desarrollador** tras un feature de cargo que los scripts de `tauri:dev` activan y los de `tauri:build` no, para que la ruta directa no exista en el binario que se distribuye.
 
 ## Paso 17 - Produccion: notificaciones y pago reales
 

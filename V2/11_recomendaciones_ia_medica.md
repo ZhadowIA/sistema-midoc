@@ -45,6 +45,8 @@ Esfuerzo recomendado por modelo:
 | Benchmark clinico | Compara proveedores con audios y casos representativos antes de tomar una decision final. |
 | Politicas de seguridad | Definen consentimiento, retencion/descarte de audio, manejo de PHI/datos sensibles y revision humana. |
 
+**Quien llama al proveedor (decision 2026-09-04).** El portal, no la maquina del medico — para transcripcion (Ruta B, ya decidido) y tambien para texto. La app del medico seudonimiza, pide consentimiento y guarda la traza; el portal media la llamada, verifica creditos antes de gastar, custodia la llave y no persiste el contenido. Motivo: la llave no se puede repartir en un instalable, y la cadena responsable → encargado → subencargado del paso 16 solo cierra si quien contrata al proveedor es MiDoc. Detalle y alcance en `10_linea_de_desarrollo.md`, paso 16.
+
 ## Proveedores a evaluar
 
 ### LLM (precios junio 2026, por 1M tokens entrada/salida)
