@@ -3669,11 +3669,13 @@ mod tests {
         grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
 
         // Nota con payload dental capturado en la sesion.
-        let mut content = NoteContent::default();
-        content.specialty = serde_json::json!({
-            "odontogram": { "16": { "status": "MISSING", "surfaces": {}, "notes": "" } },
-            "plaque": { "17": ["M"] }
-        });
+        let content = NoteContent {
+            specialty: serde_json::json!({
+                "odontogram": { "16": { "status": "MISSING", "surfaces": {}, "notes": "" } },
+                "plaque": { "17": ["M"] }
+            }),
+            ..Default::default()
+        };
         clinical::save_note(&conn, &encounter_id, &content).unwrap();
 
         let draft = assist_text(&conn, &encounter_id, USAGE_DENTAL_EVOLUTION, &registry).unwrap();
@@ -4417,7 +4419,7 @@ mod tests {
         out.extend_from_slice(&16u16.to_le_bytes());
         out.extend_from_slice(b"data");
         out.extend_from_slice(&data_len.to_le_bytes());
-        out.extend(std::iter::repeat(0u8).take((sample_count * 2) as usize));
+        out.extend(std::iter::repeat_n(0u8, sample_count * 2));
         out
     }
 

@@ -97,9 +97,5 @@ jobs:
       - name: Tests
         run: cargo test
 
-      # Se exige cero advertencias en la biblioteca, que es el codigo que se
-      # distribuye. El codigo de prueba arrastra 12 advertencias menores
-      # (agrupacion de digitos, un cast redundante) todavia sin limpiar, asi que
-      # `--all-targets` no se puede exigir sin arreglarlas primero.
       - name: Clippy
-        run: cargo clippy --lib -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings

@@ -1755,7 +1755,7 @@ mod tests {
     #[test]
     fn cash_close_totals_net_of_refunds_and_freezes_day() {
         let conn = test_conn("cash-close");
-        let session = open_cash_session(&conn, 100_00).unwrap();
+        let session = open_cash_session(&conn, 10_000).unwrap();
 
         let pay = |amount: i64, method: &str, kind: &str| {
             register_payment(
@@ -1773,17 +1773,17 @@ mod tests {
             )
             .unwrap();
         };
-        pay(300_00, "CASH", "PAYMENT");
-        pay(200_00, "CASH", "DEPOSIT");
-        pay(150_00, "CARD", "PAYMENT");
-        pay(50_00, "CASH", "REFUND"); // reembolso en efectivo
+        pay(30_000, "CASH", "PAYMENT");
+        pay(20_000, "CASH", "DEPOSIT");
+        pay(15_000, "CARD", "PAYMENT");
+        pay(5_000, "CASH", "REFUND"); // reembolso en efectivo
 
         let summary = cash_summary(&conn, &session.id).unwrap();
         assert_eq!(summary.payment_count, 4);
-        // Neto: 300 + 200 + 150 - 50 = 600 (en pesos) => 600_00 centavos.
-        assert_eq!(summary.net_total_cents, 600_00);
-        // Efectivo esperado: fondo 100 + (300 + 200 - 50) = 550 => 550_00.
-        assert_eq!(summary.expected_cash_cents, 550_00);
+        // Neto: 300 + 200 + 150 - 50 = 600 (en pesos) => 60_000 centavos.
+        assert_eq!(summary.net_total_cents, 60_000);
+        // Efectivo esperado: fondo 100 + (300 + 200 - 50) = 550 => 55_000.
+        assert_eq!(summary.expected_cash_cents, 55_000);
 
         let cash_total = summary
             .by_method
@@ -1791,11 +1791,11 @@ mod tests {
             .find(|m| m.method == "CASH")
             .unwrap()
             .total_cents;
-        assert_eq!(cash_total, 450_00);
+        assert_eq!(cash_total, 45_000);
 
-        let closed = close_cash_session(&conn, 550_00, Some("Cuadra")).unwrap();
+        let closed = close_cash_session(&conn, 55_000, Some("Cuadra")).unwrap();
         assert!(closed.session.closed_at.is_some());
-        assert_eq!(closed.session.closing_counted_cents, Some(550_00));
+        assert_eq!(closed.session.closing_counted_cents, Some(55_000));
 
         // Dia congelado: no hay caja abierta para cobrar.
         assert!(get_open_session(&conn).unwrap().is_none());
