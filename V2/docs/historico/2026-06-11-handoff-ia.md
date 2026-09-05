@@ -1,5 +1,7 @@
 # Handoff para IA — contexto vivo de trabajo
 
+> **Archivado.** Retrato del proyecto al 2026-06-11 (cierre del diseño del paso 9). Se conserva por su bitácora y sus detalles de implementación; para trabajar hoy, usa `docs/HANDOFF.md`.
+
 > Documento de traspaso entre sesiones de IA. Se actualiza al final de cada unidad
 > de trabajo. Si vas a continuar, **lee esto primero** y luego `CLAUDE.md` y
 > `V2/REGLAS_DESARROLLO.md`. Mantén este archivo al día: añade lo no obvio, no

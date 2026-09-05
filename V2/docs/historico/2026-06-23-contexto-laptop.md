@@ -1,5 +1,7 @@
 # Contexto de trabajo — continuar desde la laptop
 
+> **Archivado.** Notas del traslado del desarrollo a la laptop (2026-06-23). Se conserva por el detalle de la puesta a punto; para trabajar hoy, usa `docs/HANDOFF.md`.
+
 > Documento de handoff para retomar el desarrollo de **Sistema MiDoc V2** en otro
 > equipo. Última actualización: 2026-06-23.
 

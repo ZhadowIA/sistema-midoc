@@ -74,9 +74,9 @@
 | Llaves minisign generadas | ⏳ | `~/.tauri/midoc-updater.key` | `paso-9-actualizacion-minisign.md` |
 | Script de firma de código | ✅ | `scripts/sign-windows-installer.ps1` | Inline en documentación |
 | Script de generación de llaves | ✅ | `scripts/generate-signing-keys.ps1` | Inline en documentación |
-| E2E tests (step 9 suite) | ✅ | Existentes, documentados | `HANDOFF_IA.md` |
-| Healthchecks y readiness | ✅ Parcial | Portal + App | Documentado en `HANDOFF_IA.md` |
-| Limpieza de jobs + purga de buzón | ✅ Parcial | Base + Portal | Documentado en `HANDOFF_IA.md` |
+| E2E tests (step 9 suite) | ✅ | Existentes, documentados | `docs/historico/2026-06-11-handoff-ia.md` |
+| Healthchecks y readiness | ✅ Parcial | Portal + App | Documentado en `docs/historico/2026-06-11-handoff-ia.md` |
+| Limpieza de jobs + purga de buzón | ✅ Parcial | Base + Portal | Documentado en `docs/historico/2026-06-11-handoff-ia.md` |
 
 ---
 
