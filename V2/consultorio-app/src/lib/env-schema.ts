@@ -25,7 +25,13 @@ const emailSenderSchema = z.string().trim().refine(
 export const envSchema = z
   .object({
     DATABASE_URL: z.string().min(1),
-    NEXTAUTH_SECRET: z.string().min(1),
+    // Secreto con el que se firman sesiones y desafios de 2FA. `SESSION_SECRET`
+    // es el nombre correcto; `NEXTAUTH_SECRET` es el heredado del andamiaje
+    // inicial —V2 nunca uso next-auth— y se sigue aceptando para no forzar una
+    // rotacion en produccion. Basta definir uno; si estan los dos, gana
+    // `SESSION_SECRET`. Cambiar su valor invalida los desafios de 2FA en vuelo.
+    SESSION_SECRET: optionalNonEmptyString,
+    NEXTAUTH_SECRET: optionalNonEmptyString,
     APP_BASE_URL: z.url(),
     QUESTIONNAIRE_TOKEN_SECRET: z.string().min(1),
     TERMS_VERSION: z.string().min(1),
@@ -81,6 +87,14 @@ export const envSchema = z
     DEEPGRAM_TRANSCRIPTION_BAA_APPROVED: z.stringbool().default(false)
   })
   .superRefine((value, ctx) => {
+    if (!value.SESSION_SECRET && !value.NEXTAUTH_SECRET) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["SESSION_SECRET"],
+        message: "Set SESSION_SECRET (or the legacy NEXTAUTH_SECRET)"
+      });
+    }
+
     if (value.SMS_PROVIDER.toLowerCase() !== "twilio") {
       if (value.WHATSAPP_PROVIDER.toLowerCase() !== "twilio") {
         // continua para evaluar el gate de transcripcion mas abajo.
@@ -183,6 +197,13 @@ export const envSchema = z
         });
       }
     }
-  });
+  })
+  // Un solo nombre hacia adentro: el codigo lee `env.SESSION_SECRET` sin saber
+  // por cual de las dos variables llego. El `?? ""` es inalcanzable —el refine
+  // de arriba ya fallo si faltaban ambas— y solo existe para el tipo.
+  .transform((value) => ({
+    ...value,
+    SESSION_SECRET: value.SESSION_SECRET ?? value.NEXTAUTH_SECRET ?? ""
+  }));
 
 export type Env = z.infer<typeof envSchema>;
