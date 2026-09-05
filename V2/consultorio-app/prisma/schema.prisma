@@ -3,6 +3,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Clasificacion de datos (REGLAS_DESARROLLO.md §4.4): cada modelo declara su
+// clase arriba, con `/// Clase:`. La prueba `tests/unit/prisma-classification.test.ts`
+// falla si alguno se queda sin ella.
+//
+//   CLINICO   — contenido del expediente. Solo vive en la app del medico; en la
+//               nube unicamente en transito, cifrado y con purga.
+//   CONTACTO  — identidad y datos de contacto, el minimo para agendar y avisar.
+//   OPERATIVO — agenda, caja, seguridad, SaaS y metadatos por referencia.
+//   FACTURABLE — concepto cobrado que el medico libera (paso 27); hoy solo existe
+//               en la app del medico, no hay ningun modelo de esta clase aqui.
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -315,6 +326,7 @@ enum AiUsageStatus {
   REJECTED
 }
 
+/// Clase: CONTACTO — identidad y credenciales de la cuenta.
 model User {
   id                     String               @id @default(cuid())
   email                  String               @unique
@@ -367,6 +379,7 @@ model User {
   @@index([role, phone])
 }
 
+/// Clase: CONTACTO — perfil publico del medico y datos del consultorio.
 model DoctorProfile {
   id                   String                  @id @default(cuid())
   userId               String                  @unique
@@ -400,6 +413,7 @@ model DoctorProfile {
   subscriptions        DoctorSubscription[]
 }
 
+/// Clase: OPERATIVO — material del perfil publico.
 model DoctorGalleryImage {
   id              String        @id @default(cuid())
   doctorProfileId String
@@ -412,6 +426,7 @@ model DoctorGalleryImage {
   @@index([doctorProfileId, displayOrder])
 }
 
+/// Clase: CONTACTO — resena con nombre y correo de quien la escribe.
 model DoctorReview {
   id                String        @id @default(cuid())
   doctorProfileId   String
@@ -427,6 +442,7 @@ model DoctorReview {
   @@index([doctorProfileId, createdAt])
 }
 
+/// Clase: OPERATIVO — catalogo de servicios y precios.
 model DoctorService {
   id               String              @id @default(cuid())
   doctorProfileId  String
@@ -447,6 +463,7 @@ model DoctorService {
   @@index([doctorProfileId, status])
 }
 
+/// Clase: OPERATIVO — reglas de disponibilidad publicadas.
 model DoctorAvailability {
   id               String               @id @default(cuid())
   doctorProfileId  String
@@ -464,6 +481,7 @@ model DoctorAvailability {
   doctorProfile    DoctorProfile        @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
 }
 
+/// Clase: OPERATIVO — bloqueos y excepciones de agenda.
 model DoctorAvailabilityBlock {
   id              String        @id @default(cuid())
   doctorProfileId String
@@ -476,6 +494,7 @@ model DoctorAvailabilityBlock {
   @@index([doctorProfileId, startsAt, endsAt])
 }
 
+/// Clase: CONTACTO — identidad minima para agendar y notificar.
 model Patient {
   id                    String                @id @default(cuid())
   ownerDoctorId         String
@@ -521,6 +540,7 @@ model Patient {
   @@unique([ownerDoctorId, email])
 }
 
+/// Clase: CONTACTO — responsable o tutor (paso 18).
 model PatientContact {
   id            String   @id @default(cuid())
   patientId     String
@@ -534,6 +554,7 @@ model PatientContact {
   patient       Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
 }
 
+/// Clase: OPERATIVO — la cita vive en ambos lados; `reason` es el minimo para atender.
 model Appointment {
   id                 String            @id @default(cuid())
   doctorId           String
@@ -570,6 +591,7 @@ model Appointment {
   @@index([patientId, scheduledStart])
 }
 
+/// Clase: OPERATIVO — apartado temporal del horario.
 model AppointmentHold {
   id             String      @id @default(cuid())
   doctorId       String
@@ -591,6 +613,7 @@ model AppointmentHold {
   @@index([doctorId, slotStart, slotEnd, status])
 }
 
+/// Clase: CLINICO — **vestigio del portal previo al giro local-first (2026-06-09)**. Contradice la residencia 1: lo clinico vive en la app del medico. Sigue con rutas montadas; retirarlo es decision del dueno (ver 10_linea, paso 27).
 model ClinicalRecord {
   id                 String               @id @default(cuid())
   doctorId           String
@@ -608,6 +631,7 @@ model ClinicalRecord {
   @@unique([doctorId, patientId])
 }
 
+/// Clase: CLINICO — **vestigio del portal previo al giro local-first (2026-06-09)**. Contradice la residencia 1: lo clinico vive en la app del medico. Sigue con rutas montadas; retirarlo es decision del dueno (ver 10_linea, paso 27).
 model Encounter {
   id                   String               @id @default(cuid())
   doctorId             String
@@ -639,6 +663,7 @@ model Encounter {
   @@index([patientId, openedAt])
 }
 
+/// Clase: CLINICO — **vestigio del portal previo al giro local-first (2026-06-09)**. Contradice la residencia 1: lo clinico vive en la app del medico. Sigue con rutas montadas; retirarlo es decision del dueno (ver 10_linea, paso 27).
 model ClinicalNote {
   id               String        @id @default(cuid())
   encounterId      String        @unique
@@ -659,6 +684,7 @@ model ClinicalNote {
   versions         ClinicalNoteVersion[]
 }
 
+/// Clase: CLINICO — **vestigio del portal previo al giro local-first (2026-06-09)**. Contradice la residencia 1: lo clinico vive en la app del medico. Sigue con rutas montadas; retirarlo es decision del dueno (ver 10_linea, paso 27).
 model ClinicalNoteVersion {
   id               String       @id @default(cuid())
   clinicalNoteId   String
@@ -673,6 +699,7 @@ model ClinicalNoteVersion {
   @@unique([clinicalNoteId, versionNumber])
 }
 
+/// Clase: CLINICO — **vestigio del portal previo al giro local-first (2026-06-09)**. Contradice la residencia 1: lo clinico vive en la app del medico. Sigue con rutas montadas; retirarlo es decision del dueno (ver 10_linea, paso 27).
 model Prescription {
   id          String             @id @default(cuid())
   encounterId String
@@ -690,6 +717,7 @@ model Prescription {
   items       PrescriptionItem[]
 }
 
+/// Clase: CLINICO — **vestigio del portal previo al giro local-first (2026-06-09)**. Contradice la residencia 1: lo clinico vive en la app del medico. Sigue con rutas montadas; retirarlo es decision del dueno (ver 10_linea, paso 27).
 model PrescriptionItem {
   id             String       @id @default(cuid())
   prescriptionId String
@@ -704,6 +732,7 @@ model PrescriptionItem {
   prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
 }
 
+/// Clase: CLINICO — **vestigio del portal previo al giro local-first (2026-06-09)**. Contradice la residencia 1: lo clinico vive en la app del medico. Sigue con rutas montadas; retirarlo es decision del dueno (ver 10_linea, paso 27).
 model PatientInstruction {
   id          String            @id @default(cuid())
   encounterId String
@@ -716,6 +745,7 @@ model PatientInstruction {
   encounter   Encounter         @relation(fields: [encounterId], references: [id], onDelete: Cascade)
 }
 
+/// Clase: CLINICO en transito — sellado, se purga tras el ACK o por TTL.
 model PrecheckinSubmission {
   id           String          @id @default(cuid())
   appointmentId String?
@@ -747,6 +777,7 @@ model PrecheckinSubmission {
   @@unique([appointmentId, patientId, kind])
 }
 
+/// Clase: CLINICO — **vestigio del portal previo al giro local-first (2026-06-09)**. Contradice la residencia 1: lo clinico vive en la app del medico. Sigue con rutas montadas; retirarlo es decision del dueno (ver 10_linea, paso 27).
 model ClinicalDocument {
   id               String           @id @default(cuid())
   doctorId         String
@@ -775,6 +806,7 @@ model ClinicalDocument {
   @@index([patientId, category, createdAt])
 }
 
+/// Clase: OPERATIVO — token de carga con expiracion y proposito unico.
 model DocumentUploadLink {
   id             String           @id @default(cuid())
   doctorId       String
@@ -798,6 +830,7 @@ model DocumentUploadLink {
   @@index([patientId, expiresAt, status])
 }
 
+/// Clase: OPERATIVO — cola de envio; el cuerpo lleva contacto y cita, nunca contenido clinico.
 model Notification {
   id                String             @id @default(cuid())
   doctorId          String?
@@ -828,6 +861,7 @@ model Notification {
   @@index([status, scheduledFor])
 }
 
+/// Clase: OPERATIVO — enlace corto con expiracion.
 model ShortLink {
   id              String        @id @default(cuid())
   code            String        @unique
@@ -850,6 +884,7 @@ model ShortLink {
   @@index([appointmentId])
 }
 
+/// Clase: OPERATIVO — evidencia de aceptacion de terminos y privacidad.
 model LegalAcceptance {
   id            String            @id @default(cuid())
   userId        String?
@@ -866,6 +901,7 @@ model LegalAcceptance {
   @@index([documentType, version])
 }
 
+/// Clase: OPERATIVO — registro de consentimiento; el contenido consentido no vive aqui.
 model Consent {
   id           String      @id @default(cuid())
   patientId    String
@@ -884,6 +920,7 @@ model Consent {
   @@index([patientId, type, grantedAt])
 }
 
+/// Clase: OPERATIVO — seguridad de cuenta, un solo uso.
 model PasswordResetToken {
   id             String              @id @default(cuid())
   userId         String
@@ -903,6 +940,7 @@ model PasswordResetToken {
   @@index([userId, codeHash, status, expiresAt])
 }
 
+/// Clase: OPERATIVO — seguridad de cuenta, un solo uso.
 model EmailVerificationToken {
   id             String                       @id @default(cuid())
   userId         String
@@ -919,6 +957,7 @@ model EmailVerificationToken {
   @@index([userId, status, expiresAt])
 }
 
+/// Clase: OPERATIVO — sesion del medico, token hasheado y revocable.
 model AuthSession {
   id         String            @id @default(cuid())
   userId     String
@@ -934,6 +973,7 @@ model AuthSession {
   @@index([userId, status, expiresAt])
 }
 
+/// Clase: OPERATIVO — bitacora por referencia; prohibido contenido clinico.
 model AuditLog {
   id           String   @id @default(cuid())
   actorUserId  String?
@@ -950,6 +990,7 @@ model AuditLog {
   actorUser    User?    @relation("ActorAuditLogs", fields: [actorUserId], references: [id], onDelete: SetNull)
 }
 
+/// Clase: OPERATIVO — lista de espera de la operacion presencial.
 model WaitlistEntry {
   id               String         @id @default(cuid())
   doctorId         String
@@ -968,6 +1009,7 @@ model WaitlistEntry {
   service          DoctorService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
 }
 
+/// Clase: OPERATIVO — consultorios y equipos.
 model PhysicalResource {
   id              String            @id @default(cuid())
   doctorId        String
@@ -981,6 +1023,7 @@ model PhysicalResource {
   bookings        ResourceBooking[]
 }
 
+/// Clase: OPERATIVO — asignacion de recurso a una cita.
 model ResourceBooking {
   id                String                @id @default(cuid())
   resourceId        String
@@ -996,6 +1039,7 @@ model ResourceBooking {
   @@index([resourceId, startsAt, endsAt])
 }
 
+/// Clase: OPERATIVO — cobro; la caja autoritativa vive en la app del medico (paso 10).
 model PaymentRecord {
   id              String         @id @default(cuid())
   doctorId        String
@@ -1017,6 +1061,7 @@ model PaymentRecord {
   recordedByUser  User?          @relation("PaymentRecorder", fields: [recordedByUserId], references: [id], onDelete: SetNull)
 }
 
+/// Clase: OPERATIVO — sesion de caja; autoritativa en la app del medico.
 model CashDrawerSession {
   id             String           @id @default(cuid())
   doctorId       String
@@ -1032,6 +1077,7 @@ model CashDrawerSession {
   closedByUser   User?            @relation("CashDrawerCloser", fields: [closedByUserId], references: [id], onDelete: SetNull)
 }
 
+/// Clase: OPERATIVO — catalogo SaaS.
 model SubscriptionPlan {
   id              String               @id @default(cuid())
   code            String               @unique
@@ -1047,6 +1093,7 @@ model SubscriptionPlan {
   subscriptions   DoctorSubscription[]
 }
 
+/// Clase: OPERATIVO — suscripcion y gating por capacidad.
 model DoctorSubscription {
   id                String             @id @default(cuid())
   doctorProfileId   String
@@ -1063,6 +1110,7 @@ model DoctorSubscription {
   plan              SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Restrict)
 }
 
+/// Clase: OPERATIVO — incidentes de seguridad y privacidad.
 model SecurityIncident {
   id          String           @id @default(cuid())
   // OPERATIVO: registro de incidentes de seguridad/privacidad. Prohibido contenido
@@ -1082,6 +1130,7 @@ model SecurityIncident {
   @@index([doctorId, detectedAt])
 }
 
+/// Clase: OPERATIVO — secreto TOTP cifrado en reposo.
 model TwoFactorCredential {
   id              String                  @id @default(cuid())
   // OPERATIVO: seguridad de cuenta. Secreto TOTP cifrado en reposo; sin contenido clinico.
@@ -1095,6 +1144,7 @@ model TwoFactorCredential {
   recoveryCodes   TwoFactorRecoveryCode[]
 }
 
+/// Clase: OPERATIVO — codigo de recuperacion, solo su hash.
 model TwoFactorRecoveryCode {
   id           String              @id @default(cuid())
   // OPERATIVO: codigo de recuperacion de 2FA, almacenado solo como hash; un solo uso.
@@ -1107,6 +1157,7 @@ model TwoFactorRecoveryCode {
   @@index([credentialId])
 }
 
+/// Clase: OPERATIVO — configuracion de proveedores de IA.
 model AiProvider {
   id             String         @id @default(cuid())
   name           String
@@ -1121,6 +1172,7 @@ model AiProvider {
   benchmarkRuns  AiBenchmarkRun[]
 }
 
+/// Clase: OPERATIVO — uso de IA por referencia: ids y costo, nunca el contenido.
 model AiUsageLog {
   id                 String        @id @default(cuid())
   // OPERATIVO: propiedad SaaS/idempotencia del reporte desde la app local.
@@ -1159,6 +1211,7 @@ model AiUsageLog {
   @@index([doctorId, createdAt])
 }
 
+/// Clase: OPERATIVO — comparativa de proveedores con casos propios.
 model AiBenchmarkRun {
   id             String       @id @default(cuid())
   providerId     String
@@ -1172,6 +1225,7 @@ model AiBenchmarkRun {
   results        AiBenchmarkResult[]
 }
 
+/// Clase: OPERATIVO — resultado por proveedor de la comparativa.
 model AiBenchmarkResult {
   id               String         @id @default(cuid())
   benchmarkRunId   String
@@ -1184,6 +1238,7 @@ model AiBenchmarkResult {
   benchmarkRun     AiBenchmarkRun @relation(fields: [benchmarkRunId], references: [id], onDelete: Cascade)
 }
 
+/// Clase: CLINICO — **vestigio del portal previo al giro local-first (2026-06-09)**. Contradice la residencia 1: lo clinico vive en la app del medico. Sigue con rutas montadas; retirarlo es decision del dueno (ver 10_linea, paso 27).
 model DentalChart {
   id          String                @id @default(cuid())
   encounterId String                @unique
@@ -1195,6 +1250,7 @@ model DentalChart {
   periodontalEntries PeriodontalChartEntry[]
 }
 
+/// Clase: CLINICO — **vestigio del portal previo al giro local-first (2026-06-09)**. Contradice la residencia 1: lo clinico vive en la app del medico. Sigue con rutas montadas; retirarlo es decision del dueno (ver 10_linea, paso 27).
 model DentalChartEntry {
   id             String      @id @default(cuid())
   dentalChartId  String
@@ -1212,6 +1268,7 @@ model DentalChartEntry {
   @@index([dentalChartId, toothNumber])
 }
 
+/// Clase: CLINICO — **vestigio del portal previo al giro local-first (2026-06-09)**. Contradice la residencia 1: lo clinico vive en la app del medico. Sigue con rutas montadas; retirarlo es decision del dueno (ver 10_linea, paso 27).
 model PeriodontalChartEntry {
   id              String      @id @default(cuid())
   dentalChartId   String
@@ -1258,6 +1315,7 @@ enum AuthorizedSummaryStatus {
   PURGED
 }
 
+/// Clase: OPERATIVO — dispositivo vinculado y su llave publica de documentos.
 model SyncDevice {
   id         String           @id @default(cuid())
   doctorId   String
@@ -1276,6 +1334,7 @@ model SyncDevice {
   @@index([doctorId, status])
 }
 
+/// Clase: OPERATIVO — el evento es metadato; su `payload` puede ser CLINICO en transito hasta el ACK.
 model SyncEvent {
   id          String        @id @default(cuid())
   doctorId    String
@@ -1296,6 +1355,7 @@ model SyncEvent {
 // Buzon temporal de documentos del paciente (paso 6, Fase B). El ciphertext es
 // un sealed box (X25519) que la nube NO puede leer; se entrega a la app del
 // medico via sync y se purga tras el ACK (frontera legal de residencia).
+/// Clase: CLINICO en transito — ciphertext que la nube no puede abrir; se purga tras el ACK o por TTL.
 model MailboxDocument {
   id            String                @id @default(cuid())
   doctorId      String
@@ -1323,6 +1383,7 @@ model MailboxDocument {
 // Va app -> nube cifrado con secretbox; la llave viaja SOLO en el fragmento del
 // enlace (#k=...), nunca al servidor: la nube guarda ciphertext que no puede
 // abrir. Enlace temporal con expiracion; se purga al expirar/revocar.
+/// Clase: CLINICO en transito — cifrado para el paciente; se purga al expirar el enlace.
 model AuthorizedSummary {
   id            String                  @id @default(cuid())
   doctorId      String
@@ -1350,6 +1411,7 @@ model AuthorizedSummary {
 
 // Contador de rate limiting compartido entre instancias (OPERATIVO: solo
 // llaves tecnicas — email/IP/dispositivo — nunca contenido clinico).
+/// Clase: OPERATIVO — contador compartido entre instancias.
 model RateLimitCounter {
   key       String   @id
   count     Int
