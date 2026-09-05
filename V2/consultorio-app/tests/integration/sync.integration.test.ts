@@ -389,7 +389,10 @@ describe("AI usage metadata sync (paso 11)", () => {
       expect(logs[0]?.usageType).toBe("SOAP_SUMMARY");
       expect(logs[0]?.status).toBe("REVIEWED");
       expect(logs[0]?.patientId).toBeNull();
-      expect(logs[0]?.encounterId).toBeNull();
+      // La columna `encounterId` se retiro al sacar el expediente de la nube: el
+      // id local del encuentro solo sobrevive dentro de inputReference/outputReference,
+      // que es referencia opaca para el portal, nunca una FK ni contenido clinico.
+      expect(logs[0]).not.toHaveProperty("encounterId");
       expect(JSON.stringify(logs[0]?.inputReference)).not.toContain("Dolor lumbar");
       expect(JSON.stringify(logs[0]?.outputReference)).not.toContain("Dolor lumbar");
     } finally {
