@@ -1,5 +1,17 @@
 # 01 - Contexto de MiDoc V2
 
+## Reenfoque de alcance (2026-09-07) — manda sobre lo que sigue
+
+MiDoc V2 pasa a ser **una aplicacion de expediente clinico con apoyo de IA para el medico**. Salen del alcance activo la agenda, el portal del paciente, la recepcion, la lista de espera, la caja y el cobro de consulta, y las notificaciones al paciente: todo lo que no ayude directamente a documentar y resolver la consulta.
+
+- **Se conserva:** expediente longitudinal y directorio de pacientes, consulta clinica (SOAP, plantillas, receta, indicaciones), perfiles de medicina familiar/general y odontologia, documentos clinicos locales, seguridad de medicacion determinista, y toda la capa de IA (transcripcion local, diarizacion, escriba, anamnesis asistida, dictado dental) con su gobernanza.
+- **Del portal solo sobrevive:** cuenta del medico, suscripcion y pasarela de IA (claves y BAA del lado servidor, sin ver contenido clinico).
+- **Lo demas se apaga tras bandera de capacidad, no se borra.** El codigo queda en el repositorio, fuera de la navegacion y sin mantenimiento, para poder reactivarlo.
+
+La arquitectura local-first y las reglas de residencia de datos no cambian: siguen siendo invariantes. Lo que cambia es la superficie del producto. Detalle completo en `14_reenfoque_expediente_ia.md`; reclasificacion paso por paso en `10_linea_de_desarrollo.md`.
+
+Las secciones siguientes describen el producto amplio original y se conservan como historia del levantamiento; donde contradigan a este reenfoque, manda el reenfoque.
+
 ## Sistema actual
 
 MiDoc es una plataforma SaaS para consultorios medicos. El sistema actual incluye registro de medicos, perfil publico, agenda, portal de paciente, cuestionarios previos, expediente clinico, subida de documentos clinicos, notas SOAP, receta, pagos operativos, caja, notificaciones por SMS y correo, seguridad, auditoria y modulos de IA clinica.

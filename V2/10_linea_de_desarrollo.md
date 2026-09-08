@@ -1,5 +1,45 @@
 # 10 - Linea de desarrollo V2
 
+## Reenfoque de producto (2026-09-07) — leer antes que nada
+
+La linea que sigue se escribio para un producto mas amplio (agenda, recepcion, caja, portal del paciente). El **2026-09-07 el alcance activo se redujo a expediente clinico + apoyo IA para el medico**. El detalle esta en `14_reenfoque_expediente_ia.md`; aqui queda la consecuencia operativa.
+
+- Los pasos 0-26 **no se reabren ni se borran**: son historia entregada. Lo que sale del alcance se **apaga tras bandera de capacidad**, no se elimina.
+- Los pasos nuevos del producto reenfocado son **27 en adelante**.
+- Regla de ubicacion vigente: una tarea solo se implementa si cae en el alcance activo (expediente, consulta, IA clinica, cuenta/suscripcion/pasarela IA). Todo lo demas se documenta y no se toca.
+
+### Reclasificacion de los pasos 0-26
+
+| Paso | Estado bajo el reenfoque |
+|---|---|
+| 0 Preparacion | Vigente (base tecnica). |
+| 1 Identidad y legal | Vigente (cuenta del medico). |
+| 2 Perfil y disponibilidad | Congelado. |
+| 3 Agenda publica | Congelado. |
+| 4 Atencion integrada | **Vigente — nucleo.** |
+| 5 Medicina general/familiar | **Vigente — nucleo.** |
+| 6 Paciente y documentos | Parcial: la creacion/edicion local del paciente sigue vigente; precheckin, buzon y portal del paciente se congelan. |
+| 7 Comunicaciones | Congelado. |
+| 8 Odontologia | **Vigente — nucleo.** |
+| 9 Piloto seguro | Vigente (respaldo, restauracion, instalador firmado). |
+| 10 Operacion presencial | Congelado, salvo la consulta sin cita, que se muda al expediente (paso 27). |
+| 11 IA gobernada | **Vigente — nucleo.** |
+| 12 SaaS/compliance | Parcial: suscripcion, 2FA, ARCO y retencion vigentes; el gating se reexpresa en capacidades de expediente e IA (paso 29). |
+| 13 Directorio y expediente longitudinal | **Vigente — nucleo.** |
+| 14 Seguridad de medicacion determinista | **Vigente — nucleo.** |
+| 15 Transcripcion local real (Whisper) | **Vigente — nucleo.** |
+| 16 Proveedores de IA reales (BAA) | **Vigente**, ahora detras de la pasarela de IA del portal (paso 30). |
+| 17 Produccion: notificaciones y pago reales | Parcial: pago real de la suscripcion vigente; notificaciones al paciente congeladas. |
+| 18 Agendado con responsable/tutor | Congelado. |
+| 19 Pulido del flujo publico y preconsulta | Congelado. |
+| 20 Multi-perfil y agenda dia/semana | Parcial: multi-perfil vigente; la agenda dia/semana se congela. |
+| 21 Plantillas asistidas por conversacion | **Vigente — nucleo.** |
+| 22 Diarizacion local | **Vigente — nucleo.** |
+| 23 Anamnesis asistida | **Vigente — nucleo.** |
+| 24 Degradacion de proveedor de IA | **Vigente — nucleo.** |
+| 25 Base de medicamentos a escala | **Vigente — nucleo.** |
+| 26 Perfil dentista completo | Parcial: odontograma, indice de placa, plan de tratamiento, dictado, nota de evolucion e indicaciones vigentes; los saldos por avance del presupuesto se congelan con la caja. Las ordenes de laboratorio quedan como decision pendiente. |
+
 ## Estado actual (actualizado 2026-06-12)
 
 **Pasos 0-12 completados.** Toda la implementación del MVP + piloto seguro + operación presencial + IA gobernada + SaaS/compliance está lista:
@@ -91,6 +131,11 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 24 | Degradacion asistida de proveedor de IA | `superpowers:test-driven-development` | Ante sobrecarga del proveedor (503/429), el medico ve la causa y elige reintentar o generar con otro modelo disponible — nunca fallback silencioso. | ✅ DONE |
 | 25 | Base de medicamentos a escala | `superpowers:writing-plans` | Pipeline reproducible de fuentes publicas + catalogo mexicano de marcas; verificacion con interacciones de par y de tres clases (triple whammy), base ONChigh de dominio publico. | ✅ DONE (swap ONChigh + triple whammy + apendice ONChigh completo sin QT + marcas MX por regla; pendiente: regla QT curada, RxClass reproducible, pipeline BRSDM completo, publicar endpoints/ops) |
 | 26 | Perfil dentista completo (paridad Dentis365 + IA dental) | `superpowers:writing-plans` | Odontograma visual interactivo, indice de placa, plan de tratamiento presupuestado con saldos por avance, ordenes de laboratorio y capa IA dental (dictado al odontograma, nota de evolucion, indicaciones post-operatorias). | ✅ DONE (rebanadas 1-6 completas: odontograma visual y anatomico, indice de placa, presupuesto con saldos, laboratorio, dictado al odontograma, nota de evolucion e indicaciones post-operatorias; el uso DENTAL_EVOLUTION queda listo para el proveedor real del paso 16) |
+| 27 | Reenfoque: banderas de alcance y app centrada en el paciente | `impeccable` | La app abre en Pacientes; agenda, recepcion y caja quedan apagadas tras bandera. | 🔜 PLANEADO |
+| 28 | Expediente de calidad: documentos, busqueda y salida | `impeccable` | Documentos locales, busqueda clinica, impresion y exportacion del expediente. | 🔜 PLANEADO |
+| 29 | Suscripcion y capacidades del nuevo producto | `analytics` | El plan cobra por expediente e IA, no por citas. | 🔜 PLANEADO |
+| 30 | Pasarela de IA en el portal y proveedores reales | `codex-security:security-scan` | La IA sale por el portal con claves y BAA del lado servidor. Absorbe el paso 16. | 🔜 PLANEADO |
+| 31 | Copiloto del expediente longitudinal | `superpowers:writing-plans` | Resumen del paciente, preguntas citadas sobre su historia y seguimiento vencido. | 🔜 PLANEADO |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -1268,7 +1313,74 @@ Rebanada 3 (2026-07-09): plan de tratamiento presupuestado con saldos, entregado
 
 Rebanada 1 (2026-07-09): odontograma visual interactivo entregado en `v2/paso26-odontograma-visual`. Logica pura en `odontogramModel.ts` (denticion temporal FDI 51-85, filas por denticion adulta/mixta/infantil con temporales al centro, orientacion clinica de superficies —vestibular hacia afuera, mesial hacia la linea media, espejado por cuadrante—, ciclado de estado por clic, marcadores clasicos: X ausente, / extraccion indicada, circulo corona, triangulo endodoncia, poste implante, e `inferDentition` que abre la vista segun las piezas con hallazgos) con 11 pruebas en `node --test`. Componente SVG `OdontogramChart.tsx`: glifo de 5 superficies clicables por pieza (clic cicla Sano→Caries→Restaurado→Sellador→Fractura), numero abre la tarjeta de detalle existente (que pasa de grilla de 32 tarjetas a vista de detalle de la pieza seleccionada), toggle de denticion, linea media entre cuadrantes, leyenda, tooltip/aria-label con resumen en espanol. El payload `DentalPayload` NO cambio: es solo capa de presentacion, retrocompatible con notas dentales existentes. Verificado en navegador (mock): ciclado de superficie, seleccion, denticion mixta (52 piezas), marcador de ausente, guardado de nota con nueva version y tema claro/oscuro. 57 pruebas TS + tsc + build en verde.
 
+## Paso 27 - Reenfoque: banderas de alcance y app centrada en el paciente
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que la app abra y se sienta como lo que ahora es: un expediente clinico con apoyo IA, sin modulos apagados a la vista. |
+| Requisitos relacionados | Reenfoque 2026-09-07 (`14_reenfoque_expediente_ia.md`) |
+| Entrada necesaria | Pasos 13 y 20 entregados (directorio, expediente longitudinal, multi-perfil). |
+| Skills IA recomendadas | `impeccable`, `superpowers:writing-plans`, `superpowers:verification-before-completion` |
+| Se construye | Bandera de capacidad de alcance (apagada por omision) para agenda, recepcion, caja y sincronizacion de citas en la app, y para agenda publica, perfil publico, precheckin, buzon y notificaciones en el portal. La app abre en **Pacientes**. La consulta sin cita se muda de Recepcion al expediente (`register_walk_in` accesible desde el directorio y desde el paciente). Navegacion reducida a Pacientes, Consulta, Transcripcion, Medicamentos, Privacidad y Benchmark. |
+| Se valida con | Con la bandera apagada no queda ninguna ruta, boton ni pantalla de agenda/recepcion/caja alcanzable, y el medico puede abrir paciente nuevo, iniciar consulta, documentar y cerrar nota sin pasar por una cita. Con la bandera encendida todo lo congelado vuelve a funcionar igual que antes. |
+| Compuerta de avance | Ningun flujo clinico depende ya de una cita, y nada congelado quedo a medias en la UI. |
+| Push recomendado | Al terminar el apagado y la nueva navegacion, en una sola rama. |
+
+## Paso 28 - Expediente de calidad: documentos, busqueda y salida
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Cubrir lo que el buzon y el portal del paciente hacian, ahora dentro del expediente local. |
+| Requisitos relacionados | RF de documentos clinicos e historial; NOM-004 |
+| Entrada necesaria | Paso 27. |
+| Skills IA recomendadas | `impeccable`, `superpowers:test-driven-development` |
+| Se construye | Entrada local de documentos (arrastrar y soltar, multiples archivos, previsualizacion, vinculacion al encuentro y al paciente), busqueda dentro del expediente (por paciente, diagnostico, medicamento y texto de nota), y salida del expediente: impresion y exportacion por consulta y por paciente completo, con sello de version. |
+| Se valida con | Un estudio en PDF y una imagen entran al expediente, quedan ligados al encuentro correcto y salen en la exportacion del paciente; la busqueda encuentra una nota por diagnostico y por farmaco. |
+| Compuerta de avance | El medico puede entregar el expediente de un paciente sin abrir la base de datos. |
+| Push recomendado | Por rebanada (documentos / busqueda / exportacion). |
+
+## Paso 29 - Suscripcion y capacidades del nuevo producto
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que el plan cobre por lo que el producto hace hoy: expediente e IA, no citas. |
+| Requisitos relacionados | Paso 12 (gating por capacidad), reenfoque 2026-09-07 |
+| Entrada necesaria | Paso 27. |
+| Skills IA recomendadas | `analytics`, `superpowers:test-driven-development` |
+| Se construye | Redefinicion de capacidades del plan en terminos de expediente y asistencia (minutos de transcripcion, consultas asistidas, perfiles clinicos habilitados, respaldo en nube cifrado), retiro de las capacidades ligadas a agenda/notificaciones del gating activo, y enlace de cuenta que sobrevive sin sincronizacion de citas. |
+| Se valida con | Un medico sin plan puede documentar manualmente; al agotar la cuota de IA la app lo dice con claridad y el flujo manual sigue intacto. |
+| Compuerta de avance | Ninguna capacidad de pago depende de un modulo congelado. |
+| Push recomendado | Al cerrar la redefinicion de capacidades con sus pruebas. |
+
+## Paso 30 - Pasarela de IA en el portal y proveedores reales
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que las llamadas a proveedores salgan por el portal, con claves y BAA del lado servidor, sin que la nube vea contenido identificable. Absorbe el paso 16. |
+| Requisitos relacionados | Paso 11 (gobernanza), paso 16 (adaptadores reales), paso 24 (degradacion) |
+| Entrada necesaria | Pasos 11, 15, 24 y 29. |
+| Skills IA recomendadas | `codex-security:security-scan`, `superpowers:writing-plans` |
+| Se construye | Endpoint de pasarela autenticado por cuenta del medico, con cuota, trazabilidad por referencia y cero persistencia de contenido; adaptadores reales (LLM base + respaldo, transcripcion en nube opcional) detras de la pasarela; la app deja de necesitar claves de proveedor. |
+| Se valida con | Una consulta asistida real en staging pasa por la pasarela, consume cuota, deja traza sin contenido clinico y degrada de forma explicita ante 429/503. |
+| Compuerta de avance | Ningun contenido clinico identificable sale del equipo del medico sin consentimiento registrado y seudonimizacion. |
+| Push recomendado | Al validar en staging con proveedor real. |
+
+## Paso 31 - Copiloto del expediente longitudinal
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que la IA ayude no solo a escribir la consulta, sino a leer la historia del paciente. |
+| Requisitos relacionados | Pasos 13, 23 y 30 |
+| Entrada necesaria | Paso 30 en staging. |
+| Skills IA recomendadas | `superpowers:writing-plans`, `codex-security:security-scan` |
+| Se construye | Resumen del paciente antes de la consulta (que cambio desde la ultima visita, pendientes abiertos, estudios sin revisar), preguntas sobre el expediente con cita de la nota que sustenta cada respuesta, y deteccion de seguimiento vencido. Todo con revision humana y sin escritura automatica en el expediente. |
+| Se valida con | El medico abre un paciente con cinco consultas y obtiene un resumen correcto y citado, y ninguna afirmacion sin fuente en el expediente. |
+| Compuerta de avance | Ninguna salida del copiloto se guarda en el expediente sin confirmacion explicita del medico. |
+| Push recomendado | Por rebanada, con benchmark de calidad antes de habilitarlo por omision. |
+
 ## MVP recomendado
+
+> **Nota del reenfoque (2026-09-07):** el MVP descrito abajo corresponde al producto amplio y ya fue entregado. El MVP vigente del producto reenfocado es el paso 27 mas los pasos 28-30: expediente centrado en el paciente, documentos y salida del expediente, suscripcion reexpresada y pasarela de IA con proveedor real.
 
 El MVP debe cerrar los pasos 0 a 7 y dejar odontologia como paso 8 si el tiempo no permite incluirla desde el primer piloto. El MVP incluye necesariamente las piezas local-first: app de escritorio instalable con base cifrada, sincronizacion con purga de buzon y respaldo con restauracion probada — sin ellas la promesa de residencia de datos no se cumple. El MVP recomendado contiene:
 
