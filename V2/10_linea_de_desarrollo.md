@@ -1347,6 +1347,13 @@ Rebanada 1 (2026-07-09): odontograma visual interactivo entregado en `v2/paso26-
 | Compuerta de avance | Ningun flujo clinico depende ya de una cita, y nada congelado quedo a medias en la UI. |
 | Push recomendado | Al terminar el apagado y la nueva navegacion, en una sola rama. |
 
+Estado: ✅ DONE (rama `v2/paso27-banderas-alcance`, 2026-10-05; pendiente de merge a `dev`).
+
+- **Rebanada 1 — app del medico.** Bandera `VITE_MIDOC_FROZEN_SCOPE` (apagada por omision, se fija al compilar) en `src/scope.ts`, que deriva la navegacion y la vista inicial. La app abre en Pacientes; sin Agenda ni "Recepcion y caja" en la barra; la consulta pierde el riel de agenda y el panel de presupuesto y saldo dental (el plan de tratamiento sigue en la nota). La consulta sin cita no se muda como `register_walk_in` (eso crea una visita en la lista de espera, que tambien esta congelada): se resuelve con lo que ya existia, alta con anti-duplicados + `open_patient_encounter`, ahora con "Dar de alta e iniciar consulta" en el directorio e "Iniciar consulta" en el expediente. Los comandos Rust de agenda/recepcion/caja no se tocan: quedan sin entrada en la UI.
+- **Rebanada 2 — portal.** Bandera `MIDOC_FROZEN_SCOPE` (apagada por omision, se lee al arrancar) en `src/lib/scope.ts` y `src/proxy.ts`: las rutas congeladas de API responden 404 y las paginas redirigen (las del medico a `/medico/cuenta`, las demas a `/`). Pagina nueva `/medico/cuenta` (datos de la cuenta, perfil clinico que lee la app, estado de la suscripcion); `/medico` decide la entrada tras login y registro; el inicio pasa a ser una pagina para medicos. `/api/sync/*` sigue activo salvo los resumenes autorizados, porque la app vincula, lee su perfil, reporta uso de IA y recorre el buzon en el mismo ciclo.
+- Diferencias con la definicion: la navegacion no lleva entrada "Consulta" (la consulta nace del paciente); queda como decision en `PENDIENTES.md`.
+- Verificacion en la app real (binario Tauri de depuracion contra el portal local, 2026-10-05): perfil nuevo, vinculacion con el medico de prueba del seed, la app abre en Pacientes, "Dar de alta e iniciar consulta" abre la consulta sin cita, nota guardada, consulta firmada y cerrada, el modulo dental sin presupuesto ni saldo, "Iniciar consulta" desde el expediente y "Sincronizar" contra el portal con el `proxy` activo (perfil, dispositivos y buzon en 200).
+
 ## Paso 28 - Expediente de calidad: documentos, busqueda y salida
 
 | Campo | Definicion |

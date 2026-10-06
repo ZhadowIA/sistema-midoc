@@ -289,6 +289,8 @@ async function sha256Hex(value: string): Promise<string> {
 export function Atencion({
   encounterId,
   clinicalProfile,
+  frozenScope,
+  backLabel,
   appointments,
   appointmentSelectionBusy,
   onBack,
@@ -296,6 +298,10 @@ export function Atencion({
 }: {
   encounterId: string;
   clinicalProfile: ClinicalProfile;
+  /** Alcance congelado del reenfoque: agenda del dia y saldos del presupuesto dental. */
+  frozenScope: boolean;
+  /** A donde regresa "volver": la consulta se abre desde la agenda, el directorio o el expediente. */
+  backLabel: string;
   appointments: EncounterAgendaAppointment[];
   appointmentSelectionBusy: boolean;
   onBack: () => void;
@@ -1033,7 +1039,7 @@ export function Atencion({
       <header className="consultation-topbar">
         <div className="consultation-titlebar">
           <button className="ghost-button" onClick={onBack}>
-            ‹ Agenda
+            ‹ {backLabel}
           </button>
           <div className="consultation-patient-title">
             <strong>
@@ -1042,7 +1048,9 @@ export function Atencion({
             <span>
               {detail.appointment_start
                 ? dateTimeFormatter.format(new Date(detail.appointment_start))
-                : "Sin cita asociada"}
+                : frozenScope
+                  ? "Sin cita asociada"
+                  : `Consulta del ${dateTimeFormatter.format(new Date(detail.encounter.opened_at))}`}
             </span>
           </div>
         </div>
@@ -1097,13 +1105,15 @@ export function Atencion({
             </nav>
           </div>
 
-          <EncounterAgendaRail
-            appointments={appointments}
-            currentAppointmentId={currentAppointmentId}
-            appointmentStart={detail.appointment_start}
-            busy={appointmentSelectionBusy}
-            onSelectAppointment={selectAgendaAppointment}
-          />
+          {frozenScope ? (
+            <EncounterAgendaRail
+              appointments={appointments}
+              currentAppointmentId={currentAppointmentId}
+              appointmentStart={detail.appointment_start}
+              busy={appointmentSelectionBusy}
+              onSelectAppointment={selectAgendaAppointment}
+            />
+          ) : null}
         </aside>
 
         <main className="consultation-center">
@@ -1503,13 +1513,16 @@ export function Atencion({
                 />
               </section>
               {/* Operativo, no clinico: el presupuesto se decide y se abona
-                  aun con la nota firmada. */}
-              <DentalBudgetPanel
-                patientId={patientId}
-                encounterId={detail.encounter.id}
-                treatmentPlan={coerceDentalPayload(note.specialty).treatmentPlan}
-                disabled={busy}
-              />
+                  aun con la nota firmada. Congelado con la caja; el plan de
+                  tratamiento clinico sigue en la nota dental. */}
+              {frozenScope ? (
+                <DentalBudgetPanel
+                  patientId={patientId}
+                  encounterId={detail.encounter.id}
+                  treatmentPlan={coerceDentalPayload(note.specialty).treatmentPlan}
+                  disabled={busy}
+                />
+              ) : null}
               <DentalLabPanel
                 patientId={patientId}
                 encounterId={detail.encounter.id}
