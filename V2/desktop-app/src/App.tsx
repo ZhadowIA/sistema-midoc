@@ -17,7 +17,12 @@ import {
   type ResolutionPatient
 } from "./PatientResolution";
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
+import { defaultView, isViewAvailable, parseFrozenScopeFlag, workspaceNav, type WorkspaceView } from "./scope";
 import "./App.css";
+
+// Agenda, recepcion y caja quedan congelados por el reenfoque (2026-09-07);
+// se encienden solo al compilar con VITE_MIDOC_FROZEN_SCOPE=on.
+const FROZEN_SCOPE = parseFrozenScopeFlag(import.meta.env.VITE_MIDOC_FROZEN_SCOPE);
 
 interface UnlockResult {
   schema_version: number;
@@ -307,8 +312,10 @@ function LinkAccountForm({ onLinked }: { onLinked: () => void }) {
       <div className="panel-header">
         <h2>Vincula tu cuenta MiDoc</h2>
         <p>
-          Tus pacientes agendan en el portal y las citas bajan aqui, a tu expediente
-          cifrado. La contrasena no se guarda en este equipo.
+          {FROZEN_SCOPE
+            ? "Tus pacientes agendan en el portal y las citas bajan aqui, a tu expediente cifrado."
+            : "La cuenta activa tu suscripcion y la asistencia de IA. Tu expediente se queda cifrado en este equipo."}{" "}
+          La contrasena no se guarda en este equipo.
         </p>
       </div>
       <form
@@ -374,9 +381,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [slotMinutes, setSlotMinutes] = useState(30);
   const [workStartMinutes, setWorkStartMinutes] = useState<number | null>(null);
   const [workEndMinutes, setWorkEndMinutes] = useState<number | null>(null);
-  const [view, setView] = useState<
-    "agenda" | "patients" | "reception" | "benchmark" | "transcription" | "medications" | "arco"
-  >("agenda");
+  const [view, setView] = useState<WorkspaceView>(() => defaultView(FROZEN_SCOPE));
   const [theme, setTheme] = useState<Theme>(() => {
     try {
       return isNightTheme(localStorage.getItem(THEME_STORAGE_KEY)) ? "night" : "light";
@@ -400,7 +405,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     try {
       const [nextStatus, rows] = await Promise.all([
         call<SyncStatus>("sync_status"),
-        call<AppointmentRow[]>("list_appointments")
+        FROZEN_SCOPE ? call<AppointmentRow[]>("list_appointments") : Promise.resolve([])
       ]);
       setStatus(nextStatus);
       setClinicalProfile(coerceClinicalProfile(nextStatus.clinical_profile));
@@ -606,6 +611,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
           key={activeEncounter}
           encounterId={activeEncounter}
           clinicalProfile={clinicalProfile}
+          frozenScope={FROZEN_SCOPE}
           appointments={appointments}
           appointmentSelectionBusy={busy}
           onBack={() => {
@@ -621,19 +627,13 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     );
   }
 
-  const navClinic = [
-    { id: "agenda" as const, label: "Agenda", badge: appointments.length > 0 ? String(appointments.length) : "" },
-    { id: "patients" as const, label: "Pacientes", badge: "" }
-  ];
-  const navOperation = [
-    { id: "reception" as const, label: "Recepción y caja" },
-    { id: "transcription" as const, label: "Transcripción" },
-    { id: "medications" as const, label: "Medicamentos" }
-  ];
-  const navCompliance = [
-    { id: "arco" as const, label: "Privacidad (ARCO)" },
-    { id: "benchmark" as const, label: "Benchmark IA" }
-  ];
+  const navSections = workspaceNav(FROZEN_SCOPE);
+  // Defensa: una vista congelada nunca se pinta aunque quede en el estado.
+  const effectiveView = isViewAvailable(view, FROZEN_SCOPE) ? view : defaultView(FROZEN_SCOPE);
+  const navBadge = (id: WorkspaceView) =>
+    id === "agenda" && appointments.length > 0 ? String(appointments.length) : "";
+  // El expediente abierto cuenta como "Pacientes" en la navegacion.
+  const isNavActive = (id: WorkspaceView) => effectiveView === id || (id === "patients" && activePatient !== null);
 
   return (
     <div className="workspace-shell">
@@ -672,63 +672,39 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       <aside className="workspace-sidebar" aria-label="Navegación principal">
         {status?.linked ? (
           <>
-            <div className="sidebar-section">
-              <span className="sidebar-heading">Clínica</span>
-              {navClinic.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={
-                    view === item.id || (item.id === "patients" && activePatient)
-                      ? "sidebar-nav-item sidebar-nav-item-active"
-                      : "sidebar-nav-item"
-                  }
-                  aria-current={
-                    view === item.id || (item.id === "patients" && activePatient) ? "page" : undefined
-                  }
-                  onClick={() => {
-                    setActivePatient(null);
-                    setView(item.id);
-                  }}
-                >
-                  <span>{item.label}</span>
-                  {item.badge ? <span className="sidebar-badge">{item.badge}</span> : null}
-                </button>
-              ))}
-            </div>
-            <div className="sidebar-section">
-              <span className="sidebar-heading">Operación</span>
-              {navOperation.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={view === item.id ? "sidebar-nav-item sidebar-nav-item-active" : "sidebar-nav-item"}
-                  aria-current={view === item.id ? "page" : undefined}
-                  onClick={() => setView(item.id)}
-                >
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </div>
-            <div className="sidebar-section">
-              <span className="sidebar-heading">Cumplimiento</span>
-              {navCompliance.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={view === item.id ? "sidebar-nav-item sidebar-nav-item-active" : "sidebar-nav-item"}
-                  aria-current={view === item.id ? "page" : undefined}
-                  onClick={() => setView(item.id)}
-                >
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </div>
+            {navSections.map((section) => (
+              <div className="sidebar-section" key={section.heading}>
+                <span className="sidebar-heading">{section.heading}</span>
+                {section.items.map((item) => {
+                  const active = isNavActive(item.id);
+                  const badge = navBadge(item.id);
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={active ? "sidebar-nav-item sidebar-nav-item-active" : "sidebar-nav-item"}
+                      aria-current={active ? "page" : undefined}
+                      onClick={() => {
+                        setActivePatient(null);
+                        setView(item.id);
+                      }}
+                    >
+                      <span>{item.label}</span>
+                      {badge ? <span className="sidebar-badge">{badge}</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </>
         ) : (
           <div className="sidebar-section">
             <span className="sidebar-heading">Vinculación</span>
-            <p className="sidebar-note">Conecta este equipo con el portal para activar agenda y pacientes.</p>
+            <p className="sidebar-note">
+              {FROZEN_SCOPE
+                ? "Conecta este equipo con el portal para activar agenda y pacientes."
+                : "Conecta este equipo con tu cuenta MiDoc para abrir tu expediente."}
+            </p>
           </div>
         )}
 
@@ -772,20 +748,20 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                   onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
                   embedded
                 />
-              ) : view === "patients" ? (
+              ) : effectiveView === "patients" ? (
                 <Directorio
                   onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
                   onOpenPatient={(patientId) => setActivePatient(patientId)}
                 />
-              ) : view === "reception" ? (
+              ) : effectiveView === "reception" ? (
                 <Recepcion onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)} />
-              ) : view === "benchmark" ? (
+              ) : effectiveView === "benchmark" ? (
                 <Benchmark />
-              ) : view === "transcription" ? (
+              ) : effectiveView === "transcription" ? (
                 <TranscriptionSetup />
-              ) : view === "medications" ? (
+              ) : effectiveView === "medications" ? (
                 <MedicationReference />
-              ) : view === "arco" ? (
+              ) : effectiveView === "arco" ? (
                 <Arco />
               ) : (
                 <section className="panel agenda-panel">

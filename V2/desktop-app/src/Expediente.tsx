@@ -218,6 +218,20 @@ export function Expediente({
     setError("");
   }
 
+  // Consulta sin cita: nace del expediente, no de la agenda.
+  async function startEncounter() {
+    setBusy(true);
+    setError("");
+    try {
+      const encounter = await call<{ id: string }>("open_patient_encounter", { patientId });
+      onOpenEncounter(encounter.id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submitForm() {
     setBusy(true);
     setError("");
@@ -362,6 +376,14 @@ export function Expediente({
             </p>
           ) : null}
         </div>
+        <button
+          type="button"
+          className="action-button expediente-start"
+          onClick={() => void startEncounter()}
+          disabled={busy}
+        >
+          Iniciar consulta
+        </button>
       </div>
 
       <nav className="expediente-tabs" aria-label="Secciones del expediente">

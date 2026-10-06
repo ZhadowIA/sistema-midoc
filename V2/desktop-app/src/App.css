@@ -1222,6 +1222,11 @@ textarea:disabled {
   margin-bottom: 22px;
 }
 
+.expediente-start {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .expediente-avatar {
   display: grid;
   place-items: center;
