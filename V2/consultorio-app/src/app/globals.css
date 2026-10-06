@@ -2017,6 +2017,29 @@ a.service-card:hover {
   padding: 4px 2px 0;
 }
 
+/* Cuenta del medico: pares dato/valor en rejilla que baja a una columna. */
+.account-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px 24px;
+  margin: 0;
+}
+
+.account-facts div {
+  display: grid;
+  gap: 4px;
+}
+
+.account-facts dt {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.account-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .form-section-title {
   margin: 8px 0 0;
   padding-bottom: 8px;

@@ -25,10 +25,8 @@ export function LoginClient() {
         throw new Error(data.error || "No se pudo iniciar sesion.");
       }
 
-      const setup = await fetch("/api/auth/setup-status").then((r) => r.json());
-      const next =
-        setup.nextStep === "DASHBOARD" ? "/medico/agenda" : "/medico/configuracion";
-      router.push(next);
+      // `/medico` decide en el servidor la pagina de entrada segun el alcance.
+      router.push("/medico");
       router.refresh();
     } catch (submitError) {
       setError(
@@ -43,7 +41,7 @@ export function LoginClient() {
       <article className="auth-card">
         <header>
           <h1>Inicia sesion</h1>
-          <p>Accede a tu agenda y configuracion de consultorio.</p>
+          <p>Accede a tu cuenta MiDoc.</p>
         </header>
 
         <form

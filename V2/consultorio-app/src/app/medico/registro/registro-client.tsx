@@ -35,7 +35,7 @@ function normalizePhoneForSubmit(phone: string) {
   return trimmed;
 }
 
-export function RegistroClient() {
+export function RegistroClient({ frozenScope }: { frozenScope: boolean }) {
   const router = useRouter();
   const [form, setForm] = useState({
     firstName: "",
@@ -105,7 +105,7 @@ export function RegistroClient() {
         return;
       }
 
-      router.push("/medico/configuracion");
+      router.push("/medico");
       router.refresh();
     } catch (submitError) {
       setError(
@@ -120,7 +120,11 @@ export function RegistroClient() {
       <article className="auth-card">
         <header>
           <h1>Registra tu consultorio</h1>
-          <p>Crea tu cuenta de medico para publicar tu agenda en linea.</p>
+          <p>
+            {frozenScope
+              ? "Crea tu cuenta de medico para publicar tu agenda en linea."
+              : "Crea tu cuenta de medico para usar la app de expediente con IA."}
+          </p>
         </header>
 
         <form
@@ -161,7 +165,11 @@ export function RegistroClient() {
               value={form.professionalName}
               onChange={(event) => update("professionalName", event.currentTarget.value)}
             />
-            <p className="field-hint">Asi te veran tus pacientes en el perfil publico.</p>
+            <p className="field-hint">
+              {frozenScope
+                ? "Asi te veran tus pacientes en el perfil publico."
+                : "Es el nombre con el que aparece tu cuenta MiDoc."}
+            </p>
           </div>
 
           <div className="field">
@@ -211,17 +219,19 @@ export function RegistroClient() {
             <p className="field-hint">Lo usamos para recuperar tu cuenta y comunicarnos contigo.</p>
           </div>
 
-          <div className="field">
-            <label htmlFor="reg-patient-contact-phone">Teléfono para pacientes (opcional)</label>
-            <input
-              id="reg-patient-contact-phone"
-              type="tel"
-              autoComplete="tel"
-              value={form.patientContactPhone}
-              onChange={(event) => update("patientContactPhone", event.currentTarget.value)}
-            />
-            <p className="field-hint">Será el número de contacto en tu perfil público; puede ser el mismo.</p>
-          </div>
+          {frozenScope ? (
+            <div className="field">
+              <label htmlFor="reg-patient-contact-phone">Teléfono para pacientes (opcional)</label>
+              <input
+                id="reg-patient-contact-phone"
+                type="tel"
+                autoComplete="tel"
+                value={form.patientContactPhone}
+                onChange={(event) => update("patientContactPhone", event.currentTarget.value)}
+              />
+              <p className="field-hint">Será el número de contacto en tu perfil público; puede ser el mismo.</p>
+            </div>
+          ) : null}
 
           <div className={passwordInvalid ? "field has-error" : "field"}>
             <label htmlFor="reg-password">Contrasena</label>

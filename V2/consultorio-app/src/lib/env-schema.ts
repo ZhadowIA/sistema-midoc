@@ -53,6 +53,10 @@ export const envSchema = z
     // Llave de Google Maps Embed API para el mapa del perfil publico. Opcional:
     // si falta o es invalida, el perfil muestra un fallback (direccion + enlace).
     GOOGLE_MAPS_EMBED_API_KEY: optionalNonEmptyString,
+    // Reenfoque 2026-09-07: agenda publica, perfil publico, portal del paciente,
+    // buzon y notificaciones quedan congelados salvo que esto sea verdadero.
+    // `lib/scope.ts` y `proxy.ts` lo leen directo de `process.env`.
+    MIDOC_FROZEN_SCOPE: z.stringbool().default(false),
     // Proveedor de la preconsulta guiada por IA (paso 19, rebanada 8). `fake` es
     // un proveedor determinista sin red, default para dev/pruebas. Los proveedores
     // reales se cablean en staging con BAA (paso 16); las llaves abajo son
