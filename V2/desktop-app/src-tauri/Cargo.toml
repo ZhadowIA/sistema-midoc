@@ -34,7 +34,9 @@ serde_json = "1"
 rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher"] }
 thiserror = "2.0.18"
 reqwest = { version = "0.13.4", features = ["json", "cookies", "blocking", "multipart"] }
-uuid = { version = "1.23.3", features = ["v4"] }
+# v5: identificadores FHIR estables derivados de los ids locales (paso 28 r5),
+# para que exportar dos veces el mismo expediente produzca los mismos recursos.
+uuid = { version = "1.23.3", features = ["v4", "v5"] }
 chrono = "0.4.45"
 sha2 = "0.11.0"
 dryoc = "0.8.0"
@@ -93,3 +95,7 @@ diarization-local = ["dep:sherpa-rs"]
 [dev-dependencies]
 chrono = "0.4.45"
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
+# Validan la exportacion FHIR contra el esquema JSON oficial de R4 (paso 28 r5),
+# guardado comprimido en `test_data/fhir/`. Solo pruebas; sin resolucion remota.
+jsonschema = { version = "0.58", default-features = false }
+flate2 = "1"

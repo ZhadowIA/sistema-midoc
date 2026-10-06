@@ -1,5 +1,7 @@
 // Exportar a PDF (paso 28 r4): Rust arma los datos, la interfaz dibuja el PDF y
 // Rust abre "Guardar como", escribe el archivo y lo deja en la bitacora.
+// Exportar a FHIR R4 (paso 28 r5): Rust arma el Bundle con los documentos dentro
+// y lo escribe; el contenido no pasa por la pagina.
 
 import { bytesToBase64 } from "./base64";
 import { call } from "./ipc";
@@ -36,4 +38,14 @@ export function exportMessage(outcome: ExportOutcome): string {
   return outcome.missingDoctor
     ? `${base} Falta tu nombre o cedula: completalos en tu cuenta MiDoc y sincroniza.`
     : base;
+}
+
+/** Consulta (`encounterId`) o expediente completo en FHIR R4. null si el medico cancelo. */
+export async function exportRecordFhir(patientId: string, encounterId: string | null = null): Promise<string | null> {
+  const saved = await call<{ path: string; sha256: string } | null>("save_fhir_export", { patientId, encounterId });
+  return saved?.path ?? null;
+}
+
+export function fhirExportMessage(path: string | null): string {
+  return path ? `FHIR R4 guardado en ${path}.` : "";
 }
