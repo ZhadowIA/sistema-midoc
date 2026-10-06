@@ -1362,10 +1362,20 @@ Estado: ✅ DONE (rama `v2/paso27-banderas-alcance`, 2026-10-05; pendiente de me
 | Requisitos relacionados | RF de documentos clinicos e historial; NOM-004 |
 | Entrada necesaria | Paso 27. |
 | Skills IA recomendadas | `impeccable`, `superpowers:test-driven-development` |
-| Se construye | Entrada local de documentos (arrastrar y soltar, multiples archivos, previsualizacion, vinculacion al encuentro y al paciente), busqueda dentro del expediente (por paciente, diagnostico, medicamento y texto de nota), y salida del expediente: impresion y exportacion por consulta y por paciente completo, con sello de version. |
-| Se valida con | Un estudio en PDF y una imagen entran al expediente, quedan ligados al encuentro correcto y salen en la exportacion del paciente; la busqueda encuentra una nota por diagnostico y por farmaco. |
+| Se construye | Entrada local de documentos (arrastrar y soltar, multiples archivos, previsualizacion, vinculacion al encuentro y al paciente), diagnostico codificado con CIE-10, busqueda dentro del expediente (por paciente, diagnostico, medicamento y texto de nota), y salida del expediente: impresion y exportacion por consulta y por paciente completo, con sello de version, en PDF, HL7 FHIR R4 (JSON) y CSV del directorio. |
+| Se valida con | Un estudio en PDF y una imagen entran al expediente, quedan ligados al encuentro correcto y salen en la exportacion del paciente; un diagnostico se captura con su codigo CIE-10 y la busqueda encuentra la nota por ese codigo, por su texto y por farmaco; el PDF de la consulta lleva nombre y cedula del medico; el FHIR del paciente valida contra el esquema R4. |
 | Compuerta de avance | El medico puede entregar el expediente de un paciente sin abrir la base de datos. |
-| Push recomendado | Por rebanada (documentos / busqueda / exportacion). |
+| Push recomendado | Por rebanada. |
+
+Decisiones (2026-10-05):
+
+- **Formatos de salida, en este orden:** PDF (por consulta y expediente completo, con sello de version y huella de la nota firmada; PDF/A cuando se archive), despues HL7 FHIR R4 en JSON (interoperabilidad con otros sistemas y portabilidad ARCO, que hoy exporta un JSON propio) y al final CSV solo para el directorio de pacientes.
+- **Word queda fuera de la exportacion oficial:** un .docx editable rompe la integridad de una nota firmada (NOM-004). Si se quiere, llega despues como plantilla editable para documentos sueltos (carta de referencia, justificante), separada del expediente.
+- **HL7 CDA (NOM-024) no entra:** solo se evalua si se busca certificar el sistema o un cliente institucional lo exige.
+- **CIE-10 entra a este paso:** sin diagnosticos codificados, FHIR exporta texto y no datos. El diagnostico en texto libre se conserva para notas anteriores; el catalogo debe ser de fuente oficial con licencia verificada antes de empaquetarlo.
+- **La receta y el PDF llevan nombre y cedula del medico:** hoy la app no conoce esos datos; se capturan en el equipo (o bajan de la cuenta) como parte de la rebanada de PDF.
+
+Rebanadas en orden: 1) documentos locales ligados al paciente y a la consulta; 2) diagnostico CIE-10; 3) busqueda en el expediente; 4) PDF por consulta y expediente completo, con nombre y cedula del medico; 5) FHIR R4; 6) CSV del directorio.
 
 ## Paso 29 - Suscripcion y capacidades del nuevo producto
 
