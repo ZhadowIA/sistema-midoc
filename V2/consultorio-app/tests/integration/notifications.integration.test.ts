@@ -555,8 +555,13 @@ describe("notification flow (paso 7)", () => {
 
   it("processes the queue, retries transient failures, and expires single-use short links", async () => {
     const email = uniqueEmail("doctor-processing");
+    // La prueba ejercita la cola con el proveedor mock; si el .env.local del
+    // desarrollador apunta a Resend, el envio real falla y `sent` queda en 0.
+    const originalEmailProvider = env.EMAIL_PROVIDER;
 
     try {
+      env.EMAIL_PROVIDER = "mock";
+
       const account = await createDoctorAccount({
         email,
         password: "Str0ngPass!123",
@@ -641,6 +646,7 @@ describe("notification flow (paso 7)", () => {
         status: 410
       });
     } finally {
+      env.EMAIL_PROVIDER = originalEmailProvider;
       await cleanupUserByEmail(email);
     }
   });

@@ -517,7 +517,9 @@ describe("AI usage metadata sync (paso 11)", () => {
 
       const { deviceToken } = await linkSyncDevice(account.user.id, "PC IA creditos");
       const device = await authenticateSyncDevice(bearerRequest(deviceToken));
-      const occurredAt = "2026-06-17T12:00:00.000Z";
+      // El resumen de creditos suma solo el mes UTC en curso (utcMonthWindow),
+      // asi que el uso reportado debe ocurrir ahora y no en una fecha fija.
+      const occurredAt = new Date().toISOString();
       const runs = [
         {
           externalRunId: randomUUID(),
