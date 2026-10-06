@@ -71,49 +71,6 @@ enum HoldStatus {
   RELEASED
 }
 
-enum EncounterStatus {
-  OPEN
-  CLOSED
-  CANCELLED
-}
-
-enum EncounterSource {
-  APPOINTMENT
-  WALK_IN
-  DIRECT
-}
-
-enum ClinicalRecordStatus {
-  ACTIVE
-  ARCHIVED
-}
-
-enum NoteType {
-  SOAP
-  DENTAL
-  PROGRESS
-  SUMMARY
-}
-
-enum NoteStatus {
-  DRAFT
-  CLOSED
-  SIGNED
-  AMENDED
-}
-
-enum PrescriptionStatus {
-  DRAFT
-  ISSUED
-  CANCELLED
-}
-
-enum InstructionStatus {
-  DRAFT
-  SHARED
-  REVOKED
-}
-
 enum PrecheckinStatus {
   DRAFT
   SUBMITTED
@@ -136,13 +93,6 @@ enum DocumentCategory {
   PHOTO
   IDENTITY
   OTHER
-}
-
-enum UploadSource {
-  DOCTOR
-  PATIENT_LINK
-  PATIENT_PORTAL
-  SYSTEM
 }
 
 enum UploadLinkStatus {
@@ -334,12 +284,6 @@ model User {
   ownedPatients          Patient[]            @relation("DoctorPatients")
   appointmentsAsDoctor   Appointment[]        @relation("DoctorAppointments")
   appointmentHoldsAsDoctor AppointmentHold[]  @relation("DoctorAppointmentHolds")
-  clinicalRecordsAsDoctor ClinicalRecord[]    @relation("DoctorClinicalRecords")
-  encountersAsDoctor     Encounter[]          @relation("DoctorEncounters")
-  prescriptionsAsDoctor  Prescription[]       @relation("DoctorPrescriptions")
-  signedNotes            ClinicalNote[]       @relation("SignedNotes")
-  documentsAsDoctor      ClinicalDocument[]   @relation("DoctorClinicalDocuments")
-  uploadedDocuments      ClinicalDocument[]   @relation("DocumentUploader")
   documentLinksAsDoctor  DocumentUploadLink[] @relation("DoctorDocumentUploadLinks")
   notificationsAsDoctor  Notification[]       @relation("DoctorNotifications")
   shortLinksAsDoctor     ShortLink[]          @relation("DoctorShortLinks")
@@ -501,11 +445,7 @@ model Patient {
   contacts              PatientContact[]
   appointments          Appointment[]
   holds                 AppointmentHold[]
-  clinicalRecords       ClinicalRecord[]
-  encounters            Encounter[]
-  prescriptions         Prescription[]
   precheckinSubmissions PrecheckinSubmission[]
-  documents             ClinicalDocument[]
   uploadLinks           DocumentUploadLink[]
   mailboxDocuments      MailboxDocument[]
   authorizedSummaries   AuthorizedSummary[]
@@ -555,9 +495,7 @@ model Appointment {
   patient            Patient           @relation(fields: [patientId], references: [id], onDelete: Restrict)
   service            DoctorService?    @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   holds              AppointmentHold[]
-  encounter          Encounter?
   precheckins        PrecheckinSubmission[]
-  documents          ClinicalDocument[]
   uploadLinks        DocumentUploadLink[]
   mailboxDocuments   MailboxDocument[]
   authorizedSummaries AuthorizedSummary[]
@@ -591,135 +529,9 @@ model AppointmentHold {
   @@index([doctorId, slotStart, slotEnd, status])
 }
 
-model ClinicalRecord {
-  id                 String               @id @default(cuid())
-  doctorId           String
-  patientId          String
-  status             ClinicalRecordStatus @default(ACTIVE)
-  summary            Json?
-  alerts             Json?
-  lastEncounterAt    DateTime?
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  doctor             User                 @relation("DoctorClinicalRecords", fields: [doctorId], references: [id], onDelete: Restrict)
-  patient            Patient              @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  encounters         Encounter[]
-
-  @@unique([doctorId, patientId])
-}
-
-model Encounter {
-  id                   String               @id @default(cuid())
-  doctorId             String
-  patientId            String
-  appointmentId        String?              @unique
-  clinicalRecordId     String
-  status               EncounterStatus      @default(OPEN)
-  source               EncounterSource      @default(APPOINTMENT)
-  chiefComplaint       String?
-  openedAt             DateTime             @default(now())
-  closedAt             DateTime?
-  createdAt            DateTime             @default(now())
-  updatedAt            DateTime             @updatedAt
-  doctor               User                 @relation("DoctorEncounters", fields: [doctorId], references: [id], onDelete: Restrict)
-  patient              Patient              @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  appointment          Appointment?         @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  clinicalRecord       ClinicalRecord       @relation(fields: [clinicalRecordId], references: [id], onDelete: Restrict)
-  clinicalNote         ClinicalNote?
-  prescriptions        Prescription[]
-  patientInstructions  PatientInstruction[]
-  documents            ClinicalDocument[]
-  uploadLinks          DocumentUploadLink[]
-  consents             Consent[]
-  precheckinSubmissions PrecheckinSubmission[]
-  dentalChart          DentalChart?
-  aiUsageLogs          AiUsageLog[]
-
-  @@index([doctorId, openedAt, status])
-  @@index([patientId, openedAt])
-}
-
-model ClinicalNote {
-  id               String        @id @default(cuid())
-  encounterId      String        @unique
-  signedByDoctorId String?
-  noteType         NoteType      @default(SOAP)
-  status           NoteStatus    @default(DRAFT)
-  currentVersion   Int           @default(1)
-  subjective       Json?
-  objective        Json?
-  assessment       Json?
-  plan             Json?
-  signedAt         DateTime?
-  closedAt         DateTime?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
-  encounter        Encounter     @relation(fields: [encounterId], references: [id], onDelete: Cascade)
-  signedByDoctor   User?         @relation("SignedNotes", fields: [signedByDoctorId], references: [id], onDelete: SetNull)
-  versions         ClinicalNoteVersion[]
-}
-
-model ClinicalNoteVersion {
-  id               String       @id @default(cuid())
-  clinicalNoteId   String
-  versionNumber    Int
-  status           NoteStatus
-  content          Json
-  changeReason     String?
-  createdByUserId  String?
-  createdAt        DateTime     @default(now())
-  clinicalNote     ClinicalNote @relation(fields: [clinicalNoteId], references: [id], onDelete: Cascade)
-
-  @@unique([clinicalNoteId, versionNumber])
-}
-
-model Prescription {
-  id          String             @id @default(cuid())
-  encounterId String
-  doctorId    String
-  patientId   String
-  status      PrescriptionStatus @default(DRAFT)
-  diagnosis   String?
-  notes       String?
-  issuedAt    DateTime?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  encounter   Encounter          @relation(fields: [encounterId], references: [id], onDelete: Cascade)
-  doctor      User               @relation("DoctorPrescriptions", fields: [doctorId], references: [id], onDelete: Restrict)
-  patient     Patient            @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  items       PrescriptionItem[]
-}
-
-model PrescriptionItem {
-  id             String       @id @default(cuid())
-  prescriptionId String
-  medicationName String
-  dosage         String?
-  route          String?
-  frequency      String?
-  duration       String?
-  quantity       String?
-  instructions   String?
-  createdAt      DateTime     @default(now())
-  prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
-}
-
-model PatientInstruction {
-  id          String            @id @default(cuid())
-  encounterId String
-  title       String
-  body        String
-  status      InstructionStatus @default(DRAFT)
-  sharedAt    DateTime?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  encounter   Encounter         @relation(fields: [encounterId], references: [id], onDelete: Cascade)
-}
-
 model PrecheckinSubmission {
   id           String          @id @default(cuid())
   appointmentId String?
-  encounterId  String?
   patientId    String
   status       PrecheckinStatus @default(DRAFT)
   kind         PrecheckinKind  @default(GENERIC)
@@ -736,43 +548,14 @@ model PrecheckinSubmission {
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
   appointment  Appointment?    @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  encounter    Encounter?      @relation(fields: [encounterId], references: [id], onDelete: SetNull)
   patient      Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
   // Un solo precheckin por cita+paciente+tipo: el envio de antecedentes se
   // sobreescribe (upsert) y la preconsulta IA se rechaza si ya existe. Cierra la
   // carrera del findFirst+create ante envios casi simultaneos (doble pestana).
-  // appointmentId nulo (flujos por encounter) queda fuera: Postgres trata los
-  // NULL como distintos y no los restringe.
+  // appointmentId nulo queda fuera: Postgres trata los NULL como distintos y no
+  // los restringe.
   @@unique([appointmentId, patientId, kind])
-}
-
-model ClinicalDocument {
-  id               String           @id @default(cuid())
-  doctorId         String
-  patientId        String
-  appointmentId    String?
-  encounterId      String?
-  uploadLinkId     String?
-  uploadedByUserId String?
-  category         DocumentCategory
-  uploadSource     UploadSource
-  fileName         String
-  storagePath      String
-  mimeType         String
-  sizeBytes        Int?
-  description      String?
-  isPatientVisible Boolean          @default(false)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  doctor           User             @relation("DoctorClinicalDocuments", fields: [doctorId], references: [id], onDelete: Restrict)
-  patient          Patient          @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  appointment      Appointment?     @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  encounter        Encounter?       @relation(fields: [encounterId], references: [id], onDelete: SetNull)
-  uploadLink       DocumentUploadLink? @relation(fields: [uploadLinkId], references: [id], onDelete: SetNull)
-  uploadedByUser   User?            @relation("DocumentUploader", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
-
-  @@index([patientId, category, createdAt])
 }
 
 model DocumentUploadLink {
@@ -780,7 +563,6 @@ model DocumentUploadLink {
   doctorId       String
   patientId      String
   appointmentId  String?
-  encounterId    String?
   token          String           @unique
   status         UploadLinkStatus @default(ACTIVE)
   expiresAt      DateTime
@@ -791,8 +573,6 @@ model DocumentUploadLink {
   doctor         User             @relation("DoctorDocumentUploadLinks", fields: [doctorId], references: [id], onDelete: Restrict)
   patient        Patient          @relation(fields: [patientId], references: [id], onDelete: Restrict)
   appointment    Appointment?     @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  encounter      Encounter?       @relation(fields: [encounterId], references: [id], onDelete: SetNull)
-  documents      ClinicalDocument[]
   mailboxDocuments MailboxDocument[]
 
   @@index([patientId, expiresAt, status])
@@ -870,7 +650,6 @@ model Consent {
   id           String      @id @default(cuid())
   patientId    String
   doctorId     String?
-  encounterId  String?
   type         ConsentType
   version      String
   granted      Boolean     @default(true)
@@ -879,7 +658,6 @@ model Consent {
   evidence     Json?
   patient      Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
   doctor       User?       @relation("DoctorConsents", fields: [doctorId], references: [id], onDelete: SetNull)
-  encounter    Encounter?  @relation(fields: [encounterId], references: [id], onDelete: SetNull)
 
   @@index([patientId, type, grantedAt])
 }
@@ -1129,7 +907,6 @@ model AiUsageLog {
   externalRunId      String?
   providerId         String
   patientId          String?
-  encounterId        String?
   notificationId     String?
   usageType          AiUsageType
   status             AiUsageStatus @default(PENDING)
@@ -1153,7 +930,6 @@ model AiUsageLog {
   doctor             User?         @relation("DoctorAiUsageLogs", fields: [doctorId], references: [id], onDelete: Cascade)
   provider           AiProvider    @relation(fields: [providerId], references: [id], onDelete: Restrict)
   patient            Patient?      @relation(fields: [patientId], references: [id], onDelete: SetNull)
-  encounter          Encounter?    @relation(fields: [encounterId], references: [id], onDelete: SetNull)
 
   @@unique([doctorId, externalRunId])
   @@index([doctorId, createdAt])
@@ -1182,52 +958,6 @@ model AiBenchmarkResult {
   summary          String?
   createdAt        DateTime       @default(now())
   benchmarkRun     AiBenchmarkRun @relation(fields: [benchmarkRunId], references: [id], onDelete: Cascade)
-}
-
-model DentalChart {
-  id          String                @id @default(cuid())
-  encounterId String                @unique
-  notes       String?
-  createdAt   DateTime              @default(now())
-  updatedAt   DateTime              @updatedAt
-  encounter   Encounter             @relation(fields: [encounterId], references: [id], onDelete: Cascade)
-  entries     DentalChartEntry[]
-  periodontalEntries PeriodontalChartEntry[]
-}
-
-model DentalChartEntry {
-  id             String      @id @default(cuid())
-  dentalChartId  String
-  toothNumber    String
-  surface        String?
-  finding        String
-  condition      String?
-  procedure      String?
-  priority       Int         @default(0)
-  status         String?
-  notes          String?
-  createdAt      DateTime    @default(now())
-  dentalChart    DentalChart @relation(fields: [dentalChartId], references: [id], onDelete: Cascade)
-
-  @@index([dentalChartId, toothNumber])
-}
-
-model PeriodontalChartEntry {
-  id              String      @id @default(cuid())
-  dentalChartId   String
-  toothNumber     String
-  site            String
-  pocketDepthMm   Int?
-  gingivalMarginMm Int?
-  bleeding        Boolean     @default(false)
-  plaque          Boolean     @default(false)
-  mobility        Int?
-  furcation       String?
-  notes           String?
-  createdAt       DateTime    @default(now())
-  dentalChart     DentalChart @relation(fields: [dentalChartId], references: [id], onDelete: Cascade)
-
-  @@index([dentalChartId, toothNumber, site])
 }
 
 // ---------- Sincronizacion con la app de escritorio (13_contrato_sincronizacion.md) ----------

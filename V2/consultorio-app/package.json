@@ -6,6 +6,8 @@
     "build": "next build",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "env:check": "tsx --env-file=.env.local src/lib/env.ts",
     "db:migrate:dev": "node --env-file=.env.local node_modules/prisma/build/index.js migrate dev",

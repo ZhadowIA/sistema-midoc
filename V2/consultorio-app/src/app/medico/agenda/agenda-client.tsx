@@ -51,7 +51,7 @@ export function DoctorAgendaClient() {
 
         <div className="service-list">
           {appointments.map((appointment) => (
-            <a className="service-card" href={`/medico/atencion/${appointment.id}`} key={appointment.id}>
+            <div className="service-card" key={appointment.id}>
               <div className="service-card-top">
                 <h3>
                   {appointment.patient.firstName} {appointment.patient.lastName}
@@ -65,7 +65,7 @@ export function DoctorAgendaClient() {
                   timeStyle: "short"
                 }).format(new Date(appointment.scheduledStart))}
               </small>
-            </a>
+            </div>
           ))}
         </div>
       </article>
