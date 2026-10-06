@@ -1373,7 +1373,7 @@ Decisiones (2026-10-05):
 - **Word queda fuera de la exportacion oficial:** un .docx editable rompe la integridad de una nota firmada (NOM-004). Si se quiere, llega despues como plantilla editable para documentos sueltos (carta de referencia, justificante), separada del expediente.
 - **HL7 CDA (NOM-024) no entra:** solo se evalua si se busca certificar el sistema o un cliente institucional lo exige.
 - **CIE-10 entra a este paso:** sin diagnosticos codificados, FHIR exporta texto y no datos. El diagnostico en texto libre se conserva para notas anteriores; el catalogo debe ser de fuente oficial con licencia verificada antes de empaquetarlo.
-- **La receta y el PDF llevan nombre y cedula del medico:** hoy la app no conoce esos datos; se capturan en el equipo (o bajan de la cuenta) como parte de la rebanada de PDF.
+- **La receta y el PDF llevan nombre y cedula del medico, que bajan de la cuenta del portal** (decidido 2026-10-06): el portal ya los tiene y son la fuente de verdad; la app los guarda al vincular y los refresca en cada sincronizacion. Que la app dependa de estar vinculada es aceptable porque de todos modos tiene que verificar que la suscripcion siga vigente.
 
 Rebanadas en orden: 1) documentos locales ligados al paciente y a la consulta; 2) diagnostico CIE-10; 3) busqueda en el expediente; 4) PDF por consulta y expediente completo, con nombre y cedula del medico; 5) FHIR R4; 6) CSV del directorio.
 

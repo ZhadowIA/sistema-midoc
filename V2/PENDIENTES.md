@@ -8,7 +8,6 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 - [ ] **Avisos al propio medico** — que sobrevive de notificaciones cuando el destinatario es el medico y no el paciente. _(2026-09-07, reenfoque)_
 - [ ] **Precio del plan sin agenda** — necesario para el paso 29. _(2026-09-07, reenfoque)_
 - [ ] **Rama `v2/preconsulta-por-servicio`** — local, sin push ni PR, 2 commits (`76643c1` preconsulta guiada opcional por servicio en el portal; `7a62618` configuracion como destino unico y menu de cuatro secciones en el desktop). La preconsulta queda congelada por el reenfoque; decidir si se rescata el commit del menu y si se descarta el resto. Su migracion `20260724000000_service_requires_preconsulta` ya esta aplicada en la base local de desarrollo aunque no exista en `dev`. _(2026-10-05)_
-- [ ] **¿La app debe funcionar sin vincular cuenta?** — hoy todo el expediente queda detras del formulario de vinculacion. El paso 29 pide que un medico sin plan pueda documentar a mano; decidir si eso incluye "sin cuenta". _(2026-10-05, paso 27)_
 - [ ] **Entrada "Consulta" en la navegacion** — el paso 27 la lista, pero la consulta nace del paciente y no hay una vista que liste consultas abiertas. Decidir si se agrega "Consultas abiertas" o se quita del paso. _(2026-10-05, paso 27)_
 
 ## Deuda tecnica
@@ -29,6 +28,8 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 - [ ] **Paso 22, diarizacion** — falta compilar nativo con `--features diarization-local`, prueba e2e con audio real, fijar los `MIDOC_DIARIZE_*_SHA256` y rehospedar los `.onnx` con sus licencias. _(2026-06-18)_
 
 ## Resueltos
+
+- [x] **¿La app debe funcionar sin vincular cuenta?** — No: la app requiere estar vinculada, porque tiene que verificar que la suscripcion siga vigente; por la misma via baja el nombre y la cedula del medico. "Sin plan" (paso 29) significa vinculado pero sin suscripcion de IA, no sin cuenta. Decidido 2026-10-06.
 
 - [x] **Formato de exportacion del expediente** — PDF, despues FHIR R4 (JSON), despues CSV del directorio; Word fuera de la exportacion oficial; CIE-10 dentro del paso 28. Decidido 2026-10-05, en `10_linea_de_desarrollo.md` (paso 28).
 - [x] **La receta no lleva nombre ni cedula del medico** — absorbido por el paso 28, rebanada 4 (2026-10-05).
