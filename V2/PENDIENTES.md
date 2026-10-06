@@ -6,7 +6,8 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 
 - [ ] **Ordenes de laboratorio dental** — ¿siguen activas bajo el reenfoque o se congelan con Recepcion? Por ahora siguen activas dentro de la consulta dental, pero la vista global de trabajos pendientes vivia en Recepcion y con la bandera apagada ya no se ve en ningun lado. _(2026-09-07, reenfoque; actualizado 2026-10-05, paso 27)_
 - [ ] **Avisos al propio medico** — que sobrevive de notificaciones cuando el destinatario es el medico y no el paciente. _(2026-09-07, reenfoque)_
-- [ ] **Precio del plan sin agenda** — necesario para el paso 29. _(2026-09-07, reenfoque)_
+- [ ] **Precios del nuevo modelo** — licencia, renovacion de actualizaciones, paquetes de creditos y plan mensual; tambien equipos por licencia y periodo de parches criticos. Ver `15_modelo_de_negocio.md` seccion 5. _(2026-09-07, reenfoque; replanteado 2026-10-06)_
+- [ ] **Revision fiscal y de consumidor antes de cobrar** — CFDI por cada cobro, creditos como ingreso diferido, y que las recargas no caduquen (PROFECO). Con contador. _(2026-10-06, modelo de negocio)_
 - [ ] **Rama `v2/preconsulta-por-servicio`** — local, sin push ni PR, 2 commits (`76643c1` preconsulta guiada opcional por servicio en el portal; `7a62618` configuracion como destino unico y menu de cuatro secciones en el desktop). La preconsulta queda congelada por el reenfoque; decidir si se rescata el commit del menu y si se descarta el resto. Su migracion `20260724000000_service_requires_preconsulta` ya esta aplicada en la base local de desarrollo aunque no exista en `dev`. _(2026-10-05)_
 - [ ] **Entrada "Consulta" en la navegacion** — el paso 27 la lista, pero la consulta nace del paciente y no hay una vista que liste consultas abiertas. Decidir si se agrega "Consultas abiertas" o se quita del paso. _(2026-10-05, paso 27)_
 
@@ -32,7 +33,8 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 
 ## Resueltos
 
-- [x] **¿La app debe funcionar sin vincular cuenta?** — No: la app requiere estar vinculada, porque tiene que verificar que la suscripcion siga vigente; por la misma via baja el nombre y la cedula del medico. "Sin plan" (paso 29) significa vinculado pero sin suscripcion de IA, no sin cuenta. Decidido 2026-10-06.
+- [x] **¿La app debe funcionar sin vincular cuenta?** — Se activa una vez vinculando la cuenta; despues funciona sin conexion con una licencia firmada. La vinculacion solo hace falta para activar, creditos de IA y actualizaciones; nombre y cedula bajan del portal y quedan en el equipo. Decidido 2026-10-06 con el modelo de compra unica (`15_modelo_de_negocio.md`), que reemplaza la respuesta anterior ("requiere estar vinculada por la suscripcion").
+- [x] **Modelo de negocio** — compra unica con 12 meses de actualizaciones + creditos de IA (recargas sin caducidad y plan mensual opcional). Decidido 2026-10-06, `15_modelo_de_negocio.md`.
 
 - [x] **Formato de exportacion del expediente** — PDF, despues FHIR R4 (JSON), despues CSV del directorio; Word fuera de la exportacion oficial; CIE-10 dentro del paso 28. Decidido 2026-10-05, en `10_linea_de_desarrollo.md` (paso 28).
 - [x] **La receta no lleva nombre ni cedula del medico** — absorbido por el paso 28, rebanada 4 (2026-10-05).

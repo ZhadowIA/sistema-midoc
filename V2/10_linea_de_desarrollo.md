@@ -1373,7 +1373,7 @@ Decisiones (2026-10-05):
 - **Word queda fuera de la exportacion oficial:** un .docx editable rompe la integridad de una nota firmada (NOM-004). Si se quiere, llega despues como plantilla editable para documentos sueltos (carta de referencia, justificante), separada del expediente.
 - **HL7 CDA (NOM-024) no entra:** solo se evalua si se busca certificar el sistema o un cliente institucional lo exige.
 - **CIE-10 entra a este paso:** sin diagnosticos codificados, FHIR exporta texto y no datos. El diagnostico en texto libre se conserva para notas anteriores; el catalogo debe ser de fuente oficial con licencia verificada antes de empaquetarlo.
-- **La receta y el PDF llevan nombre y cedula del medico, que bajan de la cuenta del portal** (decidido 2026-10-06): el portal ya los tiene y son la fuente de verdad; la app los guarda al vincular y los refresca en cada sincronizacion. Que la app dependa de estar vinculada es aceptable porque de todos modos tiene que verificar que la suscripcion siga vigente.
+- **La receta y el PDF llevan nombre y cedula del medico, que bajan de la cuenta del portal** (decidido 2026-10-06): el portal ya los tiene y son la fuente de verdad; la app los guarda al vincular y los refresca en cada sincronizacion. Que la app dependa de estar vinculada era aceptable bajo suscripcion; con el modelo de compra unica (`15_modelo_de_negocio.md`) la vinculacion solo hace falta para activar, para creditos de IA y para actualizaciones: los datos quedan guardados en el equipo y la app funciona sin conexion.
 
 Rebanadas en orden: 1) documentos locales ligados al paciente y a la consulta; 2) diagnostico CIE-10; 3) busqueda en el expediente; 4) PDF por consulta y expediente completo, con nombre y cedula del medico; 5) FHIR R4; 6) CSV del directorio.
 
@@ -1385,6 +1385,8 @@ Estado: 🚧 EN PROGRESO (rama `v2/paso28-expediente-calidad`).
 - **Rebanada 4 — PDF por consulta y expediente completo (2026-10-06).** El perfil de sincronizacion del portal incluye `professionalName` y `licenseNumber`; la app los guarda al vincular y al sincronizar (`doctor_name`, `doctor_license`). `export.rs` arma los datos (paciente, sexo, consultas con su nota vigente, CIE-10, receta, firma y huella, documentos) y `save_export` abre "Guardar como" desde Rust con `tauri-plugin-dialog` (la pagina nunca elige rutas), valida que sea PDF, escribe y deja en bitacora tipo, nombre de archivo y huella, sin contenido. El PDF se dibuja en la interfaz con pdf-lib (MIT, cargado solo al exportar): bloques puros en `recordExportModel.ts` y dibujo tamano carta en `recordPdf.ts`, con encabezado del medico y cedula (o aviso de que faltan), cada consulta con su estado de firma y huella, consultas abiertas advertidas, documentos listados con su huella y pie con fecha y pagina. El PDF de consulta lleva linea de firma con nombre y cedula. Botones "Exportar PDF" en el expediente y en la consulta. Verificado en la app real: expediente completo sin cedula (con el aviso) y consulta firmada con la cedula bajada del portal tras sincronizar.
 
 ## Paso 29 - Suscripcion y capacidades del nuevo producto
+
+> **Redefinir antes de implementar (2026-10-06).** El modelo de negocio cambio a compra unica + creditos de IA (`15_modelo_de_negocio.md`). Este paso pasa a ser licencia firmada con activacion unica y uso sin conexion, actualizaciones por 12 meses, y creditos de IA (recargas que no caducan y plan mensual opcional). La tabla de abajo describe el planteamiento anterior por suscripcion y queda solo como historia.
 
 | Campo | Definicion |
 |---|---|
