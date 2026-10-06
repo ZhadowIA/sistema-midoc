@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DentalNoteEditor } from "./DentalNoteEditor";
 import { DentalBudgetPanel } from "./DentalBudgetPanel";
 import { DentalLabPanel } from "./DentalLabPanel";
+import { DocumentsPanel } from "./DocumentsPanel";
 import { DentalEvolutionPanel, PostOpInstructionsPanel } from "./DentalNoteAids";
 import {
   coerceClinicalProfile,
@@ -1098,7 +1099,17 @@ export function Atencion({
                   <span className="consultation-step-dot" aria-hidden="true" />
                   <span>
                     <strong>{item.label}</strong>
-                    <small>{item.id === "nota" ? "SOAP" : item.id === "ia" ? "Dictado" : item.id === "ayuda" ? "Asistencia" : "Clínico"}</small>
+                    <small>
+                      {item.id === "nota"
+                        ? "SOAP"
+                        : item.id === "ia"
+                          ? "Dictado"
+                          : item.id === "ayuda"
+                            ? "Asistencia"
+                            : item.id === "documentos"
+                              ? "Archivos"
+                              : "Clínico"}
+                    </small>
                   </span>
                 </button>
               ))}
@@ -1563,6 +1574,16 @@ export function Atencion({
             </div>
           ) : null}
         </section>
+            ) : null}
+
+            {resolvedSection === "documentos" ? (
+              <section className="panel">
+                <DocumentsPanel
+                  patientId={detail.patient.id}
+                  encounterId={detail.encounter.id}
+                  heading="Documentos de la consulta"
+                />
+              </section>
             ) : null}
 
             {resolvedSection === "receta" ? (

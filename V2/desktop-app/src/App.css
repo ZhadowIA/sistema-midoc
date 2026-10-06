@@ -4966,3 +4966,101 @@ body.dictating .encounter-modes:focus-within {
   background: var(--danger);
   box-shadow: 0 0 0 2px var(--bg, #fff);
 }
+
+/* ---------- Documentos del expediente (paso 28) ---------- */
+
+.documents-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.documents-dropzone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  padding: 18px 20px;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  transition: border-color var(--speed) var(--ease), background var(--speed) var(--ease);
+}
+
+.documents-dropzone p {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.documents-dropzone-active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.documents-dropzone-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.documents-group {
+  display: grid;
+  gap: 8px;
+}
+
+.documents-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.documents-open {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.documents-open strong {
+  overflow-wrap: anywhere;
+}
+
+.documents-preview {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  width: min(1000px, 100%);
+  height: min(860px, calc(100vh - 48px));
+  max-height: none;
+  overflow: hidden;
+}
+
+.documents-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.documents-preview-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.documents-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
+  object-fit: contain;
+  padding: 12px;
+}

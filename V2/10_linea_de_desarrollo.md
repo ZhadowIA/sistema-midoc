@@ -1377,6 +1377,10 @@ Decisiones (2026-10-05):
 
 Rebanadas en orden: 1) documentos locales ligados al paciente y a la consulta; 2) diagnostico CIE-10; 3) busqueda en el expediente; 4) PDF por consulta y expediente completo, con nombre y cedula del medico; 5) FHIR R4; 6) CSV del directorio.
 
+Estado: 🚧 EN PROGRESO (rama `v2/paso28-expediente-calidad`).
+
+- **Rebanada 1 — documentos locales (2026-10-05).** Migracion v24 sobre la tabla `documents` del buzon: `encounter_id`, `title`, `sha256` y `source` (MAILBOX para lo existente, LOCAL para lo adjuntado en la app). Modulo `documents.rs`: el tipo se decide por la firma del archivo (PDF, PNG, JPG, WEBP), tope de 20 MB, rechazo de duplicados por paciente (sha256), la consulta debe ser del mismo paciente, y la bitacora guarda nombre y huella, nunca contenido; leer un documento tambien queda en bitacora. "Retirar" borra el archivo (existe para corregir un adjunto al paciente equivocado) y deja constancia. UI: `DocumentsPanel` con zona para soltar archivos, selector multiple, categoria, lista agrupada por consulta y vista previa (visor de PDF de WebView2 o imagen); pestaña "Documentos" en el expediente y paso "Documentos" en la consulta, disponible tambien despues de firmar. `dragDropEnabled: false` en la ventana para que el arrastre llegue a la pagina. Verificado en la app real: PDF e imagen entran ligados a la consulta, se ven, el duplicado se rechaza, se retira con confirmacion y el expediente los agrupa por consulta y "Sin consulta".
+
 ## Paso 29 - Suscripcion y capacidades del nuevo producto
 
 | Campo | Definicion |

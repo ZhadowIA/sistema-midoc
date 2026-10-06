@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
+import { DocumentsPanel } from "./DocumentsPanel";
 import { parseDateFlexible } from "./dateOnly";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { MedicalHistoryGroups } from "./MedicalHistoryGroups";
@@ -66,7 +67,7 @@ interface TimelineEvent {
   updated_at: string;
 }
 
-type SectionId = "antecedentes" | "historial" | "timeline";
+type SectionId = "antecedentes" | "historial" | "timeline" | "documentos";
 
 const CATEGORY_LABELS: Record<string, string> = {
   NOTE: "Nota",
@@ -338,7 +339,8 @@ export function Expediente({
   const navItems: Array<{ id: SectionId; label: string }> = [
     { id: "antecedentes", label: "Antecedentes" },
     { id: "historial", label: "Historial" },
-    { id: "timeline", label: "Linea del tiempo" }
+    { id: "timeline", label: "Linea del tiempo" },
+    { id: "documentos", label: "Documentos" }
   ];
 
   return (
@@ -565,6 +567,12 @@ export function Expediente({
                     ))}
                   </ul>
                 )}
+              </section>
+            ) : null}
+
+            {section === "documentos" ? (
+              <section className="panel">
+                <DocumentsPanel patientId={patientId} />
               </section>
             ) : null}
 
