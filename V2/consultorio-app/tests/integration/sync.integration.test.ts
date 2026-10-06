@@ -248,6 +248,8 @@ describe("device profile metadata (paso 13, rebanada 4)", () => {
       const { profile } = await getSyncDeviceProfile(device);
       expect(profile?.specialty).toBe(ClinicalProfile.ODONTOLOGY);
       expect(profile?.consultationDuration).toBe(20);
+      expect(profile?.professionalName).toBe("Dra. Eva Soto");
+      expect(profile?.licenseNumber).toBe("1234567");
 
       const starts = profile?.availabilityRules.map((rule) => rule.startTime).sort();
       const ends = profile?.availabilityRules.map((rule) => rule.endTime).sort();

@@ -82,6 +82,8 @@ struct SyncStatus {
     slot_minutes: Option<i64>,
     work_start_minutes: Option<i64>,
     work_end_minutes: Option<i64>,
+    doctor_name: Option<String>,
+    doctor_license: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -332,6 +334,8 @@ fn sync_status(state: tauri::State<'_, AppDb>) -> Result<SyncStatus, String> {
     let slot_minutes = parse_minutes("slot_minutes")?;
     let work_start_minutes = parse_minutes("work_start_minutes")?;
     let work_end_minutes = parse_minutes("work_end_minutes")?;
+    let doctor_name = sync::get_state(conn, "doctor_name").map_err(|e| e.to_string())?;
+    let doctor_license = sync::get_state(conn, "doctor_license").map_err(|e| e.to_string())?;
 
     Ok(SyncStatus {
         linked,
@@ -341,6 +345,8 @@ fn sync_status(state: tauri::State<'_, AppDb>) -> Result<SyncStatus, String> {
         slot_minutes,
         work_start_minutes,
         work_end_minutes,
+        doctor_name,
+        doctor_license,
     })
 }
 
@@ -423,6 +429,12 @@ fn persist_profile_metadata(
     if let Some(work_end) = metadata.work_end_minutes {
         sync::set_state(conn, "work_end_minutes", &work_end.to_string())
             .map_err(|e| e.to_string())?;
+    }
+    if let Some(name) = metadata.professional_name.as_deref() {
+        sync::set_state(conn, "doctor_name", name).map_err(|e| e.to_string())?;
+    }
+    if let Some(license) = metadata.license_number.as_deref() {
+        sync::set_state(conn, "doctor_license", license).map_err(|e| e.to_string())?;
     }
     Ok(())
 }

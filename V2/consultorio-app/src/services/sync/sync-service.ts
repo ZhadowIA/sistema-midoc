@@ -205,6 +205,10 @@ export async function getSyncDeviceProfile(device: SyncDevice) {
     select: {
       specialty: true,
       consultationDuration: true,
+      // Identidad profesional para recetas y PDF del expediente (paso 28 r4):
+      // la app la guarda en el equipo y la usa sin conexion.
+      professionalName: true,
+      licenseNumber: true,
       availabilityRules: {
         where: { isActive: true },
         select: { startTime: true, endTime: true, isActive: true }
