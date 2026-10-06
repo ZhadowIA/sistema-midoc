@@ -20,6 +20,9 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 - [ ] **El visor de PDF permite descargar el archivo descifrado** — es una accion del medico y no viaja a la red, pero deja una copia en claro fuera de la base cifrada. Decidir si se oculta la barra del visor o se acepta como salida deliberada. _(2026-10-05, paso 28 r1)_
 - [ ] **Los diagnosticos ya elegidos no muestran los avisos del catalogo** — el aviso de sexo, edad o consulta externa sale en los resultados de busqueda, no en la lista de la nota; si cambian los datos del paciente despues, no se vuelve a avisar. _(2026-10-06, paso 28 r2)_
 - [ ] **El historial del expediente solo muestra el diagnostico en texto libre** — los codigos CIE-10 no aparecen en "Historial" ni en el resumen de consultas; entra natural con la busqueda (r3) o el PDF (r4). _(2026-10-06, paso 28 r2)_
+- [ ] **La receta impresa no cubre todos los requisitos legales** — lleva nombre, cedula, paciente, fecha y medicamentos, pero el Reglamento de Insumos para la Salud tambien pide domicilio del consultorio, institucion que expidio el titulo y especialidad (con su cedula si aplica), y para menores la edad. Esos datos no existen todavia en la cuenta del portal. _(2026-10-06, paso 28 r4)_
+- [ ] **El PDF no incluye la plantilla de especialidad ni la historia clinica estructurada** — ni el odontograma/plan dental ni la plantilla de medicina general ni los antecedentes estructurados del paso 19; solo los antecedentes en texto libre. _(2026-10-06, paso 28 r4)_
+- [ ] **PDF/A para archivo** — la decision del paso 28 menciona PDF/A al archivar; hoy se genera PDF normal (pdf-lib no produce PDF/A). _(2026-10-06, paso 28 r4)_
 - [ ] **CI en GitHub** — los PRs no reportan checks; hoy todo se verifica a mano en local. _(2026-10-05)_
 
 ## Trabajo abierto

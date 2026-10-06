@@ -9,6 +9,7 @@ mod crypto;
 mod db;
 mod dental;
 mod documents;
+mod export;
 mod diarization;
 mod diarization_model;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature
@@ -1257,6 +1258,62 @@ fn cie10_search(
 }
 
 #[tauri::command]
+fn record_export(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+    encounter_id: Option<String>,
+) -> Result<export::RecordExport, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    export::record_export(conn, &patient_id, encounter_id.as_deref()).map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+struct SavedExport {
+    path: String,
+    sha256: String,
+}
+
+/// Abre "Guardar como" (desde Rust: la pagina no elige rutas), escribe la
+/// exportacion y la deja en la bitacora. `None` si el medico cancelo.
+#[tauri::command]
+async fn save_export(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+    kind: String,
+    suggested_name: String,
+    content_base64: String,
+) -> Result<Option<SavedExport>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let file_name = export::suggested_file_name(&suggested_name, "pdf");
+    let dialog_app = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        dialog_app
+            .dialog()
+            .file()
+            .set_title("Guardar exportacion del expediente")
+            .set_file_name(&file_name)
+            .add_filter("PDF", &["pdf"])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let sha256 = export::write_export(conn, &path, &patient_id, &kind, &content_base64)
+        .map_err(|e| e.to_string())?;
+    Ok(Some(SavedExport { path: path.display().to_string(), sha256 }))
+}
+
+#[tauri::command]
 fn search_records(
     state: tauri::State<'_, AppDb>,
     query: String,
@@ -2472,6 +2529,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppDb(Mutex::new(None)))
         .manage(ModelDownloads(Mutex::new(HashMap::new())))
         .invoke_handler(tauri::generate_handler![
@@ -2533,6 +2591,8 @@ pub fn run() {
             dental_pending_lab_orders,
             cie10_search,
             search_records,
+            record_export,
+            save_export,
             cie10_catalog_info,
             documents_add,
             documents_list,

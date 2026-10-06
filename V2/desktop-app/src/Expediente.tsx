@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
 import { DocumentsPanel } from "./DocumentsPanel";
+import { exportMessage, exportRecordPdf } from "./recordExportAction";
 import { parseDateFlexible } from "./dateOnly";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { MedicalHistoryGroups } from "./MedicalHistoryGroups";
@@ -221,6 +222,20 @@ export function Expediente({
     setError("");
   }
 
+  async function exportPdf() {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const text = exportMessage(await exportRecordPdf(patientId, "PDF_EXPEDIENTE"));
+      if (text) setMessage(text);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Consulta sin cita: nace del expediente, no de la agenda.
   async function startEncounter() {
     setBusy(true);
@@ -380,14 +395,14 @@ export function Expediente({
             </p>
           ) : null}
         </div>
-        <button
-          type="button"
-          className="action-button expediente-start"
-          onClick={() => void startEncounter()}
-          disabled={busy}
-        >
-          Iniciar consulta
-        </button>
+        <div className="button-row expediente-start">
+          <button type="button" className="ghost-button" onClick={() => void exportPdf()} disabled={busy}>
+            Exportar PDF
+          </button>
+          <button type="button" className="action-button" onClick={() => void startEncounter()} disabled={busy}>
+            Iniciar consulta
+          </button>
+        </div>
       </div>
 
       <nav className="expediente-tabs" aria-label="Secciones del expediente">
