@@ -4,10 +4,12 @@ Vigentes desde: 2026-06-09. Estas reglas son obligatorias para todo cambio en `V
 
 ## 1. Principios
 
-1. **El paso actual manda.** Toda tarea se ubica primero en un paso de la linea de desarrollo. Si pertenece a un paso futuro, se documenta y no se implementa.
-2. **Local-first es invariante de arquitectura, no preferencia.** Ningun cambio puede hacer que un dato clinico se persista en la nube de forma permanente. Si un diseño lo requiere, el diseño esta mal.
-3. **Flujo manual antes que IA.** Ninguna funcion clinica depende de IA para completarse.
-4. **V1 es referencia, no dependencia.** Se puede leer `V1/` para entender reglas de negocio, pero no se importa codigo de V1 directamente; se reimplementa con las convenciones de V2.
+1. **El alcance activo manda (desde 2026-09-07).** MiDoc V2 es una aplicacion de expediente clinico con apoyo de IA para el medico. Una tarea solo se implementa si cae en: expediente y consulta, perfiles clinicos (general y dental), IA clinica y su gobernanza, o cuenta/suscripcion/pasarela de IA del portal. Agenda, portal del paciente, precheckin/buzon, recepcion, caja, cobro y notificaciones al paciente estan **congelados**: no se desarrollan ni se mantienen. Detalle en `14_reenfoque_expediente_ia.md`.
+2. **Congelar es apagar, no borrar.** Un modulo fuera de alcance queda detras de una bandera de capacidad apagada por omision, fuera de la navegacion y de las rutas. No se eliminan tablas ni migraciones por cambio de alcance; el retiro destructivo se reserva para violaciones de residencia de datos.
+3. **El paso actual manda.** Toda tarea se ubica primero en un paso de la linea de desarrollo. Si pertenece a un paso futuro, se documenta y no se implementa.
+4. **Local-first es invariante de arquitectura, no preferencia.** Ningun cambio puede hacer que un dato clinico se persista en la nube de forma permanente. Si un diseño lo requiere, el diseño esta mal.
+5. **Flujo manual antes que IA.** Ninguna funcion clinica depende de IA para completarse.
+6. **V1 es referencia, no dependencia.** Se puede leer `V1/` para entender reglas de negocio, pero no se importa codigo de V1 directamente; se reimplementa con las convenciones de V2.
 
 ## 2. Estructura del repositorio
 
@@ -20,7 +22,7 @@ Sistema MiDoc/
     ├── docs/                # Planes de implementacion
     ├── anexos/
     ├── tools/
-    ├── 01..12_*.md          # Documentacion de levantamiento y analisis
+    ├── 01..14_*.md          # Documentacion de levantamiento, analisis y reenfoque de alcance
     └── REGLAS_DESARROLLO.md # Este documento
 ```
 
