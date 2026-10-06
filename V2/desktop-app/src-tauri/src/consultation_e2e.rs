@@ -112,6 +112,12 @@ fn synced_appointment_drives_a_full_signed_consultation() {
                 "riskFactors": "Sedentarismo",
                 "preventivePlan": "Actividad fisica 150 min/sem"
             }),
+            // Clave escrita "a mano": se normaliza y el nombre sale del catalogo.
+            coded_diagnoses: vec![crate::clinical::CodedDiagnosis {
+                code: "m54.5".into(),
+                name: "lo que diga la interfaz".into(),
+                principal: false,
+            }],
         },
     )
     .unwrap();

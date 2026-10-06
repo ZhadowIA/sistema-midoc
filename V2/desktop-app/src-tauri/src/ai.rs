@@ -310,6 +310,7 @@ impl AiProvider for FakeProvider {
                     diagnosis: String::new(),
                     instructions: "Indicaciones al paciente: (a definir por el medico).".into(),
                     specialty: serde_json::Value::Null,
+                    coded_diagnoses: Vec::new(),
                 };
                 serde_json::to_string(&draft)
                     .map_err(|e| AiError::Invalid(format!("no se pudo serializar el borrador: {e}")))?
@@ -1513,6 +1514,7 @@ fn fake_clinical_aid_output(context: &str) -> Result<String, AiError> {
             diagnosis: String::new(),
             instructions: String::new(),
             specialty: serde_json::Value::Null,
+            coded_diagnoses: Vec::new(),
         },
         template_segments,
         possibilities: vec![ClinicalPossibility {
