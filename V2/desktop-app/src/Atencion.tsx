@@ -290,6 +290,7 @@ export function Atencion({
   encounterId,
   clinicalProfile,
   frozenScope,
+  backLabel,
   appointments,
   appointmentSelectionBusy,
   onBack,
@@ -299,6 +300,8 @@ export function Atencion({
   clinicalProfile: ClinicalProfile;
   /** Alcance congelado del reenfoque: agenda del dia y saldos del presupuesto dental. */
   frozenScope: boolean;
+  /** A donde regresa "volver": la consulta se abre desde la agenda, el directorio o el expediente. */
+  backLabel: string;
   appointments: EncounterAgendaAppointment[];
   appointmentSelectionBusy: boolean;
   onBack: () => void;
@@ -1036,7 +1039,7 @@ export function Atencion({
       <header className="consultation-topbar">
         <div className="consultation-titlebar">
           <button className="ghost-button" onClick={onBack}>
-            {frozenScope ? "‹ Agenda" : "‹ Pacientes"}
+            ‹ {backLabel}
           </button>
           <div className="consultation-patient-title">
             <strong>

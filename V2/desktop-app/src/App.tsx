@@ -612,6 +612,15 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
           encounterId={activeEncounter}
           clinicalProfile={clinicalProfile}
           frozenScope={FROZEN_SCOPE}
+          backLabel={
+            activePatient
+              ? "Expediente"
+              : view === "agenda"
+                ? "Agenda"
+                : view === "reception"
+                  ? "Recepción"
+                  : "Pacientes"
+          }
           appointments={appointments}
           appointmentSelectionBusy={busy}
           onBack={() => {
