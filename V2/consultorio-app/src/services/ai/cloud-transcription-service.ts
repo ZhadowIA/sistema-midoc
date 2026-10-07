@@ -2,11 +2,8 @@ import { AiProviderType, AiUsageStatus, AiUsageType, Prisma, type SyncDevice } f
 
 import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
-import {
-  getDoctorAiCreditSummary,
-  getTranscriptionCreditCost,
-  type TranscriptionMode
-} from "./ai-credits";
+import { getTranscriptionCreditCost, type TranscriptionMode } from "./ai-credits";
+import { debitCredits, refundUsage } from "./credit-ledger";
 import { readWavDurationSeconds } from "./audio-duration";
 import type {
   CloudTranscriptionProvider,
@@ -15,9 +12,10 @@ import type {
 } from "./cloud-transcription-provider";
 
 // Servicio gobernado de transcripcion en nube (Ruta B, F2). Media entre la app
-// de escritorio y un `CloudTranscriptionProvider` inyectable: valida capacidad,
-// calcula la duracion autoritativa del WAV, reserva un uso idempotente por
-// (doctorId, runId), llama al proveedor y finaliza el credito. Nunca persiste
+// de escritorio y un `CloudTranscriptionProvider` inyectable: calcula la duracion
+// autoritativa del WAV y con ella el costo, reserva un uso idempotente por
+// (doctorId, runId) tomando los creditos del saldo (paso 29 r3; sin saldo, 402),
+// llama al proveedor y, si falla, devuelve los creditos. Nunca persiste
 // audio ni transcripcion: solo metadata operativa (regla 4).
 
 export class CloudTranscriptionServiceError extends ServiceError {}
@@ -84,14 +82,7 @@ export async function transcribeCloudAudio(
 ): Promise<TranscribeCloudResult> {
   const { device, runId, mode } = input;
 
-  // 1. Gate de capacidad IA. El saldo agotado NO bloquea (registra sobreconsumo),
-  // pero una suscripcion/capacidad de IA no habilitada rechaza el uso de nube.
-  const summary = await getDoctorAiCreditSummary(device.doctorId, now);
-  if (!summary.aiEnabled || !summary.entitled) {
-    throw new CloudTranscriptionServiceError("La capacidad de IA no esta habilitada.", 403);
-  }
-
-  // 2. Duracion autoritativa: la calcula el portal del WAV validado, no confia
+  // 1. Duracion autoritativa: la calcula el portal del WAV validado, no confia
   // en la duracion declarada por el cliente.
   let durationSeconds: number;
   try {
@@ -99,7 +90,12 @@ export async function transcribeCloudAudio(
   } catch {
     throw new CloudTranscriptionServiceError("El audio no es un WAV valido.", 422);
   }
+  if (!(durationSeconds > 0)) {
+    throw new CloudTranscriptionServiceError("El audio esta vacio.", 422);
+  }
   const storedDuration = Math.round(durationSeconds);
+  // 2. Costo con la duracion autoritativa: se conoce antes de llamar al proveedor.
+  const creditCost = getTranscriptionCreditCost({ mode, durationSeconds });
 
   // 3. Reserva idempotente por (doctorId, runId).
   const existing = await prisma.aiUsageLog.findUnique({
@@ -131,46 +127,47 @@ export async function transcribeCloudAudio(
 
   const providerRow = await getOrCreateTranscriptionProvider(provider.name);
 
+  // 3b. Reserva y cobro en la misma transaccion: sin saldo no queda reserva.
   let reservationId: string;
-  if (existing) {
-    const updated = await prisma.aiUsageLog.update({
-      where: { id: existing.id },
-      data: {
-        status: AiUsageStatus.PENDING,
-        creditCost: 0,
-        durationSeconds: storedDuration,
-        transcriptionMode: mode,
-        providerId: providerRow.id,
-        reportedAt: now
-      }
+  try {
+    reservationId = await prisma.$transaction(async (tx) => {
+      const row = existing
+        ? await tx.aiUsageLog.update({
+            where: { id: existing.id },
+            data: {
+              status: AiUsageStatus.PENDING,
+              creditCost,
+              durationSeconds: storedDuration,
+              transcriptionMode: mode,
+              providerId: providerRow.id,
+              reportedAt: now
+            }
+          })
+        : await tx.aiUsageLog.create({
+            data: {
+              doctorId: device.doctorId,
+              externalRunId: runId,
+              providerId: providerRow.id,
+              usageType: AiUsageType.TRANSCRIPTION,
+              status: AiUsageStatus.PENDING,
+              creditCost,
+              durationSeconds: storedDuration,
+              transcriptionMode: mode,
+              inputReference: { kind: "REMOTE_AUDIO_TRANSIENT", runId },
+              outputReference: { kind: "LOCAL_ENCRYPTED_TRANSCRIPT", runId },
+              reportedAt: now,
+              createdAt: now
+            }
+          });
+      await debitCredits(tx, { doctorUserId: device.doctorId, credits: creditCost, aiUsageLogId: row.id, now });
+      return row.id;
     });
-    reservationId = updated.id;
-  } else {
-    try {
-      const created = await prisma.aiUsageLog.create({
-        data: {
-          doctorId: device.doctorId,
-          externalRunId: runId,
-          providerId: providerRow.id,
-          usageType: AiUsageType.TRANSCRIPTION,
-          status: AiUsageStatus.PENDING,
-          creditCost: 0,
-          durationSeconds: storedDuration,
-          transcriptionMode: mode,
-          inputReference: { kind: "REMOTE_AUDIO_TRANSIENT", runId },
-          outputReference: { kind: "LOCAL_ENCRYPTED_TRANSCRIPT", runId },
-          reportedAt: now,
-          createdAt: now
-        }
-      });
-      reservationId = created.id;
-    } catch (error) {
-      // Carrera: otra solicitud con el mismo runId reservo primero.
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new CloudTranscriptionServiceError("La transcripcion de este runId esta en curso.", 409);
-      }
-      throw error;
+  } catch (error) {
+    // Carrera: otra solicitud con el mismo runId reservo primero.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new CloudTranscriptionServiceError("La transcripcion de este runId esta en curso.", 409);
     }
+    throw error;
   }
 
   // 4. Llamada al proveedor. Un fallo marca FAILED con 0 creditos.
@@ -178,10 +175,7 @@ export async function transcribeCloudAudio(
   try {
     providerResult = await callProvider(provider, input);
   } catch {
-    await prisma.aiUsageLog.update({
-      where: { id: reservationId },
-      data: { status: AiUsageStatus.FAILED, creditCost: 0 }
-    });
+    await failReservation(reservationId);
     throw new CloudTranscriptionServiceError("El proveedor de transcripcion fallo.", 502);
   }
 
@@ -189,21 +183,16 @@ export async function transcribeCloudAudio(
   if (providerResult.reportedDurationSeconds != null) {
     const tolerance = Math.max(2, durationSeconds * 0.02);
     if (Math.abs(providerResult.reportedDurationSeconds - durationSeconds) > tolerance) {
-      await prisma.aiUsageLog.update({
-        where: { id: reservationId },
-        data: { status: AiUsageStatus.FAILED, creditCost: 0 }
-      });
+      await failReservation(reservationId);
       throw new CloudTranscriptionServiceError("La duracion reportada por el proveedor no coincide.", 502);
     }
   }
 
-  // 5. Credito definitivo con la duracion autoritativa y cierre del uso.
-  const creditCost = getTranscriptionCreditCost({ mode, durationSeconds });
+  // 5. Cierre del uso; los creditos ya se tomaron al reservar.
   await prisma.aiUsageLog.update({
     where: { id: reservationId },
     data: {
       status: AiUsageStatus.COMPLETED,
-      creditCost,
       modelVersion: providerResult.model,
       latencyMs: providerResult.latencyMs,
       estimatedCostCents: 0
@@ -211,6 +200,17 @@ export async function transcribeCloudAudio(
   });
 
   return toResult(runId, provider.name, mode, providerResult, creditCost, storedDuration);
+}
+
+/** Un uso fallido no cuesta: marca FAILED y devuelve los creditos tomados. */
+async function failReservation(reservationId: string) {
+  await prisma.$transaction(async (tx) => {
+    await tx.aiUsageLog.update({
+      where: { id: reservationId },
+      data: { status: AiUsageStatus.FAILED, creditCost: 0 }
+    });
+    await refundUsage(tx, reservationId);
+  });
 }
 
 function callProvider(provider: CloudTranscriptionProvider, input: TranscribeCloudInput) {
