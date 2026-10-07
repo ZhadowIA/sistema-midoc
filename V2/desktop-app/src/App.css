@@ -5275,3 +5275,10 @@ body.dictating .encounter-modes:focus-within {
     gap: 2px;
   }
 }
+
+/* Licencia de compra unica (paso 29): una linea discreta bajo el nombre. */
+.sidebar-license {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.3;
+}

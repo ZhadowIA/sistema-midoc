@@ -125,6 +125,7 @@ const mockState = {
     { downloaded: number; total: number; present: boolean; downloading: boolean; error: string | null }
   >,
   linked: true,
+  licensed: true,
   clinicalProfile: "ODONTOLOGY",
   slotMinutes: 30,
   aiConsent: false,
@@ -939,7 +940,36 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       } as T;
     case "link_account":
       mockState.linked = true;
-      return undefined as T;
+      mockState.licensed = true;
+      return { license_error: null } as T;
+    case "license_status":
+    case "activate_license":
+      if (command === "activate_license" && mockState.linked) mockState.licensed = true;
+      return (
+        mockState.licensed
+          ? {
+              state: "VALID",
+              reason: null,
+              holder_name: "Dra. Demo",
+              holder_license_number: "1234567",
+              edition: "STANDARD",
+              purchased_at: "2026-10-06",
+              updates_until: "2027-10-06",
+              updates_included: true,
+              max_devices: 2
+            }
+          : {
+              state: "MISSING",
+              reason: null,
+              holder_name: null,
+              holder_license_number: null,
+              edition: null,
+              purchased_at: null,
+              updates_until: null,
+              updates_included: false,
+              max_devices: null
+            }
+      ) as T;
     case "sync_now": {
       const pendingAiReports = mockState.aiRuns.filter((run) => !run.reported).length;
       mockState.aiRuns = mockState.aiRuns.map((run) => ({ ...run, reported: true }));

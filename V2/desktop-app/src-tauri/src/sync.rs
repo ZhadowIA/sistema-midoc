@@ -426,6 +426,34 @@ pub async fn link_account(
     })
 }
 
+/// Activa (o refresca) la licencia de este equipo (paso 29). Devuelve la
+/// licencia firmada; quien llama la verifica antes de guardarla.
+pub async fn activate_license(
+    server_url: &str,
+    device_token: &str,
+    installation_id: &str,
+    device_name: &str,
+) -> Result<String, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+    let response = client
+        .post(format!("{base}/api/sync/license"))
+        .bearer_auth(device_token)
+        .json(&serde_json::json!({ "installationId": installation_id, "deviceName": device_name }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+
+    let body: serde_json::Value = response.json().await?;
+    body.get("license")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| SyncError::Server("respuesta sin licencia".into()))
+}
+
 pub async fn fetch_inbox(
     server_url: &str,
     device_token: &str,

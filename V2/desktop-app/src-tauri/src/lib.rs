@@ -12,6 +12,7 @@ mod documents;
 mod export;
 mod fhir;
 mod directory_csv;
+mod license;
 mod diarization;
 mod diarization_model;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature
@@ -377,11 +378,8 @@ async fn link_account(
     server_url: String,
     email: String,
     password: String,
-) -> Result<(), String> {
-    let device_name = format!(
-        "Escritorio {}",
-        std::env::var("COMPUTERNAME").unwrap_or_else(|_| "MiDoc".into())
-    );
+) -> Result<LinkOutcome, String> {
+    let device_name = device_name();
 
     // Generar (si no existe) el par de llaves del medico y publicar la publica
     // sin retener el lock durante la llamada de red.
@@ -401,14 +399,71 @@ async fn link_account(
     .await
     .map_err(|e| e.to_string())?;
 
+    {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        sync::set_state(conn, "server_url", server_url.trim_end_matches('/'))
+            .map_err(|e| e.to_string())?;
+        sync::set_state(conn, "device_token", &link.device_token).map_err(|e| e.to_string())?;
+        sync::set_state(conn, "cursor", "0").map_err(|e| e.to_string())?;
+        persist_profile_metadata(conn, &link.metadata)?;
+    }
+
+    // Vincular activa el equipo (paso 29). Si la cuenta no tiene licencia o ya
+    // no hay lugar, la vinculacion queda hecha y la interfaz explica por que.
+    let license_error = refresh_license(&state).await.err();
+    Ok(LinkOutcome { license_error })
+}
+
+fn device_name() -> String {
+    format!(
+        "Escritorio {}",
+        std::env::var("COMPUTERNAME").unwrap_or_else(|_| "MiDoc".into())
+    )
+}
+
+#[derive(serde::Serialize)]
+struct LinkOutcome {
+    /// Por que no se pudo activar la licencia al vincular, si fallo.
+    license_error: Option<String>,
+}
+
+/// Pide al portal la licencia de este equipo, la verifica y la guarda.
+async fn refresh_license(state: &tauri::State<'_, AppDb>) -> Result<license::LicenseStatus, String> {
+    let (server_url, token, installation_id) = {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let server_url = sync::get_state(conn, "server_url")
+            .map_err(|e| e.to_string())?
+            .ok_or("Vincula tu cuenta MiDoc para activar este equipo.")?;
+        let token = sync::get_state(conn, "device_token")
+            .map_err(|e| e.to_string())?
+            .ok_or("Vincula tu cuenta MiDoc para activar este equipo.")?;
+        let installation_id = license::installation_id(conn).map_err(|e| e.to_string())?;
+        (server_url, token, installation_id)
+    };
+    let token = sync::activate_license(&server_url, &token, &installation_id, &device_name())
+        .await
+        .map_err(|e| e.to_string())?;
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
-    sync::set_state(conn, "server_url", server_url.trim_end_matches('/'))
-        .map_err(|e| e.to_string())?;
-    sync::set_state(conn, "device_token", &link.device_token).map_err(|e| e.to_string())?;
-    sync::set_state(conn, "cursor", "0").map_err(|e| e.to_string())?;
-    persist_profile_metadata(conn, &link.metadata)?;
-    Ok(())
+    let keys = license::trusted_keys();
+    license::store(conn, &token, &keys).map_err(|e| e.to_string())?;
+    license::status(conn, &keys, chrono::Local::now().date_naive()).map_err(|e| e.to_string())
+}
+
+/// Estado de la licencia, verificada sin red (paso 29).
+#[tauri::command]
+fn license_status(state: tauri::State<'_, AppDb>) -> Result<license::LicenseStatus, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    license::status(conn, &license::trusted_keys(), chrono::Local::now().date_naive()).map_err(|e| e.to_string())
+}
+
+/// Activa este equipo con la cuenta vinculada (reintento manual o automatico).
+#[tauri::command]
+async fn activate_license(state: tauri::State<'_, AppDb>) -> Result<license::LicenseStatus, String> {
+    refresh_license(&state).await
 }
 
 /// Guarda en el estado local los metadatos del perfil (perfil clinico, duracion
@@ -593,6 +648,10 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
         let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
         persist_profile_metadata(conn, &metadata)?;
     }
+
+    // Refrescar la licencia trae las renovaciones de actualizaciones. Si falla
+    // (sin lugar, licencia revocada) se conserva la que ya hay en el equipo.
+    let _ = refresh_license(&state).await;
 
     Ok(sync::SyncSummary {
         applied_events: applied,
@@ -2661,6 +2720,8 @@ pub fn run() {
             save_export,
             save_fhir_export,
             save_directory_csv,
+            license_status,
+            activate_license,
             cie10_catalog_info,
             documents_add,
             documents_list,
