@@ -62,7 +62,7 @@ export async function grantLicense(input: {
     select: { id: true, license: { select: { id: true } } }
   });
   if (!doctor) {
-    throw new LicenseServiceError("Medico no encontrado.", 404);
+    throw new LicenseServiceError("Médico no encontrado.", 404);
   }
   if (doctor.license) {
     throw new LicenseServiceError("La cuenta ya tiene una licencia.", 409);
@@ -103,7 +103,7 @@ export async function activateLicense(
 ): Promise<LicenseActivationResult> {
   const signingKey = configuredSigningKey();
   if (!signingKey) {
-    throw new LicenseServiceError("Este portal todavia no emite licencias.", 503);
+    throw new LicenseServiceError("Este portal todavía no emite licencias.", 503);
   }
 
   const outcome = await prisma.$transaction(async (tx) => {
@@ -130,7 +130,7 @@ export async function activateLicense(
     const active = await tx.licenseActivation.count({ where: { licenseId: license.id, releasedAt: null } });
     if (active >= license.maxDevices) {
       throw new LicenseServiceError(
-        `Tu licencia ya esta activada en ${license.maxDevices} equipos. Libera uno desde tu cuenta MiDoc para activar este.`,
+        `Tu licencia ya está activada en ${license.maxDevices} equipos. Libera uno desde tu cuenta MiDoc para activar este.`,
         409
       );
     }
