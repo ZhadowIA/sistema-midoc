@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
 import { parseDateFlexible } from "./dateOnly";
+import { exportDirectoryCsv } from "./recordExportAction";
 
 interface PatientSummary {
   id: string;
@@ -427,6 +428,20 @@ export function Directorio({
     );
   }
 
+  async function exportCsv() {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const text = await exportDirectoryCsv();
+      if (text) setMessage(text);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // ---- Lista del directorio ----
   return (
     <div className="directory">
@@ -435,16 +450,27 @@ export function Directorio({
           <h1>Pacientes</h1>
           <p>Directorio de tu expediente cifrado local</p>
         </div>
-        <button
-          className="action-button"
-          onClick={() => {
-            setMatches(null);
-            setError("");
-            setCreating(true);
-          }}
-        >
-          Nuevo paciente
-        </button>
+        <div className="button-row">
+          <button
+            type="button"
+            className="ghost-button"
+            title="Nombre, contacto, responsable y consultas de todos tus pacientes, sin informacion clinica, para hoja de calculo"
+            disabled={busy}
+            onClick={() => void exportCsv()}
+          >
+            Exportar CSV
+          </button>
+          <button
+            className="action-button"
+            onClick={() => {
+              setMatches(null);
+              setError("");
+              setCreating(true);
+            }}
+          >
+            Nuevo paciente
+          </button>
+        </div>
       </div>
 
       {message && (
