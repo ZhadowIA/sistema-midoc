@@ -24,7 +24,7 @@ La linea que sigue se escribio para un producto mas amplio (agenda, recepcion, c
 | 9 Piloto seguro | Vigente (respaldo, restauracion, instalador firmado). |
 | 10 Operacion presencial | Congelado, salvo la consulta sin cita, que se muda al expediente (paso 27). |
 | 11 IA gobernada | **Vigente — nucleo.** |
-| 12 SaaS/compliance | Parcial: suscripcion, 2FA, ARCO y retencion vigentes; el gating se reexpresa en capacidades de expediente e IA (paso 29). |
+| 12 SaaS/compliance | Parcial: 2FA, ARCO y retencion vigentes; la suscripcion se sustituye por licencia de compra unica + creditos de IA (paso 29). |
 | 13 Directorio y expediente longitudinal | **Vigente — nucleo.** |
 | 14 Seguridad de medicacion determinista | **Vigente — nucleo.** |
 | 15 Transcripcion local real (Whisper) | **Vigente — nucleo.** |
@@ -1386,20 +1386,35 @@ Estado: ✅ DONE (rebanadas 1-6, 2026-10-06; ramas apiladas `v2/paso28-*`, pendi
 - **Rebanada 5 — FHIR R4 (2026-10-06).** `fhir.rs` convierte los mismos datos del PDF (`export::record_export`) en un Bundle R4 de tipo `collection` y `save_fhir_export` lo arma, abre "Guardar como" (filtro .json) y lo escribe desde Rust con los documentos dentro (base64), sin que el contenido pase por la pagina; bitacora `FHIR_CONSULTA`/`FHIR_EXPEDIENTE` con nombre y huella. Mapeo: paciente a `Patient` (sexo, nacimiento, telefono, correo y responsable como `contact`); medico a `Practitioner` con la cedula como identificador (tipo `MD` de v2-0203); alergias a un `AllergyIntolerance` por termino, sin las negaciones ("niega", "ninguna"); antecedentes a una `Composition` "Antecedentes del paciente" (solo expediente completo, como el PDF); cada consulta a `Encounter` + `Composition` (nota de evolucion LOINC 11506-3, secciones SOAP, diagnostico, indicaciones y receta como narrativa, `final` con `attester` legal si esta firmada, `preliminary` si no, y la huella de la firma en el texto); CIE-10 a `Condition` con el sistema ICD-10 de la OMS (`http://hl7.org/fhir/sid/icd-10`, clave con punto) y el nombre oficial en `text`, y sin codigos el diagnostico libre como `Condition` solo con texto; la receta a un `MedicationRequest` por medicamento (la linea que nombra uno de la referencia local abre uno nuevo, las siguientes son sus indicaciones; estado `unknown` porque MiDoc no sabe si se surtio, `draft` si la consulta esta abierta); documentos a `DocumentReference` con el archivo dentro y la liga a la consulta. Los ids son UUID v5 de los ids locales: exportar dos veces da los mismos recursos. Los textos se limpian para el tipo `string` de FHIR (sin control, sin espacios no separables). El esquema JSON oficial de R4 (CC0) vive comprimido en `src-tauri/test_data/fhir/` y las pruebas validan contra el con `jsonschema` (solo dependencia de pruebas); los codigos LOINC, v2-0203, ActCode y las claves ICD-10 se confirmaron en tx.fhir.org. Botones "Exportar FHIR" en el expediente y en la consulta. Verificado en la app real: el expediente de una paciente ficticia (consulta firmada con dos CIE-10, receta y PDF; consulta abierta con diagnostico libre; radiografia suelta) se exporto y valido contra el esquema R4 con un validador independiente (ajv), sin referencias rotas.
 - **Rebanada 6 — CSV del directorio (2026-10-06).** `directory_csv.rs` arma el directorio completo y `save_directory_csv` lo escribe tras "Guardar como" (.csv), con bitacora `CSV_DIRECTORIO` (entidad "directorio", nombre y huella). Columnas: id MiDoc, nombre, apellidos, sexo, fecha de nacimiento, telefono, correo, responsable con parentesco, telefono y correo, numero de consultas con nota (como el directorio), fecha de la ultima y fecha de alta (fechas locales AAAA-MM-DD). **Sin contenido clinico, ni siquiera alergias**: el CSV es texto plano para hoja de calculo; lo clinico sale en PDF o FHIR. Deja fuera a los pacientes con cancelacion ARCO cumplida. Formato para Excel en espanol de Mexico: UTF-8 con BOM, coma, CRLF y comillas RFC 4180; lo que Excel tomaria como formula (`=`, `+`, `-`, `@`) lleva apostrofo inicial, salvo los telefonos. Boton "Exportar CSV" en el directorio. Verificado en la app real: dos pacientes ficticios, acentos y enie intactos, telefono con `+` sin alterar y sin datos clinicos.
 
-## Paso 29 - Suscripcion y capacidades del nuevo producto
+## Paso 29 - Licencia de compra unica, activacion y creditos de IA
 
-> **Redefinir antes de implementar (2026-10-06).** El modelo de negocio cambio a compra unica + creditos de IA (`15_modelo_de_negocio.md`). Este paso pasa a ser licencia firmada con activacion unica y uso sin conexion, actualizaciones por 12 meses, y creditos de IA (recargas que no caducan y plan mensual opcional). La tabla de abajo describe el planteamiento anterior por suscripcion y queda solo como historia.
+> **Redefinido el 2026-10-06** sobre el modelo de compra unica + creditos de IA (`15_modelo_de_negocio.md`). Sustituye el planteamiento por suscripcion y capacidades; ese texto queda en el historial de git.
 
 | Campo | Definicion |
 |---|---|
-| Objetivo | Que el plan cobre por lo que el producto hace hoy: expediente e IA, no citas. |
-| Requisitos relacionados | Paso 12 (gating por capacidad), reenfoque 2026-09-07 |
-| Entrada necesaria | Paso 27. |
-| Skills IA recomendadas | `analytics`, `superpowers:test-driven-development` |
-| Se construye | Redefinicion de capacidades del plan en terminos de expediente y asistencia (minutos de transcripcion, consultas asistidas, perfiles clinicos habilitados, respaldo en nube cifrado), retiro de las capacidades ligadas a agenda/notificaciones del gating activo, y enlace de cuenta que sobrevive sin sincronizacion de citas. |
-| Se valida con | Un medico sin plan puede documentar manualmente; al agotar la cuota de IA la app lo dice con claridad y el flujo manual sigue intacto. |
-| Compuerta de avance | Ninguna capacidad de pago depende de un modulo congelado. |
-| Push recomendado | Al cerrar la redefinicion de capacidades con sus pruebas. |
+| Objetivo | Que el medico sea dueno de su copia: una licencia de compra unica que la app verifica sin conexion despues de activarla una vez, con actualizaciones por 12 meses, y la IA en la nube cobrada por creditos que viven en el servidor. |
+| Requisitos relacionados | `15_modelo_de_negocio.md`; paso 12 (gating por capacidad, que aqui se reduce a licencia + creditos); paso 9 (canal de actualizaciones firmado); paso 30 (pasarela de IA, donde se descuentan los creditos de toda la IA en nube) |
+| Entrada necesaria | Paso 27; paso 28 (nombre y cedula del medico bajan del portal). |
+| Skills IA recomendadas | `superpowers:test-driven-development`, `codex-security:security-scan` |
+| Se construye | Licencia firmada con Ed25519 en el portal (edicion, fecha de compra, actualizaciones hasta, equipos permitidos) y activacion por equipo con limite; verificacion local en la app con llaves publicas embebidas, sin red; el espacio de trabajo deja de depender de la vinculacion y pasa a depender de una licencia valida; libro mayor de creditos de IA en el servidor (cortesia, recargas que no caducan, plan mensual que si caduca, consumo); cuenta del portal con licencia, equipos y saldo. |
+| Se valida con | Tras activar una vez, la app abre y documenta sin red; una licencia alterada o de otro equipo se rechaza; desvincular no quita la licencia; el limite de equipos se respeta y liberar uno permite activar otro; al vencer las actualizaciones la app sigue funcionando; sin saldo la transcripcion en nube se rechaza con un mensaje claro y el flujo manual y la transcripcion local siguen intactos. |
+| Compuerta de avance | Nada que no sea IA en la nube depende de conexion ni de un pago recurrente. |
+| Push recomendado | Por rebanada. |
+
+Decisiones de diseno (2026-10-06):
+
+- **Formato de licencia:** `base64url(payload JSON).base64url(firma Ed25519 del payload)`. Se firman los bytes exactos del payload (sin canonicalizar). El payload lleva version, `kid` de la llave, id de licencia y de activacion, cuenta, nombre y cedula del medico, edicion, fecha de compra, `updatesUntil`, id de instalacion y fecha de emision. No lleva datos clinicos (clase OPERATIVO).
+- **Llaves:** la privada vive solo en el entorno del portal (`LICENSE_SIGNING_KEY`, `LICENSE_SIGNING_KID`); nunca se commitea. La app confia en las llaves publicas fijadas al compilar (`MIDOC_LICENSE_PUBKEYS`, varias para poder rotar); en compilaciones de depuracion tambien acepta las del entorno, para desarrollo. Sin llave configurada, una compilacion de distribucion no activa nada: se configura antes de distribuir.
+- **Instalacion:** cada perfil (base cifrada) tiene un id de instalacion aleatorio; la licencia se liga a el. Piratear la app base se acepta (seccion 4 de `15_modelo_de_negocio.md`): la licencia hace que lo legitimo sea lo comodo y cuente equipos, no es una proteccion fuerte.
+- **Activacion:** ocurre al vincular y se refresca en cada sincronizacion (asi llegan las renovaciones de actualizaciones). Liberar un equipo desde la cuenta solo libera el lugar para otro: no apaga a distancia una licencia ya emitida, porque la app debe funcionar sin conexion aunque MiDoc deje de existir.
+- **Desvincular** detiene sincronizacion, creditos y actualizaciones, pero la licencia se queda en el equipo.
+- **Equipos por licencia:** campo de la licencia, 2 por omision (consultorio y casa) mientras se decide el numero definitivo (`15_modelo_de_negocio.md`, seccion 5).
+- **Sin pasarela de pago todavia:** en desarrollo y piloto la licencia la otorga el administrador de la plataforma (o la semilla de desarrollo). La compra real, las recargas y el CFDI entran con el paso 17.
+- **Suscripcion heredada:** sus tablas se conservan (congelar no es borrar), pero deja de dar derecho a la IA y deja de mostrarse en la cuenta.
+
+Rebanadas en orden: 1) licencia firmada y activacion en el portal; 2) verificacion local y espacio de trabajo por licencia en la app; 3) libro mayor de creditos y cobro de la transcripcion en nube contra saldo; 4) cuenta del portal (licencia, equipos, saldo y movimientos) y saldo visible en la app; 5) el canal de actualizaciones del paso 9 respeta `updatesUntil` (depende de esa infraestructura).
+
+Estado: 🚧 EN PROGRESO (rama `v2/paso29-licencia`).
 
 ## Paso 30 - Pasarela de IA en el portal y proveedores reales
 
