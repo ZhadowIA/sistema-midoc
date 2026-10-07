@@ -140,3 +140,30 @@ describe("env schema Deepgram transcription gate", () => {
     }
   });
 });
+
+describe("env schema license signing key (paso 29)", () => {
+  const seed = Buffer.alloc(32, 7).toString("base64");
+
+  it("accepts no key at all: the portal simply does not issue licenses", () => {
+    expect(envSchema.safeParse(baseEnv()).success).toBe(true);
+  });
+
+  it("accepts a 32-byte seed with its kid", () => {
+    const result = envSchema.safeParse(baseEnv({ LICENSE_SIGNING_KEY: seed, LICENSE_SIGNING_KID: "midoc-2026" }));
+    expect(result.success).toBe(true);
+  });
+
+  it("requires both halves and a 32-byte seed", () => {
+    expect(issuePaths(envSchema.safeParse(baseEnv({ LICENSE_SIGNING_KEY: seed })))).toContain("LICENSE_SIGNING_KID");
+    expect(issuePaths(envSchema.safeParse(baseEnv({ LICENSE_SIGNING_KID: "midoc-2026" })))).toContain(
+      "LICENSE_SIGNING_KEY"
+    );
+    expect(
+      issuePaths(
+        envSchema.safeParse(
+          baseEnv({ LICENSE_SIGNING_KEY: Buffer.alloc(16).toString("base64"), LICENSE_SIGNING_KID: "midoc-2026" })
+        )
+      )
+    ).toContain("LICENSE_SIGNING_KEY");
+  });
+});
