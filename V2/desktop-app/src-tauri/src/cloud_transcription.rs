@@ -167,6 +167,7 @@ impl TranscriptionProvider for PortalTranscriptionProvider {
         // El credito y la duracion son autoritativos del portal; el borrador local
         // los persiste (nunca vuelven a subir). El costo estimado en centavos es 0.
         Ok(AiResponse {
+            gateway_run_id: None,
             output: parsed.transcript_text,
             model_version: parsed.model_version,
             estimated_cost_cents: 0,

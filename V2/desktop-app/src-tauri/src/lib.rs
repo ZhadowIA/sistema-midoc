@@ -756,6 +756,13 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
     // (sin lugar, licencia revocada) se conserva la que ya hay en el equipo.
     let _ = refresh_license(&state).await;
 
+    // Estado de la pasarela de IA (paso 30): decide si la IA de texto sale por el portal.
+    if let Ok(gateway) = sync::fetch_gateway_status(&server_url, &token).await {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        sync::set_state(conn, "ai_gateway", &gateway.to_string()).map_err(|e| e.to_string())?;
+    }
+
     // Saldo de creditos de IA (paso 29 r4): se guarda para mostrarlo sin conexion.
     if let Ok(balance) = sync::fetch_credit_balance(&server_url, &token).await {
         let guard = state.0.lock().unwrap();
@@ -1794,7 +1801,7 @@ fn ai_assist_soap(
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
 ) -> Result<ai::SoapDraft, String> {
-    let registry = ai::ProviderRegistry::default_local();
+    let registry = resolve_text_registry(&state, None)?;
     with_ai(&state, |conn| {
         ai::assist_soap(conn, &encounter_id, &registry)
     })
@@ -1806,7 +1813,7 @@ fn ai_assist_text(
     encounter_id: String,
     usage_type: String,
 ) -> Result<ai::TextDraft, String> {
-    let registry = ai::ProviderRegistry::default_local();
+    let registry = resolve_text_registry(&state, None)?;
     with_ai(&state, |conn| {
         ai::assist_text(conn, &encounter_id, &usage_type, &registry)
     })
@@ -2058,7 +2065,7 @@ fn ai_structure_consultation(
     template: ConsultationTemplatePayload,
     model_override: Option<String>,
 ) -> Result<ai::ConsultationStructuringDraft, String> {
-    let registry = resolve_text_registry(model_override)?;
+    let registry = resolve_text_registry(&state, model_override)?;
     with_ai(&state, |conn| {
         ai::structure_consultation(conn, &encounter_id, turns, template.segments, &registry)
     })
@@ -2072,7 +2079,7 @@ fn ai_generate_clinical_aid(
     history_fields: Vec<ai::MedicalHistoryField>,
     model_override: Option<String>,
 ) -> Result<ai::ClinicalAidDraft, String> {
-    let registry = resolve_text_registry(model_override)?;
+    let registry = resolve_text_registry(&state, model_override)?;
     with_ai(&state, |conn| {
         ai::generate_clinical_aid(
             conn,
@@ -2087,16 +2094,74 @@ fn ai_generate_clinical_aid(
 /// Modelos de texto disponibles para ofrecer como alternativa cuando el modelo
 /// primario esta sobrecargado. Vacio si no hay proveedor real configurado.
 #[tauri::command]
-fn ai_list_text_models() -> Vec<ai::TextModelOption> {
-    ai::text_model_options()
+fn ai_list_text_models(state: tauri::State<'_, AppDb>) -> Vec<ai::TextModelOption> {
+    match gateway_settings(&state) {
+        Some(gateway) => gateway
+            .models
+            .iter()
+            .enumerate()
+            .map(|(index, model)| ai::TextModelOption {
+                id: format!("gateway:{model}"),
+                provider: ai::PROVIDER_GATEWAY.into(),
+                model: model.clone(),
+                label: format!("MiDoc IA · {model}"),
+                is_default: index == 0,
+            })
+            .collect(),
+        None => ai::text_model_options(),
+    }
+}
+
+struct GatewaySettings {
+    server_url: String,
+    device_token: String,
+    models: Vec<String>,
+}
+
+/// Pasarela de IA del portal (paso 30) si el equipo esta vinculado y la ultima
+/// sincronizacion dijo que esta encendida.
+fn gateway_settings(state: &tauri::State<'_, AppDb>) -> Option<GatewaySettings> {
+    let guard = state.0.lock().ok()?;
+    let conn = guard.as_ref()?;
+    let server_url = sync::get_state(conn, "server_url").ok()??;
+    let device_token = sync::get_state(conn, "device_token").ok()??;
+    let status: serde_json::Value = serde_json::from_str(&sync::get_state(conn, "ai_gateway").ok()??).ok()?;
+    if status["enabled"] != true {
+        return None;
+    }
+    let models = status["models"]
+        .as_array()
+        .map(|list| list.iter().filter_map(|m| m.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    Some(GatewaySettings { server_url, device_token, models })
 }
 
 /// Valida el override contra el catalogo: elegir un modelo/proveedor no
 /// configurado degradaria en silencio al fake, y eso esta prohibido por diseno.
 /// El override es el `id` de una opcion del catalogo (`gemini:<m>` / `openai:<m>`).
 fn resolve_text_registry(
+    state: &tauri::State<'_, AppDb>,
     model_override: Option<String>,
 ) -> Result<ai::ProviderRegistry, String> {
+    // Con la pasarela encendida, la IA de texto sale por el portal: claves del
+    // lado servidor, cobro con creditos y sin proveedor directo desde el equipo.
+    if let Some(gateway) = gateway_settings(state) {
+        let model = match model_override {
+            Some(option_id) => {
+                let model = option_id
+                    .strip_prefix("gateway:")
+                    .filter(|model| gateway.models.iter().any(|m| m == model))
+                    .ok_or("el modelo solicitado no esta habilitado en la pasarela de IA")?;
+                Some(model.to_string())
+            }
+            None => None,
+        };
+        return Ok(ai::ProviderRegistry::new(vec![Box::new(ai::GatewayProvider::new(
+            &gateway.server_url,
+            &gateway.device_token,
+            model,
+        ))]));
+    }
     let Some(option_id) = model_override else {
         return Ok(ai::ProviderRegistry::default_local());
     };
