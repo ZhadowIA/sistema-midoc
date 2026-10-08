@@ -4,7 +4,9 @@ Objetivo: definir el canal de auto-actualización de la app de escritorio
 (Tauri 2.11) y el procedimiento de rollback ante una versión defectuosa, sin
 comprometer la residencia local de los datos clínicos.
 
-> Estado: **diseño listo para ejecutar.** Los cambios de código de abajo están
+> **Actualizacion 2026-10-07 (paso 29 r5):** el plugin ya esta cableado en el codigo, usado solo desde Rust (`src-tauri/src/updates.rs`, comandos `check_for_update` e `install_update`). La llave publica y el endpoint NO van en `tauri.conf.json` (que queda con `pubkey` vacio y `requireSignedVersion: true`): se fijan al compilar con `MIDOC_UPDATER_PUBKEY` y `MIDOC_UPDATE_ENDPOINT`. Antes de instalar, la app compara `pub_date` del manifiesto con `updates_until` de la licencia; un campo `"critical": true` en el manifiesto marca un parche que se entrega aunque las actualizaciones incluidas hayan terminado. Falta lo de infraestructura de abajo (llave y servidor). Los pasos 1-4 de "Cambios de codigo" quedan como referencia historica.
+>
+> Estado original: **diseño listo para ejecutar.** Los cambios de código de abajo están
 > redactados para aplicarse tal cual, pero requieren una llave de firma real y
 > un servidor de releases; por eso no se activan en el repo (una `pubkey`
 > inválida rompería `tauri build`, y la llave privada nunca debe commitearse).
