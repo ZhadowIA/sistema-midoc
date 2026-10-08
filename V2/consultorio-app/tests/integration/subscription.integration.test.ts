@@ -6,13 +6,7 @@ import { PlanStatus, PrismaClient, SubscriptionStatus } from "@prisma/client";
 
 import { GET as notificationsGET } from "../../src/app/api/admin/notifications/route";
 import { createDoctorAccount, createDoctorSubscription, signInDoctor } from "../../src/services/auth/auth-service";
-import {
-  cancelSubscription,
-  changePlan,
-  pauseSubscription,
-  reactivateSubscription,
-  resolveDoctorCapabilities
-} from "../../src/services/subscription/subscription-service";
+import { resolveDoctorCapabilities } from "../../src/services/subscription/subscription-service";
 
 const prisma = new PrismaClient();
 
@@ -67,6 +61,30 @@ async function cleanupUserByEmail(email: string) {
 
 const createdEmails: string[] = [];
 
+// El ciclo de vida de la suscripcion se retiro con el paso 29 (licencia + creditos);
+// la compuerta por capacidad sigue viva solo para los modulos congelados.
+async function latestSubscription(userId: string) {
+  const profile = await prisma.doctorProfile.findUniqueOrThrow({ where: { userId } });
+  return prisma.doctorSubscription.findFirstOrThrow({
+    where: { doctorProfileId: profile.id },
+    orderBy: { createdAt: "desc" }
+  });
+}
+
+async function setStatus(userId: string, status: SubscriptionStatus) {
+  const subscription = await latestSubscription(userId);
+  await prisma.doctorSubscription.update({ where: { id: subscription.id }, data: { status } });
+}
+
+async function setPlan(userId: string, planCode: string) {
+  const subscription = await latestSubscription(userId);
+  const plan = await prisma.subscriptionPlan.findUniqueOrThrow({ where: { code: planCode } });
+  await prisma.doctorSubscription.update({
+    where: { id: subscription.id },
+    data: { planId: plan.id, status: SubscriptionStatus.ACTIVE }
+  });
+}
+
 beforeAll(async () => {
   await prisma.$connect();
   // Plan restringido para probar cambio de plan y gating: solo agenda.
@@ -92,7 +110,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe("subscription and capability gating (paso 12, rebanada 1)", () => {
+describe("frozen-scope capability gating (paso 12; congelado desde el paso 29)", () => {
   it("grants the plan capabilities only while the subscription is entitled", async () => {
     const { email, userId } = await registerDoctor("sub-lifecycle");
     createdEmails.push(email);
@@ -113,21 +131,21 @@ describe("subscription and capability gating (paso 12, rebanada 1)", () => {
     expect(trial.capabilities.ai).toBe(true);
 
     // Pausar quita el derecho sin perder la suscripcion.
-    await pauseSubscription(userId);
+    await setStatus(userId, SubscriptionStatus.PAUSED);
     const paused = await resolveDoctorCapabilities(userId);
     expect(paused.status).toBe(SubscriptionStatus.PAUSED);
     expect(paused.entitled).toBe(false);
     expect(paused.capabilities.notifications).toBe(false);
 
     // Reactivar restablece el derecho.
-    await reactivateSubscription(userId);
+    await setStatus(userId, SubscriptionStatus.ACTIVE);
     const reactivated = await resolveDoctorCapabilities(userId);
     expect(reactivated.status).toBe(SubscriptionStatus.ACTIVE);
     expect(reactivated.entitled).toBe(true);
     expect(reactivated.capabilities.notifications).toBe(true);
 
     // Cancelar deja todo gateado.
-    await cancelSubscription(userId);
+    await setStatus(userId, SubscriptionStatus.CANCELLED);
     const cancelled = await resolveDoctorCapabilities(userId);
     expect(cancelled.status).toBe(SubscriptionStatus.CANCELLED);
     expect(cancelled.entitled).toBe(false);
@@ -141,20 +159,12 @@ describe("subscription and capability gating (paso 12, rebanada 1)", () => {
     await createDoctorSubscription({ doctorUserId: userId, planCode: "ESSENTIAL" });
     expect((await resolveDoctorCapabilities(userId)).capabilities.notifications).toBe(true);
 
-    await changePlan(userId, RESTRICTED_PLAN_CODE);
+    await setPlan(userId, RESTRICTED_PLAN_CODE);
     const restricted = await resolveDoctorCapabilities(userId);
     expect(restricted.planCode).toBe(RESTRICTED_PLAN_CODE);
     expect(restricted.status).toBe(SubscriptionStatus.ACTIVE);
     expect(restricted.capabilities.agenda).toBe(true);
     expect(restricted.capabilities.notifications).toBe(false);
-  });
-
-  it("rejects changing to an unknown plan", async () => {
-    const { email, userId } = await registerDoctor("sub-badplan");
-    createdEmails.push(email);
-    await createDoctorSubscription({ doctorUserId: userId, planCode: "ESSENTIAL" });
-
-    await expect(changePlan(userId, "DOES_NOT_EXIST")).rejects.toMatchObject({ status: 404 });
   });
 
   it("gates a capability-protected route: 200 when entitled, 402 when not, 401 without session", async () => {
@@ -175,7 +185,7 @@ describe("subscription and capability gating (paso 12, rebanada 1)", () => {
     expect(allowed.status).toBe(200);
 
     // Cambiar a plan sin la capacidad de notificaciones.
-    await changePlan(userId, RESTRICTED_PLAN_CODE);
+    await setPlan(userId, RESTRICTED_PLAN_CODE);
     const blocked = await notificationsGET(
       authedRequest("http://localhost/api/admin/notifications", login.sessionToken)
     );
