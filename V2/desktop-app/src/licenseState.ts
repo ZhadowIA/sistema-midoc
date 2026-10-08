@@ -46,3 +46,24 @@ export function creditBalanceTitle(readAt: string | null): string {
   if (!readAt) return "Saldo de tu cuenta MiDoc";
   return `Saldo de tu cuenta MiDoc al sincronizar el ${formatDateFlexible(readAt)}`;
 }
+
+/** Resultado de buscar actualizaciones (paso 29 r5), tal como lo decide Rust. */
+export interface UpdateCheck {
+  configured: boolean;
+  current_version: string;
+  available: boolean;
+  version: string | null;
+  published_at: string | null;
+  notes: string | null;
+  critical: boolean;
+  allowed: boolean;
+  reason: string | null;
+}
+
+/** Titulo corto del aviso de actualizaciones. */
+export function updateHeadline(check: UpdateCheck): string {
+  if (!check.configured) return "Actualizaciones no disponibles en esta compilación";
+  if (!check.available) return `MiDoc ${check.current_version} está al día`;
+  if (check.allowed) return `MiDoc ${check.version} disponible${check.critical ? " (parche crítico)" : ""}`;
+  return `MiDoc ${check.version} no está incluida en tu licencia`;
+}

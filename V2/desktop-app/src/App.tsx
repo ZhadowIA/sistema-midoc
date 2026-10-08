@@ -20,7 +20,15 @@ import {
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
 import { defaultView, isViewAvailable, parseFrozenScopeFlag, workspaceNav, type WorkspaceView } from "./scope";
 import { LinkAccountForm, PendingActivation } from "./LicenseActivation";
-import { creditBalanceLine, creditBalanceTitle, isLicensed, licenseLine, type LicenseStatus } from "./licenseState";
+import {
+  creditBalanceLine,
+  creditBalanceTitle,
+  isLicensed,
+  licenseLine,
+  updateHeadline,
+  type LicenseStatus,
+  type UpdateCheck
+} from "./licenseState";
 import "./App.css";
 
 // Agenda, recepcion y caja quedan congelados por el reenfoque (2026-09-07);
@@ -301,6 +309,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const autoActivatedRef = useRef(false);
   // Con licencia y sin vincular, el medico puede volver a vincular desde su perfil.
   const [linking, setLinking] = useState(false);
+  // Actualizaciones (paso 29 r5): Rust decide si la licencia incluye la version.
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
+  const [updating, setUpdating] = useState(false);
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -386,6 +397,30 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     autoActivatedRef.current = true;
     void activateLicense();
   }, [status?.linked, license, activateLicense]);
+
+  async function checkForUpdate() {
+    setUpdating(true);
+    setError("");
+    try {
+      setUpdateCheck(await call<UpdateCheck>("check_for_update"));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  async function installUpdate() {
+    setUpdating(true);
+    setError("");
+    try {
+      // Si sale bien, la app se reinicia con la version nueva.
+      await call("install_update");
+    } catch (e) {
+      setError(String(e));
+      setUpdating(false);
+    }
+  }
 
   // Peek de cambios pendientes para el badge (no aplica nada).
   const refreshPending = useCallback(async () => {
@@ -697,6 +732,11 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 {creditBalanceLine(status.credit_balance)}
               </span>
             ) : null}
+            {licensed ? (
+              <button type="button" onClick={() => void checkForUpdate()} disabled={updating}>
+                {updating ? "Buscando…" : "Buscar actualizaciones"}
+              </button>
+            ) : null}
             <button type="button" onClick={() => void lock()}>Bloquear</button>
             {status?.linked ? (
               <button type="button" onClick={() => void unlink()} disabled={busy}>
@@ -723,6 +763,25 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
               {error}
             </p>
           )}
+          {updateCheck && licensed ? (
+            <section className="update-notice" role="status">
+              <div>
+                <strong>{updateHeadline(updateCheck)}</strong>
+                {updateCheck.reason ? <p>{updateCheck.reason}</p> : null}
+                {updateCheck.notes ? <p className="meta">{updateCheck.notes}</p> : null}
+              </div>
+              <div className="button-row">
+                {updateCheck.available && updateCheck.allowed ? (
+                  <button className="action-button" type="button" disabled={updating} onClick={() => void installUpdate()}>
+                    {updating ? "Instalando…" : "Instalar y reiniciar"}
+                  </button>
+                ) : null}
+                <button className="ghost-button" type="button" disabled={updating} onClick={() => setUpdateCheck(null)}>
+                  Cerrar
+                </button>
+              </div>
+            </section>
+          ) : null}
 
           {!status || !license ? (
             <p className="meta">Cargando…</p>
