@@ -20,10 +20,14 @@ type DoctorAccount = {
     licenseNumber: string | null;
     isPublic: boolean;
   } | null;
-  ai: {
-    enabled: boolean;
-    monthlyCredits: number;
-  };
+  // Licencia de compra unica y saldo de creditos de IA (paso 29).
+  license: {
+    status: string;
+    updatesUntil: string;
+    maxDevices: number;
+    activeDevices: number;
+  } | null;
+  aiCredits: number;
 };
 
 const statusLabels: Record<UserStatus, string> = {
@@ -94,54 +98,72 @@ export function AdminDoctorsClient({
     }
   }
 
-  async function updateAiAccess(
-    doctorId: string,
-    aiEnabled: boolean,
-    aiCreditsMonthly?: number | null
-  ) {
+  async function grantLicense(doctorId: string) {
     setBusyId(doctorId);
     setError("");
     try {
-      const response = await fetch(`/api/platform-admin/doctors/${doctorId}/ai-access`, {
-        method: "PATCH",
+      const response = await fetch(`/api/platform-admin/doctors/${doctorId}/license`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          aiEnabled,
-          ...(aiCreditsMonthly === undefined ? {} : { aiCreditsMonthly })
-        })
+        body: JSON.stringify({ source: "PILOT" })
       });
       const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || "No se pudo actualizar el acceso a la IA.");
+        throw new Error(data.error || "No se pudo otorgar la licencia.");
       }
-
       setAccounts((current) =>
         current.map((account) =>
           account.id === doctorId
             ? {
                 ...account,
-                ai: {
-                  enabled: data.summary.aiEnabled,
-                  monthlyCredits: data.summary.monthlyCredits
-                }
+                license: {
+                  status: "ACTIVE",
+                  updatesUntil: String(data.updatesUntil).slice(0, 10),
+                  maxDevices: data.maxDevices,
+                  activeDevices: 0
+                },
+                // La licencia incluye creditos de cortesia.
+                aiCredits: data.aiCredits
               }
             : account
         )
       );
-      setCreditDrafts((drafts) => {
-        const next = { ...drafts };
-        delete next[doctorId];
-        return next;
-      });
-    } catch (updateError) {
-      setError(
-        updateError instanceof Error ? updateError.message : "No se pudo actualizar el acceso a la IA."
-      );
+    } catch (grantError) {
+      setError(grantError instanceof Error ? grantError.message : "No se pudo otorgar la licencia.");
     } finally {
       setBusyId("");
     }
   }
+
+  async function addCredits(doctorId: string) {
+    const parsed = Number(creditDrafts[doctorId] ?? "");
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      setError("Los créditos a abonar deben ser un entero mayor que cero.");
+      return;
+    }
+    setBusyId(doctorId);
+    setError("");
+    try {
+      const response = await fetch(`/api/platform-admin/doctors/${doctorId}/credits`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "TOP_UP", credits: parsed })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudieron abonar los créditos.");
+      }
+      setAccounts((current) =>
+        current.map((account) => (account.id === doctorId ? { ...account, aiCredits: data.balance } : account))
+      );
+      setCreditDrafts((drafts) => ({ ...drafts, [doctorId]: "" }));
+    } catch (creditError) {
+      setError(creditError instanceof Error ? creditError.message : "No se pudieron abonar los créditos.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
 
   return (
     <main className="admin-shell">
@@ -224,25 +246,30 @@ export function AdminDoctorsClient({
               </button>
 
               <div className="admin-ai-controls">
-                <span className={account.ai.enabled ? "status-pill status-active" : "status-pill status-suspended"}>
-                  IA {account.ai.enabled ? `activa · ${account.ai.monthlyCredits} créditos/mes` : "inactiva"}
-                </span>
-                <button
-                  className="secondary-button secondary-button-small"
-                  type="button"
-                  disabled={busyId === account.id}
-                  onClick={() => void updateAiAccess(account.id, !account.ai.enabled)}
-                >
-                  {account.ai.enabled ? "Deshabilitar IA" : "Habilitar IA"}
-                </button>
+                {account.license ? (
+                  <span className="status-pill status-active">
+                    Licencia · {account.license.activeDevices}/{account.license.maxDevices} equipos · act. hasta{" "}
+                    {formatDate(`${account.license.updatesUntil}T12:00:00Z`)}
+                  </span>
+                ) : (
+                  <button
+                    className="secondary-button secondary-button-small"
+                    type="button"
+                    disabled={busyId === account.id}
+                    onClick={() => void grantLicense(account.id)}
+                  >
+                    Otorgar licencia (piloto)
+                  </button>
+                )}
+                <span className="status-pill">{account.aiCredits} créditos IA</span>
                 <label className="admin-ai-credits">
-                  <span>Créditos IA/mes</span>
+                  <span>Abonar créditos</span>
                   <input
                     type="number"
-                    min={0}
+                    min={1}
                     inputMode="numeric"
-                    value={creditDrafts[account.id] ?? String(account.ai.monthlyCredits)}
-                    disabled={busyId === account.id || !account.ai.enabled}
+                    value={creditDrafts[account.id] ?? ""}
+                    disabled={busyId === account.id}
                     onChange={(event) =>
                       setCreditDrafts((drafts) => ({ ...drafts, [account.id]: event.target.value }))
                     }
@@ -251,18 +278,10 @@ export function AdminDoctorsClient({
                 <button
                   className="secondary-button secondary-button-small"
                   type="button"
-                  disabled={busyId === account.id || !account.ai.enabled}
-                  onClick={() => {
-                    const raw = creditDrafts[account.id] ?? String(account.ai.monthlyCredits);
-                    const parsed = Number(raw);
-                    if (!Number.isInteger(parsed) || parsed < 0) {
-                      setError("Los créditos de IA deben ser un entero mayor o igual a cero.");
-                      return;
-                    }
-                    void updateAiAccess(account.id, true, parsed);
-                  }}
+                  disabled={busyId === account.id || !creditDrafts[account.id]}
+                  onClick={() => void addCredits(account.id)}
                 >
-                  Guardar créditos
+                  Abonar
                 </button>
               </div>
             </div>

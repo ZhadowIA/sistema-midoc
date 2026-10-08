@@ -142,3 +142,56 @@ export async function refundUsage(tx: Tx, aiUsageLogId: string) {
   }
   await tx.aiCreditDebit.deleteMany({ where: { aiUsageLogId } });
 }
+
+export interface CreditMovement {
+  /** Abono (`grant`) o consumo de un uso de IA (`usage`). */
+  type: "grant" | "usage";
+  /** Tipo de abono o de uso (TRANSCRIPTION, ...). Nunca contenido. */
+  kind: string;
+  /** Positivo si abona, negativo si consume. */
+  credits: number;
+  at: Date;
+  expiresAt: Date | null;
+}
+
+/** Ultimos movimientos del saldo, del mas reciente al mas viejo, para la cuenta. */
+export async function listCreditMovements(doctorUserId: string, limit = 20): Promise<CreditMovement[]> {
+  const [grants, debits] = await Promise.all([
+    prisma.aiCreditGrant.findMany({
+      where: { doctorId: doctorUserId },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: { kind: true, credits: true, createdAt: true, expiresAt: true }
+    }),
+    prisma.aiCreditDebit.findMany({
+      where: { doctorId: doctorUserId },
+      orderBy: { createdAt: "desc" },
+      take: limit * 4,
+      select: { aiUsageLogId: true, credits: true, createdAt: true, aiUsageLog: { select: { usageType: true } } }
+    })
+  ]);
+
+  // Un uso puede tomar de varios abonos: se muestra como un solo consumo.
+  const usages = new Map<string, CreditMovement>();
+  for (const debit of debits) {
+    const current = usages.get(debit.aiUsageLogId);
+    if (current) {
+      current.credits -= debit.credits;
+    } else {
+      usages.set(debit.aiUsageLogId, {
+        type: "usage",
+        kind: debit.aiUsageLog.usageType,
+        credits: -debit.credits,
+        at: debit.createdAt,
+        expiresAt: null
+      });
+    }
+  }
+
+  return [
+    ...grants.map((g) => ({ type: "grant" as const, kind: g.kind, credits: g.credits, at: g.createdAt, expiresAt: g.expiresAt })),
+    ...usages.values()
+  ]
+    .sort((a, b) => b.at.getTime() - a.at.getTime())
+    .slice(0, limit);
+}

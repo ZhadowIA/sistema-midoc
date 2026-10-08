@@ -10,6 +10,7 @@ import {
   debitCredits,
   getCreditBalance,
   grantCredits,
+  listCreditMovements,
   refundUsage
 } from "../../src/services/ai/credit-ledger";
 import { grantLicense } from "../../src/services/license/license-service";
@@ -129,6 +130,24 @@ describe("AI credit ledger (paso 29 r3)", () => {
     expect(attempts.filter((a) => a.status === "fulfilled")).toHaveLength(3);
     const grant = await prisma.aiCreditGrant.findFirstOrThrow({ where: { doctorId } });
     expect(grant.remaining).toBe(0);
+  });
+
+  it("lists grants and usages as movements, one line per usage", async () => {
+    const doctorId = await createDoctor("ledger-movements");
+    await grantCredits({ doctorUserId: doctorId, kind: AiCreditGrantKind.TOP_UP, credits: 2, actorUserId: null });
+    await grantCredits({ doctorUserId: doctorId, kind: AiCreditGrantKind.ADJUSTMENT, credits: 3, actorUserId: null });
+    await debit(doctorId, 4); // toma de los dos abonos
+
+    const movements = await listCreditMovements(doctorId);
+    expect(movements).toHaveLength(3);
+    expect(movements.map((m) => [m.type, m.kind, m.credits]).sort()).toEqual(
+      [
+        ["grant", "ADJUSTMENT", 3],
+        ["grant", "TOP_UP", 2],
+        ["usage", "TRANSCRIPTION", -4]
+      ].sort()
+    );
+    expect(Object.keys(movements[0]).sort()).toEqual(["at", "credits", "expiresAt", "kind", "type"]);
   });
 
   it("validates grants: only plan credits expire and accounts must be doctors", async () => {
