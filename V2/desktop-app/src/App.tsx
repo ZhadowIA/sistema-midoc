@@ -20,7 +20,7 @@ import {
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
 import { defaultView, isViewAvailable, parseFrozenScopeFlag, workspaceNav, type WorkspaceView } from "./scope";
 import { LinkAccountForm, PendingActivation } from "./LicenseActivation";
-import { isLicensed, licenseLine, type LicenseStatus } from "./licenseState";
+import { creditBalanceLine, creditBalanceTitle, isLicensed, licenseLine, type LicenseStatus } from "./licenseState";
 import "./App.css";
 
 // Agenda, recepcion y caja quedan congelados por el reenfoque (2026-09-07);
@@ -50,6 +50,8 @@ interface SyncStatus {
   slot_minutes: number | null;
   work_start_minutes: number | null;
   work_end_minutes: number | null;
+  credit_balance?: number | null;
+  credit_balance_at?: string | null;
 }
 
 type AppointmentRow = EncounterAgendaAppointment;
@@ -690,6 +692,11 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
           <span className="sidebar-profile-text">
             <strong>{unlocked.profile.display_name}</strong>
             {licensed ? <span className="sidebar-license">{licenseLine(license)}</span> : null}
+            {licensed && status?.credit_balance != null ? (
+              <span className="sidebar-license" title={creditBalanceTitle(status.credit_balance_at ?? null)}>
+                {creditBalanceLine(status.credit_balance)}
+              </span>
+            ) : null}
             <button type="button" onClick={() => void lock()}>Bloquear</button>
             {status?.linked ? (
               <button type="button" onClick={() => void unlink()} disabled={busy}>

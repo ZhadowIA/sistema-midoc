@@ -36,3 +36,13 @@ export function activationReason(license: LicenseStatus | null, lastError: strin
   if (license?.state === "INVALID" && license.reason) return license.reason;
   return "Este equipo todavía no tiene licencia de MiDoc.";
 }
+
+/** Saldo de creditos de IA tal como se leyo en la ultima sincronizacion. */
+export function creditBalanceLine(balance: number): string {
+  return `${balance} ${balance === 1 ? "crédito" : "créditos"} de IA`;
+}
+
+export function creditBalanceTitle(readAt: string | null): string {
+  if (!readAt) return "Saldo de tu cuenta MiDoc";
+  return `Saldo de tu cuenta MiDoc al sincronizar el ${formatDateFlexible(readAt)}`;
+}

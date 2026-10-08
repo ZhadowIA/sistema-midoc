@@ -88,6 +88,9 @@ struct SyncStatus {
     work_end_minutes: Option<i64>,
     doctor_name: Option<String>,
     doctor_license: Option<String>,
+    /// Ultimo saldo de creditos de IA conocido (paso 29 r4) y cuando se leyo.
+    credit_balance: Option<i64>,
+    credit_balance_at: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -351,6 +354,10 @@ fn sync_status(state: tauri::State<'_, AppDb>) -> Result<SyncStatus, String> {
         work_end_minutes,
         doctor_name,
         doctor_license,
+        credit_balance: sync::get_state(conn, "credit_balance")
+            .map_err(|e| e.to_string())?
+            .and_then(|value| value.parse::<i64>().ok()),
+        credit_balance_at: sync::get_state(conn, "credit_balance_at").map_err(|e| e.to_string())?,
     })
 }
 
@@ -652,6 +659,14 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
     // Refrescar la licencia trae las renovaciones de actualizaciones. Si falla
     // (sin lugar, licencia revocada) se conserva la que ya hay en el equipo.
     let _ = refresh_license(&state).await;
+
+    // Saldo de creditos de IA (paso 29 r4): se guarda para mostrarlo sin conexion.
+    if let Ok(balance) = sync::fetch_credit_balance(&server_url, &token).await {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        sync::set_state(conn, "credit_balance", &balance.to_string()).map_err(|e| e.to_string())?;
+        sync::set_state(conn, "credit_balance_at", &chrono::Utc::now().to_rfc3339()).map_err(|e| e.to_string())?;
+    }
 
     Ok(sync::SyncSummary {
         applied_events: applied,

@@ -936,7 +936,9 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         clinical_profile: mockState.clinicalProfile,
         slot_minutes: mockState.slotMinutes,
         work_start_minutes: 9 * 60,
-        work_end_minutes: 14 * 60
+        work_end_minutes: 14 * 60,
+        credit_balance: 30,
+        credit_balance_at: "2026-10-07T12:00:00Z"
       } as T;
     case "link_account":
       mockState.linked = true;
