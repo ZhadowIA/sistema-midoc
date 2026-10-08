@@ -2024,7 +2024,13 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         deleted_precheckins: 0,
         deleted_medical_history_versions: 0,
         anonymized_visits: 0,
-        anonymized_appointments: 0
+        anonymized_appointments: 0,
+        deleted_transcriptions: 0,
+        deleted_timeline_events: 0,
+        deleted_lab_orders: 0,
+        deleted_budgets: 0,
+        anonymized_budgets: 0,
+        deleted_patient_links: 0
       } as T;
     }
     default:

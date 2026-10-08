@@ -27,5 +27,6 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 
 ## Resueltos
 
+- [x] **La cancelacion ARCO del desktop no limpiaba tablas agregadas despues** — fallaba por llave foranea si el paciente tenia transcripciones y dejaba linea del tiempo, ordenes de laboratorio, presupuestos dentales, contacto del responsable y liga al portal. Corregido 2026-10-07 en `v2/fix-arco-cancelacion` (el pendiente abierto que trae la rama del paso 28 r6 se cierra con este arreglo).
 - [x] **3 pruebas de integracion del portal fallando en `dev`** (cola de notificaciones, DST de agenda publica, creditos de IA) — PR #42, 2026-10-05.
 - [x] **Expediente clinico persistido en PostgreSQL** — PR #43, 2026-10-05.
