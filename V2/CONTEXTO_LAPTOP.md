@@ -36,8 +36,8 @@ Cada uno tiene como base el anterior; al mergear uno, el siguiente se retargetea
 | #53 | `v2/paso29-creditos` | r3, créditos de IA |
 | #55 | `v2/paso29-cuenta` | r4, cuenta y saldo |
 | #56 | `v2/paso29-actualizaciones` | r5, actualizaciones (cierra paso 29) |
-| nuevo | `v2/retirar-suscripcion` | retiro de la suscripción del alcance activo |
-| nuevo | `v2/paso30-pasarela-ia` | paso 30, pasarela de IA de texto |
+| #57 | `v2/retirar-suscripcion` | retiro de la suscripción del alcance activo |
+| #58 | `v2/paso30-pasarela-ia` | paso 30, pasarela de IA de texto |
 
 Aparte, **#54** `v2/fix-arco-cancelacion` → `dev` (fix de la cancelación ARCO; al
 integrar la pila hay que quitar su entrada abierta de `PENDIENTES.md`) y **#41**
