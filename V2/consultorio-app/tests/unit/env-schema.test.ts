@@ -167,3 +167,15 @@ describe("env schema license signing key (paso 29)", () => {
     ).toContain("LICENSE_SIGNING_KEY");
   });
 });
+
+describe("env schema email sender", () => {
+  it("accepts a display-name email sender for provider From headers", () => {
+    const result = envSchema.safeParse(baseEnv({ EMAIL_FROM: "MiDoc <no-reply@midocapp.com.mx>" }));
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a sender without a valid address", () => {
+    const result = envSchema.safeParse(baseEnv({ EMAIL_FROM: "MiDoc <no-reply>" }));
+    expect(issuePaths(result)).toContain("EMAIL_FROM");
+  });
+});
