@@ -944,6 +944,18 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       mockState.linked = true;
       mockState.licensed = true;
       return { license_error: null } as T;
+    case "check_for_update":
+      return {
+        configured: false,
+        current_version: "0.1.0",
+        available: false,
+        version: null,
+        published_at: null,
+        notes: null,
+        critical: false,
+        allowed: false,
+        reason: "Esta compilacion de MiDoc no tiene canal de actualizaciones configurado."
+      } as T;
     case "license_status":
     case "activate_license":
       if (command === "activate_license" && mockState.linked) mockState.licensed = true;

@@ -13,6 +13,7 @@ mod export;
 mod fhir;
 mod directory_csv;
 mod license;
+mod updates;
 mod diarization;
 mod diarization_model;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature
@@ -457,6 +458,101 @@ async fn refresh_license(state: &tauri::State<'_, AppDb>) -> Result<license::Lic
     let keys = license::trusted_keys();
     license::store(conn, &token, &keys).map_err(|e| e.to_string())?;
     license::status(conn, &keys, chrono::Local::now().date_naive()).map_err(|e| e.to_string())
+}
+
+/// Fecha hasta la que la licencia incluye actualizaciones, si hay licencia valida.
+fn licensed_updates_until(state: &tauri::State<'_, AppDb>) -> Result<Option<chrono::NaiveDate>, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let status = license::status(conn, &license::trusted_keys(), chrono::Local::now().date_naive())
+        .map_err(|e| e.to_string())?;
+    Ok(status
+        .updates_until
+        .filter(|_| status.state == "VALID")
+        .and_then(|until| chrono::NaiveDate::parse_from_str(&until, "%Y-%m-%d").ok()))
+}
+
+/// Consulta el canal de actualizaciones (paso 9) con la llave y el endpoint de
+/// esta compilacion. `None` si la compilacion no tiene canal o no hay version nueva.
+async fn fetch_update(app: &tauri::AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let Some(settings) = updates::settings() else {
+        return Ok(None);
+    };
+    let endpoint = settings.endpoint.parse().map_err(|_| "el endpoint de actualizaciones no es una URL valida")?;
+    app.updater_builder()
+        .pubkey(settings.pubkey)
+        .endpoints(vec![endpoint])
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| format!("no se pudo consultar las actualizaciones: {e}"))
+}
+
+fn release_date(update: &tauri_plugin_updater::Update) -> Option<chrono::NaiveDate> {
+    update
+        .date
+        .and_then(|d| chrono::NaiveDate::from_ymd_opt(d.year(), u8::from(d.month()) as u32, d.day() as u32))
+}
+
+/// Busca una version nueva y dice si la licencia la incluye (paso 29 r5).
+#[tauri::command]
+async fn check_for_update(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppDb>,
+) -> Result<updates::UpdateCheck, String> {
+    let current_version = app.package_info().version.to_string();
+    let updates_until = licensed_updates_until(&state)?;
+    if updates::settings().is_none() {
+        return Ok(updates::UpdateCheck {
+            configured: false,
+            current_version,
+            reason: Some("Esta compilacion de MiDoc no tiene canal de actualizaciones configurado.".into()),
+            ..Default::default()
+        });
+    }
+    let Some(update) = fetch_update(&app).await? else {
+        return Ok(updates::UpdateCheck {
+            configured: true,
+            current_version,
+            reason: Some("Tienes la version mas reciente.".into()),
+            ..Default::default()
+        });
+    };
+    Ok(updates::evaluate(
+        &current_version,
+        &update.version,
+        release_date(&update),
+        update.body.clone(),
+        &update.raw_json,
+        updates_until,
+    ))
+}
+
+/// Descarga, verifica la firma e instala la version nueva si la licencia la
+/// incluye; despues reinicia la app. La base cifrada no se toca (paso 9).
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle, state: tauri::State<'_, AppDb>) -> Result<(), String> {
+    let updates_until = licensed_updates_until(&state)?;
+    let update = fetch_update(&app).await?.ok_or("No hay una version nueva para instalar.")?;
+    let check = updates::evaluate(
+        &app.package_info().version.to_string(),
+        &update.version,
+        release_date(&update),
+        update.body.clone(),
+        &update.raw_json,
+        updates_until,
+    );
+    if !check.allowed {
+        return Err(check.reason.unwrap_or_else(|| "Esta version no esta incluida en tu licencia.".into()));
+    }
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|e| format!("no se pudo instalar la actualizacion: {e}"))?;
+    app.restart();
 }
 
 /// Estado de la licencia, verificada sin red (paso 29).
@@ -2670,6 +2766,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppDb(Mutex::new(None)))
         .manage(ModelDownloads(Mutex::new(HashMap::new())))
         .invoke_handler(tauri::generate_handler![
@@ -2737,6 +2834,8 @@ pub fn run() {
             save_directory_csv,
             license_status,
             activate_license,
+            check_for_update,
+            install_update,
             cie10_catalog_info,
             documents_add,
             documents_list,

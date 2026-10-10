@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { activationReason, creditBalanceLine, creditBalanceTitle, isLicensed, licenseLine, type LicenseStatus } from "./licenseState.ts";
+import { activationReason, creditBalanceLine, creditBalanceTitle, isLicensed, licenseLine, updateHeadline, type LicenseStatus, type UpdateCheck } from "./licenseState.ts";
 
 const valid: LicenseStatus = {
   state: "VALID",
@@ -39,4 +39,23 @@ test("el saldo de creditos se lee en singular y plural", () => {
   assert.equal(creditBalanceLine(1), "1 crédito de IA");
   assert.equal(creditBalanceLine(0), "0 créditos de IA");
   assert.match(creditBalanceTitle(null), /Saldo de tu cuenta/);
+});
+
+test("el aviso de actualizaciones distingue incluida, no incluida y al dia", () => {
+  const base: UpdateCheck = {
+    configured: true,
+    current_version: "0.1.0",
+    available: true,
+    version: "0.2.0",
+    published_at: "2026-12-01",
+    notes: null,
+    critical: false,
+    allowed: true,
+    reason: null
+  };
+  assert.equal(updateHeadline(base), "MiDoc 0.2.0 disponible");
+  assert.equal(updateHeadline({ ...base, critical: true }), "MiDoc 0.2.0 disponible (parche crítico)");
+  assert.equal(updateHeadline({ ...base, allowed: false }), "MiDoc 0.2.0 no está incluida en tu licencia");
+  assert.equal(updateHeadline({ ...base, available: false }), "MiDoc 0.1.0 está al día");
+  assert.match(updateHeadline({ ...base, configured: false }), /no disponibles/);
 });

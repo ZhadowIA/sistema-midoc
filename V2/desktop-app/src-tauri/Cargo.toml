@@ -23,6 +23,10 @@ tauri-plugin-opener = "2"
 # Dialogo "Guardar como" para las exportaciones del expediente (paso 28 r4). Se
 # usa solo desde Rust: la pagina nunca elige rutas de escritura.
 tauri-plugin-dialog = "2"
+# Canal de actualizaciones firmado (paso 9) que respeta las actualizaciones
+# incluidas en la licencia (paso 29 r5). Se usa solo desde Rust; la llave
+# publica y el endpoint se fijan al compilar (MIDOC_UPDATER_PUBKEY/ENDPOINT).
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # En Windows, `bundled-sqlcipher-vendored-openssl` recompila OpenSSL completo
