@@ -4,7 +4,7 @@ import { DentalBudgetPanel } from "./DentalBudgetPanel";
 import { DentalLabPanel } from "./DentalLabPanel";
 import { DocumentsPanel } from "./DocumentsPanel";
 import { Cie10Picker } from "./Cie10Picker";
-import { exportMessage, exportRecordPdf } from "./recordExportAction";
+import { exportMessage, exportRecordFhir, exportRecordPdf, fhirExportMessage } from "./recordExportAction";
 import type { CodedDiagnosis } from "./cie10Model";
 import { DentalEvolutionPanel, PostOpInstructionsPanel } from "./DentalNoteAids";
 import {
@@ -571,15 +571,17 @@ export function Atencion({
     }
   }
 
-  // Exporta la ultima version guardada de la nota (paso 28 r4).
-  async function exportConsultationPdf() {
+  // Exporta la ultima version guardada de la nota (paso 28 r4 y r5).
+  async function exportConsultation(format: "pdf" | "fhir") {
     if (!detail) return;
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      const outcome = await exportRecordPdf(detail.patient.id, "PDF_CONSULTA", encounterId);
-      const text = exportMessage(outcome);
+      const text =
+        format === "pdf"
+          ? exportMessage(await exportRecordPdf(detail.patient.id, "PDF_CONSULTA", encounterId))
+          : fhirExportMessage(await exportRecordFhir(detail.patient.id, encounterId));
       if (text) setMessage(text);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1091,9 +1093,18 @@ export function Atencion({
             type="button"
             disabled={busy}
             title="Exporta la ultima version guardada de la nota y la receta"
-            onClick={() => void exportConsultationPdf()}
+            onClick={() => void exportConsultation("pdf")}
           >
             Exportar PDF
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={busy}
+            title="HL7 FHIR R4 (JSON) de la ultima version guardada, con sus documentos, para llevarla a otro sistema"
+            onClick={() => void exportConsultation("fhir")}
+          >
+            Exportar FHIR
           </button>
           {signed ? (
             <span

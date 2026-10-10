@@ -1,8 +1,9 @@
-//! Salida del expediente (paso 28, rebanada 4).
+//! Salida del expediente (paso 28, rebanadas 4 y 5).
 //!
 //! Clase de residencia: CLINICO. Arma los datos de una consulta o del
-//! expediente completo para que la interfaz los pinte como PDF, y escribe el
-//! archivo que el medico eligio con "Guardar como". Escribir fuera de la base
+//! expediente completo para que la interfaz los pinte como PDF o para que
+//! `fhir.rs` los convierta en un Bundle FHIR R4, y escribe el archivo que el
+//! medico eligio con "Guardar como". Escribir fuera de la base
 //! cifrada es una salida deliberada del medico: queda en la bitacora con el
 //! tipo, el nombre del archivo y su huella, nunca con el contenido.
 //!
@@ -26,10 +27,12 @@ pub enum ExportError {
     Invalid(String),
     #[error("no se pudo escribir el archivo: {0}")]
     Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Medication(#[from] crate::medication::MedicationError),
 }
 
 /// Tipos de salida que reconoce la bitacora.
-pub const EXPORT_KINDS: &[&str] = &["PDF_CONSULTA", "PDF_EXPEDIENTE"];
+pub const EXPORT_KINDS: &[&str] = &["PDF_CONSULTA", "PDF_EXPEDIENTE", "FHIR_CONSULTA", "FHIR_EXPEDIENTE"];
 
 #[derive(Debug, Serialize)]
 pub struct ExportDoctor {
@@ -45,13 +48,18 @@ pub struct ExportEncounter {
     pub signed_at: Option<String>,
     pub signed_hash: Option<String>,
     pub note_version: Option<i64>,
+    /// Cuando se guardo la version vigente de la nota.
+    pub note_saved_at: Option<String>,
     pub note: Option<NoteContent>,
     pub prescription: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ExportDocument {
+    pub id: String,
     pub file_name: String,
+    pub mime_type: String,
+    pub size_bytes: i64,
     pub title: Option<String>,
     pub category: Option<String>,
     pub received_at: String,
@@ -118,6 +126,7 @@ pub fn record_export(
             signed_at: detail.encounter.signed_at,
             signed_hash: detail.encounter.signed_hash,
             note_version: detail.note.as_ref().map(|n| n.version),
+            note_saved_at: detail.note.as_ref().map(|n| n.created_at.clone()),
             note: detail.note.map(|n| n.content),
             prescription: detail.prescription,
         });
@@ -125,18 +134,21 @@ pub fn record_export(
 
     let documents = conn
         .prepare(
-            "SELECT file_name, title, category, received_at, encounter_id, sha256
+            "SELECT id, file_name, mime_type, size_bytes, title, category, received_at, encounter_id, sha256
              FROM documents WHERE patient_id = ?1 AND (?2 IS NULL OR encounter_id = ?2)
-             ORDER BY received_at ASC",
+             ORDER BY received_at ASC, id",
         )?
         .query_map(params![patient_id, encounter_id], |row| {
             Ok(ExportDocument {
-                file_name: row.get(0)?,
-                title: row.get(1)?,
-                category: row.get(2)?,
-                received_at: row.get(3)?,
-                encounter_id: row.get(4)?,
-                sha256: row.get(5)?,
+                id: row.get(0)?,
+                file_name: row.get(1)?,
+                mime_type: row.get(2)?,
+                size_bytes: row.get(3)?,
+                title: row.get(4)?,
+                category: row.get(5)?,
+                received_at: row.get(6)?,
+                encounter_id: row.get(7)?,
+                sha256: row.get(8)?,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -166,7 +178,8 @@ pub fn suggested_file_name(stem: &str, extension: &str) -> String {
     format!("{}.{extension}", stem.chars().take(80).collect::<String>())
 }
 
-/// Escribe la exportacion en la ruta elegida y la deja en la bitacora.
+/// Escribe la exportacion que llega de la interfaz (base64) en la ruta elegida
+/// y la deja en la bitacora.
 pub fn write_export(
     conn: &Connection,
     path: &std::path::Path,
@@ -174,17 +187,37 @@ pub fn write_export(
     kind: &str,
     content_base64: &str,
 ) -> Result<String, ExportError> {
-    if !EXPORT_KINDS.contains(&kind) {
-        return Err(ExportError::Invalid(format!("tipo de exportacion no valido: {kind}")));
-    }
     let bytes = STANDARD
         .decode(content_base64.trim())
         .map_err(|_| ExportError::Invalid("el contenido de la exportacion no es valido".into()))?;
+    write_export_bytes(conn, path, patient_id, kind, &bytes)
+}
+
+/// Valida que el contenido corresponda al tipo, lo escribe y lo deja en la
+/// bitacora con nombre de archivo y huella, nunca con el contenido.
+pub fn write_export_bytes(
+    conn: &Connection,
+    path: &std::path::Path,
+    patient_id: &str,
+    kind: &str,
+    bytes: &[u8],
+) -> Result<String, ExportError> {
+    if !EXPORT_KINDS.contains(&kind) {
+        return Err(ExportError::Invalid(format!("tipo de exportacion no valido: {kind}")));
+    }
     if kind.starts_with("PDF") && !bytes.starts_with(b"%PDF-") {
         return Err(ExportError::Invalid("el contenido no es un PDF".into()));
     }
-    std::fs::write(path, &bytes)?;
-    let sha256: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+    if kind.starts_with("FHIR") {
+        let is_bundle = serde_json::from_slice::<serde_json::Value>(bytes)
+            .map(|value| value["resourceType"] == "Bundle")
+            .unwrap_or(false);
+        if !is_bundle {
+            return Err(ExportError::Invalid("el contenido no es un Bundle FHIR".into()));
+        }
+    }
+    std::fs::write(path, bytes)?;
+    let sha256: String = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect();
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("exportacion");
     conn.execute(
         "INSERT INTO clinical_audit (entity, entity_id, action, at, details)
@@ -298,6 +331,12 @@ mod tests {
 
         assert!(write_export(&conn, &path, "p1", "PDF_CONSULTA", &STANDARD.encode(b"no es pdf")).is_err());
         assert!(write_export(&conn, &path, "p1", "OTRA_COSA", &STANDARD.encode(pdf)).is_err());
+        assert!(write_export_bytes(&conn, &path, "p1", "FHIR_EXPEDIENTE", pdf).is_err(), "un FHIR debe ser JSON");
+        assert!(
+            write_export_bytes(&conn, &path, "p1", "FHIR_EXPEDIENTE", br#"{"resourceType":"Patient"}"#).is_err(),
+            "un FHIR debe ser un Bundle"
+        );
+        assert!(write_export_bytes(&conn, &path, "p1", "FHIR_EXPEDIENTE", br#"{"resourceType":"Bundle"}"#).is_ok());
     }
 
     #[test]

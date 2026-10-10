@@ -10,6 +10,7 @@ mod db;
 mod dental;
 mod documents;
 mod export;
+mod fhir;
 mod diarization;
 mod diarization_model;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature
@@ -1274,8 +1275,35 @@ struct SavedExport {
     sha256: String,
 }
 
-/// Abre "Guardar como" (desde Rust: la pagina no elige rutas), escribe la
-/// exportacion y la deja en la bitacora. `None` si el medico cancelo.
+/// "Guardar como" desde Rust: la pagina nunca elige rutas de escritura. `None`
+/// si el medico cancelo.
+async fn pick_export_path(
+    app: &tauri::AppHandle,
+    suggested_name: &str,
+    filter_name: &'static str,
+    extension: &'static str,
+) -> Result<Option<std::path::PathBuf>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let file_name = export::suggested_file_name(suggested_name, extension);
+    let dialog_app = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        dialog_app
+            .dialog()
+            .file()
+            .set_title("Guardar exportacion del expediente")
+            .set_file_name(&file_name)
+            .add_filter(filter_name, &[extension])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    picked.map(|p| p.into_path().map_err(|e| e.to_string())).transpose()
+}
+
+/// Escribe el PDF que dibujo la interfaz y lo deja en la bitacora. `None` si el
+/// medico cancelo.
 #[tauri::command]
 async fn save_export(
     app: tauri::AppHandle,
@@ -1285,30 +1313,39 @@ async fn save_export(
     suggested_name: String,
     content_base64: String,
 ) -> Result<Option<SavedExport>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    let file_name = export::suggested_file_name(&suggested_name, "pdf");
-    let dialog_app = app.clone();
-    let picked = tauri::async_runtime::spawn_blocking(move || {
-        dialog_app
-            .dialog()
-            .file()
-            .set_title("Guardar exportacion del expediente")
-            .set_file_name(&file_name)
-            .add_filter("PDF", &["pdf"])
-            .blocking_save_file()
-    })
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let Some(picked) = picked else {
+    let Some(path) = pick_export_path(&app, &suggested_name, "PDF", "pdf").await? else {
         return Ok(None);
     };
-    let path = picked.into_path().map_err(|e| e.to_string())?;
-
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
     let sha256 = export::write_export(conn, &path, &patient_id, &kind, &content_base64)
+        .map_err(|e| e.to_string())?;
+    Ok(Some(SavedExport { path: path.display().to_string(), sha256 }))
+}
+
+/// Exporta en FHIR R4 la consulta (`encounter_id`) o el expediente completo
+/// (paso 28 r5). Rust arma el Bundle con los documentos dentro y lo escribe:
+/// el contenido no pasa por la pagina. `None` si el medico cancelo.
+#[tauri::command]
+async fn save_fhir_export(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+    encounter_id: Option<String>,
+) -> Result<Option<SavedExport>, String> {
+    // Se arma antes del dialogo para no pedir ruta si algo falla, y sin
+    // retener la base mientras el medico elige donde guardar.
+    let export = {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        fhir::export_record(conn, &patient_id, encounter_id.as_deref()).map_err(|e| e.to_string())?
+    };
+    let Some(path) = pick_export_path(&app, &export.file_stem, "FHIR R4 (JSON)", "json").await? else {
+        return Ok(None);
+    };
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let sha256 = export::write_export_bytes(conn, &path, &patient_id, export.kind, &export.bytes)
         .map_err(|e| e.to_string())?;
     Ok(Some(SavedExport { path: path.display().to_string(), sha256 }))
 }
@@ -2593,6 +2630,7 @@ pub fn run() {
             search_records,
             record_export,
             save_export,
+            save_fhir_export,
             cie10_catalog_info,
             documents_add,
             documents_list,

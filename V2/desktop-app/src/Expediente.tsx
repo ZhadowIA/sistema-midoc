@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
 import { DocumentsPanel } from "./DocumentsPanel";
-import { exportMessage, exportRecordPdf } from "./recordExportAction";
+import { exportMessage, exportRecordFhir, exportRecordPdf, fhirExportMessage } from "./recordExportAction";
 import { parseDateFlexible } from "./dateOnly";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { MedicalHistoryGroups } from "./MedicalHistoryGroups";
@@ -222,12 +222,12 @@ export function Expediente({
     setError("");
   }
 
-  async function exportPdf() {
+  async function runExport(action: () => Promise<string>) {
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      const text = exportMessage(await exportRecordPdf(patientId, "PDF_EXPEDIENTE"));
+      const text = await action();
       if (text) setMessage(text);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -396,8 +396,22 @@ export function Expediente({
           ) : null}
         </div>
         <div className="button-row expediente-start">
-          <button type="button" className="ghost-button" onClick={() => void exportPdf()} disabled={busy}>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void runExport(async () => exportMessage(await exportRecordPdf(patientId, "PDF_EXPEDIENTE")))}
+            disabled={busy}
+          >
             Exportar PDF
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            title="HL7 FHIR R4 (JSON), con los documentos dentro, para llevar el expediente a otro sistema"
+            onClick={() => void runExport(async () => fhirExportMessage(await exportRecordFhir(patientId)))}
+            disabled={busy}
+          >
+            Exportar FHIR
           </button>
           <button type="button" className="action-button" onClick={() => void startEncounter()} disabled={busy}>
             Iniciar consulta

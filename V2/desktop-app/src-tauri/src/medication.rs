@@ -126,7 +126,7 @@ pub struct SafetyReport {
 /* ---------- Helpers puros ---------- */
 
 /// Normaliza un nombre para buscarlo: minusculas, sin espacios de sobra.
-fn normalize_name(raw: &str) -> String {
+pub(crate) fn normalize_name(raw: &str) -> String {
     raw.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
