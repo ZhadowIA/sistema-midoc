@@ -13,6 +13,7 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 
 ## Deuda tecnica
 
+- [ ] **La cancelacion ARCO del desktop no limpia tablas agregadas despues** — con `foreign_keys = ON`, si el paciente tiene transcripciones (`consultation_transcriptions` referencia `encounters` sin cascada) el borrado de consultas falla y toda la cancelacion hace rollback; ademas no borra `timeline_events` ni las ordenes de laboratorio dentales, no toca presupuestos dentales y no limpia los datos del responsable (`guardian_*`) ni `patient_links`. Es un derecho ARCO que no se puede ejercer completo. Tarea aparte propuesta (`v2/fix-arco-cancelacion`). _(2026-10-06, paso 28 r6)_
 - [ ] **Retirar `PaymentRecord`, `CashDrawerSession` y `WaitlistEntry` del portal** — vestigio del commit `0bc949e`, sin referencias en `src/` ni `tests/`; la caja y la lista de espera viven en la app del medico. Rama aparte. _(2026-09-05, PR #43)_
 - [ ] **`open_patient_encounter` siempre crea una consulta nueva** — no reutiliza una consulta abierta del mismo paciente, asi que un doble clic o volver a entrar deja consultas vacias en estado OPEN. Ahora es la entrada principal, no la secundaria. _(2026-10-05, paso 27)_
 - [ ] **El mock del navegador (`ipc.ts`) tiene una sola consulta fija** — `open_patient_encounter` devuelve siempre la de Hugo, sin importar el paciente; estorba para verificar flujos en el navegador. _(2026-10-05, paso 27)_

@@ -2,6 +2,8 @@
 // Rust abre "Guardar como", escribe el archivo y lo deja en la bitacora.
 // Exportar a FHIR R4 (paso 28 r5): Rust arma el Bundle con los documentos dentro
 // y lo escribe; el contenido no pasa por la pagina.
+// Directorio en CSV (paso 28 r6): identificacion, contacto y actividad, sin
+// contenido clinico; tambien lo arma y lo escribe Rust.
 
 import { bytesToBase64 } from "./base64";
 import { call } from "./ipc";
@@ -48,4 +50,11 @@ export async function exportRecordFhir(patientId: string, encounterId: string | 
 
 export function fhirExportMessage(path: string | null): string {
   return path ? `FHIR R4 guardado en ${path}.` : "";
+}
+
+/** Directorio de pacientes en CSV. Devuelve el mensaje para el medico ("" si cancelo). */
+export async function exportDirectoryCsv(): Promise<string> {
+  const saved = await call<{ path: string; patients: number } | null>("save_directory_csv");
+  if (!saved) return "";
+  return `Directorio exportado (${saved.patients} ${saved.patients === 1 ? "paciente" : "pacientes"}) en ${saved.path}.`;
 }

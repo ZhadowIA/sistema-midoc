@@ -1,4 +1,4 @@
-//! Salida del expediente (paso 28, rebanadas 4 y 5).
+//! Salida del expediente (paso 28, rebanadas 4 a 6).
 //!
 //! Clase de residencia: CLINICO. Arma los datos de una consulta o del
 //! expediente completo para que la interfaz los pinte como PDF o para que
@@ -32,7 +32,8 @@ pub enum ExportError {
 }
 
 /// Tipos de salida que reconoce la bitacora.
-pub const EXPORT_KINDS: &[&str] = &["PDF_CONSULTA", "PDF_EXPEDIENTE", "FHIR_CONSULTA", "FHIR_EXPEDIENTE"];
+pub const EXPORT_KINDS: &[&str] =
+    &["PDF_CONSULTA", "PDF_EXPEDIENTE", "FHIR_CONSULTA", "FHIR_EXPEDIENTE", "CSV_DIRECTORIO"];
 
 #[derive(Debug, Serialize)]
 pub struct ExportDoctor {
@@ -194,7 +195,8 @@ pub fn write_export(
 }
 
 /// Valida que el contenido corresponda al tipo, lo escribe y lo deja en la
-/// bitacora con nombre de archivo y huella, nunca con el contenido.
+/// bitacora con nombre de archivo y huella, nunca con el contenido. Para el
+/// directorio, `patient_id` es "directorio".
 pub fn write_export_bytes(
     conn: &Connection,
     path: &std::path::Path,
@@ -215,6 +217,9 @@ pub fn write_export_bytes(
         if !is_bundle {
             return Err(ExportError::Invalid("el contenido no es un Bundle FHIR".into()));
         }
+    }
+    if kind.starts_with("CSV") && std::str::from_utf8(bytes).is_err() {
+        return Err(ExportError::Invalid("el contenido no es un CSV en UTF-8".into()));
     }
     std::fs::write(path, bytes)?;
     let sha256: String = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect();

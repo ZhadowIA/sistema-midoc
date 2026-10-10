@@ -11,6 +11,7 @@ mod dental;
 mod documents;
 mod export;
 mod fhir;
+mod directory_csv;
 mod diarization;
 mod diarization_model;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature
@@ -1350,6 +1351,34 @@ async fn save_fhir_export(
     Ok(Some(SavedExport { path: path.display().to_string(), sha256 }))
 }
 
+#[derive(serde::Serialize)]
+struct SavedDirectory {
+    path: String,
+    patients: usize,
+}
+
+/// Exporta el directorio de pacientes a CSV (paso 28 r6): identificacion,
+/// contacto y actividad, sin contenido clinico. `None` si el medico cancelo.
+#[tauri::command]
+async fn save_directory_csv(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppDb>,
+) -> Result<Option<SavedDirectory>, String> {
+    let export = {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        directory_csv::directory_csv(conn).map_err(|e| e.to_string())?
+    };
+    let Some(path) = pick_export_path(&app, &export.file_stem, "CSV", "csv").await? else {
+        return Ok(None);
+    };
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    export::write_export_bytes(conn, &path, "directorio", "CSV_DIRECTORIO", &export.bytes)
+        .map_err(|e| e.to_string())?;
+    Ok(Some(SavedDirectory { path: path.display().to_string(), patients: export.patients }))
+}
+
 #[tauri::command]
 fn search_records(
     state: tauri::State<'_, AppDb>,
@@ -2631,6 +2660,7 @@ pub fn run() {
             record_export,
             save_export,
             save_fhir_export,
+            save_directory_csv,
             cie10_catalog_info,
             documents_add,
             documents_list,
