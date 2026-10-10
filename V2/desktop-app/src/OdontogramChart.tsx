@@ -23,55 +23,78 @@ import {
   toothType,
   type Dentition
 } from "./odontogramModel.ts";
-import { CROWN_PATHS, crownRegionPaths, GROOVE_PATHS, ROOT_PATHS } from "./toothGeometry.ts";
+import {
+  CROWN_PATHS,
+  crownRegionPaths,
+  FACIAL_CANAL_PATH,
+  FACIAL_CROWN_PATHS,
+  FACIAL_IMPLANT_BODY,
+  FACIAL_IMPLANT_THREADS,
+  GROOVE_PATHS,
+  ROOT_PATHS
+} from "./toothGeometry.ts";
 
-// Las 5 zonas clicables son regiones anatomicas por tipo de pieza (la zona
-// central es la tabla oclusal/borde incisal real de cada tipo, generada en
-// toothGeometry.ts con teselado garantizado); la silueta de la corona sigue
-// recortando con clipPath. La interaccion y el payload no cambian.
+// Doble vista por diente, como en el odontograma en papel (idea 3):
+// - Vista FACIAL (corona desde vestibular + raiz, hacia afuera de la boca):
+//   ahi viven los estados de pieza completa — corona, implante (tornillo),
+//   endodoncia (conducto relleno), tintes por estado, X de ausente.
+// - Disco OCLUSAL (hacia la linea media entre arcadas): las 5 regiones
+//   anatomicas clicables por superficie de las ideas 1+2.
+// La interaccion y el payload no cambian: clic en superficie = cara, clic en
+// la vista facial o el numero = pieza completa.
 
 // Tamano base del glifo en px; cada pieza lo escala con sus proporciones.
+// viewBox 40x78: facial (raiz 16 + corona 22) + separacion + oclusal 40.
 const GLYPH_BASE_WIDTH = 32;
-const GLYPH_BASE_HEIGHT = 43;
+const GLYPH_BASE_HEIGHT = 62;
+const OCCLUSAL_OFFSET = 38;
+const GLYPH_TOTAL = 78;
 
 function ToothMarkerOverlay({ marker }: { marker: ReturnType<typeof toothMarker> }) {
+  // Solo ausente y extraccion cruzan el glifo completo (ambas vistas); los
+  // demas estados ya se representan en la vista facial.
   switch (marker) {
     case "cross":
       return (
         <g className="tooth-marker">
-          <line x1={5} y1={5} x2={35} y2={35} />
-          <line x1={35} y1={5} x2={5} y2={35} />
+          <line x1={6} y1={6} x2={34} y2={GLYPH_TOTAL - 6} />
+          <line x1={34} y1={6} x2={6} y2={GLYPH_TOTAL - 6} />
         </g>
       );
     case "slash":
       return (
         <g className="tooth-marker">
-          <line x1={5} y1={35} x2={35} y2={5} />
-        </g>
-      );
-    case "circle":
-      return (
-        <g className="tooth-marker">
-          <circle cx={20} cy={20} r={16} />
-        </g>
-      );
-    case "triangle":
-      return (
-        <g className="tooth-marker">
-          <polygon points="20,6 33,32 7,32" />
-        </g>
-      );
-    case "post":
-      return (
-        <g className="tooth-marker">
-          <line x1={20} y1={6} x2={20} y2={34} />
-          <line x1={12} y1={12} x2={28} y2={12} />
-          <line x1={14} y1={20} x2={26} y2={20} />
+          <line x1={6} y1={GLYPH_TOTAL - 6} x2={34} y2={6} />
         </g>
       );
     default:
       return null;
   }
+}
+
+/** Vista facial: raiz + corona vestibular con los adornos del estado. */
+function FacialView({
+  type,
+  status
+}: {
+  type: ReturnType<typeof toothType>;
+  status: string;
+}) {
+  const implant = status === "IMPLANT";
+  return (
+    <>
+      {implant ? (
+        <g className="facial-implant">
+          <path d={FACIAL_IMPLANT_BODY} />
+          <path className="facial-implant-threads" d={FACIAL_IMPLANT_THREADS} />
+        </g>
+      ) : (
+        <path className="tooth-root" d={ROOT_PATHS[type === "MOLAR" ? "DOUBLE" : "SINGLE"]} />
+      )}
+      {status === "ROOT_CANAL" ? <path className="facial-canal" d={FACIAL_CANAL_PATH} /> : null}
+      <path className="facial-crown" d={FACIAL_CROWN_PATHS[type]} />
+    </>
+  );
 }
 
 function ToothGlyph({
@@ -147,7 +170,7 @@ function ToothGlyph({
       <span className="tooth-number">{toothId}</span>
       <svg
         className={`tooth-glyph ${toothStatusClass(tooth.status)}`}
-        viewBox="0 0 40 54"
+        viewBox={`0 0 40 ${GLYPH_TOTAL}`}
         style={{
           width: Math.round(GLYPH_BASE_WIDTH * proportions.width),
           height: Math.round(GLYPH_BASE_HEIGHT * proportions.height)
@@ -158,15 +181,18 @@ function ToothGlyph({
             <path d={CROWN_PATHS[type]} />
           </clipPath>
         </defs>
-        {/* Raiz hacia afuera de la boca: arriba en superiores, abajo en
-            inferiores (espejada). */}
+        {/* Vista facial hacia afuera de la boca: arriba en superiores,
+            espejada abajo en inferiores. Clic aqui = pieza completa (el
+            evento burbujea al boton del glifo). */}
         <g
-          className="tooth-root"
-          transform={upper ? undefined : "translate(0,54) scale(1,-1)"}
+          className="facial-view"
+          transform={upper ? undefined : `translate(0,${GLYPH_TOTAL}) scale(1,-1)`}
         >
-          <path d={ROOT_PATHS[type === "MOLAR" ? "DOUBLE" : "SINGLE"]} />
+          <title>{`${toothId} pieza completa`}</title>
+          <FacialView type={type} status={tooth.status} />
         </g>
-        <g transform={upper ? "translate(0,14)" : undefined}>
+        {/* Disco oclusal hacia la linea media, con las regiones por cara. */}
+        <g transform={upper ? `translate(0,${OCCLUSAL_OFFSET})` : undefined}>
           <g clipPath={`url(#${clipId})`}>
             {TOOTH_FACES.map((face) => (
               <path
@@ -186,8 +212,8 @@ function ToothGlyph({
           </g>
           <path className="tooth-crown-outline" d={CROWN_PATHS[type]} />
           <path className="tooth-groove" d={GROOVE_PATHS[type]} />
-          <ToothMarkerOverlay marker={marker} />
         </g>
+        <ToothMarkerOverlay marker={marker} />
       </svg>
     </button>
   );
@@ -297,27 +323,23 @@ export function OdontogramChart({
           Extraccion indicada
         </span>
         <span className="legend-item">
-          <svg viewBox="0 0 40 40" className="legend-swatch">
-            <g className="tooth-marker">
-              <circle cx={20} cy={20} r={15} />
-            </g>
+          <svg viewBox="8 12 24 24" className="legend-swatch">
+            <path className="facial-crown legend-crown-status" d={FACIAL_CROWN_PATHS.PREMOLAR} />
           </svg>
           Corona
         </span>
         <span className="legend-item">
-          <svg viewBox="0 0 40 40" className="legend-swatch">
-            <g className="tooth-marker">
-              <polygon points="20,6 33,32 7,32" />
-            </g>
+          <svg viewBox="10 0 20 20" className="legend-swatch">
+            <path className="tooth-root" d={ROOT_PATHS.SINGLE} />
+            <path className="facial-canal" d={FACIAL_CANAL_PATH} />
           </svg>
           Endodoncia
         </span>
         <span className="legend-item">
-          <svg viewBox="0 0 40 40" className="legend-swatch">
-            <g className="tooth-marker">
-              <line x1={20} y1={6} x2={20} y2={34} />
-              <line x1={12} y1={12} x2={28} y2={12} />
-              <line x1={14} y1={20} x2={26} y2={20} />
+          <svg viewBox="10 0 20 16" className="legend-swatch">
+            <g className="facial-implant">
+              <path d={FACIAL_IMPLANT_BODY} />
+              <path className="facial-implant-threads" d={FACIAL_IMPLANT_THREADS} />
             </g>
           </svg>
           Implante

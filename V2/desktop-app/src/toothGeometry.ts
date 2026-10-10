@@ -87,3 +87,26 @@ export const ROOT_PATHS: Record<"SINGLE" | "DOUBLE", string> = {
   DOUBLE:
     "M8 16 C8 7 10 2 13 2 C16 2 17.5 8 17.5 16 Z M22.5 16 C22.5 8 24 2 27 2 C30 2 32 7 32 16 Z"
 };
+
+/* ---------- Vista facial (doble vista, idea 3) ---------- */
+
+// Corona vista desde vestibular, en la caja y14..~35 (cervical arriba, borde
+// oclusal/incisal abajo; la raiz de ROOT_PATHS ocupa y0..16 encima). Para
+// inferiores el grupo facial completo se espeja verticalmente.
+// Formas: incisivo en abanico con borde recto, canino terminado en punta,
+// premolar con dos cuspides, molar mas ancho con dos cuspides marcadas.
+export const FACIAL_CROWN_PATHS: Record<ToothType, string> = {
+  MOLAR:
+    "M11 14 H29 C33 21 32.5 29 29 32.5 C26 35.5 23 32.5 20 33 C17 32.5 14 35.5 11 32.5 C7.5 29 7 21 11 14 Z",
+  PREMOLAR:
+    "M13 14 H27 C30 21 29 29 26 32.5 C23.5 35 21.5 32.5 20 32.5 C18.5 32.5 16.5 35 14 32.5 C11 29 10 21 13 14 Z",
+  CANINE: "M14 14 H26 C30 21 29 27 20 35 C11 27 10 21 14 14 Z",
+  INCISOR: "M14 14 H26 C30 21 31 29 30 34 L10 34 C9 29 10 21 14 14 Z"
+};
+
+// Adornos de la vista facial para estados de pieza completa.
+// Conducto obturado (endodoncia): relleno dentro de la raiz, apice arriba.
+export const FACIAL_CANAL_PATH = "M18.6 14 L20 3.5 L21.4 14 Z";
+// Implante: cuerpo roscado que sustituye a la raiz natural.
+export const FACIAL_IMPLANT_BODY = "M15.5 14 L20 2.5 L24.5 14 Z";
+export const FACIAL_IMPLANT_THREADS = "M15.8 11 H24.2 M16.6 8 H23.4 M17.6 5.5 H22.4";
