@@ -43,7 +43,7 @@ describe("frozen scope flag", () => {
     }
   });
 
-  it("keeps account, subscription, AI gateway and desktop sync alive", () => {
+  it("keeps account, license, credits, AI gateway and desktop sync alive", () => {
     for (const path of [
       "/",
       "/medico",
@@ -54,7 +54,6 @@ describe("frozen scope flag", () => {
       "/admin/medicos",
       "/api/auth/login",
       "/api/admin/profile",
-      "/api/admin/subscription",
       "/api/admin/ai-credits",
       "/api/admin/license/devices/act_1/release",
       "/api/sync/license",

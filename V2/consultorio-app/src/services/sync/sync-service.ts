@@ -16,7 +16,8 @@ import { writeAuditLog } from "../../lib/audit";
 import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { generateOpaqueToken, hashOpaqueToken } from "../../lib/security/token";
-import { getAiCreditCost, getDoctorAiCreditSummary } from "../ai/ai-credits";
+import { getAiCreditCost } from "../ai/ai-credits";
+import { getCreditBalance } from "../ai/credit-ledger";
 
 const INBOX_BATCH_SIZE = 100;
 const AI_USAGE_BATCH_SIZE = 100;
@@ -559,7 +560,9 @@ export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
     });
   }
 
-  const creditSummary = await getDoctorAiCreditSummary(device.doctorId, now);
+  // Los usos que la app reporta despues no descuentan saldo: ese cobro llega
+  // con la pasarela de IA (paso 30). Se devuelve el saldo del libro mayor.
+  const { balance } = await getCreditBalance(device.doctorId, now);
 
   await writeAuditLog({
     actorUserId: device.doctorId,
@@ -569,12 +572,9 @@ export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
     source: "sync-service",
     metadata: {
       runCount: parsed.runs.length,
-      consumedCredits: creditSummary.consumedCredits,
-      remainingCredits: creditSummary.remainingCredits,
-      overageCredits: creditSummary.overageCredits,
-      periodKey: creditSummary.periodKey
+      creditBalance: balance
     }
   });
 
-  return { reported: parsed.runs.length, creditSummary };
+  return { reported: parsed.runs.length, creditBalance: balance };
 }
