@@ -100,11 +100,63 @@ test("el PDF de consulta lleva espacio de firma como receta", () => {
   assert.ok(!blocks.some((b) => b.type === "field" && b.label === "Antecedentes personales"));
 });
 
-test("avisa si faltan nombre o cedula del medico", () => {
-  assert.deepEqual(doctorHeader(sample()), { lines: ["Dra. Eva Soto", "Cédula profesional 1234567"], missing: false });
+const FULL_DOCTOR: RecordExport["doctor"] = {
+  name: "Dra. Eva Soto",
+  license: "1234567",
+  degree_institution: "Universidad Autónoma de Chihuahua",
+  specialty_title: "Pediatría",
+  specialty_license: "7654321",
+  address_line1: "Av. Juárez 100",
+  address_line2: "Col. Centro",
+  city: "Chihuahua",
+  state: "Chihuahua",
+  postal_code: "31000"
+};
+
+test("el encabezado lleva lo que exige la receta", () => {
   const data = sample();
+  data.doctor = FULL_DOCTOR;
+  assert.deepEqual(doctorHeader(data), {
+    lines: [
+      "Dra. Eva Soto",
+      "Cédula profesional 1234567 · Pediatría, cédula de especialidad 7654321",
+      "Título expedido por Universidad Autónoma de Chihuahua",
+      "Av. Juárez 100, Col. Centro, Chihuahua, Chihuahua, C.P. 31000"
+    ],
+    missing: false,
+    missingItems: []
+  });
+});
+
+test("sin especialidad no se imprime la linea de especialidad", () => {
+  const data = sample();
+  data.doctor = { ...FULL_DOCTOR, specialty_title: null, specialty_license: null };
+  assert.equal(doctorHeader(data).lines[1], "Cédula profesional 1234567");
+});
+
+test("avisa que datos de la receta faltan", () => {
+  const data = sample();
+  data.doctor = { name: "Dra. Eva Soto", license: "1234567" };
+  const header = doctorHeader(data);
+  assert.equal(header.missing, true);
+  assert.deepEqual(header.missingItems, ["institución que expidió el título", "domicilio del consultorio"]);
+  assert.deepEqual(header.lines, ["Dra. Eva Soto", "Cédula profesional 1234567"]);
+
   data.doctor = { name: null, license: null };
-  assert.equal(doctorHeader(data).missing, true);
+  assert.deepEqual(doctorHeader(data).lines, ["Médico sin nombre registrado", "Cédula profesional no registrada"]);
+  assert.equal(doctorHeader(data).missingItems.length, 4);
+});
+
+test("la nota de consulta avisa que faltan datos de la receta; el expediente no", () => {
+  const data = sample();
+  data.doctor = { name: "Dra. Eva Soto", license: "1234567" };
+  const warning = (kind: "PDF_CONSULTA" | "PDF_EXPEDIENTE") =>
+    buildBlocks(data, kind).find((b) => b.type === "warning" && b.text.startsWith("Faltan datos para la receta"));
+  assert.ok(warning("PDF_CONSULTA"));
+  assert.equal(warning("PDF_EXPEDIENTE"), undefined);
+
+  data.doctor = FULL_DOCTOR;
+  assert.equal(warning("PDF_CONSULTA"), undefined);
 });
 
 test("calcula la edad cumplida", () => {

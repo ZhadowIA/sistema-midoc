@@ -632,7 +632,71 @@ fn persist_profile_metadata(
     if let Some(license) = metadata.license_number.as_deref() {
         sync::set_state(conn, "doctor_license", license).map_err(|e| e.to_string())?;
     }
+    if let Some(prescriber) = &metadata.prescriber {
+        sync::store_prescriber(conn, prescriber).map_err(|e| e.to_string())?;
+    }
     Ok(())
+}
+
+/// Datos de la receta en la copia local y si la app puede editarlos (regla 4.6:
+/// se editan a traves del portal, asi que hace falta estar vinculada).
+#[derive(serde::Serialize)]
+struct PrescriberView {
+    linked: bool,
+    prescriber: Option<sync::Prescriber>,
+}
+
+#[tauri::command]
+fn get_prescriber(state: tauri::State<'_, AppDb>) -> Result<PrescriberView, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    Ok(PrescriberView {
+        linked: sync::get_state(conn, "device_token")
+            .map_err(|e| e.to_string())?
+            .is_some(),
+        prescriber: sync::load_prescriber(conn).map_err(|e| e.to_string())?,
+    })
+}
+
+/// Edita los datos de la receta en el portal y, solo si acepta (o si responde
+/// con la version vigente por conflicto), actualiza la copia local.
+#[tauri::command]
+async fn save_prescriber(
+    state: tauri::State<'_, AppDb>,
+    input: sync::PrescriberInput,
+) -> Result<sync::PrescriberSave, String> {
+    let (server_url, token) = {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let server_url = sync::get_state(conn, "server_url")
+            .map_err(|e| e.to_string())?
+            .ok_or("vincula tu cuenta para editar tus datos")?;
+        let token = sync::get_state(conn, "device_token")
+            .map_err(|e| e.to_string())?
+            .ok_or("vincula tu cuenta para editar tus datos")?;
+        (server_url, token)
+    };
+
+    let outcome = sync::save_prescriber(&server_url, &token, &input)
+        .await
+        .map_err(|e| match e {
+            sync::SyncError::Http(_) => {
+                "Sin conexion con el portal: tus datos se pueden consultar, pero se editan con conexion."
+                    .to_string()
+            }
+            other => other.to_string(),
+        })?;
+
+    let current = match &outcome {
+        sync::PrescriberSave::Saved { prescriber } => prescriber,
+        sync::PrescriberSave::Conflict { current, .. } => current,
+    };
+    {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        sync::store_prescriber(conn, current).map_err(|e| e.to_string())?;
+    }
+    Ok(outcome)
 }
 
 /// Descarga eventos pendientes del buzon, los aplica a la base local y
@@ -2915,6 +2979,8 @@ pub fn run() {
             find_patient_matches,
             create_patient,
             open_patient_encounter,
+            get_prescriber,
+            save_prescriber,
             list_timeline_events,
             add_timeline_event,
             update_timeline_event,

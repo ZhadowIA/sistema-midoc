@@ -68,3 +68,23 @@ test("sin nombre ni cedula del medico el PDF se genera igual", async () => {
   const pdf = await PDFDocument.load(await buildRecordPdf(sample, "PDF_CONSULTA"), { updateMetadata: false });
   assert.equal(pdf.getAuthor(), "MiDoc");
 });
+
+test("con la identidad completa de la receta el encabezado se repite en cada pagina", async () => {
+  const longPlan = Array.from({ length: 120 }, (_, i) => `Indicacion numero ${i + 1} con detalle.`).join("\n");
+  const sample = data(longPlan);
+  sample.doctor = {
+    name: "Dra. Eva Soto Núñez",
+    license: "1234567",
+    degree_institution: "Universidad Autónoma de Chihuahua",
+    specialty_title: "Pediatría",
+    specialty_license: "7654321",
+    address_line1: "Av. Juárez 100, consultorio 3",
+    address_line2: "Col. Centro",
+    city: "Chihuahua",
+    state: "Chihuahua",
+    postal_code: "31000"
+  };
+  const pdf = await PDFDocument.load(await buildRecordPdf(sample, "PDF_CONSULTA"), { updateMetadata: false });
+  assert.ok(pdf.getPageCount() >= 2, `paginas: ${pdf.getPageCount()}`);
+  assert.equal(pdf.getAuthor(), "Dra. Eva Soto Núñez");
+});

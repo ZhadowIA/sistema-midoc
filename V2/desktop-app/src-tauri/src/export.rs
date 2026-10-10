@@ -44,6 +44,15 @@ pub const EXPORT_KINDS: &[&str] = &[
 pub struct ExportDoctor {
     pub name: Option<String>,
     pub license: Option<String>,
+    /// Lo que ademas exige la receta (Reglamento de Insumos para la Salud).
+    pub degree_institution: Option<String>,
+    pub specialty_title: Option<String>,
+    pub specialty_license: Option<String>,
+    pub address_line1: Option<String>,
+    pub address_line2: Option<String>,
+    pub city: Option<String>,
+    pub state: Option<String>,
+    pub postal_code: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -178,6 +187,14 @@ pub fn record_export(
         doctor: ExportDoctor {
             name: state(conn, "doctor_name")?,
             license: state(conn, "doctor_license")?,
+            degree_institution: state(conn, "doctor_degree_institution")?,
+            specialty_title: state(conn, "doctor_specialty_title")?,
+            specialty_license: state(conn, "doctor_specialty_license")?,
+            address_line1: state(conn, "doctor_address_line1")?,
+            address_line2: state(conn, "doctor_address_line2")?,
+            city: state(conn, "doctor_city")?,
+            state: state(conn, "doctor_state")?,
+            postal_code: state(conn, "doctor_postal_code")?,
         },
         patient: profile.patient,
         sex,
@@ -304,6 +321,12 @@ mod tests {
         .unwrap();
         crate::sync::set_state(conn, "doctor_name", "Dra. Eva Soto").unwrap();
         crate::sync::set_state(conn, "doctor_license", "1234567").unwrap();
+        crate::sync::set_state(conn, "doctor_degree_institution", "UACH").unwrap();
+        crate::sync::set_state(conn, "doctor_specialty_title", "Pediatria").unwrap();
+        crate::sync::set_state(conn, "doctor_specialty_license", "7654321").unwrap();
+        crate::sync::set_state(conn, "doctor_address_line1", "Av. Juarez 100").unwrap();
+        crate::sync::set_state(conn, "doctor_city", "Chihuahua").unwrap();
+        crate::sync::set_state(conn, "doctor_postal_code", "31000").unwrap();
 
         let first = clinical::open_encounter_for_patient(conn, "p1").unwrap();
         clinical::save_note(
@@ -347,6 +370,18 @@ mod tests {
 
         assert_eq!(export.doctor.name.as_deref(), Some("Dra. Eva Soto"));
         assert_eq!(export.doctor.license.as_deref(), Some("1234567"));
+        // Datos de la receta (Reglamento de Insumos para la Salud).
+        assert_eq!(export.doctor.degree_institution.as_deref(), Some("UACH"));
+        assert_eq!(export.doctor.specialty_title.as_deref(), Some("Pediatria"));
+        assert_eq!(export.doctor.specialty_license.as_deref(), Some("7654321"));
+        assert_eq!(
+            export.doctor.address_line1.as_deref(),
+            Some("Av. Juarez 100")
+        );
+        assert_eq!(export.doctor.address_line2, None);
+        assert_eq!(export.doctor.city.as_deref(), Some("Chihuahua"));
+        assert_eq!(export.doctor.state, None);
+        assert_eq!(export.doctor.postal_code.as_deref(), Some("31000"));
         assert_eq!(export.patient.first_name, "Ana");
         assert_eq!(export.sex.as_deref(), Some("F"));
         assert_eq!(

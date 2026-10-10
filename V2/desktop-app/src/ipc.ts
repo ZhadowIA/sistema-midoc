@@ -106,6 +106,20 @@ function mockMimeFromBase64(content: string): string | null {
 }
 
 const mockState = {
+  // Copia de los datos de la receta (regla 4.6); misma regla de version que el portal.
+  prescriber: {
+    professionalName: "Dra. Eva Soto",
+    licenseNumber: "1234567",
+    degreeInstitution: null as string | null,
+    specialtyTitle: null as string | null,
+    specialtyLicenseNumber: null as string | null,
+    addressLine1: null as string | null,
+    addressLine2: null as string | null,
+    city: null as string | null,
+    state: null as string | null,
+    postalCode: null as string | null,
+    updatedAt: "2026-10-10T12:00:00.000Z"
+  },
   profiles: [
     {
       id: "default",
@@ -940,6 +954,22 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         credit_balance: 30,
         credit_balance_at: "2026-10-07T12:00:00Z"
       } as T;
+    case "get_prescriber":
+      return { linked: mockState.linked, prescriber: { ...mockState.prescriber } } as T;
+    case "save_prescriber": {
+      const { expectedUpdatedAt, ...fields } = args?.input as typeof mockState.prescriber & {
+        expectedUpdatedAt: string;
+      };
+      if (expectedUpdatedAt !== mockState.prescriber.updatedAt) {
+        return {
+          kind: "conflict",
+          message: "Tus datos cambiaron desde otro lugar.",
+          current: { ...mockState.prescriber }
+        } as T;
+      }
+      mockState.prescriber = { ...mockState.prescriber, ...fields, updatedAt: new Date().toISOString() };
+      return { kind: "saved", prescriber: { ...mockState.prescriber } } as T;
+    }
     case "link_account":
       mockState.linked = true;
       mockState.licensed = true;
