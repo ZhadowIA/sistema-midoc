@@ -219,6 +219,19 @@ enum PlanStatus {
   ARCHIVED
 }
 
+enum LicenseStatus {
+  ACTIVE
+  // Reembolso o fraude: deja de emitirse y de refrescarse. Una licencia ya
+  // emitida sigue verificando en los equipos sin conexion (paso 29).
+  REVOKED
+}
+
+enum LicenseSource {
+  PURCHASE
+  GRANT
+  PILOT
+}
+
 enum SubscriptionStatus {
   TRIAL
   ACTIVE
@@ -307,6 +320,7 @@ model User {
   cashDrawerSessionsClosed CashDrawerSession[] @relation("CashDrawerCloser")
   aiBenchmarkRuns        AiBenchmarkRun[]     @relation("AiBenchmarkRunner")
   aiUsageLogsAsDoctor    AiUsageLog[]         @relation("DoctorAiUsageLogs")
+  license                License?             @relation("DoctorLicense")
 
   @@index([role, phone])
 }
@@ -1086,4 +1100,40 @@ model RateLimitCounter {
   expiresAt DateTime
 
   @@index([expiresAt])
+}
+
+// OPERATIVO: licencia de compra unica del medico (paso 29). Sin contenido
+// clinico. Una por cuenta; los equipos se cuentan en LicenseActivation.
+model License {
+  id           String              @id @default(cuid())
+  doctorId     String              @unique
+  doctor       User                @relation("DoctorLicense", fields: [doctorId], references: [id], onDelete: Cascade)
+  edition      String              @default("STANDARD")
+  status       LicenseStatus       @default(ACTIVE)
+  source       LicenseSource
+  purchasedAt  DateTime
+  // Ultimo dia con actualizaciones incluidas; la app sigue funcionando despues.
+  updatesUntil DateTime
+  maxDevices   Int                 @default(2)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  activations  LicenseActivation[]
+}
+
+// OPERATIVO: un equipo (instalacion de la app) activado con la licencia. El id
+// de instalacion es aleatorio y lo genera la app; no identifica a la persona.
+model LicenseActivation {
+  id             String    @id @default(cuid())
+  licenseId      String
+  license        License   @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+  installationId String
+  deviceName     String?
+  activatedAt    DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+  // Liberada desde la cuenta: deja el lugar para otro equipo. No apaga a
+  // distancia la licencia ya emitida a ese equipo.
+  releasedAt     DateTime?
+
+  @@unique([licenseId, installationId])
+  @@index([licenseId, releasedAt])
 }

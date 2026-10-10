@@ -19,6 +19,8 @@ import {
 } from "./PatientResolution";
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
 import { defaultView, isViewAvailable, parseFrozenScopeFlag, workspaceNav, type WorkspaceView } from "./scope";
+import { LinkAccountForm, PendingActivation } from "./LicenseActivation";
+import { isLicensed, licenseLine, type LicenseStatus } from "./licenseState";
 import "./App.css";
 
 // Agenda, recepcion y caja quedan congelados por el reenfoque (2026-09-07);
@@ -288,81 +290,15 @@ function UnlockScreen({ onUnlocked }: { onUnlocked: (result: UnlockResult) => vo
   );
 }
 
-function LinkAccountForm({ onLinked }: { onLinked: () => void }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function link() {
-    setBusy(true);
-    setError("");
-    try {
-      await call("link_account", { serverUrl: PORTAL_URL, email, password });
-      setPassword("");
-      onLinked();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <section className="link-account-form">
-      <div className="panel-header">
-        <h2>Vincula tu cuenta MiDoc</h2>
-        <p>
-          {FROZEN_SCOPE
-            ? "Tus pacientes agendan en el portal y las citas bajan aqui, a tu expediente cifrado."
-            : "La cuenta activa tu suscripcion y la asistencia de IA. Tu expediente se queda cifrado en este equipo."}{" "}
-          La contrasena no se guarda en este equipo.
-        </p>
-      </div>
-      <form
-        className="stack"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void link();
-        }}
-      >
-        <label className="field">
-          <span>Correo de tu cuenta</span>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.currentTarget.value)}
-            autoComplete="email"
-            required
-          />
-        </label>
-        <label className="field">
-          <span>Contrasena</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.currentTarget.value)}
-            autoComplete="current-password"
-            required
-          />
-        </label>
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="button-row">
-          <button className="action-button" type="submit" disabled={busy}>
-            {busy ? "Vinculando…" : "Vincular dispositivo"}
-          </button>
-        </div>
-      </form>
-    </section>
-  );
-}
-
 function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () => void }) {
   const [status, setStatus] = useState<SyncStatus | null>(null);
+  // Licencia verificada sin red (paso 29): ella, no la vinculacion, abre el espacio de trabajo.
+  const [license, setLicense] = useState<LicenseStatus | null>(null);
+  const [licenseError, setLicenseError] = useState("");
+  const [activating, setActivating] = useState(false);
+  const autoActivatedRef = useRef(false);
+  // Con licencia y sin vincular, el medico puede volver a vincular desde su perfil.
+  const [linking, setLinking] = useState(false);
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -406,11 +342,13 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
 
   const refresh = useCallback(async () => {
     try {
-      const [nextStatus, rows] = await Promise.all([
+      const [nextStatus, nextLicense, rows] = await Promise.all([
         call<SyncStatus>("sync_status"),
+        call<LicenseStatus>("license_status"),
         FROZEN_SCOPE ? call<AppointmentRow[]>("list_appointments") : Promise.resolve([])
       ]);
       setStatus(nextStatus);
+      setLicense(nextLicense);
       setClinicalProfile(coerceClinicalProfile(nextStatus.clinical_profile));
       setSlotMinutes(nextStatus.slot_minutes && nextStatus.slot_minutes > 0 ? nextStatus.slot_minutes : 30);
       setWorkStartMinutes(nextStatus.work_start_minutes);
@@ -424,6 +362,28 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const activateLicense = useCallback(async () => {
+    setActivating(true);
+    setLicenseError("");
+    try {
+      setLicense(await call<LicenseStatus>("activate_license"));
+    } catch (e) {
+      setLicenseError(String(e));
+    } finally {
+      setActivating(false);
+    }
+  }, []);
+
+  // Equipos vinculados antes del paso 29 (o con la licencia de otro equipo):
+  // intentar activarlos una vez al abrir, sin pedir nada al medico.
+  useEffect(() => {
+    if (!status?.linked || !license || isLicensed(license) || autoActivatedRef.current) {
+      return;
+    }
+    autoActivatedRef.current = true;
+    void activateLicense();
+  }, [status?.linked, license, activateLicense]);
 
   // Peek de cambios pendientes para el badge (no aplica nada).
   const refreshPending = useCallback(async () => {
@@ -444,7 +404,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     }
     if (!autoSyncedRef.current) {
       autoSyncedRef.current = true;
-      void syncNow();
+      void syncNow(true);
     }
     void refreshPending();
     const interval = setInterval(() => void refreshPending(), 60_000);
@@ -453,7 +413,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status?.linked, refreshPending]);
 
-  async function syncNow() {
+  // `quiet`: la sincronizacion automatica al abrir no alarma si no hay red; con
+  // la licencia la app trabaja sin conexion (paso 29). El boton si avisa.
+  async function syncNow(quiet = false) {
     setBusy(true);
     setMessage("");
     setError("");
@@ -474,7 +436,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       await refresh();
       await refreshPending();
     } catch (e) {
-      setError(String(e));
+      if (!(quiet && String(e).includes("error de red"))) {
+        setError(String(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -644,6 +608,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const navSections = workspaceNav(FROZEN_SCOPE);
   // Defensa: una vista congelada nunca se pinta aunque quede en el estado.
   const effectiveView = isViewAvailable(view, FROZEN_SCOPE) ? view : defaultView(FROZEN_SCOPE);
+  const licensed = isLicensed(license);
   const navBadge = (id: WorkspaceView) =>
     id === "agenda" && appointments.length > 0 ? String(appointments.length) : "";
   // El expediente abierto cuenta como "Pacientes" en la navegacion.
@@ -684,7 +649,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       </header>
 
       <aside className="workspace-sidebar" aria-label="Navegación principal">
-        {status?.linked ? (
+        {licensed ? (
           <>
             {navSections.map((section) => (
               <div className="sidebar-section" key={section.heading}>
@@ -713,11 +678,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
           </>
         ) : (
           <div className="sidebar-section">
-            <span className="sidebar-heading">Vinculación</span>
+            <span className="sidebar-heading">Activación</span>
             <p className="sidebar-note">
-              {FROZEN_SCOPE
-                ? "Conecta este equipo con el portal para activar agenda y pacientes."
-                : "Conecta este equipo con tu cuenta MiDoc para abrir tu expediente."}
+              Activa este equipo una vez con tu cuenta MiDoc; después tu expediente funciona sin conexión.
             </p>
           </div>
         )}
@@ -726,10 +689,15 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
           <span className="sidebar-avatar" aria-hidden="true">{profileInitials(unlocked.profile.display_name)}</span>
           <span className="sidebar-profile-text">
             <strong>{unlocked.profile.display_name}</strong>
+            {licensed ? <span className="sidebar-license">{licenseLine(license)}</span> : null}
             <button type="button" onClick={() => void lock()}>Bloquear</button>
             {status?.linked ? (
               <button type="button" onClick={() => void unlink()} disabled={busy}>
                 Desvincular
+              </button>
+            ) : licensed ? (
+              <button type="button" onClick={() => setLinking(true)}>
+                Vincular cuenta
               </button>
             ) : null}
           </span>
@@ -749,10 +717,34 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
             </p>
           )}
 
-          {!status ? (
+          {!status || !license ? (
             <p className="meta">Cargando…</p>
-          ) : !status.linked ? (
-            <LinkAccountForm onLinked={() => void refresh()} />
+          ) : !licensed && !status.linked ? (
+            <LinkAccountForm
+              portalUrl={PORTAL_URL}
+              licensed={false}
+              onLinked={(error) => {
+                setLicenseError(error ?? "");
+                autoActivatedRef.current = true;
+                void refresh();
+              }}
+            />
+          ) : !licensed ? (
+            <PendingActivation
+              license={license}
+              lastError={licenseError}
+              busy={activating}
+              onActivate={() => void activateLicense()}
+            />
+          ) : linking && !status.linked ? (
+            <LinkAccountForm
+              portalUrl={PORTAL_URL}
+              licensed
+              onLinked={() => {
+                setLinking(false);
+                void refresh();
+              }}
+            />
           ) : (
             <>
               {activePatient ? (

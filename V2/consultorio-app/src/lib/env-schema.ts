@@ -82,7 +82,12 @@ export const envSchema = z
     DEEPGRAM_TRANSCRIPTION_ENABLED: z.stringbool().default(false),
     DEEPGRAM_TRANSCRIPTION_MODEL: z.string().min(1).default("nova-3"),
     DEEPGRAM_TRANSCRIPTION_LANGUAGE: z.string().min(1).default("multi"),
-    DEEPGRAM_TRANSCRIPTION_BAA_APPROVED: z.stringbool().default(false)
+    DEEPGRAM_TRANSCRIPTION_BAA_APPROVED: z.stringbool().default(false),
+    // Licencia de compra unica (paso 29): semilla Ed25519 de 32 bytes en base64
+    // y el id de la llave, que la app usa para elegir la publica. Opcionales:
+    // sin ellas el portal no emite licencias. Se generan con `npm run license:keygen`.
+    LICENSE_SIGNING_KEY: optionalNonEmptyString,
+    LICENSE_SIGNING_KID: optionalNonEmptyString
   })
   .superRefine((value, ctx) => {
     if (value.SMS_PROVIDER.toLowerCase() !== "twilio") {
@@ -164,6 +169,30 @@ export const envSchema = z
           path: ["OPENAI_TRANSCRIPTION_ZDR_APPROVED"],
           message:
             "OPENAI_TRANSCRIPTION_ZDR_APPROVED must be true (Zero Data Retention verified) when OPENAI_TRANSCRIPTION_ENABLED=true"
+        });
+      }
+    }
+
+    // La llave de licencias va completa: semilla de 32 bytes y su id.
+    if (value.LICENSE_SIGNING_KEY || value.LICENSE_SIGNING_KID) {
+      if (!value.LICENSE_SIGNING_KID) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["LICENSE_SIGNING_KID"],
+          message: "Required when LICENSE_SIGNING_KEY is set"
+        });
+      }
+      if (!value.LICENSE_SIGNING_KEY) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["LICENSE_SIGNING_KEY"],
+          message: "Required when LICENSE_SIGNING_KID is set"
+        });
+      } else if (Buffer.from(value.LICENSE_SIGNING_KEY, "base64").length !== 32) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["LICENSE_SIGNING_KEY"],
+          message: "Must be a base64 Ed25519 seed of 32 bytes"
         });
       }
     }
