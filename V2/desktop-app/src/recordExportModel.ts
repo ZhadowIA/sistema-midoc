@@ -9,7 +9,20 @@ export type ExportKind = "PDF_CONSULTA" | "PDF_EXPEDIENTE";
 
 export interface RecordExport {
   generated_at: string;
-  doctor: { name: string | null; license: string | null };
+  doctor: {
+    name: string | null;
+    license: string | null;
+    // Lo que ademas exige la receta (Reglamento de Insumos para la Salud).
+    // Opcionales: una app sin sincronizar con el portal nuevo no los tiene.
+    degree_institution?: string | null;
+    specialty_title?: string | null;
+    specialty_license?: string | null;
+    address_line1?: string | null;
+    address_line2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    postal_code?: string | null;
+  };
   patient: {
     id: string;
     first_name: string;
@@ -89,14 +102,52 @@ export function patientName(data: RecordExport): string {
   return `${data.patient.first_name} ${data.patient.last_name}`.trim();
 }
 
-/** Encabezado de cada pagina: medico y cedula, o el aviso de que faltan. */
-export function doctorHeader(data: RecordExport): { lines: string[]; missing: boolean } {
-  const name = data.doctor.name?.trim();
-  const license = data.doctor.license?.trim();
-  return {
-    lines: [name || "Médico sin nombre registrado", license ? `Cédula profesional ${license}` : "Cédula profesional no registrada"],
-    missing: !name || !license
-  };
+function clean(value: string | null | undefined): string {
+  return value?.trim() ?? "";
+}
+
+/** Domicilio del consultorio en una linea, o vacio si no hay calle. */
+export function doctorAddress(doctor: RecordExport["doctor"]): string {
+  const street = clean(doctor.address_line1);
+  if (!street) return "";
+  const postal = clean(doctor.postal_code);
+  return [street, clean(doctor.address_line2), clean(doctor.city), clean(doctor.state), postal ? `C.P. ${postal}` : ""]
+    .filter(Boolean)
+    .join(", ");
+}
+
+/**
+ * Encabezado de cada pagina y pie de firma: la identidad que exige la receta.
+ * `missingItems` dice que le falta para cumplir el Reglamento.
+ */
+export function doctorHeader(data: RecordExport): { lines: string[]; missing: boolean; missingItems: string[] } {
+  const doctor = data.doctor;
+  const name = clean(doctor.name);
+  const license = clean(doctor.license);
+  const institution = clean(doctor.degree_institution);
+  const specialty = clean(doctor.specialty_title);
+  const specialtyLicense = clean(doctor.specialty_license);
+  const address = doctorAddress(doctor);
+
+  const licenseLine = license ? `Cédula profesional ${license}` : "Cédula profesional no registrada";
+  const specialtyText = specialty
+    ? `${specialty}${specialtyLicense ? `, cédula de especialidad ${specialtyLicense}` : ""}`
+    : "";
+  const lines = [
+    name || "Médico sin nombre registrado",
+    specialtyText ? `${licenseLine} · ${specialtyText}` : licenseLine,
+    institution ? `Título expedido por ${institution}` : "",
+    address
+  ].filter(Boolean);
+
+  const missingItems = [
+    name ? "" : "nombre del médico",
+    license ? "" : "cédula profesional",
+    institution ? "" : "institución que expidió el título",
+    address ? "" : "domicilio del consultorio"
+  ].filter(Boolean);
+
+  return { lines, missing: missingItems.length > 0, missingItems };
 }
 
 function codedLine(d: CodedDiagnosis): string {
@@ -158,6 +209,14 @@ export function buildBlocks(data: RecordExport, kind: ExportKind, today = new Da
     .join(" · ");
 
   blocks.push({ type: "title", text: kind === "PDF_CONSULTA" ? "Nota de consulta" : "Expediente clínico" });
+  // La nota de consulta hace de receta: si le falta algo del Reglamento, se dice.
+  const { missingItems } = doctorHeader(data);
+  if (kind === "PDF_CONSULTA" && missingItems.length > 0) {
+    blocks.push({
+      type: "warning",
+      text: `Faltan datos para la receta: ${missingItems.join(", ")}. Captúralos en Mis datos o en tu cuenta del portal.`
+    });
+  }
   blocks.push({ type: "field", label: "Paciente", text: patientName(data) });
   if (identity) blocks.push({ type: "meta", text: identity });
   if (p.guardian) {

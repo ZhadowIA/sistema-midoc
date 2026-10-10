@@ -51,13 +51,19 @@ class Writer {
     this.pages.push(this.page);
     const header = doctorHeader(this.data);
     this.page.drawText(toPdfSafe(header.lines[0]), { x: MARGIN_X, y: TOP, size: 13, font: this.fonts.bold, color: INK });
-    this.page.drawText(toPdfSafe(header.lines[1]), {
-      x: MARGIN_X,
-      y: TOP - 15,
-      size: 9.5,
-      font: this.fonts.regular,
-      color: header.missing ? WARNING : MUTED
-    });
+    // Cedula, especialidad, institucion y domicilio: tantas lineas como haya.
+    let lineY = TOP - 15;
+    for (const text of header.lines.slice(1)) {
+      this.page.drawText(toPdfSafe(text), {
+        x: MARGIN_X,
+        y: lineY,
+        size: 9.5,
+        font: this.fonts.regular,
+        color: header.missing ? WARNING : MUTED
+      });
+      lineY -= 12;
+    }
+    const ruleY = lineY + 1;
     const brand = "MiDoc";
     this.page.drawText(brand, {
       x: PAGE_WIDTH - MARGIN_X - this.fonts.bold.widthOfTextAtSize(brand, 10),
@@ -67,12 +73,12 @@ class Writer {
       color: PRIMARY
     });
     this.page.drawLine({
-      start: { x: MARGIN_X, y: TOP - 26 },
-      end: { x: PAGE_WIDTH - MARGIN_X, y: TOP - 26 },
+      start: { x: MARGIN_X, y: ruleY },
+      end: { x: PAGE_WIDTH - MARGIN_X, y: ruleY },
       thickness: 0.8,
       color: LINE
     });
-    this.y = TOP - 48;
+    this.y = ruleY - 22;
   }
 
   private ensure(height: number) {
@@ -122,15 +128,20 @@ class Writer {
         this.y -= 6;
         break;
       case "signature": {
-        this.ensure(90);
-        this.y -= 46;
         const width = 220;
         const x = PAGE_WIDTH - MARGIN_X - width;
+        // La identidad completa no cabe en una linea de 220 pt: se ajusta al ancho
+        // y el espacio se reserva con las lineas ya ajustadas.
+        const font = this.fonts.regular;
+        const lines = ["Firma", ...doctorHeader(this.data).lines].flatMap((text) =>
+          wrapText(toPdfSafe(text), width, (line) => font.widthOfTextAtSize(line, 9))
+        );
+        this.ensure(46 + 13 + lines.length * 12);
+        this.y -= 46;
         this.page.drawLine({ start: { x, y: this.y }, end: { x: x + width, y: this.y }, thickness: 0.8, color: INK });
-        const header = doctorHeader(this.data);
         let lineY = this.y - 13;
-        for (const text of ["Firma", ...header.lines]) {
-          this.page.drawText(toPdfSafe(text), { x, y: lineY, size: 9, font: this.fonts.regular, color: MUTED });
+        for (const text of lines) {
+          this.page.drawText(text, { x, y: lineY, size: 9, font, color: MUTED });
           lineY -= 12;
         }
         this.y = lineY - 8;

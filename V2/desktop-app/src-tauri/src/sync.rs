@@ -62,6 +62,28 @@ pub struct ProfileMetadata {
     /// en la cuenta del portal, guardada en el equipo para usarla sin conexion.
     pub professional_name: Option<String>,
     pub license_number: Option<String>,
+    /// Datos completos para la receta (regla 4.6). `None` con un portal anterior.
+    pub prescriber: Option<Prescriber>,
+}
+
+/// Datos del medico que exige la receta (Reglamento de Insumos para la Salud).
+/// El portal es la fuente de verdad (regla 4.6): la app guarda una copia para
+/// imprimir sin conexion y solo la cambia cuando el portal acepta una edicion.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Prescriber {
+    pub professional_name: String,
+    pub license_number: Option<String>,
+    pub degree_institution: Option<String>,
+    pub specialty_title: Option<String>,
+    pub specialty_license_number: Option<String>,
+    pub address_line1: Option<String>,
+    pub address_line2: Option<String>,
+    pub city: Option<String>,
+    pub state: Option<String>,
+    pub postal_code: Option<String>,
+    /// Version que el portal exige de vuelta al editar (concurrencia optimista).
+    pub updated_at: String,
 }
 
 #[derive(Debug)]
@@ -99,6 +121,66 @@ pub fn set_state(conn: &Connection, key: &str, value: &str) -> Result<(), SyncEr
 pub fn delete_state(conn: &Connection, key: &str) -> Result<(), SyncError> {
     conn.execute("DELETE FROM sync_state WHERE key = ?1", params![key])?;
     Ok(())
+}
+
+/// Claves de la copia local de los datos de la receta. `doctor_name` y
+/// `doctor_license` son las mismas que ya leen el PDF y la receta.
+const PRESCRIBER_VERSION_KEY: &str = "doctor_profile_version";
+
+fn prescriber_optional_fields(prescriber: &Prescriber) -> [(&'static str, Option<&str>); 9] {
+    [
+        ("doctor_license", prescriber.license_number.as_deref()),
+        (
+            "doctor_degree_institution",
+            prescriber.degree_institution.as_deref(),
+        ),
+        (
+            "doctor_specialty_title",
+            prescriber.specialty_title.as_deref(),
+        ),
+        (
+            "doctor_specialty_license",
+            prescriber.specialty_license_number.as_deref(),
+        ),
+        ("doctor_address_line1", prescriber.address_line1.as_deref()),
+        ("doctor_address_line2", prescriber.address_line2.as_deref()),
+        ("doctor_city", prescriber.city.as_deref()),
+        ("doctor_state", prescriber.state.as_deref()),
+        ("doctor_postal_code", prescriber.postal_code.as_deref()),
+    ]
+}
+
+/// Reemplaza la copia local con lo que dice el portal; un campo vacio alla se
+/// borra aca (no se conserva un domicilio que el medico ya quito).
+pub fn store_prescriber(conn: &Connection, prescriber: &Prescriber) -> Result<(), SyncError> {
+    set_state(conn, "doctor_name", &prescriber.professional_name)?;
+    for (key, value) in prescriber_optional_fields(prescriber) {
+        match value.map(str::trim).filter(|v| !v.is_empty()) {
+            Some(value) => set_state(conn, key, value)?,
+            None => delete_state(conn, key)?,
+        }
+    }
+    set_state(conn, PRESCRIBER_VERSION_KEY, &prescriber.updated_at)
+}
+
+/// La copia local, si ya se sincronizo alguna vez con un portal que la manda.
+pub fn load_prescriber(conn: &Connection) -> Result<Option<Prescriber>, SyncError> {
+    let Some(updated_at) = get_state(conn, PRESCRIBER_VERSION_KEY)? else {
+        return Ok(None);
+    };
+    Ok(Some(Prescriber {
+        professional_name: get_state(conn, "doctor_name")?.unwrap_or_default(),
+        license_number: get_state(conn, "doctor_license")?,
+        degree_institution: get_state(conn, "doctor_degree_institution")?,
+        specialty_title: get_state(conn, "doctor_specialty_title")?,
+        specialty_license_number: get_state(conn, "doctor_specialty_license")?,
+        address_line1: get_state(conn, "doctor_address_line1")?,
+        address_line2: get_state(conn, "doctor_address_line2")?,
+        city: get_state(conn, "doctor_city")?,
+        state: get_state(conn, "doctor_state")?,
+        postal_code: get_state(conn, "doctor_postal_code")?,
+        updated_at,
+    }))
 }
 
 pub fn get_cursor(conn: &Connection) -> Result<i64, SyncError> {
@@ -341,6 +423,9 @@ fn profile_metadata_from_body(body: &serde_json::Value) -> ProfileMetadata {
         work_end_minutes,
         professional_name: extract_profile_text(body, "professionalName"),
         license_number: extract_profile_text(body, "licenseNumber"),
+        prescriber: body
+            .get("prescriber")
+            .and_then(|value| serde_json::from_value(value.clone()).ok()),
     }
 }
 
@@ -363,6 +448,77 @@ pub async fn fetch_profile_metadata(
     }
 
     Ok(profile_metadata_from_body(&response.json().await?))
+}
+
+/// Edicion de los datos de la receta desde la app. Lleva la version que la app
+/// leyo; el portal responde 409 si alguien los cambio entretanto.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrescriberInput {
+    pub professional_name: String,
+    pub license_number: String,
+    pub degree_institution: Option<String>,
+    pub specialty_title: Option<String>,
+    pub specialty_license_number: Option<String>,
+    pub address_line1: Option<String>,
+    pub address_line2: Option<String>,
+    pub city: Option<String>,
+    pub state: Option<String>,
+    pub postal_code: Option<String>,
+    pub expected_updated_at: String,
+}
+
+/// Resultado de editar: guardado, o conflicto con la version vigente del portal
+/// para que el medico la vea antes de volver a capturar.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PrescriberSave {
+    Saved {
+        prescriber: Prescriber,
+    },
+    Conflict {
+        message: String,
+        current: Prescriber,
+    },
+}
+
+pub async fn save_prescriber(
+    server_url: &str,
+    device_token: &str,
+    input: &PrescriberInput,
+) -> Result<PrescriberSave, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+    let response = client
+        .put(format!("{base}/api/sync/profile"))
+        .bearer_auth(device_token)
+        .json(input)
+        .send()
+        .await?;
+
+    if response.status() == reqwest::StatusCode::CONFLICT {
+        let message = match error_from_response(response).await {
+            SyncError::Server(message) => message,
+            other => other.to_string(),
+        };
+        let current = fetch_profile_metadata(server_url, device_token)
+            .await?
+            .prescriber
+            .ok_or_else(|| SyncError::Server("el portal no devolvio tus datos".into()))?;
+        return Ok(PrescriberSave::Conflict { message, current });
+    }
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+
+    #[derive(Deserialize)]
+    struct Saved {
+        prescriber: Prescriber,
+    }
+    let saved: Saved = response.json().await?;
+    Ok(PrescriberSave::Saved {
+        prescriber: saved.prescriber,
+    })
 }
 
 /// Inicia sesion en el portal y registra este equipo como dispositivo de
@@ -1208,6 +1364,69 @@ mod tests {
         assert_eq!(meta.slot_minutes, Some(20));
         assert_eq!(meta.work_start_minutes, Some(9 * 60));
         assert_eq!(meta.work_end_minutes, Some(20 * 60));
+    }
+
+    fn prescriber_body() -> serde_json::Value {
+        serde_json::json!({
+            "profile": { "professionalName": "Dra. Eva Soto", "licenseNumber": "1234567" },
+            "prescriber": {
+                "professionalName": "Dra. Eva Soto",
+                "licenseNumber": "1234567",
+                "degreeInstitution": "UACH",
+                "specialtyTitle": "Pediatria",
+                "specialtyLicenseNumber": "7654321",
+                "addressLine1": "Av. Juarez 100",
+                "addressLine2": null,
+                "city": "Chihuahua",
+                "state": "Chihuahua",
+                "postalCode": "31000",
+                "updatedAt": "2026-10-10T12:00:00.000Z"
+            }
+        })
+    }
+
+    #[test]
+    fn reads_the_prescriber_block_and_tolerates_older_portals() {
+        let meta = profile_metadata_from_body(&prescriber_body());
+        let prescriber = meta.prescriber.expect("prescriber");
+        assert_eq!(prescriber.degree_institution.as_deref(), Some("UACH"));
+        assert_eq!(
+            prescriber.specialty_license_number.as_deref(),
+            Some("7654321")
+        );
+        assert_eq!(prescriber.address_line2, None);
+        assert_eq!(prescriber.updated_at, "2026-10-10T12:00:00.000Z");
+
+        // Un portal anterior a la regla 4.6 no manda `prescriber`.
+        let older = profile_metadata_from_body(&serde_json::json!({ "profile": {} }));
+        assert!(older.prescriber.is_none());
+    }
+
+    #[test]
+    fn stores_the_prescriber_copy_and_clears_fields_removed_in_the_portal() {
+        let conn = test_conn("prescriber-copy");
+        assert!(load_prescriber(&conn).unwrap().is_none());
+
+        let mut prescriber = profile_metadata_from_body(&prescriber_body())
+            .prescriber
+            .unwrap();
+        store_prescriber(&conn, &prescriber).unwrap();
+        assert_eq!(load_prescriber(&conn).unwrap(), Some(prescriber.clone()));
+        // El nombre y la cedula que ya leian el PDF y la receta quedan al dia.
+        assert_eq!(
+            get_state(&conn, "doctor_name").unwrap().as_deref(),
+            Some("Dra. Eva Soto")
+        );
+
+        // El medico quita la especialidad desde la web: la copia local tambien.
+        prescriber.specialty_title = None;
+        prescriber.specialty_license_number = None;
+        prescriber.updated_at = "2026-10-11T09:00:00.000Z".into();
+        store_prescriber(&conn, &prescriber).unwrap();
+        let reloaded = load_prescriber(&conn).unwrap().unwrap();
+        assert_eq!(reloaded.specialty_title, None);
+        assert_eq!(reloaded.specialty_license_number, None);
+        assert_eq!(reloaded.updated_at, "2026-10-11T09:00:00.000Z");
     }
 
     // ---------- E2E contra portal vivo (Capa 2) ----------
