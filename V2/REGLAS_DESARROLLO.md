@@ -48,6 +48,7 @@ Reglas:
 3. Todo envio a servicios de terceros (IA en nube, SMS, correo, WhatsApp Business oficial) lleva el minimo de datos: para IA, contenido seudonimizado y con consentimiento registrado; para notificaciones, solo nombre, contacto y datos de cita.
 4. Toda nueva tabla o campo se clasifica al diseñarse: `CLINICO` (solo local/buzon), `CONTACTO` (nube minima) u `OPERATIVO` (segun residencia). La clasificacion se anota en el esquema.
 5. Tokens y enlaces publicos (cuestionario, carga de estudios, acciones de cita) siempre tienen expiracion, un solo proposito y auditoria de uso.
+6. **Datos del medico: se capturan desde la web o desde la app, y el portal manda.** Todo dato del medico (identidad profesional, cedulas, domicilio del consultorio y similares; no clinico, clasificado `CONTACTO` u `OPERATIVO`) debe poder capturarse y editarse en ambos lados. El portal es la unica fuente de verdad: la app edita a traves de la API del portal y, solo cuando el portal acepta, actualiza su copia local. Sin conexion la app muestra y usa la copia local (p. ej. para imprimir la receta), pero no edita, y lo dice. Las escrituras usan concurrencia optimista: el cliente envia la version que leyo (`updatedAt`) y el portal responde 409 si cambio entretanto; nunca "gana el ultimo" en silencio. Decidido 2026-10-10: se descarto la edicion sin conexion con cola porque sus conflictos pierden datos que van impresos en documentos con validez legal; se puede agregar despues sin cambiar la fuente de verdad.
 
 ## 5. Pruebas
 

@@ -6,6 +6,7 @@ import { UserRole } from "@prisma/client";
 import { SESSION_COOKIE_NAME } from "../../../lib/auth/session-cookie";
 import { validateAuthSession } from "../../../services/auth/auth-service";
 import { getDoctorWorkspace } from "../../../services/doctor/doctor-profile-service";
+import { getPrescriberProfile } from "../../../services/doctor/prescriber-profile-service";
 import { getCreditBalance, listCreditMovements } from "../../../services/ai/credit-ledger";
 import { getLicenseOverview } from "../../../services/license/license-service";
 import { CuentaClient } from "./cuenta-client";
@@ -26,8 +27,9 @@ export default async function CuentaPage() {
     redirect("/medico/login");
   }
 
-  const [workspace, overview, balance, movements] = await Promise.all([
+  const [workspace, prescriber, overview, balance, movements] = await Promise.all([
     getDoctorWorkspace(user.id),
+    getPrescriberProfile(user.id),
     getLicenseOverview(user.id),
     getCreditBalance(user.id),
     listCreditMovements(user.id)
@@ -40,10 +42,9 @@ export default async function CuentaPage() {
         email: user.email,
         emailVerified: Boolean(user.emailVerifiedAt),
         status: user.status,
-        professionalName: workspace.professionalName,
-        licenseNumber: workspace.licenseNumber,
         clinicalProfile: workspace.specialty
       }}
+      prescriber={prescriber}
       license={
         license
           ? {
