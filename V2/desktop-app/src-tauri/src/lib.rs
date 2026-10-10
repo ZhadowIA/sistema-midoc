@@ -7,6 +7,7 @@ mod consultation_templates;
 mod crypto;
 mod db;
 mod dental;
+mod documents;
 mod diarization;
 mod diarization_model;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature
@@ -1186,6 +1187,44 @@ fn list_session_payments(
 }
 
 /* ---------- Presupuestos dentales y saldos (paso 26) ---------- */
+
+fn with_documents<T>(
+    state: &tauri::State<'_, AppDb>,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, documents::DocumentError>,
+) -> Result<T, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    f(conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn documents_add(
+    state: tauri::State<'_, AppDb>,
+    document: documents::NewDocument,
+) -> Result<documents::DocumentMeta, String> {
+    with_documents(&state, |conn| documents::add_document(conn, &document))
+}
+
+#[tauri::command]
+fn documents_list(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<Vec<documents::DocumentMeta>, String> {
+    with_documents(&state, |conn| documents::list_patient_documents(conn, &patient_id))
+}
+
+#[tauri::command]
+fn documents_read(
+    state: tauri::State<'_, AppDb>,
+    document_id: String,
+) -> Result<documents::DocumentContent, String> {
+    with_documents(&state, |conn| documents::read_document(conn, &document_id))
+}
+
+#[tauri::command]
+fn documents_delete(state: tauri::State<'_, AppDb>, document_id: String) -> Result<(), String> {
+    with_documents(&state, |conn| documents::delete_document(conn, &document_id))
+}
 
 fn with_dental<T>(
     state: &tauri::State<'_, AppDb>,
@@ -2445,6 +2484,10 @@ pub fn run() {
             dental_set_lab_order_status,
             dental_list_lab_orders,
             dental_pending_lab_orders,
+            documents_add,
+            documents_list,
+            documents_read,
+            documents_delete,
             ai_consent_status,
             ai_grant_consent,
             ai_revoke_consent,

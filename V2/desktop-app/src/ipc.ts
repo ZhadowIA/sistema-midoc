@@ -76,6 +76,35 @@ const MOCK_DIARIZATION_SIZES: Record<string, number> = {
   "diarization-embedding": 29_292_684
 };
 
+// Documentos del expediente en memoria (paso 28): metadatos + base64.
+interface MockDocument {
+  meta: {
+    id: string;
+    patient_id: string;
+    encounter_id: string | null;
+    encounter_opened_at: string | null;
+    file_name: string;
+    title: string | null;
+    mime_type: string;
+    category: string | null;
+    size_bytes: number;
+    sha256: string | null;
+    source: string;
+    received_at: string;
+  };
+  content_base64: string;
+}
+
+const mockDocuments: MockDocument[] = [];
+
+function mockMimeFromBase64(content: string): string | null {
+  if (content.startsWith("JVBERi0")) return "application/pdf";
+  if (content.startsWith("iVBORw0KGgo")) return "image/png";
+  if (content.startsWith("/9j/")) return "image/jpeg";
+  if (content.startsWith("UklGR")) return "image/webp";
+  return null;
+}
+
 const mockState = {
   profiles: [
     {
@@ -2026,6 +2055,54 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         anonymized_visits: 0,
         anonymized_appointments: 0
       } as T;
+    }
+    case "documents_list":
+      return mockDocuments
+        .filter((doc) => doc.meta.patient_id === String(args?.patientId))
+        .map((doc) => doc.meta)
+        .reverse() as T;
+    case "documents_add": {
+      const input = args?.document as {
+        patient_id: string;
+        encounter_id: string | null;
+        file_name: string;
+        category: string;
+        title: string | null;
+        content_base64: string;
+      };
+      const mime = mockMimeFromBase64(input.content_base64);
+      if (!mime) throw "solo se admiten PDF, PNG, JPG y WEBP";
+      const duplicate = mockDocuments.find(
+        (doc) => doc.meta.patient_id === input.patient_id && doc.content_base64 === input.content_base64
+      );
+      if (duplicate) throw `este archivo ya esta en el expediente como "${duplicate.meta.file_name}"`;
+      const meta = {
+        id: `doc-${mockDocuments.length + 1}`,
+        patient_id: input.patient_id,
+        encounter_id: input.encounter_id,
+        encounter_opened_at: input.encounter_id ? new Date().toISOString() : null,
+        file_name: input.file_name,
+        title: input.title,
+        mime_type: mime,
+        category: input.category,
+        size_bytes: Math.floor((input.content_base64.length * 3) / 4),
+        sha256: null,
+        source: "LOCAL",
+        received_at: new Date().toISOString()
+      };
+      mockDocuments.push({ meta, content_base64: input.content_base64 });
+      return meta as T;
+    }
+    case "documents_read": {
+      const doc = mockDocuments.find((d) => d.meta.id === String(args?.documentId));
+      if (!doc) throw "documento no encontrado";
+      return { meta: doc.meta, content_base64: doc.content_base64 } as T;
+    }
+    case "documents_delete": {
+      const index = mockDocuments.findIndex((d) => d.meta.id === String(args?.documentId));
+      if (index < 0) throw "documento no encontrado";
+      mockDocuments.splice(index, 1);
+      return undefined as T;
     }
     default:
       throw new Error(`mock sin comando: ${command}`);
