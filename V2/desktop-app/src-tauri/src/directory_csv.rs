@@ -213,7 +213,9 @@ mod tests {
              VALUES ('arco-1', 'p-baja', 'CANCELLATION', 'FULFILLED', '2026-03-01', '2026-03-01');",
         )
         .unwrap();
-        let with_note = clinical::open_encounter_for_patient(conn, "p-ana").unwrap();
+        let with_note =
+            clinical::open_encounter_for_patient(conn, "p-ana", chrono::Local::now().date_naive())
+                .unwrap();
         clinical::save_note(
             conn,
             &with_note.id,
@@ -229,7 +231,8 @@ mod tests {
         )
         .unwrap();
         // Consulta abierta sin nota: no cuenta, como en el directorio.
-        clinical::open_encounter_for_patient(conn, "p-ana").unwrap();
+        clinical::open_encounter_for_patient(conn, "p-ana", chrono::Local::now().date_naive())
+            .unwrap();
     }
 
     #[test]

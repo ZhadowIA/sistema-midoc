@@ -328,7 +328,9 @@ mod tests {
         crate::sync::set_state(conn, "doctor_city", "Chihuahua").unwrap();
         crate::sync::set_state(conn, "doctor_postal_code", "31000").unwrap();
 
-        let first = clinical::open_encounter_for_patient(conn, "p1").unwrap();
+        let first =
+            clinical::open_encounter_for_patient(conn, "p1", chrono::Local::now().date_naive())
+                .unwrap();
         clinical::save_note(
             conn,
             &first.id,
@@ -346,10 +348,17 @@ mod tests {
         clinical::save_prescription(conn, &first.id, "Salbutamol").unwrap();
         clinical::sign_encounter(conn, &first.id).unwrap();
 
-        // Consulta abierta y vacia: no debe salir en el expediente completo.
-        clinical::open_encounter_for_patient(conn, "p1").unwrap();
+        // Consulta abierta y vacia (borrador olvidado de otro dia): no debe salir en el expediente completo.
+        conn.execute(
+            "INSERT INTO encounters (id, appointment_id, patient_id, status, opened_at)
+             VALUES ('vacia', NULL, 'p1', 'OPEN', '2026-01-02T12:00:00+00:00')",
+            [],
+        )
+        .unwrap();
 
-        let second = clinical::open_encounter_for_patient(conn, "p1").unwrap();
+        let second =
+            clinical::open_encounter_for_patient(conn, "p1", chrono::Local::now().date_naive())
+                .unwrap();
         clinical::save_note(
             conn,
             &second.id,
