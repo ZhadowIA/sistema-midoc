@@ -65,7 +65,10 @@ export async function setup() {
 
   serverProcess = spawn(`npx next dev --port ${PORT} --hostname ${HOST}`, {
     cwd: process.cwd(),
-    env: { ...process.env },
+    // Las E2E recorren por HTTP la agenda publica, el perfil y el buzon, que
+    // estan congelados tras MIDOC_FROZEN_SCOPE (paso 27). El 404 con la bandera
+    // apagada se cubre en tests/unit/scope.test.ts.
+    env: { ...process.env, MIDOC_FROZEN_SCOPE: process.env.MIDOC_FROZEN_SCOPE ?? "true" },
     shell: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
