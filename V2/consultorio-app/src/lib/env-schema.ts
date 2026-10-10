@@ -82,7 +82,22 @@ export const envSchema = z
     DEEPGRAM_TRANSCRIPTION_ENABLED: z.stringbool().default(false),
     DEEPGRAM_TRANSCRIPTION_MODEL: z.string().min(1).default("nova-3"),
     DEEPGRAM_TRANSCRIPTION_LANGUAGE: z.string().min(1).default("multi"),
-    DEEPGRAM_TRANSCRIPTION_BAA_APPROVED: z.stringbool().default(false)
+    DEEPGRAM_TRANSCRIPTION_BAA_APPROVED: z.stringbool().default(false),
+    // Licencia de compra unica (paso 29): semilla Ed25519 de 32 bytes en base64
+    // y el id de la llave, que la app usa para elegir la publica. Opcionales:
+    // sin ellas el portal no emite licencias. Se generan con `npm run license:keygen`.
+    LICENSE_SIGNING_KEY: optionalNonEmptyString,
+    LICENSE_SIGNING_KID: optionalNonEmptyString,
+    // Pasarela de IA de texto (paso 30): la app manda contenido seudonimizado y
+    // el portal llama al proveedor con su clave, cobra creditos y no guarda
+    // contenido. `none` (default) la apaga y la app usa su borrador local de
+    // demostracion. `fake` es un proveedor determinista solo para desarrollo.
+    // Los reales exigen la clave del proveedor y la confirmacion de BAA/ZDR,
+    // que se verifica fuera de banda (igual que la transcripcion en nube).
+    AI_GATEWAY_PROVIDER: z.enum(["none", "fake", "gemini", "openai"]).default("none"),
+    // Modelos permitidos, separados por coma; el primero es el predeterminado.
+    AI_GATEWAY_MODELS: optionalNonEmptyString,
+    AI_GATEWAY_BAA_APPROVED: z.stringbool().default(false)
   })
   .superRefine((value, ctx) => {
     if (value.SMS_PROVIDER.toLowerCase() !== "twilio") {
@@ -166,6 +181,49 @@ export const envSchema = z
             "OPENAI_TRANSCRIPTION_ZDR_APPROVED must be true (Zero Data Retention verified) when OPENAI_TRANSCRIPTION_ENABLED=true"
         });
       }
+    }
+
+    // La llave de licencias va completa: semilla de 32 bytes y su id.
+    if (value.LICENSE_SIGNING_KEY || value.LICENSE_SIGNING_KID) {
+      if (!value.LICENSE_SIGNING_KID) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["LICENSE_SIGNING_KID"],
+          message: "Required when LICENSE_SIGNING_KEY is set"
+        });
+      }
+      if (!value.LICENSE_SIGNING_KEY) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["LICENSE_SIGNING_KEY"],
+          message: "Required when LICENSE_SIGNING_KID is set"
+        });
+      } else if (Buffer.from(value.LICENSE_SIGNING_KEY, "base64").length !== 32) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["LICENSE_SIGNING_KEY"],
+          message: "Must be a base64 Ed25519 seed of 32 bytes"
+        });
+      }
+    }
+
+    // Pasarela de IA: un proveedor real exige su clave y el BAA/ZDR confirmado;
+    // el fake no puede llegar a produccion.
+    if (value.AI_GATEWAY_PROVIDER === "gemini" || value.AI_GATEWAY_PROVIDER === "openai") {
+      const key = value.AI_GATEWAY_PROVIDER === "gemini" ? "GEMINI_API_KEY" : "OPENAI_API_KEY";
+      if (!value[key]) {
+        ctx.addIssue({ code: "custom", path: [key], message: `Required when AI_GATEWAY_PROVIDER=${value.AI_GATEWAY_PROVIDER}` });
+      }
+      if (!value.AI_GATEWAY_BAA_APPROVED) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["AI_GATEWAY_BAA_APPROVED"],
+          message: "AI_GATEWAY_BAA_APPROVED must be true (BAA / zero retention verified) for a real AI gateway provider"
+        });
+      }
+    }
+    if (value.AI_GATEWAY_PROVIDER === "fake" && process.env.NODE_ENV === "production") {
+      ctx.addIssue({ code: "custom", path: ["AI_GATEWAY_PROVIDER"], message: "The fake AI gateway provider is not allowed in production" });
     }
 
     // Mismo gate para Deepgram: clave y BAA/no-retencion aprobados o no se activa.

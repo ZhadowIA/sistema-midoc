@@ -1,0 +1,13 @@
+{
+  "file": "fhir-r4.schema.json.gz",
+  "contents": "fhir.schema.json (gzip -9)",
+  "fhirVersion": "4.0.1",
+  "source": {
+    "name": "HL7 FHIR R4 JSON Schema",
+    "url": "https://hl7.org/fhir/R4/fhir.schema.json.zip",
+    "license": "CC0 1.0 (FHIR specification)",
+    "licenseUrl": "https://hl7.org/fhir/R4/license.html"
+  },
+  "use": "Solo pruebas: valida que la exportacion FHIR del expediente (paso 28 r5) cumpla el esquema R4. No se empaqueta con la app.",
+  "sha256Uncompressed": "2230406893b4cf002a4ee1e5e2bbeca22ac5d2d4931b3e9ef7b9594bbc376a01"
+}

@@ -195,6 +195,7 @@ impl TranscriptionProvider for WhisperLocalProvider {
         }
 
         let response = AiResponse {
+            gateway_run_id: None,
             output: text.trim().to_string(),
             model_version: self.name.clone(),
             // La transcripcion local no tiene costo por uso (corre en el equipo).

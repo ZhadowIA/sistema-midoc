@@ -394,7 +394,7 @@ describe("notification flow (paso 7)", () => {
         { type: "WHATSAPP_NOTIFICATIONS", granted: true }
       ]);
       expect(consents.every((consent) => consent.doctorId === account.user.id)).toBe(true);
-      expect(consents.every((consent) => consent.version === "2026-05")).toBe(true);
+      expect(consents.every((consent) => consent.version === env.PRIVACY_VERSION)).toBe(true);
 
       const phoneConfirmation = await prisma.notification.findFirstOrThrow({
         where: {

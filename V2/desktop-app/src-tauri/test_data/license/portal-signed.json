@@ -1,0 +1,22 @@
+{
+  "note": "Licencia firmada por el portal (Node) con una semilla solo de pruebas (32 bytes 0x2a). Comprueba que la app verifica el formato que emite el portal. No es de confianza en ninguna compilacion.",
+  "seedBase64": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
+  "kid": "test-fixture",
+  "publicKey": "GX9rI+FshTLGq8g4+s1ep4m+DHaykgM0A5v6iz02jWE=",
+  "token": "eyJ2IjoxLCJraWQiOiJ0ZXN0LWZpeHR1cmUiLCJsaWNlbnNlSWQiOiJsaWNfZml4dHVyZSIsImFjdGl2YXRpb25JZCI6ImFjdF9maXh0dXJlIiwiYWNjb3VudElkIjoidXNlcl9maXh0dXJlIiwiaG9sZGVyTmFtZSI6IkRyYS4gRXZhIFNvdG8iLCJob2xkZXJMaWNlbnNlTnVtYmVyIjoiMTIzNDU2NyIsImVkaXRpb24iOiJTVEFOREFSRCIsInB1cmNoYXNlZEF0IjoiMjAyNi0xMC0wNiIsInVwZGF0ZXNVbnRpbCI6IjIwMjctMTAtMDYiLCJtYXhEZXZpY2VzIjoyLCJpbnN0YWxsYXRpb25JZCI6IjhhMzNlNmRhLTE4MmEtNDc1YS1hNDFhLThiN2MzZDcwNjk5MCIsImlzc3VlZEF0IjoiMjAyNi0xMC0wNlQxODowMDowMC4wMDBaIn0.g-S7xoH8PEvFK47ITMCU7xa3tx2Z5xNNQdgbZvArrOw75AhNLlZq-wDchg5I4T7BpQ0o-mni2y2Mq5vgeTokBA",
+  "payload": {
+    "v": 1,
+    "kid": "test-fixture",
+    "licenseId": "lic_fixture",
+    "activationId": "act_fixture",
+    "accountId": "user_fixture",
+    "holderName": "Dra. Eva Soto",
+    "holderLicenseNumber": "1234567",
+    "edition": "STANDARD",
+    "purchasedAt": "2026-10-06",
+    "updatesUntil": "2027-10-06",
+    "maxDevices": 2,
+    "installationId": "8a33e6da-182a-475a-a41a-8b7c3d706990",
+    "issuedAt": "2026-10-06T18:00:00.000Z"
+  }
+}

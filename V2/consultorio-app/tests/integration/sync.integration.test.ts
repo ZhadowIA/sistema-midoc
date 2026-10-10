@@ -1,10 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { ClinicalProfile, PrismaClient } from "@prisma/client";
+import { AiCreditGrantKind, ClinicalProfile, PrismaClient } from "@prisma/client";
 import { approveDoctorAccountForTesting } from "../helpers/doctor-accounts";
 
-import { createDoctorAccount, createDoctorSubscription } from "../../src/services/auth/auth-service";
+import { createDoctorAccount } from "../../src/services/auth/auth-service";
+import { grantCredits } from "../../src/services/ai/credit-ledger";
 import {
   bookPublicAppointment,
   createAppointmentHold,
@@ -248,6 +249,8 @@ describe("device profile metadata (paso 13, rebanada 4)", () => {
       const { profile } = await getSyncDeviceProfile(device);
       expect(profile?.specialty).toBe(ClinicalProfile.ODONTOLOGY);
       expect(profile?.consultationDuration).toBe(20);
+      expect(profile?.professionalName).toBe("Dra. Eva Soto");
+      expect(profile?.licenseNumber).toBe("1234567");
 
       const starts = profile?.availabilityRules.map((rule) => rule.startTime).sort();
       const ends = profile?.availabilityRules.map((rule) => rule.endTime).sort();
@@ -501,7 +504,7 @@ describe("AI usage metadata sync (paso 11)", () => {
     }
   });
 
-  it("charges plan credits for reported AI usage without double counting retries", async () => {
+  it("records reported AI usage costs once and returns the ledger balance without charging it", async () => {
     const email = uniqueEmail("doctor-ai-credits");
 
     try {
@@ -516,12 +519,15 @@ describe("AI usage metadata sync (paso 11)", () => {
         termsVersion: "2026-05",
         privacyVersion: "2026-05"
       });
-      await createDoctorSubscription({ doctorUserId: account.user.id, planCode: "CLINICO" });
+      await grantCredits({
+        doctorUserId: account.user.id,
+        kind: AiCreditGrantKind.TOP_UP,
+        credits: 120,
+        actorUserId: null
+      });
 
       const { deviceToken } = await linkSyncDevice(account.user.id, "PC IA creditos");
       const device = await authenticateSyncDevice(bearerRequest(deviceToken));
-      // El resumen de creditos suma solo el mes UTC en curso (utcMonthWindow),
-      // asi que el uso reportado debe ocurrir ahora y no en una fecha fija.
       const occurredAt = new Date().toISOString();
       const runs = [
         {
@@ -568,12 +574,11 @@ describe("AI usage metadata sync (paso 11)", () => {
 
       const first = await recordAiUsageBatch(device, { runs });
       expect(first.reported).toBe(2);
-      expect(first.creditSummary.monthlyCredits).toBe(120);
-      expect(first.creditSummary.consumedCredits).toBe(3);
-      expect(first.creditSummary.remainingCredits).toBe(117);
+      // Lo reportado despues no descuenta saldo hasta la pasarela (paso 30).
+      expect(first.creditBalance).toBe(120);
 
       const retry = await recordAiUsageBatch(device, { runs });
-      expect(retry.creditSummary.consumedCredits).toBe(3);
+      expect(retry.creditBalance).toBe(120);
 
       const logs = await prisma.aiUsageLog.findMany({
         where: { doctorId: account.user.id },

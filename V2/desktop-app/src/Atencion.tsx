@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DentalNoteEditor } from "./DentalNoteEditor";
 import { DentalBudgetPanel } from "./DentalBudgetPanel";
 import { DentalLabPanel } from "./DentalLabPanel";
+import { DocumentsPanel } from "./DocumentsPanel";
+import { Cie10Picker } from "./Cie10Picker";
+import { exportMessage, exportRecordFhir, exportRecordPdf, fhirExportMessage } from "./recordExportAction";
+import type { CodedDiagnosis } from "./cie10Model";
 import { DentalEvolutionPanel, PostOpInstructionsPanel } from "./DentalNoteAids";
 import {
   coerceClinicalProfile,
@@ -96,6 +100,7 @@ interface NoteContent {
   diagnosis: string;
   instructions: string;
   specialty: SpecialtyPayload;
+  coded_diagnoses: CodedDiagnosis[];
 }
 
 interface EncounterDetail {
@@ -123,8 +128,10 @@ interface EncounterDetail {
   medical_history: string | null;
   /** Resultado de la preconsulta guiada por IA. */
   preconsulta: string | null;
-  note: (Omit<NoteContent, "specialty"> & {
+  note: (Omit<NoteContent, "specialty" | "coded_diagnoses"> & {
     specialty: unknown;
+    // Rust omite el campo cuando la nota no tiene diagnosticos codificados.
+    coded_diagnoses?: CodedDiagnosis[];
     version: number;
     created_at: string;
   }) | null;
@@ -209,10 +216,15 @@ const EMPTY_NOTE: NoteContent = {
   plan: "",
   diagnosis: "",
   instructions: "",
-  specialty: EMPTY_GENERAL_MEDICINE_PAYLOAD
+  specialty: EMPTY_GENERAL_MEDICINE_PAYLOAD,
+  coded_diagnoses: []
 };
 
-const NOTE_FIELDS: Array<{ key: keyof Omit<NoteContent, "specialty">; label: string; rows: number }> = [
+const NOTE_FIELDS: Array<{
+  key: keyof Omit<NoteContent, "specialty" | "coded_diagnoses">;
+  label: string;
+  rows: number;
+}> = [
   { key: "subjective", label: "S · Subjetivo (lo que refiere el paciente)", rows: 3 },
   { key: "objective", label: "O · Objetivo (exploracion y hallazgos)", rows: 3 },
   { key: "assessment", label: "A · Analisis", rows: 2 },
@@ -252,7 +264,8 @@ function noteFromStoredDetail(
         plan: storedNote.plan,
         diagnosis: storedNote.diagnosis,
         instructions: storedNote.instructions,
-        specialty: coerceSpecialtyPayload(clinicalProfile, storedNote.specialty)
+        specialty: coerceSpecialtyPayload(clinicalProfile, storedNote.specialty),
+        coded_diagnoses: storedNote.coded_diagnoses ?? []
       }
     : createEmptyNote(clinicalProfile);
 }
@@ -553,6 +566,25 @@ export function Atencion({
       load();
     } catch (e) {
       setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Exporta la ultima version guardada de la nota (paso 28 r4 y r5).
+  async function exportConsultation(format: "pdf" | "fhir") {
+    if (!detail) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const text =
+        format === "pdf"
+          ? exportMessage(await exportRecordPdf(detail.patient.id, "PDF_CONSULTA", encounterId))
+          : fhirExportMessage(await exportRecordFhir(detail.patient.id, encounterId));
+      if (text) setMessage(text);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -1056,6 +1088,24 @@ export function Atencion({
         </div>
 
         <div className="button-row consultation-actions">
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={busy}
+            title="Exporta la ultima version guardada de la nota y la receta"
+            onClick={() => void exportConsultation("pdf")}
+          >
+            Exportar PDF
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={busy}
+            title="HL7 FHIR R4 (JSON) de la ultima version guardada, con sus documentos, para llevarla a otro sistema"
+            onClick={() => void exportConsultation("fhir")}
+          >
+            Exportar FHIR
+          </button>
           {signed ? (
             <span
               className={
@@ -1098,7 +1148,17 @@ export function Atencion({
                   <span className="consultation-step-dot" aria-hidden="true" />
                   <span>
                     <strong>{item.label}</strong>
-                    <small>{item.id === "nota" ? "SOAP" : item.id === "ia" ? "Dictado" : item.id === "ayuda" ? "Asistencia" : "Clínico"}</small>
+                    <small>
+                      {item.id === "nota"
+                        ? "SOAP"
+                        : item.id === "ia"
+                          ? "Dictado"
+                          : item.id === "ayuda"
+                            ? "Asistencia"
+                            : item.id === "documentos"
+                              ? "Archivos"
+                              : "Clínico"}
+                    </small>
                   </span>
                 </button>
               ))}
@@ -1433,20 +1493,44 @@ export function Atencion({
                   </div>
                 </div>
                 <div className="soap-field-grid">
-                  {NOTE_FIELDS.map(({ key, label, rows }, index) => (
-                    <label className="soap-field-card" key={key}>
-                      <span className="soap-field-heading">
-                        <span className="soap-field-key">{index + 1}</span>
-                        <span>{label}</span>
-                      </span>
-                      <AutoGrowTextarea
-                        rows={rows}
-                        value={note[key]}
-                        disabled={busy || signed}
-                        onChange={(e) => setNote((current) => ({ ...current, [key]: e.target.value }))}
-                      />
-                    </label>
-                  ))}
+                  {NOTE_FIELDS.map(({ key, label, rows }, index) =>
+                    key === "diagnosis" ? (
+                      // Un div y no un label: dentro van el buscador y sus botones.
+                      <div className="soap-field-card" key={key}>
+                        <span className="soap-field-heading">
+                          <span className="soap-field-key">{index + 1}</span>
+                          <span>{label}</span>
+                        </span>
+                        <Cie10Picker
+                          value={note.coded_diagnoses}
+                          patientId={detail.patient.id}
+                          disabled={busy || signed}
+                          onChange={(coded) => setNote((current) => ({ ...current, coded_diagnoses: coded }))}
+                        />
+                        <AutoGrowTextarea
+                          rows={rows}
+                          aria-label="Impresion diagnostica en texto libre"
+                          placeholder="Impresion diagnostica en texto libre (opcional)"
+                          value={note.diagnosis}
+                          disabled={busy || signed}
+                          onChange={(e) => setNote((current) => ({ ...current, diagnosis: e.target.value }))}
+                        />
+                      </div>
+                    ) : (
+                      <label className="soap-field-card" key={key}>
+                        <span className="soap-field-heading">
+                          <span className="soap-field-key">{index + 1}</span>
+                          <span>{label}</span>
+                        </span>
+                        <AutoGrowTextarea
+                          rows={rows}
+                          value={note[key]}
+                          disabled={busy || signed}
+                          onChange={(e) => setNote((current) => ({ ...current, [key]: e.target.value }))}
+                        />
+                      </label>
+                    )
+                  )}
                 </div>
                 {!signed ? (
                   <div className="button-row">
@@ -1563,6 +1647,16 @@ export function Atencion({
             </div>
           ) : null}
         </section>
+            ) : null}
+
+            {resolvedSection === "documentos" ? (
+              <section className="panel">
+                <DocumentsPanel
+                  patientId={detail.patient.id}
+                  encounterId={detail.encounter.id}
+                  heading="Documentos de la consulta"
+                />
+              </section>
             ) : null}
 
             {resolvedSection === "receta" ? (

@@ -20,19 +20,25 @@ Sistema MiDoc/
 
 V2 is **a clinical-records app with AI support for the doctor**. Active scope: patient directory and longitudinal record, the clinical encounter (SOAP, templates, prescription, instructions), the general-medicine and dentistry profiles, local clinical documents, deterministic medication safety, and the whole AI layer (local transcription, diarization, scribe, assisted anamnesis, dental dictation) with its governance.
 
-Out of active scope and **frozen behind a capability flag — turned off, never deleted**: public scheduling, patient portal, precheckin/mailbox, reception and waiting list, cash drawer and consultation payments, patient SMS/email notifications, and the desktop day/week agenda. The cloud portal keeps only the doctor's account, the subscription, and the AI gateway (provider keys and BAA server-side; it never sees clinical content).
+Out of active scope and **frozen behind a capability flag — turned off, never deleted**: public scheduling, patient portal, precheckin/mailbox, reception and waiting list, cash drawer and consultation payments, patient SMS/email notifications, and the desktop day/week agenda. The cloud portal keeps only the doctor's account, licensing/activation and AI credits, and the AI gateway (provider keys and BAA server-side; it never sees clinical content).
+
+## Business model (decision 2026-10-06)
+
+MiDoc is sold as a **one-time purchase**, not a mandatory subscription: the app (records, prescriptions, exports, local transcription) works forever, offline after a one-time activation with a signed license; purchase includes 12 months of updates and the last version received stays the doctor's. Revenue comes mainly from **AI credits** (non-expiring top-ups plus an optional monthly credit plan). Step 29 implemented it (signed license, activation, server-side AI credit ledger, account page, license-bounded updates); the legacy subscription code was retired from the active scope and only survives, frozen, for the frozen modules. Full detail in `V2/15_modelo_de_negocio.md`.
 
 Full detail in `V2/14_reenfoque_expediente_ia.md`; step-by-step reclassification and the new steps 27-31 in `V2/10_linea_de_desarrollo.md`. Local-first and the data-residency rules are unchanged — only the product surface shrank.
 
 ## V2 architecture (2026-06-09, unchanged)
 
-V2 is **local-first**: all clinical data (records, SOAP notes, prescriptions, documents) lives encrypted on the doctor's computer inside the installable desktop app. The cloud portal was built to handle public booking, the doctor's public profile, a temporary encrypted inbox (pre-consultation forms and patient uploads, purged after the desktop app syncs them down), SMS/email notifications, and the SaaS subscription; under the 2026-09-07 scope decision only the account, the subscription and the AI gateway stay active and the rest is frozen. **No clinical data is ever persisted permanently in the cloud.** Everything is TypeScript.
+V2 is **local-first**: all clinical data (records, SOAP notes, prescriptions, documents) lives encrypted on the doctor's computer inside the installable desktop app. The cloud portal was built to handle public booking, the doctor's public profile, a temporary encrypted inbox (pre-consultation forms and patient uploads, purged after the desktop app syncs them down), SMS/email notifications, and the SaaS subscription; under the 2026-09-07 scope decision and the 2026-10-06 business model only the account, the license and AI credits, and the AI gateway stay active and the rest is frozen. **No clinical data is ever persisted permanently in the cloud.** Everything is TypeScript.
 
 There is no WhatsApp bot in V2 — notifications use SMS and email.
 
 ## Mandatory reading before working on V2
 
 - `V2/14_reenfoque_expediente_ia.md` — the 2026-09-07 scope decision. It overrides any wider scope described in older docs.
+- `V2/15_modelo_de_negocio.md` — the 2026-10-06 business-model decision (one-time purchase + AI credits). It overrides the subscription assumptions in older docs.
+- `V2/PENDIENTES.md` — living list of open items; add anything left unresolved during work, with date and origin.
 - `V2/REGLAS_DESARROLLO.md` — binding development rules (layering, Zod at boundaries, data-residency classification, testing requirements, Definition of Done, git flow). Follow them exactly.
 - `V2/10_linea_de_desarrollo.md` — stepped development line with gates. Every task must be located in a step; tasks belonging to future steps are documented, not implemented.
 - `V2/01_contexto_v2.md` — product context and architecture decision.
