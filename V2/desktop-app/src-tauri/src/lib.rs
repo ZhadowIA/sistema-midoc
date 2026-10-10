@@ -1062,7 +1062,7 @@ fn open_patient_encounter(
     patient_id: String,
 ) -> Result<clinical::Encounter, String> {
     with_conn(&state, |conn| {
-        clinical::open_encounter_for_patient(conn, &patient_id)
+        clinical::open_encounter_for_patient(conn, &patient_id, chrono::Local::now().date_naive())
     })
 }
 
@@ -1348,8 +1348,12 @@ fn start_visit_encounter(
         }
         // Walk-in: el paciente ya se resolvio al registrarlo en recepcion.
         (None, Some(patient_id)) => {
-            let encounter = clinical::open_encounter_for_patient(conn, patient_id)
-                .map_err(|e| e.to_string())?;
+            let encounter = clinical::open_encounter_for_patient(
+                conn,
+                patient_id,
+                chrono::Local::now().date_naive(),
+            )
+            .map_err(|e| e.to_string())?;
             operations::link_visit_encounter(conn, &visit_id, &encounter.id)
                 .map_err(|e| e.to_string())?;
             Ok(clinical::AttendOutcome::Encounter {
