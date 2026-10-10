@@ -194,8 +194,8 @@ pub fn apply_event(conn: &Connection, event: &InboxEvent) -> Result<(), SyncErro
         // Antecedentes sellados (sealed box): el contenido NO viaja en el
         // payload; se descarga y descifra aparte (store_mailbox_precheckin), por
         // lo que este evento no hace nada aqui (no pisarlo con "{}").
-        "PRECHECKIN_SUBMITTED"
-            if payload.get("sealed").and_then(|v| v.as_bool()) == Some(true) => {}
+        "PRECHECKIN_SUBMITTED" if payload.get("sealed").and_then(|v| v.as_bool()) == Some(true) => {
+        }
         "PRECHECKIN_SUBMITTED" => {
             let responses = payload
                 .get("responses")
@@ -455,7 +455,10 @@ pub async fn activate_license(
 }
 
 /// Estado de la pasarela de IA del portal (paso 30): `{ enabled, models }`.
-pub async fn fetch_gateway_status(server_url: &str, device_token: &str) -> Result<serde_json::Value, SyncError> {
+pub async fn fetch_gateway_status(
+    server_url: &str,
+    device_token: &str,
+) -> Result<serde_json::Value, SyncError> {
     let client = reqwest::Client::new();
     let base = server_url.trim_end_matches('/');
     let response = client
@@ -865,7 +868,15 @@ mod tests {
                         guardian_relationship, guardian_email
                  FROM appointments WHERE id = 'appt-minor'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .unwrap();
 
@@ -1141,7 +1152,10 @@ mod tests {
         assert_eq!(extract_slot_minutes(&body), Some(20));
 
         // Ausente o no positivo => sin valor (se usara el default en el front).
-        assert_eq!(extract_slot_minutes(&serde_json::json!({ "profile": {} })), None);
+        assert_eq!(
+            extract_slot_minutes(&serde_json::json!({ "profile": {} })),
+            None
+        );
         assert_eq!(
             extract_slot_minutes(&serde_json::json!({ "profile": { "consultationDuration": 0 } })),
             None
@@ -1186,7 +1200,9 @@ mod tests {
         let meta = profile_metadata_from_body(&body);
         assert_eq!(meta.professional_name.as_deref(), Some("Dra. Eva Soto"));
         assert_eq!(meta.license_number.as_deref(), Some("1234567"));
-        let empty = profile_metadata_from_body(&serde_json::json!({ "profile": { "licenseNumber": "  " } }));
+        let empty = profile_metadata_from_body(
+            &serde_json::json!({ "profile": { "licenseNumber": "  " } }),
+        );
         assert_eq!(empty.license_number, None, "vacio no pisa lo guardado");
         assert_eq!(meta.clinical_profile.as_deref(), Some("ODONTOLOGY"));
         assert_eq!(meta.slot_minutes, Some(20));

@@ -30,7 +30,13 @@ pub enum DocumentError {
 /// video no es un documento clinico.
 pub const MAX_DOCUMENT_BYTES: usize = 20 * 1024 * 1024;
 
-pub const CATEGORIES: &[&str] = &["LABORATORIO", "IMAGEN", "REFERENCIA", "CONSENTIMIENTO", "OTRO"];
+pub const CATEGORIES: &[&str] = &[
+    "LABORATORIO",
+    "IMAGEN",
+    "REFERENCIA",
+    "CONSENTIMIENTO",
+    "OTRO",
+];
 
 fn now() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -199,9 +205,8 @@ pub fn add_document(conn: &Connection, input: &NewDocument) -> Result<DocumentMe
             MAX_DOCUMENT_BYTES / (1024 * 1024)
         )));
     }
-    let mime_type = detect_mime(&bytes).ok_or_else(|| {
-        DocumentError::Invalid("solo se admiten PDF, PNG, JPG y WEBP".into())
-    })?;
+    let mime_type = detect_mime(&bytes)
+        .ok_or_else(|| DocumentError::Invalid("solo se admiten PDF, PNG, JPG y WEBP".into()))?;
 
     let sha256: String = Sha256::digest(&bytes)
         .iter()
@@ -248,7 +253,12 @@ pub fn add_document(conn: &Connection, input: &NewDocument) -> Result<DocumentMe
             now()
         ],
     )?;
-    audit(conn, &id, "added", Some(&format!("{file_name} sha256={sha256}")))?;
+    audit(
+        conn,
+        &id,
+        "added",
+        Some(&format!("{file_name} sha256={sha256}")),
+    )?;
     read_meta(conn, &id)
 }
 
@@ -270,7 +280,10 @@ pub fn list_patient_documents(
     Ok(rows)
 }
 
-pub fn read_document(conn: &Connection, document_id: &str) -> Result<DocumentContent, DocumentError> {
+pub fn read_document(
+    conn: &Connection,
+    document_id: &str,
+) -> Result<DocumentContent, DocumentError> {
     let meta = read_meta(conn, document_id)?;
     let bytes: Vec<u8> = conn.query_row(
         "SELECT content FROM documents WHERE id = ?1",
@@ -369,7 +382,10 @@ mod tests {
         assert_eq!(meta.title.as_deref(), Some("Biometria hematica"));
         assert_eq!(meta.mime_type, "application/pdf");
         assert_eq!(meta.encounter_id.as_deref(), Some("e1"));
-        assert_eq!(meta.encounter_opened_at.as_deref(), Some("2026-10-05T10:00:00Z"));
+        assert_eq!(
+            meta.encounter_opened_at.as_deref(),
+            Some("2026-10-05T10:00:00Z")
+        );
         assert_eq!(meta.source, "LOCAL");
         assert_eq!(meta.size_bytes, PDF.len() as i64);
 
@@ -407,7 +423,10 @@ mod tests {
 
         add_document(&conn, &new_doc("p1", None, PDF)).unwrap();
         let err = add_document(&conn, &new_doc("p1", None, PDF)).unwrap_err();
-        assert!(err.to_string().contains("ya esta en el expediente"), "{err}");
+        assert!(
+            err.to_string().contains("ya esta en el expediente"),
+            "{err}"
+        );
 
         let mut bad_category = new_doc("p1", None, PNG);
         bad_category.category = "VIDEO".into();
@@ -447,7 +466,10 @@ mod tests {
 
         delete_document(&conn, &meta.id).unwrap();
         assert!(list_patient_documents(&conn, "p1").unwrap().is_empty());
-        assert!(matches!(read_document(&conn, &meta.id), Err(DocumentError::NotFound)));
+        assert!(matches!(
+            read_document(&conn, &meta.id),
+            Err(DocumentError::NotFound)
+        ));
 
         let actions: Vec<(String, Option<String>)> = conn
             .prepare("SELECT action, details FROM clinical_audit WHERE entity = 'document' ORDER BY rowid")
@@ -456,11 +478,17 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(actions.iter().map(|a| a.0.as_str()).collect::<Vec<_>>(), ["added", "deleted"]);
+        assert_eq!(
+            actions.iter().map(|a| a.0.as_str()).collect::<Vec<_>>(),
+            ["added", "deleted"]
+        );
         let deleted_details = actions[1].1.as_deref().unwrap();
         assert!(deleted_details.contains("biometria.pdf"));
         assert!(deleted_details.contains(meta.sha256.as_deref().unwrap()));
-        assert!(!deleted_details.contains("%PDF"), "la auditoria no guarda contenido");
+        assert!(
+            !deleted_details.contains("%PDF"),
+            "la auditoria no guarda contenido"
+        );
     }
 
     #[test]

@@ -433,7 +433,9 @@ pub fn fulfill_cancellation(
         ));
     }
     if request.status != "PENDING" {
-        return Err(ArcoError::Invalid("la solicitud ya fue atendida".to_string()));
+        return Err(ArcoError::Invalid(
+            "la solicitud ya fue atendida".to_string(),
+        ));
     }
 
     let patient_id = request.patient_id.clone();
@@ -452,8 +454,10 @@ pub fn fulfill_cancellation(
          OR encounter_id IN (SELECT id FROM encounters WHERE patient_id = ?1)",
         params![patient_id],
     )?;
-    let deleted_ai_consents =
-        tx.execute("DELETE FROM ai_consents WHERE patient_id = ?1", params![patient_id])?;
+    let deleted_ai_consents = tx.execute(
+        "DELETE FROM ai_consents WHERE patient_id = ?1",
+        params![patient_id],
+    )?;
     let deleted_prescriptions = tx.execute(
         "DELETE FROM prescriptions
          WHERE encounter_id IN (SELECT id FROM encounters WHERE patient_id = ?1)",
@@ -469,12 +473,18 @@ pub fn fulfill_cancellation(
         params![patient_id],
     )?;
     // Los documentos pueden ligarse a una consulta: antes que las consultas.
-    let deleted_documents =
-        tx.execute("DELETE FROM documents WHERE patient_id = ?1", params![patient_id])?;
-    let deleted_timeline_events =
-        tx.execute("DELETE FROM timeline_events WHERE patient_id = ?1", params![patient_id])?;
-    let deleted_lab_orders =
-        tx.execute("DELETE FROM dental_lab_orders WHERE patient_id = ?1", params![patient_id])?;
+    let deleted_documents = tx.execute(
+        "DELETE FROM documents WHERE patient_id = ?1",
+        params![patient_id],
+    )?;
+    let deleted_timeline_events = tx.execute(
+        "DELETE FROM timeline_events WHERE patient_id = ?1",
+        params![patient_id],
+    )?;
+    let deleted_lab_orders = tx.execute(
+        "DELETE FROM dental_lab_orders WHERE patient_id = ?1",
+        params![patient_id],
+    )?;
 
     // Presupuestos dentales: los procedimientos son clinicos y se borran. Un
     // presupuesto con abonos se conserva seudonimizado porque los cobros lo
@@ -495,11 +505,15 @@ pub fn fulfill_cancellation(
         params![patient_id],
     )?;
 
-    let deleted_encounters =
-        tx.execute("DELETE FROM encounters WHERE patient_id = ?1", params![patient_id])?;
+    let deleted_encounters = tx.execute(
+        "DELETE FROM encounters WHERE patient_id = ?1",
+        params![patient_id],
+    )?;
     // La liga con el paciente del portal identifica a la persona.
-    let deleted_patient_links =
-        tx.execute("DELETE FROM patient_links WHERE patient_id = ?1", params![patient_id])?;
+    let deleted_patient_links = tx.execute(
+        "DELETE FROM patient_links WHERE patient_id = ?1",
+        params![patient_id],
+    )?;
     let deleted_precheckins = tx.execute(
         "DELETE FROM precheckins
          WHERE appointment_id IN (SELECT id FROM appointments WHERE patient_id = ?1)",
@@ -701,7 +715,9 @@ mod tests {
         assert!(export.is_minor);
         let guardian = export.guardian.expect("el responsable debe viajar");
         assert_eq!(guardian.name, "Hugo Paz");
-        let note = export.rights_exercised_by.expect("debe documentar quien ejerce");
+        let note = export
+            .rights_exercised_by
+            .expect("debe documentar quien ejerce");
         assert!(note.contains("Hugo Paz"));
         assert!(note.contains("Padre"));
     }
@@ -763,25 +779,41 @@ mod tests {
 
         // El expediente clinico desaparecio.
         let encounters: i64 = conn
-            .query_row("SELECT count(*) FROM encounters WHERE patient_id='pat-1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM encounters WHERE patient_id='pat-1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(encounters, 0);
 
         // La identidad quedo seudonimizada.
         let name: String = conn
-            .query_row("SELECT first_name FROM patients WHERE id='pat-1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT first_name FROM patients WHERE id='pat-1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(name, ANON);
 
         // El registro contable se conserva intacto.
         let payments: i64 = conn
-            .query_row("SELECT count(*) FROM payments WHERE patient_id='pat-1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM payments WHERE patient_id='pat-1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(payments, 1);
 
         // La solicitud quedo cumplida.
         let status: String = conn
-            .query_row("SELECT status FROM arco_requests WHERE id=?1", params![req.id], |r| r.get(0))
+            .query_row(
+                "SELECT status FROM arco_requests WHERE id=?1",
+                params![req.id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(status, "FULFILLED");
     }
@@ -827,33 +859,66 @@ mod tests {
         seed_later_records(&conn, "pat-1");
 
         let req = record_arco_request(&conn, "pat-1", "CANCELLATION", None).unwrap();
-        let result = fulfill_cancellation(&mut conn, &req.id).expect("la cancelacion no falla por transcripciones");
+        let result = fulfill_cancellation(&mut conn, &req.id)
+            .expect("la cancelacion no falla por transcripciones");
 
         assert_eq!(result.deleted_transcriptions, 1);
         assert_eq!(result.deleted_timeline_events, 1);
         assert_eq!(result.deleted_lab_orders, 1);
-        assert_eq!(result.deleted_budgets, 1, "el presupuesto sin abonos se borra");
-        assert_eq!(result.anonymized_budgets, 1, "el presupuesto con abonos se conserva seudonimizado");
+        assert_eq!(
+            result.deleted_budgets, 1,
+            "el presupuesto sin abonos se borra"
+        );
+        assert_eq!(
+            result.anonymized_budgets, 1,
+            "el presupuesto con abonos se conserva seudonimizado"
+        );
         assert_eq!(result.deleted_patient_links, 1);
 
-        assert_eq!(count(&conn, "SELECT count(*) FROM consultation_transcriptions"), 0);
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM consultation_transcriptions"),
+            0
+        );
         assert_eq!(count(&conn, "SELECT count(*) FROM timeline_events"), 0);
         assert_eq!(count(&conn, "SELECT count(*) FROM dental_lab_orders"), 0);
-        assert_eq!(count(&conn, "SELECT count(*) FROM dental_budget_items"), 0, "los procedimientos son clinicos");
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM dental_budget_items"),
+            0,
+            "los procedimientos son clinicos"
+        );
         assert_eq!(count(&conn, "SELECT count(*) FROM patient_links"), 0);
 
         let (label, notes, encounter): (String, Option<String>, Option<String>) = conn
-            .query_row("SELECT label, notes, encounter_id FROM dental_budgets WHERE id = 'bud-paid'", [], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-            })
+            .query_row(
+                "SELECT label, notes, encounter_id FROM dental_budgets WHERE id = 'bud-paid'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
             .unwrap();
         assert_eq!((label.as_str(), notes, encounter), (ANON, None, None));
 
         // Lo contable sigue intacto: los dos cobros y su liga al presupuesto.
-        assert_eq!(count(&conn, "SELECT count(*) FROM payments WHERE patient_id = 'pat-1'"), 2);
-        assert_eq!(count(&conn, "SELECT count(*) FROM payments WHERE budget_id = 'bud-paid'"), 1);
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM payments WHERE patient_id = 'pat-1'"
+            ),
+            2
+        );
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM payments WHERE budget_id = 'bud-paid'"
+            ),
+            1
+        );
 
-        let guardian: (Option<String>, Option<String>, Option<String>, Option<String>) = conn
+        let guardian: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = conn
             .query_row(
                 "SELECT guardian_name, guardian_relationship, guardian_phone, guardian_email
                  FROM patients WHERE id = 'pat-1'",
@@ -861,7 +926,11 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .unwrap();
-        assert_eq!(guardian, (None, None, None, None), "el contacto del responsable tambien se va");
+        assert_eq!(
+            guardian,
+            (None, None, None, None),
+            "el contacto del responsable tambien se va"
+        );
     }
 
     #[test]

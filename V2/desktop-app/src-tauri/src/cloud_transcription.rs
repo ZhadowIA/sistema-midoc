@@ -147,7 +147,10 @@ impl TranscriptionProvider for PortalTranscriptionProvider {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().unwrap_or_default();
-            return Err(AiError::Invalid(portal_error_message(status.as_u16(), &body)));
+            return Err(AiError::Invalid(portal_error_message(
+                status.as_u16(),
+                &body,
+            )));
         }
         let body = response
             .text()
@@ -188,7 +191,12 @@ impl TranscriptionProvider for PortalTranscriptionProvider {
 fn portal_error_message(status: u16, body: &str) -> String {
     serde_json::from_str::<serde_json::Value>(body)
         .ok()
-        .and_then(|value| value.get("error").and_then(|e| e.as_str()).map(str::to_string))
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(|e| e.as_str())
+                .map(str::to_string)
+        })
         .filter(|message| !message.trim().is_empty())
         .unwrap_or_else(|| format!("el portal respondio {status}"))
 }
@@ -201,8 +209,14 @@ mod tests {
     fn shows_the_portal_message_when_credits_run_out() {
         let body = r#"{"error":"No tienes créditos de IA suficientes: esto cuesta 2 y tu saldo es 0. La transcripción local y el flujo manual siguen disponibles."}"#;
         assert!(portal_error_message(402, body).starts_with("No tienes créditos de IA suficientes"));
-        assert_eq!(portal_error_message(502, "<html>"), "el portal respondio 502");
-        assert_eq!(portal_error_message(500, r#"{"error":""}"#), "el portal respondio 500");
+        assert_eq!(
+            portal_error_message(502, "<html>"),
+            "el portal respondio 502"
+        );
+        assert_eq!(
+            portal_error_message(500, r#"{"error":""}"#),
+            "el portal respondio 500"
+        );
     }
 
     #[test]
@@ -264,15 +278,25 @@ mod tests {
     #[test]
     fn portal_provider_requires_linked_server_and_token() {
         // La via en nube solo existe con portal y dispositivo vinculados.
-        assert!(PortalTranscriptionProvider::new("", "tok", "run-1", "standard", "openai").is_err());
         assert!(
-            PortalTranscriptionProvider::new("https://midoc.test", "", "run-1", "standard", "openai")
-                .is_err()
+            PortalTranscriptionProvider::new("", "tok", "run-1", "standard", "openai").is_err()
         );
-        assert!(
-            PortalTranscriptionProvider::new("https://midoc.test", "tok", "run-1", "standard", "openai")
-                .is_ok()
-        );
+        assert!(PortalTranscriptionProvider::new(
+            "https://midoc.test",
+            "",
+            "run-1",
+            "standard",
+            "openai"
+        )
+        .is_err());
+        assert!(PortalTranscriptionProvider::new(
+            "https://midoc.test",
+            "tok",
+            "run-1",
+            "standard",
+            "openai"
+        )
+        .is_ok());
     }
 
     #[test]

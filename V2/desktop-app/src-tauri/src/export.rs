@@ -32,8 +32,13 @@ pub enum ExportError {
 }
 
 /// Tipos de salida que reconoce la bitacora.
-pub const EXPORT_KINDS: &[&str] =
-    &["PDF_CONSULTA", "PDF_EXPEDIENTE", "FHIR_CONSULTA", "FHIR_EXPEDIENTE", "CSV_DIRECTORIO"];
+pub const EXPORT_KINDS: &[&str] = &[
+    "PDF_CONSULTA",
+    "PDF_EXPEDIENTE",
+    "FHIR_CONSULTA",
+    "FHIR_EXPEDIENTE",
+    "CSV_DIRECTORIO",
+];
 
 #[derive(Debug, Serialize)]
 pub struct ExportDoctor {
@@ -80,7 +85,11 @@ pub struct RecordExport {
 
 fn state(conn: &Connection, key: &str) -> Result<Option<String>, ExportError> {
     Ok(conn
-        .query_row("SELECT value FROM sync_state WHERE key = ?1", params![key], |row| row.get(0))
+        .query_row(
+            "SELECT value FROM sync_state WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
         .optional()?)
 }
 
@@ -93,17 +102,27 @@ pub fn record_export(
 ) -> Result<RecordExport, ExportError> {
     let profile = clinical::get_patient_profile(conn, patient_id)?;
     let sex: Option<String> = conn
-        .query_row("SELECT sex FROM patients WHERE id = ?1", params![patient_id], |row| row.get(0))
+        .query_row(
+            "SELECT sex FROM patients WHERE id = ?1",
+            params![patient_id],
+            |row| row.get(0),
+        )
         .optional()?
         .flatten();
 
     let ids: Vec<String> = match encounter_id {
         Some(id) => {
             let owner: Option<String> = conn
-                .query_row("SELECT patient_id FROM encounters WHERE id = ?1", params![id], |row| row.get(0))
+                .query_row(
+                    "SELECT patient_id FROM encounters WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
                 .optional()?;
             if owner.as_deref() != Some(patient_id) {
-                return Err(ExportError::Invalid("la consulta no pertenece a este paciente".into()));
+                return Err(ExportError::Invalid(
+                    "la consulta no pertenece a este paciente".into(),
+                ));
             }
             vec![id.to_string()]
         }
@@ -156,7 +175,10 @@ pub fn record_export(
 
     Ok(RecordExport {
         generated_at: chrono::Utc::now().to_rfc3339(),
-        doctor: ExportDoctor { name: state(conn, "doctor_name")?, license: state(conn, "doctor_license")? },
+        doctor: ExportDoctor {
+            name: state(conn, "doctor_name")?,
+            license: state(conn, "doctor_license")?,
+        },
         patient: profile.patient,
         sex,
         encounters,
@@ -168,14 +190,24 @@ pub fn record_export(
 pub fn suggested_file_name(stem: &str, extension: &str) -> String {
     let cleaned: String = stem
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     let compact = cleaned
         .split('-')
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("-");
-    let stem = if compact.is_empty() { "expediente".to_string() } else { compact };
+    let stem = if compact.is_empty() {
+        "expediente".to_string()
+    } else {
+        compact
+    };
     format!("{}.{extension}", stem.chars().take(80).collect::<String>())
 }
 
@@ -205,7 +237,9 @@ pub fn write_export_bytes(
     bytes: &[u8],
 ) -> Result<String, ExportError> {
     if !EXPORT_KINDS.contains(&kind) {
-        return Err(ExportError::Invalid(format!("tipo de exportacion no valido: {kind}")));
+        return Err(ExportError::Invalid(format!(
+            "tipo de exportacion no valido: {kind}"
+        )));
     }
     if kind.starts_with("PDF") && !bytes.starts_with(b"%PDF-") {
         return Err(ExportError::Invalid("el contenido no es un PDF".into()));
@@ -215,19 +249,34 @@ pub fn write_export_bytes(
             .map(|value| value["resourceType"] == "Bundle")
             .unwrap_or(false);
         if !is_bundle {
-            return Err(ExportError::Invalid("el contenido no es un Bundle FHIR".into()));
+            return Err(ExportError::Invalid(
+                "el contenido no es un Bundle FHIR".into(),
+            ));
         }
     }
     if kind.starts_with("CSV") && std::str::from_utf8(bytes).is_err() {
-        return Err(ExportError::Invalid("el contenido no es un CSV en UTF-8".into()));
+        return Err(ExportError::Invalid(
+            "el contenido no es un CSV en UTF-8".into(),
+        ));
     }
     std::fs::write(path, bytes)?;
-    let sha256: String = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect();
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("exportacion");
+    let sha256: String = Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("exportacion");
     conn.execute(
         "INSERT INTO clinical_audit (entity, entity_id, action, at, details)
          VALUES ('export', ?1, ?2, ?3, ?4)",
-        params![patient_id, kind, chrono::Utc::now().to_rfc3339(), format!("{file_name} sha256={sha256}")],
+        params![
+            patient_id,
+            kind,
+            chrono::Utc::now().to_rfc3339(),
+            format!("{file_name} sha256={sha256}")
+        ],
     )?;
     Ok(sha256)
 }
@@ -262,7 +311,11 @@ mod tests {
             &first.id,
             &NoteContent {
                 subjective: "Tos".into(),
-                coded_diagnoses: vec![CodedDiagnosis { code: "J459".into(), name: String::new(), principal: true }],
+                coded_diagnoses: vec![CodedDiagnosis {
+                    code: "J459".into(),
+                    name: String::new(),
+                    principal: true,
+                }],
                 ..Default::default()
             },
         )
@@ -274,7 +327,15 @@ mod tests {
         clinical::open_encounter_for_patient(conn, "p1").unwrap();
 
         let second = clinical::open_encounter_for_patient(conn, "p1").unwrap();
-        clinical::save_note(conn, &second.id, &NoteContent { plan: "Control".into(), ..Default::default() }).unwrap();
+        clinical::save_note(
+            conn,
+            &second.id,
+            &NoteContent {
+                plan: "Control".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         (first.id, second.id)
     }
 
@@ -289,7 +350,11 @@ mod tests {
         assert_eq!(export.patient.first_name, "Ana");
         assert_eq!(export.sex.as_deref(), Some("F"));
         assert_eq!(
-            export.encounters.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            export
+                .encounters
+                .iter()
+                .map(|e| e.id.as_str())
+                .collect::<Vec<_>>(),
             vec![first.as_str(), second.as_str()],
             "en orden y sin la consulta vacia"
         );
@@ -297,7 +362,10 @@ mod tests {
         assert_eq!(signed.status, "SIGNED");
         assert!(signed.signed_hash.is_some());
         assert_eq!(signed.prescription.as_deref(), Some("Salbutamol"));
-        assert_eq!(signed.note.as_ref().unwrap().coded_diagnoses[0].code, "J459");
+        assert_eq!(
+            signed.note.as_ref().unwrap().coded_diagnoses[0].code,
+            "J459"
+        );
     }
 
     #[test]
@@ -320,7 +388,8 @@ mod tests {
         let path = dir.join(format!("salida-{}.pdf", uuid::Uuid::new_v4()));
         let pdf = b"%PDF-1.7\nexpediente de Ana";
 
-        let sha = write_export(&conn, &path, "p1", "PDF_EXPEDIENTE", &STANDARD.encode(pdf)).unwrap();
+        let sha =
+            write_export(&conn, &path, "p1", "PDF_EXPEDIENTE", &STANDARD.encode(pdf)).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), pdf);
 
         let (action, details): (String, String) = conn
@@ -334,20 +403,50 @@ mod tests {
         assert!(details.contains(&sha));
         assert!(!details.contains("Ana"), "la bitacora no guarda contenido");
 
-        assert!(write_export(&conn, &path, "p1", "PDF_CONSULTA", &STANDARD.encode(b"no es pdf")).is_err());
+        assert!(write_export(
+            &conn,
+            &path,
+            "p1",
+            "PDF_CONSULTA",
+            &STANDARD.encode(b"no es pdf")
+        )
+        .is_err());
         assert!(write_export(&conn, &path, "p1", "OTRA_COSA", &STANDARD.encode(pdf)).is_err());
-        assert!(write_export_bytes(&conn, &path, "p1", "FHIR_EXPEDIENTE", pdf).is_err(), "un FHIR debe ser JSON");
         assert!(
-            write_export_bytes(&conn, &path, "p1", "FHIR_EXPEDIENTE", br#"{"resourceType":"Patient"}"#).is_err(),
+            write_export_bytes(&conn, &path, "p1", "FHIR_EXPEDIENTE", pdf).is_err(),
+            "un FHIR debe ser JSON"
+        );
+        assert!(
+            write_export_bytes(
+                &conn,
+                &path,
+                "p1",
+                "FHIR_EXPEDIENTE",
+                br#"{"resourceType":"Patient"}"#
+            )
+            .is_err(),
             "un FHIR debe ser un Bundle"
         );
-        assert!(write_export_bytes(&conn, &path, "p1", "FHIR_EXPEDIENTE", br#"{"resourceType":"Bundle"}"#).is_ok());
+        assert!(write_export_bytes(
+            &conn,
+            &path,
+            "p1",
+            "FHIR_EXPEDIENTE",
+            br#"{"resourceType":"Bundle"}"#
+        )
+        .is_ok());
     }
 
     #[test]
     fn suggests_safe_file_names() {
-        assert_eq!(suggested_file_name("Expediente Ana Ruiz 2026-10-06", "pdf"), "Expediente-Ana-Ruiz-2026-10-06.pdf");
-        assert_eq!(suggested_file_name("../../etc/passwd", "pdf"), "etc-passwd.pdf");
+        assert_eq!(
+            suggested_file_name("Expediente Ana Ruiz 2026-10-06", "pdf"),
+            "Expediente-Ana-Ruiz-2026-10-06.pdf"
+        );
+        assert_eq!(
+            suggested_file_name("../../etc/passwd", "pdf"),
+            "etc-passwd.pdf"
+        );
         assert_eq!(suggested_file_name("***", "pdf"), "expediente.pdf");
     }
 }

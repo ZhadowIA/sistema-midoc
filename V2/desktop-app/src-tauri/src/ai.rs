@@ -623,9 +623,7 @@ impl AiProvider for GeminiProvider {
                 .json(&body)
                 .send()
             {
-                Ok(resp)
-                    if transient_provider_status(resp.status().as_u16()) && attempt < 3 =>
-                {
+                Ok(resp) if transient_provider_status(resp.status().as_u16()) && attempt < 3 => {
                     std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
                     continue;
                 }
@@ -785,9 +783,7 @@ impl AiProvider for OpenAiProvider {
                 .json(&body)
                 .send()
             {
-                Ok(resp)
-                    if transient_provider_status(resp.status().as_u16()) && attempt < 3 =>
-                {
+                Ok(resp) if transient_provider_status(resp.status().as_u16()) && attempt < 3 => {
                     std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
                     continue;
                 }
@@ -901,7 +897,11 @@ impl GatewayProvider {
 
 /// Cuerpo de la solicitud a la pasarela. Los usos con salida estructurada
 /// mandan su esquema JSON, igual que con el proveedor directo.
-pub fn gateway_request_body(request: &AiRequest, run_id: &str, model: Option<&str>) -> serde_json::Value {
+pub fn gateway_request_body(
+    request: &AiRequest,
+    run_id: &str,
+    model: Option<&str>,
+) -> serde_json::Value {
     let schema = if request.usage_type == USAGE_CONSULTATION_STRUCTURING {
         Some(consultation_structuring_schema())
     } else if request.usage_type == USAGE_CLINICAL_AID {
@@ -951,7 +951,10 @@ impl AiProvider for GatewayProvider {
         let start = std::time::Instant::now();
         let run_id = uuid::Uuid::new_v4().to_string();
         let body = gateway_request_body(request, &run_id, self.model.as_deref());
-        let model_label = self.model.clone().unwrap_or_else(|| "predeterminado".into());
+        let model_label = self
+            .model
+            .clone()
+            .unwrap_or_else(|| "predeterminado".into());
         let client = reqwest::blocking::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(15))
             .timeout(std::time::Duration::from_secs(150))
@@ -980,7 +983,10 @@ impl AiProvider for GatewayProvider {
             .to_string();
         Ok(AiResponse {
             output,
-            model_version: payload["model"].as_str().unwrap_or(&model_label).to_string(),
+            model_version: payload["model"]
+                .as_str()
+                .unwrap_or(&model_label)
+                .to_string(),
             // El costo real son creditos, autoritativos en el portal.
             estimated_cost_cents: 0,
             latency_ms: start.elapsed().as_millis() as i64,
@@ -1507,7 +1513,9 @@ fn build_context(detail: &clinical::EncounterDetail) -> String {
         parts.push(format!("Preconsulta del paciente: {preconsulta}"));
     }
     if let Some(medical_history) = &detail.medical_history {
-        parts.push(format!("Cuestionario de antecedentes del paciente: {medical_history}"));
+        parts.push(format!(
+            "Cuestionario de antecedentes del paciente: {medical_history}"
+        ));
     }
     if let Some(allergies) = &detail.patient.allergies {
         parts.push(format!("Alergias: {allergies}"));
@@ -1953,7 +1961,9 @@ pub fn assist_text(
     })
 }
 
-fn validate_consultation_turns(turns: &[ConsultationTurn]) -> Result<Vec<ConsultationTurn>, AiError> {
+fn validate_consultation_turns(
+    turns: &[ConsultationTurn],
+) -> Result<Vec<ConsultationTurn>, AiError> {
     let cleaned: Vec<ConsultationTurn> = turns
         .iter()
         .filter_map(|turn| {
@@ -1964,7 +1974,10 @@ fn validate_consultation_turns(turns: &[ConsultationTurn]) -> Result<Vec<Consult
             // La diarizacion en nube (Ruta B, F4) puede identificar hasta 4 roles;
             // el medico los confirma en la UI antes de guardar o acomodar.
             let speaker = turn.speaker.trim().to_uppercase();
-            if !matches!(speaker.as_str(), "MEDICO" | "PACIENTE" | "ACOMPANANTE" | "OTRO") {
+            if !matches!(
+                speaker.as_str(),
+                "MEDICO" | "PACIENTE" | "ACOMPANANTE" | "OTRO"
+            ) {
                 return None;
             }
             Some(ConsultationTurn {
@@ -1980,7 +1993,9 @@ fn validate_consultation_turns(turns: &[ConsultationTurn]) -> Result<Vec<Consult
         ));
     }
     if cleaned.iter().any(|turn| turn.id.is_empty()) {
-        return Err(AiError::Invalid("cada turno debe tener identificador".into()));
+        return Err(AiError::Invalid(
+            "cada turno debe tener identificador".into(),
+        ));
     }
     Ok(cleaned)
 }
@@ -2174,7 +2189,10 @@ pub fn structure_consultation(
     let (provider, response) = registry.generate(&request)?;
     let output = parse_structuring_output(&response.output, &template_segments, &turns)?;
 
-    let run_id = response.gateway_run_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let run_id = response
+        .gateway_run_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     conn.execute(
         "INSERT INTO ai_runs
             (id, encounter_id, patient_id, usage_type, provider, model_version,
@@ -2317,8 +2335,9 @@ fn parse_clinical_aid_output(
     turns: &[ConsultationTurn],
     history_fields: &[MedicalHistoryField],
 ) -> Result<ClinicalAidOutput, AiError> {
-    let mut output: ClinicalAidOutput = serde_json::from_str(raw)
-        .map_err(|error| AiError::Invalid(format!("respuesta de ayuda clinica invalida: {error}")))?;
+    let mut output: ClinicalAidOutput = serde_json::from_str(raw).map_err(|error| {
+        AiError::Invalid(format!("respuesta de ayuda clinica invalida: {error}"))
+    })?;
     for item in &output.possibilities {
         if !matches!(item.compatibility.as_str(), "HIGH" | "MEDIUM" | "LOW")
             || item.compatibility.contains('%')
@@ -2332,7 +2351,9 @@ fn parse_clinical_aid_output(
     }
     for exam in &output.exam_suggestions {
         if exam.name.trim().is_empty() || exam.reason.trim().is_empty() {
-            return Err(AiError::Invalid("sugerencia de exploracion invalida".into()));
+            return Err(AiError::Invalid(
+                "sugerencia de exploracion invalida".into(),
+            ));
         }
     }
     for question in &output.question_suggestions {
@@ -2396,10 +2417,7 @@ fn parse_clinical_aid_output(
     Ok(output)
 }
 
-fn medical_history_value_is_valid(
-    field: &MedicalHistoryField,
-    value: &serde_json::Value,
-) -> bool {
+fn medical_history_value_is_valid(field: &MedicalHistoryField, value: &serde_json::Value) -> bool {
     match field.kind.as_str() {
         "yesno" => value
             .as_str()
@@ -2425,7 +2443,13 @@ fn medical_history_value_is_valid(
                     .iter()
                     .all(|value| field.options.iter().any(|option| option == value))
         }
-        "number" => value.is_number() || value.as_str().and_then(|value| value.parse::<f64>().ok()).is_some(),
+        "number" => {
+            value.is_number()
+                || value
+                    .as_str()
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .is_some()
+        }
         "text" | "textarea" | "date" => value
             .as_str()
             .map(|value| !value.trim().is_empty())
@@ -2501,7 +2525,10 @@ pub fn generate_clinical_aid(
         &reviewed.turns,
         &history_fields,
     )?;
-    let run_id = response.gateway_run_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let run_id = response
+        .gateway_run_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     conn.execute(
         "INSERT INTO ai_runs
             (id, encounter_id, patient_id, usage_type, provider, model_version,
@@ -2558,8 +2585,8 @@ pub fn save_reviewed_transcription(
     {
         return Err(AiError::Invalid(
             "el borrador de transcripcion no puede revisarse".into(),
-            ));
-        }
+        ));
+    }
     let turns = validate_consultation_turns(&turns)?;
     let transcript_text = turns
         .iter()
@@ -2574,7 +2601,14 @@ pub fn save_reviewed_transcription(
         "INSERT INTO consultation_transcriptions
             (id, encounter_id, run_id, transcript_text, turns_json, status, created_at, reviewed_at)
          VALUES (?1, ?2, ?3, ?4, ?5, 'REVIEWED', ?6, ?6)",
-        params![id, encounter_id, run_id, transcript_text, turns_json, reviewed_at],
+        params![
+            id,
+            encounter_id,
+            run_id,
+            transcript_text,
+            turns_json,
+            reviewed_at
+        ],
     )?;
     review_run(conn, run_id, "APPROVED", None)?;
     Ok(ReviewedTranscription {
@@ -3129,7 +3163,10 @@ mod tests {
         assert!(body["responseSchema"].is_object());
         assert_eq!(body["temperature"], 0.1);
 
-        let text = AiRequest { usage_type: USAGE_SUMMARY.into(), ..request };
+        let text = AiRequest {
+            usage_type: USAGE_SUMMARY.into(),
+            ..request
+        };
         let body = gateway_request_body(&text, "run-2", None);
         assert!(body["responseSchema"].is_null());
         assert!(body.get("model").is_none());
@@ -3137,13 +3174,23 @@ mod tests {
 
     #[test]
     fn gateway_errors_degrade_explicitly() {
-        let overloaded = gateway_error(503, r#"{"error":"saturado","code":"PROVIDER_OVERLOADED"}"#, "m");
+        let overloaded = gateway_error(
+            503,
+            r#"{"error":"saturado","code":"PROVIDER_OVERLOADED"}"#,
+            "m",
+        );
         assert!(matches!(overloaded, AiError::Overloaded { .. }));
-        let credits = gateway_error(402, r#"{"error":"No tienes créditos de IA suficientes"}"#, "m");
+        let credits = gateway_error(
+            402,
+            r#"{"error":"No tienes créditos de IA suficientes"}"#,
+            "m",
+        );
         assert!(matches!(&credits, AiError::Invalid(m) if m.starts_with("No tienes créditos")));
         let disabled = gateway_error(503, r#"{"error":"apagada","code":"GATEWAY_DISABLED"}"#, "m");
         assert!(matches!(disabled, AiError::Invalid(_)));
-        assert!(matches!(gateway_error(500, "<html>", "m"), AiError::Invalid(m) if m.contains("500")));
+        assert!(
+            matches!(gateway_error(500, "<html>", "m"), AiError::Invalid(m) if m.contains("500"))
+        );
     }
 
     struct FailingProvider;
@@ -3281,7 +3328,11 @@ mod tests {
     fn redaction_keeps_json_structure_intact() {
         // `redact` corre sobre el JSON serializado del prompt: los nombres entre
         // comillas deben redactarse sin romper la estructura.
-        let redacted = redact(r#"{"turns":[{"text":"Hugo Paz refiere tos"}]}"#, "Hugo", "Paz");
+        let redacted = redact(
+            r#"{"turns":[{"text":"Hugo Paz refiere tos"}]}"#,
+            "Hugo",
+            "Paz",
+        );
         assert!(redacted.contains(r#"{"turns":[{"text":"[PACIENTE] [PACIENTE] refiere tos"}]}"#));
     }
 
@@ -3446,7 +3497,10 @@ mod tests {
 
         assert_eq!(draft.usage_type, USAGE_CONSULTATION_STRUCTURING);
         assert_eq!(draft.provider, "fake-clinico");
-        assert!(draft.segments.iter().any(|segment| segment.segment_id == "subjective"));
+        assert!(draft
+            .segments
+            .iter()
+            .any(|segment| segment.segment_id == "subjective"));
 
         let run = read_run(&conn, &draft.run_id).unwrap();
         assert_eq!(run.status, "DRAFT");
@@ -3578,10 +3632,16 @@ mod tests {
     #[test]
     fn transient_status_classification_matches_overload_semantics() {
         for status in [429, 500, 502, 503, 504] {
-            assert!(transient_provider_status(status), "esperaba transitorio: {status}");
+            assert!(
+                transient_provider_status(status),
+                "esperaba transitorio: {status}"
+            );
         }
         for status in [200, 400, 401, 403, 404] {
-            assert!(!transient_provider_status(status), "esperaba determinista: {status}");
+            assert!(
+                !transient_provider_status(status),
+                "esperaba determinista: {status}"
+            );
         }
     }
 
@@ -3593,7 +3653,9 @@ mod tests {
 
         let registry = ProviderRegistry::new(vec![Box::new(OverloadedProvider)]);
         match assist_soap(&conn, &encounter_id, &registry) {
-            Err(AiError::Overloaded { provider, model, .. }) => {
+            Err(AiError::Overloaded {
+                provider, model, ..
+            }) => {
                 assert_eq!(provider, "overloaded");
                 assert_eq!(model, "model-x");
             }
@@ -3641,8 +3703,7 @@ mod tests {
         );
 
         // Con clave + gate: una opcion, nunca como default (Gemini sigue primario).
-        let options =
-            openai_text_model_options(Some("key".into()), Some("true".into()), None);
+        let options = openai_text_model_options(Some("key".into()), Some("true".into()), None);
         assert_eq!(options.len(), 1);
         assert_eq!(options[0].provider, PROVIDER_OPENAI);
         assert_eq!(options[0].model, DEFAULT_OPENAI_MODEL);
@@ -3650,11 +3711,8 @@ mod tests {
         assert!(!options[0].is_default);
 
         // Modelo configurable.
-        let options = openai_text_model_options(
-            Some("key".into()),
-            Some("1".into()),
-            Some("gpt-5.4".into()),
-        );
+        let options =
+            openai_text_model_options(Some("key".into()), Some("1".into()), Some("gpt-5.4".into()));
         assert_eq!(options[0].model, "gpt-5.4");
     }
 
@@ -4207,7 +4265,9 @@ mod tests {
             ],
         )
         .unwrap();
-        assert!(reviewed.transcript_text.contains("ACOMPANANTE: Soy su hija."));
+        assert!(reviewed
+            .transcript_text
+            .contains("ACOMPANANTE: Soy su hija."));
         assert!(reviewed
             .transcript_text
             .contains("OTRO: Traigo los estudios previos."));
@@ -4306,12 +4366,16 @@ mod tests {
         let bad_exam = base
             .replace("EXAMS", r#"[{"name":"  ","reason":"Sin datos"}]"#)
             .replace("QUESTIONS", "[]");
-        assert!(parse_clinical_aid_output(&bad_exam, &scribe_segments(), &scribe_turns(), &[]).is_err());
-        let bad_question = base
-            .replace("EXAMS", "[]")
-            .replace("QUESTIONS", r#"[{"question":"¿Desde cuándo?","reason":""}]"#);
         assert!(
-            parse_clinical_aid_output(&bad_question, &scribe_segments(), &scribe_turns(), &[]).is_err()
+            parse_clinical_aid_output(&bad_exam, &scribe_segments(), &scribe_turns(), &[]).is_err()
+        );
+        let bad_question = base.replace("EXAMS", "[]").replace(
+            "QUESTIONS",
+            r#"[{"question":"¿Desde cuándo?","reason":""}]"#,
+        );
+        assert!(
+            parse_clinical_aid_output(&bad_question, &scribe_segments(), &scribe_turns(), &[])
+                .is_err()
         );
     }
 
@@ -4349,7 +4413,9 @@ mod tests {
         }"#;
         assert!(parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns(), &[]).is_err());
         let valid = raw.replace("blood_type", "allergies");
-        assert!(parse_clinical_aid_output(&valid, &scribe_segments(), &scribe_turns(), &[]).is_ok());
+        assert!(
+            parse_clinical_aid_output(&valid, &scribe_segments(), &scribe_turns(), &[]).is_ok()
+        );
     }
 
     #[test]
@@ -4366,31 +4432,20 @@ mod tests {
             kind: "yesno".into(),
             options: Vec::new(),
         }];
-        let output = parse_clinical_aid_output(
-            raw,
-            &scribe_segments(),
-            &scribe_turns(),
-            &fields,
-        )
-        .unwrap();
+        let output =
+            parse_clinical_aid_output(raw, &scribe_segments(), &scribe_turns(), &fields).unwrap();
         assert_eq!(output.medical_history_updates[0].label, "Diabetes");
 
         let unknown = raw.replace("pathological.diabetico", "pathological.inventado");
-        assert!(parse_clinical_aid_output(
-            &unknown,
-            &scribe_segments(),
-            &scribe_turns(),
-            &fields,
-        )
-        .is_err());
+        assert!(
+            parse_clinical_aid_output(&unknown, &scribe_segments(), &scribe_turns(), &fields,)
+                .is_err()
+        );
         let uncited = raw.replace(r#"["turn-1"]"#, "[]");
-        assert!(parse_clinical_aid_output(
-            &uncited,
-            &scribe_segments(),
-            &scribe_turns(),
-            &fields,
-        )
-        .is_err());
+        assert!(
+            parse_clinical_aid_output(&uncited, &scribe_segments(), &scribe_turns(), &fields,)
+                .is_err()
+        );
     }
 
     #[test]
@@ -4412,13 +4467,8 @@ mod tests {
             &provider,
         )
         .unwrap();
-        save_reviewed_transcription(
-            &conn,
-            &encounter_id,
-            &transcript.run_id,
-            scribe_turns(),
-        )
-        .unwrap();
+        save_reviewed_transcription(&conn, &encounter_id, &transcript.run_id, scribe_turns())
+            .unwrap();
         let draft = generate_clinical_aid(
             &conn,
             &encounter_id,
@@ -4511,8 +4561,16 @@ mod tests {
         // Diarizador de prueba: el primer segmento es hablante 0, el segundo el 1.
         let diarizer = |_samples: &[f32], _sr: u32| {
             Ok(vec![
-                crate::diarization::SpeakerSegment { start_cs: 0, end_cs: 100, speaker_idx: 0 },
-                crate::diarization::SpeakerSegment { start_cs: 100, end_cs: 250, speaker_idx: 1 },
+                crate::diarization::SpeakerSegment {
+                    start_cs: 0,
+                    end_cs: 100,
+                    speaker_idx: 0,
+                },
+                crate::diarization::SpeakerSegment {
+                    start_cs: 100,
+                    end_cs: 250,
+                    speaker_idx: 1,
+                },
             ])
         };
 
@@ -4535,7 +4593,10 @@ mod tests {
         assert_eq!(draft.turns[0].speaker_id, "speaker-0");
         assert_eq!(draft.turns[0].role, crate::diarization::ScribeRole::Medico);
         assert_eq!(draft.turns[1].speaker_id, "speaker-1");
-        assert_eq!(draft.turns[1].role, crate::diarization::ScribeRole::Paciente);
+        assert_eq!(
+            draft.turns[1].role,
+            crate::diarization::ScribeRole::Paciente
+        );
         assert_eq!(draft.usage_type, USAGE_TRANSCRIPTION);
         assert_eq!(draft.audio_retention_policy, AUDIO_RETENTION_DISCARD);
 

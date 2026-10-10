@@ -208,7 +208,10 @@ fn normalize_coded_diagnoses(
     let mut out: Vec<CodedDiagnosis> = Vec::with_capacity(input.len());
     for item in input {
         let entry = crate::cie10::lookup(&item.code).ok_or_else(|| {
-            ClinicalError::Invalid(format!("la clave CIE-10 {} no existe en el catalogo", item.code.trim()))
+            ClinicalError::Invalid(format!(
+                "la clave CIE-10 {} no existe en el catalogo",
+                item.code.trim()
+            ))
         })?;
         if out.iter().any(|d| d.code == entry.code) {
             continue;
@@ -380,9 +383,8 @@ fn import_appointment_patient(
         .optional()?
         .ok_or(ClinicalError::NotFound)?;
 
-    let patient_id = patient_id.ok_or_else(|| {
-        ClinicalError::Invalid("la cita no tiene paciente asociado".into())
-    })?;
+    let patient_id = patient_id
+        .ok_or_else(|| ClinicalError::Invalid("la cita no tiene paciente asociado".into()))?;
 
     // El responsable de la cita se conserva en el expediente como entidad propia.
     conn.execute(
@@ -392,8 +394,17 @@ fn import_appointment_patient(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
          ON CONFLICT(id) DO NOTHING",
         params![
-            patient_id, first_name, last_name, phone, email, birth_date,
-            g_name, g_rel, g_phone, g_email, now()
+            patient_id,
+            first_name,
+            last_name,
+            phone,
+            email,
+            birth_date,
+            g_name,
+            g_rel,
+            g_phone,
+            g_email,
+            now()
         ],
     )?;
 
@@ -427,7 +438,13 @@ pub fn open_encounter_for_appointment(
         params![encounter_id, appointment_id, patient_id, now()],
     )?;
 
-    audit(conn, "encounter", &encounter_id, "opened", Some(appointment_id))?;
+    audit(
+        conn,
+        "encounter",
+        &encounter_id,
+        "opened",
+        Some(appointment_id),
+    )?;
     read_encounter(conn, &encounter_id)
 }
 
@@ -577,7 +594,13 @@ fn link_portal_patient(
         "UPDATE documents SET patient_id = ?2 WHERE patient_id = ?1",
         params![portal_patient_id, patient_id],
     )?;
-    audit(conn, "patient_link", portal_patient_id, "linked", Some(patient_id))?;
+    audit(
+        conn,
+        "patient_link",
+        portal_patient_id,
+        "linked",
+        Some(patient_id),
+    )?;
     Ok(())
 }
 
@@ -592,7 +615,13 @@ fn open_encounter_with_patient(
          VALUES (?1, ?2, ?3, 'OPEN', ?4)",
         params![encounter_id, appointment_id, patient_id, now()],
     )?;
-    audit(conn, "encounter", &encounter_id, "opened", Some(appointment_id))?;
+    audit(
+        conn,
+        "encounter",
+        &encounter_id,
+        "opened",
+        Some(appointment_id),
+    )?;
     read_encounter(conn, &encounter_id)
 }
 
@@ -612,7 +641,9 @@ pub fn attend_appointment(
     force_new: bool,
 ) -> Result<AttendOutcome, ClinicalError> {
     if let Some(existing) = encounter_id_for_appointment(conn, appointment_id)? {
-        return Ok(AttendOutcome::Encounter { encounter_id: existing });
+        return Ok(AttendOutcome::Encounter {
+            encounter_id: existing,
+        });
     }
 
     let (portal_id, appt) = read_appointment_patient(conn, appointment_id)?;
@@ -628,13 +659,17 @@ pub fn attend_appointment(
             }
         }
         let encounter = open_encounter_with_patient(conn, appointment_id, local_id)?;
-        return Ok(AttendOutcome::Encounter { encounter_id: encounter.id });
+        return Ok(AttendOutcome::Encounter {
+            encounter_id: encounter.id,
+        });
     }
 
     // El medico eligio crear un expediente nuevo desde los datos de la cita.
     if force_new {
         let encounter = open_encounter_for_appointment(conn, appointment_id)?;
-        return Ok(AttendOutcome::Encounter { encounter_id: encounter.id });
+        return Ok(AttendOutcome::Encounter {
+            encounter_id: encounter.id,
+        });
     }
 
     // Resolucion automatica por id del portal (cuenta de paciente o vinculo ya
@@ -643,12 +678,16 @@ pub fn attend_appointment(
         if let Some(local_id) = lookup_patient_link(conn, pid)? {
             if patient_exists(conn, &local_id)? {
                 let encounter = open_encounter_with_patient(conn, appointment_id, &local_id)?;
-                return Ok(AttendOutcome::Encounter { encounter_id: encounter.id });
+                return Ok(AttendOutcome::Encounter {
+                    encounter_id: encounter.id,
+                });
             }
         }
         if patient_exists(conn, pid)? {
             let encounter = open_encounter_with_patient(conn, appointment_id, pid)?;
-            return Ok(AttendOutcome::Encounter { encounter_id: encounter.id });
+            return Ok(AttendOutcome::Encounter {
+                encounter_id: encounter.id,
+            });
         }
     }
 
@@ -664,7 +703,9 @@ pub fn attend_appointment(
     if candidates.is_empty() {
         // Sin coincidencias: importa los datos y entra directo.
         let encounter = open_encounter_for_appointment(conn, appointment_id)?;
-        return Ok(AttendOutcome::Encounter { encounter_id: encounter.id });
+        return Ok(AttendOutcome::Encounter {
+            encounter_id: encounter.id,
+        });
     }
 
     Ok(AttendOutcome::NeedsResolution {
@@ -1125,14 +1166,23 @@ pub fn match_patients_with_reasons(
     let mut matches: Vec<PatientMatch> = candidates
         .into_iter()
         .filter_map(|p| {
-            let p_email = p.email.as_deref().map(normalize_text).filter(|s| !s.is_empty());
-            let p_phone = p.phone.as_deref().map(normalize_phone).filter(|s| !s.is_empty());
+            let p_email = p
+                .email
+                .as_deref()
+                .map(normalize_text)
+                .filter(|s| !s.is_empty());
+            let p_phone = p
+                .phone
+                .as_deref()
+                .map(normalize_phone)
+                .filter(|s| !s.is_empty());
             let p_name = normalize_name(&p.first_name, &p.last_name);
 
             let matched_email = matches!((&email_n, &p_email), (Some(e), Some(pe)) if e == pe);
             let matched_phone = matches!((&phone_n, &p_phone), (Some(ph), Some(pp)) if ph == pp);
-            let matched_name =
-                name_n.as_ref().is_some_and(|n| !p_name.is_empty() && n == &p_name);
+            let matched_name = name_n
+                .as_ref()
+                .is_some_and(|n| !p_name.is_empty() && n == &p_name);
 
             if matched_name || matched_phone || matched_email {
                 Some(PatientMatch {
@@ -1161,10 +1211,12 @@ pub fn find_patient_matches(
     first_name: &str,
     last_name: &str,
 ) -> Result<Vec<PatientSummary>, ClinicalError> {
-    Ok(match_patients_with_reasons(conn, email, phone, first_name, last_name)?
-        .into_iter()
-        .map(|m| m.patient)
-        .collect())
+    Ok(
+        match_patients_with_reasons(conn, email, phone, first_name, last_name)?
+            .into_iter()
+            .map(|m| m.patient)
+            .collect(),
+    )
 }
 
 /// Da de alta un paciente capturado a mano (no llego por una cita del portal).
@@ -1192,7 +1244,16 @@ pub fn create_patient(
         "INSERT INTO patients
             (id, first_name, last_name, phone, email, birth_date, sex, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-        params![id, first_name, last_name, phone, email, birth_date, sex, now()],
+        params![
+            id,
+            first_name,
+            last_name,
+            phone,
+            email,
+            birth_date,
+            sex,
+            now()
+        ],
     )?;
 
     audit(conn, "patient", &id, "created", Some("manual"))?;
@@ -1214,15 +1275,26 @@ pub fn create_patient(
 
 /* ---------- Linea del tiempo clinica ---------- */
 
-const TIMELINE_CATEGORIES: &[&str] =
-    &["NOTE", "DIAGNOSIS", "PROCEDURE", "MEDICATION", "LAB", "ALERT", "MILESTONE"];
+const TIMELINE_CATEGORIES: &[&str] = &[
+    "NOTE",
+    "DIAGNOSIS",
+    "PROCEDURE",
+    "MEDICATION",
+    "LAB",
+    "ALERT",
+    "MILESTONE",
+];
 
 fn validate_timeline_input(input: &TimelineEventInput) -> Result<String, ClinicalError> {
     if input.title.trim().is_empty() {
-        return Err(ClinicalError::Invalid("el evento necesita un titulo".into()));
+        return Err(ClinicalError::Invalid(
+            "el evento necesita un titulo".into(),
+        ));
     }
     if input.event_date.trim().is_empty() {
-        return Err(ClinicalError::Invalid("el evento necesita una fecha".into()));
+        return Err(ClinicalError::Invalid(
+            "el evento necesita una fecha".into(),
+        ));
     }
     let category = input.category.trim().to_uppercase();
     let category = if category.is_empty() {
@@ -1638,7 +1710,12 @@ pub fn save_prescription(
             conn.execute(
                 "INSERT INTO prescriptions (id, encounter_id, content, created_at)
                  VALUES (?1, ?2, ?3, ?4)",
-                params![uuid::Uuid::new_v4().to_string(), encounter_id, content, now()],
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    encounter_id,
+                    content,
+                    now()
+                ],
             )?;
         }
     }
@@ -1697,7 +1774,12 @@ pub fn sign_encounter(conn: &Connection, encounter_id: &str) -> Result<Encounter
         .note
         .ok_or_else(|| ClinicalError::Invalid("no se puede firmar un encuentro sin nota".into()))?;
 
-    let hash = signature_hash(encounter_id, &encounter.patient_id, &note, &detail.prescription);
+    let hash = signature_hash(
+        encounter_id,
+        &encounter.patient_id,
+        &note,
+        &detail.prescription,
+    );
 
     conn.execute(
         "UPDATE encounters SET status = 'SIGNED', signed_at = ?2, signed_hash = ?3 WHERE id = ?1",
@@ -1721,7 +1803,12 @@ pub fn verify_signature(conn: &Connection, encounter_id: &str) -> Result<bool, C
         return Ok(false);
     };
 
-    let hash = signature_hash(encounter_id, &encounter.patient_id, &note, &detail.prescription);
+    let hash = signature_hash(
+        encounter_id,
+        &encounter.patient_id,
+        &note,
+        &detail.prescription,
+    );
 
     Ok(hash == stored_hash)
 }
@@ -1817,7 +1904,11 @@ mod tests {
     }
 
     fn coded(code: &str, principal: bool) -> CodedDiagnosis {
-        CodedDiagnosis { code: code.into(), name: "texto de la interfaz".into(), principal }
+        CodedDiagnosis {
+            code: code.into(),
+            name: "texto de la interfaz".into(),
+            principal,
+        }
     }
 
     #[test]
@@ -1841,21 +1932,36 @@ mod tests {
         )
         .unwrap();
 
-        let note = get_encounter_detail(&conn, &encounter.id).unwrap().note.unwrap();
+        let note = get_encounter_detail(&conn, &encounter.id)
+            .unwrap()
+            .note
+            .unwrap();
         assert_eq!(
             note.content.coded_diagnoses,
             vec![
-                CodedDiagnosis { code: "J459".into(), name: "ASMA, NO ESPECIFICADO".into(), principal: false },
-                CodedDiagnosis { code: "M545".into(), name: "LUMBAGO NO ESPECIFICADO".into(), principal: true },
+                CodedDiagnosis {
+                    code: "J459".into(),
+                    name: "ASMA, NO ESPECIFICADO".into(),
+                    principal: false
+                },
+                CodedDiagnosis {
+                    code: "M545".into(),
+                    name: "LUMBAGO NO ESPECIFICADO".into(),
+                    principal: true
+                },
             ],
             "sin repetidos, nombre oficial y un solo principal"
         );
-        assert_eq!(note.content.diagnosis, "Asma y lumbago", "el texto libre se conserva");
+        assert_eq!(
+            note.content.diagnosis, "Asma y lumbago",
+            "el texto libre se conserva"
+        );
     }
 
     #[test]
     fn the_first_coded_diagnosis_is_principal_when_none_is_marked() {
-        let normalized = normalize_coded_diagnoses(&[coded("M545", false), coded("J459", false)]).unwrap();
+        let normalized =
+            normalize_coded_diagnoses(&[coded("M545", false), coded("J459", false)]).unwrap();
         assert!(normalized[0].principal && !normalized[1].principal);
         assert!(normalize_coded_diagnoses(&[]).unwrap().is_empty());
     }
@@ -1863,7 +1969,10 @@ mod tests {
     #[test]
     fn rejects_unknown_codes_and_overlong_lists() {
         let err = normalize_coded_diagnoses(&[coded("Z99.99", false)]).unwrap_err();
-        assert!(err.to_string().contains("no existe en el catalogo"), "{err}");
+        assert!(
+            err.to_string().contains("no existe en el catalogo"),
+            "{err}"
+        );
 
         let many: Vec<CodedDiagnosis> = (0..13).map(|_| coded("M545", false)).collect();
         assert!(normalize_coded_diagnoses(&many).is_err());
@@ -1873,12 +1982,21 @@ mod tests {
     fn notes_without_coded_diagnoses_keep_their_signature_hash() {
         // La huella se calcula sobre el contenido serializado: sin diagnosticos
         // codificados el campo no aparece y las firmas previas siguen validas.
-        let content = NoteContent { diagnosis: "Lumbalgia".into(), ..Default::default() };
+        let content = NoteContent {
+            diagnosis: "Lumbalgia".into(),
+            ..Default::default()
+        };
         let json = serde_json::to_value(&content).unwrap();
         assert!(json.get("coded_diagnoses").is_none());
 
-        let with_codes = NoteContent { coded_diagnoses: vec![coded("M545", true)], ..content };
-        assert!(serde_json::to_value(&with_codes).unwrap().get("coded_diagnoses").is_some());
+        let with_codes = NoteContent {
+            coded_diagnoses: vec![coded("M545", true)],
+            ..content
+        };
+        assert!(serde_json::to_value(&with_codes)
+            .unwrap()
+            .get("coded_diagnoses")
+            .is_some());
     }
 
     #[test]
@@ -2006,7 +2124,10 @@ mod tests {
         let audit_count: i64 = conn
             .query_row("SELECT count(*) FROM clinical_audit", [], |row| row.get(0))
             .unwrap();
-        assert!(audit_count >= 5, "se esperaban >=5 eventos, hubo {audit_count}");
+        assert!(
+            audit_count >= 5,
+            "se esperaban >=5 eventos, hubo {audit_count}"
+        );
     }
 
     #[test]
@@ -2274,7 +2395,10 @@ mod tests {
             AttendOutcome::Encounter { encounter_id } => encounter_id,
             _ => panic!("el vinculo recordado debio resolver solo"),
         };
-        assert_eq!(get_encounter_detail(&conn, &enc2).unwrap().patient.id, local.id);
+        assert_eq!(
+            get_encounter_detail(&conn, &enc2).unwrap().patient.id,
+            local.id
+        );
 
         // Reabrir la misma cita devuelve el mismo encuentro (idempotente).
         match attend_appointment(&conn, "appt-1", None, false).unwrap() {
@@ -2295,7 +2419,10 @@ mod tests {
         };
         // Se importo el paciente con el id del portal (preserva enlaces de buzon).
         assert!(patient_exists(&conn, "portal-new").unwrap());
-        assert_eq!(get_encounter_detail(&conn, &enc).unwrap().patient.id, "portal-new");
+        assert_eq!(
+            get_encounter_detail(&conn, &enc).unwrap().patient.id,
+            "portal-new"
+        );
     }
 
     fn encounter_count_for(conn: &Connection, appointment_id: &str) -> i64 {
@@ -2457,13 +2584,24 @@ mod tests {
         );
         // Sin coincidencia: otra persona con otros datos.
         assert_eq!(
-            find_patient_matches(&conn, Some("otro@example.com"), Some("555"), "Juan", "Perez")
+            find_patient_matches(
+                &conn,
+                Some("otro@example.com"),
+                Some("555"),
+                "Juan",
+                "Perez"
+            )
+            .unwrap()
+            .len(),
+            0
+        );
+        // Sin datos no devuelve nada (no propone a todo el directorio).
+        assert_eq!(
+            find_patient_matches(&conn, None, None, "", "")
                 .unwrap()
                 .len(),
             0
         );
-        // Sin datos no devuelve nada (no propone a todo el directorio).
-        assert_eq!(find_patient_matches(&conn, None, None, "", "").unwrap().len(), 0);
     }
 
     #[test]
@@ -2487,7 +2625,13 @@ mod tests {
         let listed = list_patients(&conn, None).unwrap();
         assert_eq!(listed[0].encounter_count, 0);
         assert!(listed[0].last_visit.is_none());
-        assert_eq!(get_patient_profile(&conn, &patient.id).unwrap().history.len(), 0);
+        assert_eq!(
+            get_patient_profile(&conn, &patient.id)
+                .unwrap()
+                .history
+                .len(),
+            0
+        );
 
         // En cuanto se escribe algo, el encuentro aparece en el historial.
         let encounter = open_encounter_for_patient(&conn, &patient.id).unwrap();
@@ -2500,7 +2644,13 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(get_patient_profile(&conn, &patient.id).unwrap().history.len(), 1);
+        assert_eq!(
+            get_patient_profile(&conn, &patient.id)
+                .unwrap()
+                .history
+                .len(),
+            1
+        );
         assert_eq!(list_patients(&conn, None).unwrap()[0].encounter_count, 1);
     }
 
@@ -2543,15 +2693,36 @@ mod tests {
             detail: None,
         };
         assert!(matches!(
-            add_timeline_event(&conn, &patient.id, &TimelineEventInput { title: "  ".into(), ..base() }),
+            add_timeline_event(
+                &conn,
+                &patient.id,
+                &TimelineEventInput {
+                    title: "  ".into(),
+                    ..base()
+                }
+            ),
             Err(ClinicalError::Invalid(_))
         ));
         assert!(matches!(
-            add_timeline_event(&conn, &patient.id, &TimelineEventInput { event_date: "".into(), ..base() }),
+            add_timeline_event(
+                &conn,
+                &patient.id,
+                &TimelineEventInput {
+                    event_date: "".into(),
+                    ..base()
+                }
+            ),
             Err(ClinicalError::Invalid(_))
         ));
         assert!(matches!(
-            add_timeline_event(&conn, &patient.id, &TimelineEventInput { category: "INVENTADA".into(), ..base() }),
+            add_timeline_event(
+                &conn,
+                &patient.id,
+                &TimelineEventInput {
+                    category: "INVENTADA".into(),
+                    ..base()
+                }
+            ),
             Err(ClinicalError::Invalid(_))
         ));
 

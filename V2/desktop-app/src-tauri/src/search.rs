@@ -141,13 +141,19 @@ fn medication_synonyms(conn: &Connection, query: &str) -> Result<Vec<String>, Se
          WHERE upper(r1.name) = ?1",
     )?;
     let rows = stmt
-        .query_map(params![folded], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .query_map(params![folded], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut names: Vec<String> = Vec::new();
     for (display, name) in rows {
         for candidate in [display, name] {
             let key: String = folded_chars(&candidate).into_iter().collect();
-            if key.trim() != folded && !names.iter().any(|n| folded_chars(n) == folded_chars(&candidate)) {
+            if key.trim() != folded
+                && !names
+                    .iter()
+                    .any(|n| folded_chars(n) == folded_chars(&candidate))
+            {
                 names.push(candidate);
             }
         }
@@ -217,7 +223,11 @@ pub fn search_records(
 ) -> Result<SearchResults, SearchError> {
     let base = tokens_of(query);
     if base.is_empty() {
-        return Ok(SearchResults { hits: Vec::new(), truncated: false, expanded_terms: Vec::new() });
+        return Ok(SearchResults {
+            hits: Vec::new(),
+            truncated: false,
+            expanded_terms: Vec::new(),
+        });
     }
     let expanded_terms = medication_synonyms(conn, query)?;
     let mut alternatives = vec![base];
@@ -239,10 +249,20 @@ pub fn search_records(
 
     for row in load_notes(conn, patient_id)? {
         for diagnosis in &row.coded {
-            let label = format!("{} {}", crate::cie10::display_code(&diagnosis.code), diagnosis.name);
-            let by_code = code.as_deref().is_some_and(|c| diagnosis.code.starts_with(c));
+            let label = format!(
+                "{} {}",
+                crate::cie10::display_code(&diagnosis.code),
+                diagnosis.name
+            );
+            let by_code = code
+                .as_deref()
+                .is_some_and(|c| diagnosis.code.starts_with(c));
             if by_code || match_position(&diagnosis.name, &alternatives).is_some() {
-                let field = if diagnosis.principal { "CIE-10 principal" } else { "CIE-10" };
+                let field = if diagnosis.principal {
+                    "CIE-10 principal"
+                } else {
+                    "CIE-10"
+                };
                 hits.push(hit(&row, "DIAGNOSTICO", field, label));
             }
         }
@@ -282,7 +302,11 @@ pub fn search_records(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     for (id, pid, name, encounter_id, opened_at, status, title, file_name) in documents {
-        let label = if title.is_empty() { file_name.clone() } else { format!("{title} ({file_name})") };
+        let label = if title.is_empty() {
+            file_name.clone()
+        } else {
+            format!("{title} ({file_name})")
+        };
         if match_position(&label, &alternatives).is_some() {
             hits.push(SearchHit {
                 patient_id: pid,
@@ -300,7 +324,11 @@ pub fn search_records(
 
     let truncated = hits.len() > MAX_HITS;
     hits.truncate(MAX_HITS);
-    Ok(SearchResults { hits, truncated, expanded_terms })
+    Ok(SearchResults {
+        hits,
+        truncated,
+        expanded_terms,
+    })
 }
 
 #[cfg(test)]
@@ -327,7 +355,12 @@ mod tests {
         .unwrap();
     }
 
-    fn consult(conn: &Connection, patient_id: &str, note: NoteContent, prescription: &str) -> String {
+    fn consult(
+        conn: &Connection,
+        patient_id: &str,
+        note: NoteContent,
+        prescription: &str,
+    ) -> String {
         let encounter = clinical::open_encounter_for_patient(conn, patient_id).unwrap();
         clinical::save_note(conn, &encounter.id, &note).unwrap();
         if !prescription.is_empty() {
@@ -345,7 +378,11 @@ mod tests {
             NoteContent {
                 subjective: "Disnea nocturna y sibilancias desde hace una semana.".into(),
                 diagnosis: "Crisis asmática leve".into(),
-                coded_diagnoses: vec![CodedDiagnosis { code: "J459".into(), name: String::new(), principal: true }],
+                coded_diagnoses: vec![CodedDiagnosis {
+                    code: "J459".into(),
+                    name: String::new(),
+                    principal: true,
+                }],
                 ..Default::default()
             },
             "Salbutamol inhalado 2 disparos c/6h\nTempra 500 mg c/8h por 3 dias",
@@ -356,7 +393,11 @@ mod tests {
             NoteContent {
                 subjective: "Dolor lumbar al cargar peso.".into(),
                 plan: "Reposo relativo y ejercicios.".into(),
-                coded_diagnoses: vec![CodedDiagnosis { code: "M545".into(), name: String::new(), principal: true }],
+                coded_diagnoses: vec![CodedDiagnosis {
+                    code: "M545".into(),
+                    name: String::new(),
+                    principal: true,
+                }],
                 ..Default::default()
             },
             "Naproxeno 250 mg c/12h",
@@ -365,7 +406,11 @@ mod tests {
     }
 
     fn kinds(results: &SearchResults) -> Vec<(String, String)> {
-        results.hits.iter().map(|h| (h.patient_id.clone(), h.kind.clone())).collect()
+        results
+            .hits
+            .iter()
+            .map(|h| (h.patient_id.clone(), h.kind.clone()))
+            .collect()
     }
 
     #[test]
@@ -374,7 +419,10 @@ mod tests {
         let (asthma, _) = seed(&conn);
         let results = search_records(&conn, "j45", None).unwrap();
         assert_eq!(kinds(&results), vec![("p1".into(), "DIAGNOSTICO".into())]);
-        assert_eq!(results.hits[0].encounter_id.as_deref(), Some(asthma.as_str()));
+        assert_eq!(
+            results.hits[0].encounter_id.as_deref(),
+            Some(asthma.as_str())
+        );
         assert_eq!(results.hits[0].snippet, "J45.9 ASMA, NO ESPECIFICADO");
         assert_eq!(results.hits[0].field, "CIE-10 principal");
         assert_eq!(search_records(&conn, "J45.9", None).unwrap().hits.len(), 1);
@@ -389,10 +437,16 @@ mod tests {
         assert_eq!(results.hits[0].field, "Diagnostico");
 
         let results = search_records(&conn, "sibilancias nocturna", None).unwrap();
-        assert_eq!(results.hits[0].field, "Subjetivo", "todas las palabras en el mismo campo");
+        assert_eq!(
+            results.hits[0].field, "Subjetivo",
+            "todas las palabras en el mismo campo"
+        );
         assert!(results.hits[0].snippet.contains("sibilancias"));
 
-        assert!(search_records(&conn, "sibilancias lumbar", None).unwrap().hits.is_empty());
+        assert!(search_records(&conn, "sibilancias lumbar", None)
+            .unwrap()
+            .hits
+            .is_empty());
     }
 
     #[test]
@@ -401,8 +455,15 @@ mod tests {
         seed(&conn);
         let results = search_records(&conn, "paracetamol", None).unwrap();
         assert_eq!(kinds(&results), vec![("p1".into(), "RECETA".into())]);
-        assert!(results.hits[0].snippet.contains("Tempra"), "{}", results.hits[0].snippet);
-        assert!(results.expanded_terms.iter().any(|t| t.eq_ignore_ascii_case("tempra")));
+        assert!(
+            results.hits[0].snippet.contains("Tempra"),
+            "{}",
+            results.hits[0].snippet
+        );
+        assert!(results
+            .expanded_terms
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case("tempra")));
 
         let results = search_records(&conn, "naproxeno", None).unwrap();
         assert_eq!(kinds(&results), vec![("p2".into(), "RECETA".into())]);
@@ -413,7 +474,10 @@ mod tests {
         let conn = test_conn("patient");
         seed(&conn);
         assert_eq!(search_records(&conn, "dolor", None).unwrap().hits.len(), 1);
-        assert!(search_records(&conn, "dolor", Some("p1")).unwrap().hits.is_empty());
+        assert!(search_records(&conn, "dolor", Some("p1"))
+            .unwrap()
+            .hits
+            .is_empty());
     }
 
     #[test]
@@ -428,14 +492,20 @@ mod tests {
                 file_name: "espirometria-octubre.pdf".into(),
                 category: "LABORATORIO".into(),
                 title: None,
-                content_base64: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"%PDF-1.4 x"),
+                content_base64: base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    b"%PDF-1.4 x",
+                ),
             },
         )
         .unwrap();
         let results = search_records(&conn, "espirometria", None).unwrap();
         assert_eq!(results.hits.len(), 1);
         assert_eq!(results.hits[0].kind, "DOCUMENTO");
-        assert_eq!(results.hits[0].encounter_id.as_deref(), Some(asthma.as_str()));
+        assert_eq!(
+            results.hits[0].encounter_id.as_deref(),
+            Some(asthma.as_str())
+        );
         assert!(results.hits[0].document_id.is_some());
     }
 
@@ -444,17 +514,45 @@ mod tests {
         let conn = test_conn("versions");
         patient(&conn, "p1", "Ana", "Ruiz");
         let encounter = clinical::open_encounter_for_patient(&conn, "p1").unwrap();
-        clinical::save_note(&conn, &encounter.id, &NoteContent { plan: "Amoxicilina".into(), ..Default::default() }).unwrap();
-        clinical::save_note(&conn, &encounter.id, &NoteContent { plan: "Solo vigilancia".into(), ..Default::default() }).unwrap();
-        assert!(search_records(&conn, "amoxicilina", None).unwrap().hits.is_empty());
-        assert_eq!(search_records(&conn, "vigilancia", None).unwrap().hits.len(), 1);
+        clinical::save_note(
+            &conn,
+            &encounter.id,
+            &NoteContent {
+                plan: "Amoxicilina".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        clinical::save_note(
+            &conn,
+            &encounter.id,
+            &NoteContent {
+                plan: "Solo vigilancia".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(search_records(&conn, "amoxicilina", None)
+            .unwrap()
+            .hits
+            .is_empty());
+        assert_eq!(
+            search_records(&conn, "vigilancia", None)
+                .unwrap()
+                .hits
+                .len(),
+            1
+        );
     }
 
     #[test]
     fn empty_queries_return_nothing_and_snippets_are_trimmed() {
         let conn = test_conn("empty");
         seed(&conn);
-        assert!(search_records(&conn, "  .,; ", None).unwrap().hits.is_empty());
+        assert!(search_records(&conn, "  .,; ", None)
+            .unwrap()
+            .hits
+            .is_empty());
 
         let long = format!("{} hallazgo clave {}", "a ".repeat(80), "b ".repeat(80));
         let position = match_position(&long, &[tokens_of("hallazgo")]).unwrap();
