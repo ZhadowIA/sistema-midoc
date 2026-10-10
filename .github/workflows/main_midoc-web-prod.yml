@@ -83,7 +83,7 @@ jobs:
         run: npx prisma generate
 
       - name: Validate environment contract
-        run: npm run env:check
+        run: npx tsx src/lib/env.ts
 
       - name: Lint
         run: npm run lint
