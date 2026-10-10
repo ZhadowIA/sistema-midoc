@@ -1,0 +1,6 @@
+# Commits de solo formato que git blame debe saltar.
+# Uso local: git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub lo aplica automaticamente en la vista de blame.
+
+# style(desktop): aplicar cargo fmt al codigo Rust
+21e9c0ce55260b94270a2ac352483f8093783053
