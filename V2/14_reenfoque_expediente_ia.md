@@ -86,7 +86,7 @@ Nada de esto se elimina de la base de datos local ni de PostgreSQL en este reenf
 | Órdenes de laboratorio dental (paso 26) | Es coordinación clínica, no cobro. ¿Se conserva activa o se congela junto con la operación del consultorio? |
 | Notificaciones al propio médico | ¿Sobrevive algún aviso (respaldo fallido, suscripción por vencer) por correo, o la app no notifica nada hacia afuera? |
 | Exportación del expediente | ¿Qué formato exige el médico para entregar o migrar un expediente (PDF por consulta, expediente completo, CSV)? |
-| Modelo de negocio | Sin agenda ni cobro, la suscripción se justifica por expediente + IA. ¿Precio por médico con cuota de IA incluida? |
+| Modelo de negocio | **Decidido 2026-10-06:** compra única + créditos de IA, sin suscripción obligatoria. Ver `15_modelo_de_negocio.md`. |
 
 ## 6. Cómo se refleja en la línea de desarrollo
 

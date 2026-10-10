@@ -4,6 +4,7 @@ import { DentalBudgetPanel } from "./DentalBudgetPanel";
 import { DentalLabPanel } from "./DentalLabPanel";
 import { DocumentsPanel } from "./DocumentsPanel";
 import { Cie10Picker } from "./Cie10Picker";
+import { exportMessage, exportRecordPdf } from "./recordExportAction";
 import type { CodedDiagnosis } from "./cie10Model";
 import { DentalEvolutionPanel, PostOpInstructionsPanel } from "./DentalNoteAids";
 import {
@@ -570,6 +571,23 @@ export function Atencion({
     }
   }
 
+  // Exporta la ultima version guardada de la nota (paso 28 r4).
+  async function exportConsultationPdf() {
+    if (!detail) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const outcome = await exportRecordPdf(detail.patient.id, "PDF_CONSULTA", encounterId);
+      const text = exportMessage(outcome);
+      if (text) setMessage(text);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function saveNote() {
     void run("Nota guardada (nueva version).", () => call("save_note", { encounterId, note }));
   }
@@ -1068,6 +1086,15 @@ export function Atencion({
         </div>
 
         <div className="button-row consultation-actions">
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={busy}
+            title="Exporta la ultima version guardada de la nota y la receta"
+            onClick={() => void exportConsultationPdf()}
+          >
+            Exportar PDF
+          </button>
           {signed ? (
             <span
               className={
