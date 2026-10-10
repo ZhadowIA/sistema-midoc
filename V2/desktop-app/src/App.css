@@ -5178,3 +5178,100 @@ body.dictating .encounter-modes:focus-within {
   color: var(--faint);
   font-size: 0.75rem;
 }
+
+/* ---------- Busqueda en expedientes (paso 28) ---------- */
+
+.record-search {
+  display: grid;
+  gap: 16px;
+}
+
+.record-search-input {
+  width: 100%;
+  font-size: 1rem;
+  padding: 11px 14px;
+}
+
+.record-search-summary {
+  margin: 0;
+}
+
+.record-search-patient {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+}
+
+.record-search-patient-header,
+.record-search-encounter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.record-search-encounter {
+  display: grid;
+  gap: 6px;
+}
+
+.record-search-hits {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.record-search-hit {
+  display: grid;
+  grid-template-columns: 92px 120px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+
+.record-search-kind {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.record-search-kind-diagnostico {
+  color: var(--primary);
+}
+
+.record-search-kind-receta {
+  color: var(--accent);
+}
+
+.record-search-field {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.record-search-snippet {
+  overflow-wrap: anywhere;
+}
+
+.record-search-snippet mark {
+  background: var(--warning-soft);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+@media (max-width: 720px) {
+  .record-search-hit {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

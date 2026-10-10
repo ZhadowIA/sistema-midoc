@@ -7,6 +7,7 @@ import { TranscriptionSetup } from "./TranscriptionSetup";
 import { MedicationReference } from "./MedicationReference";
 import { Arco } from "./Arco";
 import { Directorio } from "./Directorio";
+import { RecordSearch } from "./RecordSearch";
 import { Expediente } from "./Expediente";
 import { WeekAgenda } from "./WeekAgenda";
 import type { EncounterAgendaAppointment } from "./encounterAgenda";
@@ -382,6 +383,8 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [workStartMinutes, setWorkStartMinutes] = useState<number | null>(null);
   const [workEndMinutes, setWorkEndMinutes] = useState<number | null>(null);
   const [view, setView] = useState<WorkspaceView>(() => defaultView(FROZEN_SCOPE));
+  // La busqueda conserva lo escrito al ir y volver de una consulta.
+  const [searchQuery, setSearchQuery] = useState("");
   const [theme, setTheme] = useState<Theme>(() => {
     try {
       return isNightTheme(localStorage.getItem(THEME_STORAGE_KEY)) ? "night" : "light";
@@ -619,7 +622,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 ? "Agenda"
                 : view === "reception"
                   ? "Recepción"
-                  : "Pacientes"
+                  : view === "search"
+                    ? "Búsqueda"
+                    : "Pacientes"
           }
           appointments={appointments}
           appointmentSelectionBusy={busy}
@@ -642,7 +647,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const navBadge = (id: WorkspaceView) =>
     id === "agenda" && appointments.length > 0 ? String(appointments.length) : "";
   // El expediente abierto cuenta como "Pacientes" en la navegacion.
-  const isNavActive = (id: WorkspaceView) => effectiveView === id || (id === "patients" && activePatient !== null);
+  const isNavActive = (id: WorkspaceView) => (activePatient !== null ? id === "patients" : effectiveView === id);
 
   return (
     <div className="workspace-shell">
@@ -753,12 +758,20 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
               {activePatient ? (
                 <Expediente
                   patientId={activePatient}
+                  backLabel={effectiveView === "search" ? "Búsqueda" : "Directorio"}
                   onBack={() => setActivePatient(null)}
                   onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
                   embedded
                 />
               ) : effectiveView === "patients" ? (
                 <Directorio
+                  onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
+                  onOpenPatient={(patientId) => setActivePatient(patientId)}
+                />
+              ) : effectiveView === "search" ? (
+                <RecordSearch
+                  query={searchQuery}
+                  onQueryChange={setSearchQuery}
                   onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
                   onOpenPatient={(patientId) => setActivePatient(patientId)}
                 />

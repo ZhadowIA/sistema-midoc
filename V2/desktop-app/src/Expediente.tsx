@@ -146,9 +146,11 @@ export function Expediente({
   patientId,
   onBack,
   onOpenEncounter,
-  embedded = false
+  embedded = false,
+  backLabel = "Directorio"
 }: {
   patientId: string;
+  backLabel?: string;
   onBack: () => void;
   onOpenEncounter: (encounterId: string) => void;
   embedded?: boolean;
@@ -346,7 +348,7 @@ export function Expediente({
   return (
     <section className={embedded ? "expediente-screen" : "content expediente-screen"}>
       <button type="button" className="ghost-button expediente-back" onClick={onBack}>
-        ‹ Directorio
+        ‹ {backLabel}
       </button>
 
       <div className="expediente-hero">

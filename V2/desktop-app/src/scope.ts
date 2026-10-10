@@ -14,6 +14,7 @@
 export type WorkspaceView =
   | "agenda"
   | "patients"
+  | "search"
   | "reception"
   | "transcription"
   | "medications"
@@ -52,7 +53,8 @@ export function workspaceNav(frozenScope: boolean): NavSection[] {
       heading: "Clínica",
       items: [
         { id: "agenda", label: "Agenda" },
-        { id: "patients", label: "Pacientes" }
+        { id: "patients", label: "Pacientes" },
+        { id: "search", label: "Búsqueda" }
       ]
     },
     {

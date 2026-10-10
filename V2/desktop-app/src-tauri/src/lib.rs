@@ -16,6 +16,7 @@ mod diarization_model;
 mod sherpa_diarization;
 mod medication;
 mod operations;
+mod search;
 mod sync;
 mod transcription;
 mod transcription_model;
@@ -1241,6 +1242,17 @@ fn cie10_search(
         None => cie10::PatientContext::default(),
     };
     Ok(cie10::search(&query, &patient, 20))
+}
+
+#[tauri::command]
+fn search_records(
+    state: tauri::State<'_, AppDb>,
+    query: String,
+    patient_id: Option<String>,
+) -> Result<search::SearchResults, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    search::search_records(conn, &query, patient_id.as_deref()).map_err(|e| e.to_string())
 }
 
 /// Fuente y licencia del catalogo empaquetado: la CC BY 4.0 exige atribucion.
@@ -2508,6 +2520,7 @@ pub fn run() {
             dental_list_lab_orders,
             dental_pending_lab_orders,
             cie10_search,
+            search_records,
             cie10_catalog_info,
             documents_add,
             documents_list,

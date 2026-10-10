@@ -2056,6 +2056,35 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         anonymized_appointments: 0
       } as T;
     }
+    case "search_records": {
+      // Muestra fija: la busqueda real corre en Rust sobre la base cifrada.
+      const q = String(args?.query ?? "").toLowerCase();
+      const hits = [
+        {
+          patient_id: mockState.encounter.patient.id,
+          patient_name: `${mockState.encounter.patient.first_name} ${mockState.encounter.patient.last_name}`,
+          encounter_id: mockState.encounter.id,
+          encounter_opened_at: new Date().toISOString(),
+          encounter_status: "OPEN",
+          kind: "DIAGNOSTICO",
+          field: "CIE-10 principal",
+          snippet: "J45.9 ASMA, NO ESPECIFICADO",
+          document_id: null
+        },
+        {
+          patient_id: mockState.encounter.patient.id,
+          patient_name: `${mockState.encounter.patient.first_name} ${mockState.encounter.patient.last_name}`,
+          encounter_id: mockState.encounter.id,
+          encounter_opened_at: new Date().toISOString(),
+          encounter_status: "OPEN",
+          kind: "RECETA",
+          field: "Receta",
+          snippet: "Salbutamol inhalado 2 disparos c/6h. Tempra 500 mg c/8h por 3 dias",
+          document_id: null
+        }
+      ].filter((h) => h.snippet.toLowerCase().includes(q) || q === "paracetamol");
+      return { hits, truncated: false, expanded_terms: q === "paracetamol" ? ["Tempra"] : [] } as T;
+    }
     case "cie10_catalog_info":
       return {
         version: "cie10-mx-mock",
