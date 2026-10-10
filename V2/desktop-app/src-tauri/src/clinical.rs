@@ -454,6 +454,7 @@ pub fn open_encounter_for_appointment(
 pub fn open_encounter_for_patient(
     conn: &Connection,
     patient_id: &str,
+    today: chrono::NaiveDate,
 ) -> Result<Encounter, ClinicalError> {
     let exists: bool = conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM patients WHERE id = ?1)",
@@ -462,6 +463,12 @@ pub fn open_encounter_for_patient(
     )?;
     if !exists {
         return Err(ClinicalError::NotFound);
+    }
+
+    // Un doble clic o volver a entrar el mismo dia reutiliza la consulta abierta.
+    // Una abierta de otro dia no se toca: mezclaria dos visitas en una nota.
+    if let Some(encounter_id) = open_encounter_from(conn, patient_id, today)? {
+        return read_encounter(conn, &encounter_id);
     }
 
     let encounter_id = uuid::Uuid::new_v4().to_string();
@@ -473,6 +480,30 @@ pub fn open_encounter_for_patient(
 
     audit(conn, "encounter", &encounter_id, "opened", Some("walk-in"))?;
     read_encounter(conn, &encounter_id)
+}
+
+/// La consulta abierta mas reciente del paciente, si se abrio en `today` (fecha local).
+fn open_encounter_from(
+    conn: &Connection,
+    patient_id: &str,
+    today: chrono::NaiveDate,
+) -> Result<Option<String>, ClinicalError> {
+    let latest = conn
+        .query_row(
+            "SELECT id, opened_at FROM encounters
+             WHERE patient_id = ?1 AND status = 'OPEN'
+             ORDER BY opened_at DESC LIMIT 1",
+            params![patient_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    Ok(latest.and_then(|(id, opened_at)| {
+        let opened_on = chrono::DateTime::parse_from_rfc3339(&opened_at)
+            .ok()?
+            .with_timezone(&chrono::Local)
+            .date_naive();
+        (opened_on == today).then_some(id)
+    }))
 }
 
 /* ---------- Atender cita: agenda -> expediente con anti-duplicados ---------- */
@@ -2309,7 +2340,9 @@ mod tests {
         ));
 
         // Una consulta walk-in para el paciente aparece en su ficha.
-        let encounter = open_encounter_for_patient(&conn, &created.id).unwrap();
+        let encounter =
+            open_encounter_for_patient(&conn, &created.id, chrono::Local::now().date_naive())
+                .unwrap();
         save_note(
             &conn,
             &encounter.id,
@@ -2621,7 +2654,7 @@ mod tests {
         .unwrap();
 
         // Un encuentro abierto pero sin nota no cuenta como consulta.
-        open_encounter_for_patient(&conn, &patient.id).unwrap();
+        open_encounter_for_patient(&conn, &patient.id, chrono::Local::now().date_naive()).unwrap();
         let listed = list_patients(&conn, None).unwrap();
         assert_eq!(listed[0].encounter_count, 0);
         assert!(listed[0].last_visit.is_none());
@@ -2634,7 +2667,9 @@ mod tests {
         );
 
         // En cuanto se escribe algo, el encuentro aparece en el historial.
-        let encounter = open_encounter_for_patient(&conn, &patient.id).unwrap();
+        let encounter =
+            open_encounter_for_patient(&conn, &patient.id, chrono::Local::now().date_naive())
+                .unwrap();
         save_note(
             &conn,
             &encounter.id,
@@ -2770,5 +2805,88 @@ mod tests {
             delete_timeline_event(&conn, &event.id),
             Err(ClinicalError::NotFound)
         ));
+    }
+
+    fn walk_in_patient(conn: &Connection) -> String {
+        create_patient(
+            conn,
+            &NewPatientInput {
+                first_name: "Rosa".into(),
+                last_name: "Lugo".into(),
+                phone: None,
+                email: None,
+                birth_date: None,
+                sex: None,
+            },
+        )
+        .unwrap()
+        .id
+    }
+
+    fn encounters_of(conn: &Connection, patient_id: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM encounters WHERE patient_id = ?1",
+            params![patient_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn reuses_the_encounter_opened_today_instead_of_creating_another() {
+        let conn = test_conn("walk-in-reuse");
+        let patient_id = walk_in_patient(&conn);
+        let today = chrono::Local::now().date_naive();
+
+        let first = open_encounter_for_patient(&conn, &patient_id, today).unwrap();
+        // Doble clic o volver a entrar el mismo dia: misma consulta.
+        let again = open_encounter_for_patient(&conn, &patient_id, today).unwrap();
+
+        assert_eq!(again.id, first.id);
+        assert_eq!(encounters_of(&conn, &patient_id), 1);
+    }
+
+    #[test]
+    fn opens_a_new_encounter_when_the_open_one_is_from_another_day() {
+        let conn = test_conn("walk-in-stale");
+        let patient_id = walk_in_patient(&conn);
+        let today = chrono::Local::now().date_naive();
+        let stale_opened_at = (chrono::Utc::now() - chrono::Duration::days(3)).to_rfc3339();
+        conn.execute(
+            "INSERT INTO encounters (id, appointment_id, patient_id, status, opened_at)
+             VALUES ('stale', NULL, ?1, 'OPEN', ?2)",
+            params![patient_id, stale_opened_at],
+        )
+        .unwrap();
+
+        // Un borrador olvidado de otro dia no se mezcla con la visita de hoy.
+        let encounter = open_encounter_for_patient(&conn, &patient_id, today).unwrap();
+
+        assert_ne!(encounter.id, "stale");
+        assert_eq!(encounters_of(&conn, &patient_id), 2);
+    }
+
+    #[test]
+    fn opens_a_new_encounter_after_signing_the_one_from_today() {
+        let conn = test_conn("walk-in-signed");
+        let patient_id = walk_in_patient(&conn);
+        let today = chrono::Local::now().date_naive();
+        let first = open_encounter_for_patient(&conn, &patient_id, today).unwrap();
+        save_note(
+            &conn,
+            &first.id,
+            &NoteContent {
+                subjective: "Cefalea".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        sign_encounter(&conn, &first.id).unwrap();
+
+        // La firmada queda cerrada: una segunda visita el mismo dia es otra consulta.
+        let second = open_encounter_for_patient(&conn, &patient_id, today).unwrap();
+
+        assert_ne!(second.id, first.id);
+        assert_eq!(second.status, "OPEN");
     }
 }

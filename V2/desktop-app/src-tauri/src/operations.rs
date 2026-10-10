@@ -863,7 +863,12 @@ mod tests {
         assert!(exists);
 
         // Walk-in abre expediente sin cita.
-        let encounter = crate::clinical::open_encounter_for_patient(&conn, &patient_id).unwrap();
+        let encounter = crate::clinical::open_encounter_for_patient(
+            &conn,
+            &patient_id,
+            chrono::Local::now().date_naive(),
+        )
+        .unwrap();
         assert!(encounter.appointment_id.is_none());
         assert_eq!(encounter.patient_id, patient_id);
     }

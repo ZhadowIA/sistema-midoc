@@ -361,7 +361,12 @@ mod tests {
         note: NoteContent,
         prescription: &str,
     ) -> String {
-        let encounter = clinical::open_encounter_for_patient(conn, patient_id).unwrap();
+        let encounter = clinical::open_encounter_for_patient(
+            conn,
+            patient_id,
+            chrono::Local::now().date_naive(),
+        )
+        .unwrap();
         clinical::save_note(conn, &encounter.id, &note).unwrap();
         if !prescription.is_empty() {
             clinical::save_prescription(conn, &encounter.id, prescription).unwrap();
@@ -513,7 +518,9 @@ mod tests {
     fn only_the_latest_note_version_counts() {
         let conn = test_conn("versions");
         patient(&conn, "p1", "Ana", "Ruiz");
-        let encounter = clinical::open_encounter_for_patient(&conn, "p1").unwrap();
+        let encounter =
+            clinical::open_encounter_for_patient(&conn, "p1", chrono::Local::now().date_naive())
+                .unwrap();
         clinical::save_note(
             &conn,
             &encounter.id,
