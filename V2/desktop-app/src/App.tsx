@@ -6,6 +6,7 @@ import { Benchmark } from "./Benchmark";
 import { TranscriptionSetup } from "./TranscriptionSetup";
 import { MedicationReference } from "./MedicationReference";
 import { Arco } from "./Arco";
+import { DoctorData } from "./DoctorData";
 import { Directorio } from "./Directorio";
 import { RecordSearch } from "./RecordSearch";
 import { Expediente } from "./Expediente";
@@ -843,6 +844,8 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 <MedicationReference />
               ) : effectiveView === "arco" ? (
                 <Arco />
+              ) : effectiveView === "doctor-data" ? (
+                <DoctorData />
               ) : (
                 <section className="panel agenda-panel">
                   {appointments.length === 0 ? (

@@ -19,7 +19,8 @@ export type WorkspaceView =
   | "transcription"
   | "medications"
   | "arco"
-  | "benchmark";
+  | "benchmark"
+  | "doctor-data";
 
 export interface NavItem {
   id: WorkspaceView;
@@ -71,6 +72,10 @@ export function workspaceNav(frozenScope: boolean): NavSection[] {
         { id: "arco", label: "Privacidad (ARCO)" },
         { id: "benchmark", label: "Benchmark IA" }
       ]
+    },
+    {
+      heading: "Cuenta",
+      items: [{ id: "doctor-data", label: "Mis datos" }]
     }
   ];
 

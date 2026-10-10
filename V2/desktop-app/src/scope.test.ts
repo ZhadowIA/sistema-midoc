@@ -17,7 +17,15 @@ test("la bandera del alcance congelado esta apagada salvo un 'on' explicito", ()
 
 test("con la bandera apagada la app abre en Pacientes y no ofrece agenda ni recepcion", () => {
   assert.equal(defaultView(false), "patients");
-  assert.deepEqual(navIds(false), ["patients", "search", "transcription", "medications", "arco", "benchmark"]);
+  assert.deepEqual(navIds(false), [
+    "patients",
+    "search",
+    "transcription",
+    "medications",
+    "arco",
+    "benchmark",
+    "doctor-data"
+  ]);
   assert.equal(isViewAvailable("agenda", false), false);
   assert.equal(isViewAvailable("reception", false), false);
 });
@@ -32,7 +40,8 @@ test("con la bandera encendida vuelve la navegacion previa al reenfoque", () => 
     "transcription",
     "medications",
     "arco",
-    "benchmark"
+    "benchmark",
+    "doctor-data"
   ]);
   assert.equal(isViewAvailable("reception", true), true);
 });
