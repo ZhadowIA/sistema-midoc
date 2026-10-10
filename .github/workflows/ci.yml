@@ -54,7 +54,7 @@ jobs:
         run: npm run test:cie10 --if-present
 
   desktop-rust:
-    name: desktop-app Rust (clippy y pruebas)
+    name: desktop-app Rust (formato, clippy y pruebas)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -78,7 +78,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -97,6 +97,10 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      - name: Format
+        working-directory: V2/desktop-app/src-tauri
+        run: cargo fmt --check
 
       - name: Clippy
         working-directory: V2/desktop-app/src-tauri
