@@ -1,0 +1,14 @@
+{
+  "version": "cie10-mx-2026-10-06",
+  "generatedAt": "2026-10-06T06:04:47.097Z",
+  "source": {
+    "name": "Catalogo CIE-10, Secretaria de Salud (mantenido por el Hospital Juarez de Mexico)",
+    "url": "https://www.datos.gob.mx/dataset/catalogo_cie_10",
+    "license": "Creative Commons Attribution 4.0 (CC BY 4.0)",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "changes": "Solo codigos vigentes (VALID = SI) y no borrados (RUBRICA_TYPE distinto de B); se conservan clave, nombre, sexo, limites de edad y validez en consulta externa."
+  },
+  "rawRows": 14498,
+  "entries": 12551,
+  "sha256": "e8947bafff623ebe68dffdadb66fa29a9851e7ce1868720adeed8048f49c6485"
+}

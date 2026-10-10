@@ -2056,6 +2056,29 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         anonymized_appointments: 0
       } as T;
     }
+    case "cie10_catalog_info":
+      return {
+        version: "cie10-mx-mock",
+        source: {
+          name: "Catalogo CIE-10, Secretaria de Salud (mantenido por el Hospital Juarez de Mexico)",
+          license: "Creative Commons Attribution 4.0 (CC BY 4.0)"
+        }
+      } as T;
+    case "cie10_search": {
+      // Muestra fija del catalogo real para disenar sin la app nativa.
+      const sample = [
+        { code: "J450", name: "ASMA PREDOMINANTEMENTE ALÉRGICA", warnings: [] as string[] },
+        { code: "J459", name: "ASMA, NO ESPECIFICADO", warnings: [] as string[] },
+        { code: "M545", name: "LUMBAGO NO ESPECIFICADO", warnings: [] as string[] },
+        { code: "K021", name: "CARIES DE LA DENTINA", warnings: [] as string[] },
+        { code: "O800", name: "PARTO ÚNICO ESPONTÁNEO, PRESENTACIÓN CEFÁLICA DE VÉRTICE", warnings: ["El catalogo restringe este codigo a mujeres."] }
+      ];
+      const strip = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase();
+      const q = strip(String(args?.query ?? "")).replace(".", "");
+      return sample
+        .filter((m) => m.code.startsWith(q) || q.split(" ").every((w) => strip(m.name).includes(w)))
+        .map((m) => ({ ...m, display_code: m.code.length > 3 ? `${m.code.slice(0, 3)}.${m.code.slice(3)}` : m.code })) as T;
+    }
     case "documents_list":
       return mockDocuments
         .filter((doc) => doc.meta.patient_id === String(args?.patientId))

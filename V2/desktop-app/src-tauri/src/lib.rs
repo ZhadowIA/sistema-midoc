@@ -1,6 +1,7 @@
 mod ai;
 mod arco;
 mod audio;
+mod cie10;
 mod clinical;
 mod cloud_transcription;
 mod consultation_templates;
@@ -1224,6 +1225,28 @@ fn documents_read(
 #[tauri::command]
 fn documents_delete(state: tauri::State<'_, AppDb>, document_id: String) -> Result<(), String> {
     with_documents(&state, |conn| documents::delete_document(conn, &document_id))
+}
+
+#[tauri::command]
+fn cie10_search(
+    state: tauri::State<'_, AppDb>,
+    query: String,
+    patient_id: Option<String>,
+) -> Result<Vec<cie10::Cie10Match>, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let patient = match patient_id {
+        Some(id) => cie10::patient_context(conn, &id, chrono::Local::now().date_naive())
+            .map_err(|e| e.to_string())?,
+        None => cie10::PatientContext::default(),
+    };
+    Ok(cie10::search(&query, &patient, 20))
+}
+
+/// Fuente y licencia del catalogo empaquetado: la CC BY 4.0 exige atribucion.
+#[tauri::command]
+fn cie10_catalog_info() -> Result<serde_json::Value, String> {
+    serde_json::from_str(cie10::CATALOG_MANIFEST).map_err(|e| e.to_string())
 }
 
 fn with_dental<T>(
@@ -2484,6 +2507,8 @@ pub fn run() {
             dental_set_lab_order_status,
             dental_list_lab_orders,
             dental_pending_lab_orders,
+            cie10_search,
+            cie10_catalog_info,
             documents_add,
             documents_list,
             documents_read,

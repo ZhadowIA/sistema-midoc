@@ -537,6 +537,10 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE documents ADD COLUMN source TEXT NOT NULL DEFAULT 'MAILBOX';
     CREATE INDEX idx_documents_encounter ON documents (encounter_id);
     CREATE INDEX idx_documents_patient_sha ON documents (patient_id, sha256);",
+    // Diagnosticos codificados CIE-10 por version de nota (paso 28 r2). Clase
+    // CLINICO. JSON [{code, name, principal}] validado contra el catalogo al
+    // guardar; el diagnostico en texto libre se conserva aparte.
+    "ALTER TABLE note_versions ADD COLUMN coded_diagnoses TEXT NOT NULL DEFAULT '[]';",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

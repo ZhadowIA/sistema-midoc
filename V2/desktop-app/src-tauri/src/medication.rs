@@ -676,7 +676,7 @@ pub fn parse_ddinter_csv(csv: &str) -> Result<Vec<InteractionRow>, MedicationErr
 /// A diferencia de `csv_fields`, tolera comas dentro de campos entrecomillados
 /// (p. ej. la descripcion clinica del formato del paso 25). Asume descripciones
 /// de una sola linea (el pipeline no emite saltos de linea dentro de un campo).
-fn csv_fields_quoted(line: &str) -> Vec<String> {
+pub(crate) fn csv_fields_quoted(line: &str) -> Vec<String> {
     let mut fields = Vec::new();
     let mut field = String::new();
     let mut in_quotes = false;

@@ -19,6 +19,8 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 - [ ] **Escape no cierra la vista previa de un PDF** — el visor de WebView2 retiene el teclado; se cierra con "Cerrar" o clic fuera. En imagenes si funciona. _(2026-10-05, paso 28 r1)_
 - [ ] **Arrastrar archivos desde el Explorador no se probo en la app real** — la prueba automatizada no puede arrastrar desde el Explorador; se verifico el soltar en el navegador y el selector de archivos en la app real. Probarlo a mano una vez. _(2026-10-05, paso 28 r1)_
 - [ ] **El visor de PDF permite descargar el archivo descifrado** — es una accion del medico y no viaja a la red, pero deja una copia en claro fuera de la base cifrada. Decidir si se oculta la barra del visor o se acepta como salida deliberada. _(2026-10-05, paso 28 r1)_
+- [ ] **Los diagnosticos ya elegidos no muestran los avisos del catalogo** — el aviso de sexo, edad o consulta externa sale en los resultados de busqueda, no en la lista de la nota; si cambian los datos del paciente despues, no se vuelve a avisar. _(2026-10-06, paso 28 r2)_
+- [ ] **El historial del expediente solo muestra el diagnostico en texto libre** — los codigos CIE-10 no aparecen en "Historial" ni en el resumen de consultas; entra natural con la busqueda (r3) o el PDF (r4). _(2026-10-06, paso 28 r2)_
 - [ ] **CI en GitHub** — los PRs no reportan checks; hoy todo se verifica a mano en local. _(2026-10-05)_
 
 ## Trabajo abierto

@@ -5064,3 +5064,117 @@ body.dictating .encounter-modes:focus-within {
   object-fit: contain;
   padding: 12px;
 }
+
+/* ---------- Diagnostico CIE-10 (paso 28) ---------- */
+
+.cie10-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.cie10-selected {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cie10-chip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.cie10-code {
+  flex-shrink: 0;
+  min-width: 52px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.cie10-chip-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.cie10-chip-action {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.cie10-chip-action:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.cie10-search {
+  position: relative;
+}
+
+.cie10-search input {
+  width: 100%;
+}
+
+.cie10-results {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+  box-shadow: var(--shadow-overlay);
+}
+
+.cie10-result {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.cie10-result-active {
+  background: var(--primary-soft);
+}
+
+.cie10-result-text {
+  display: grid;
+  gap: 2px;
+  font-size: 0.9rem;
+}
+
+.cie10-warning {
+  color: var(--warning);
+  font-size: 0.8rem;
+}
+
+.cie10-empty {
+  margin: 4px 0 0;
+}
+
+.cie10-attribution {
+  margin: 0;
+  color: var(--faint);
+  font-size: 0.75rem;
+}
