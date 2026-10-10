@@ -168,6 +168,28 @@ describe("env schema license signing key (paso 29)", () => {
   });
 });
 
+describe("env schema AI gateway (paso 30)", () => {
+  it("is off by default", () => {
+    const result = envSchema.safeParse(baseEnv());
+    expect(result.success && result.data.AI_GATEWAY_PROVIDER).toBe("none");
+  });
+
+  it("requires the provider key and the BAA confirmation for a real provider", () => {
+    const paths = issuePaths(envSchema.safeParse(baseEnv({ AI_GATEWAY_PROVIDER: "gemini" })));
+    expect(paths).toContain("GEMINI_API_KEY");
+    expect(paths).toContain("AI_GATEWAY_BAA_APPROVED");
+    expect(
+      envSchema.safeParse(
+        baseEnv({ AI_GATEWAY_PROVIDER: "openai", OPENAI_API_KEY: "sk-test", AI_GATEWAY_BAA_APPROVED: "true" })
+      ).success
+    ).toBe(true);
+  });
+
+  it("accepts the fake provider outside production", () => {
+    expect(envSchema.safeParse(baseEnv({ AI_GATEWAY_PROVIDER: "fake" })).success).toBe(true);
+  });
+});
+
 describe("env schema email sender", () => {
   it("accepts a display-name email sender for provider From headers", () => {
     const result = envSchema.safeParse(baseEnv({ EMAIL_FROM: "MiDoc <no-reply@midocapp.com.mx>" }));

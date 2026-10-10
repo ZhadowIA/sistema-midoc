@@ -111,6 +111,10 @@ pub struct AiResponse {
     /// Metadata de transcripcion en nube gobernada por el portal (Ruta B). `None`
     /// para proveedores locales/LLM; la provee el `PortalTranscriptionProvider`.
     pub cloud_transcription: Option<CloudTranscriptionMeta>,
+    /// `runId` con el que la pasarela de IA del portal cobro el uso (paso 30).
+    /// La corrida local reusa este id para que el reporte posterior no cuente
+    /// el uso dos veces. `None` para proveedores locales o directos.
+    pub gateway_run_id: Option<String>,
 }
 
 /// Metadata autoritativa que devuelve el portal para una transcripcion en nube.
@@ -337,6 +341,7 @@ impl AiProvider for FakeProvider {
         let estimated_cost_cents = (1 + (context.len() as i64) / 500) * self.cost_factor;
 
         Ok(AiResponse {
+            gateway_run_id: None,
             output,
             model_version: "fake-1".into(),
             estimated_cost_cents,
@@ -676,6 +681,7 @@ impl AiProvider for GeminiProvider {
             .to_string();
 
         Ok(AiResponse {
+            gateway_run_id: None,
             output,
             model_version: self.model.clone(),
             estimated_cost_cents: 1 + (request.redacted_input.len() as i64 / 4000),
@@ -834,6 +840,7 @@ impl AiProvider for OpenAiProvider {
             .to_string();
 
         Ok(AiResponse {
+            gateway_run_id: None,
             output,
             model_version: self.model.clone(),
             estimated_cost_cents: 1 + (request.redacted_input.len() as i64 / 4000),
@@ -867,6 +874,120 @@ fn consultation_structuring_schema() -> serde_json::Value {
             "warnings": { "type": "array", "items": { "type": "string" } }
         }
     })
+}
+
+pub const PROVIDER_GATEWAY: &str = "midoc-gateway";
+
+/// Proveedor de texto por la pasarela de IA del portal (paso 30). Manda el
+/// contexto YA seudonimizado (el consentimiento y la seudonimizacion ocurren
+/// antes, en `run_assist` y compania) con el token del dispositivo; el portal
+/// usa su clave del proveedor, cobra creditos y no guarda contenido. La app ya
+/// no necesita claves de proveedor.
+pub struct GatewayProvider {
+    server_url: String,
+    device_token: String,
+    model: Option<String>,
+}
+
+impl GatewayProvider {
+    pub fn new(server_url: &str, device_token: &str, model: Option<String>) -> Self {
+        Self {
+            server_url: server_url.trim_end_matches('/').to_string(),
+            device_token: device_token.to_string(),
+            model,
+        }
+    }
+}
+
+/// Cuerpo de la solicitud a la pasarela. Los usos con salida estructurada
+/// mandan su esquema JSON, igual que con el proveedor directo.
+pub fn gateway_request_body(request: &AiRequest, run_id: &str, model: Option<&str>) -> serde_json::Value {
+    let schema = if request.usage_type == USAGE_CONSULTATION_STRUCTURING {
+        Some(consultation_structuring_schema())
+    } else if request.usage_type == USAGE_CLINICAL_AID {
+        Some(clinical_aid_schema())
+    } else {
+        None
+    };
+    let mut body = serde_json::json!({
+        "runId": run_id,
+        "usageType": request.usage_type,
+        "promptVersion": request.prompt_version,
+        "input": request.redacted_input,
+        "responseSchema": schema,
+        "temperature": if schema.is_some() { 0.1 } else { 0.2 },
+    });
+    if let Some(model) = model {
+        body["model"] = serde_json::json!(model);
+    }
+    body
+}
+
+/// Traduce un rechazo de la pasarela a un error para el medico: la sobrecarga
+/// del proveedor se ofrece para reintentar; sin creditos o apagada, se explica.
+pub fn gateway_error(status: u16, body: &str, model: &str) -> AiError {
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    let message = parsed["error"]
+        .as_str()
+        .filter(|m| !m.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("la pasarela de IA respondio {status}"));
+    match (status, parsed["code"].as_str()) {
+        (503, Some("PROVIDER_OVERLOADED")) | (429, _) => AiError::Overloaded {
+            provider: PROVIDER_GATEWAY.into(),
+            model: model.to_string(),
+            message,
+        },
+        _ => AiError::Invalid(message),
+    }
+}
+
+impl AiProvider for GatewayProvider {
+    fn name(&self) -> &str {
+        PROVIDER_GATEWAY
+    }
+
+    fn generate(&self, request: &AiRequest) -> Result<AiResponse, AiError> {
+        let start = std::time::Instant::now();
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let body = gateway_request_body(request, &run_id, self.model.as_deref());
+        let model_label = self.model.clone().unwrap_or_else(|| "predeterminado".into());
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(150))
+            .build()
+            .map_err(|e| AiError::Invalid(format!("no se pudo crear el cliente HTTP: {e}")))?;
+        let response = client
+            .post(format!("{}/api/sync/ai/generate", self.server_url))
+            .bearer_auth(&self.device_token)
+            .json(&body)
+            .send()
+            .map_err(|e| AiError::Overloaded {
+                provider: PROVIDER_GATEWAY.into(),
+                model: model_label.clone(),
+                message: format!("no se pudo contactar la pasarela de IA de MiDoc: {e}"),
+            })?;
+        let status = response.status();
+        let text = response.text().unwrap_or_default();
+        if !status.is_success() {
+            return Err(gateway_error(status.as_u16(), &text, &model_label));
+        }
+        let payload: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| AiError::Invalid(format!("respuesta de la pasarela ilegible: {e}")))?;
+        let output = payload["output"]
+            .as_str()
+            .ok_or_else(|| AiError::Invalid("la pasarela no devolvio texto".into()))?
+            .to_string();
+        Ok(AiResponse {
+            output,
+            model_version: payload["model"].as_str().unwrap_or(&model_label).to_string(),
+            // El costo real son creditos, autoritativos en el portal.
+            estimated_cost_cents: 0,
+            latency_ms: start.elapsed().as_millis() as i64,
+            cloud_transcription: None,
+            gateway_run_id: Some(run_id),
+        })
+    }
 }
 
 /// Transcriptor fake determinista. Doble de pruebas del contrato: el flujo
@@ -909,6 +1030,7 @@ impl TranscriptionProvider for FakeTranscriptionProvider {
         );
 
         Ok(AiResponse {
+            gateway_run_id: None,
             output,
             model_version: "fake-transcription-1".into(),
             estimated_cost_cents: 1 + (request.byte_len as i64 / 1_000_000),
@@ -1757,7 +1879,10 @@ fn run_assist(
     };
     let (provider, response) = registry.generate(&request)?;
 
-    let run_id = uuid::Uuid::new_v4().to_string();
+    let run_id = response
+        .gateway_run_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     conn.execute(
         "INSERT INTO ai_runs
             (id, encounter_id, patient_id, usage_type, provider, model_version,
@@ -2049,7 +2174,7 @@ pub fn structure_consultation(
     let (provider, response) = registry.generate(&request)?;
     let output = parse_structuring_output(&response.output, &template_segments, &turns)?;
 
-    let run_id = uuid::Uuid::new_v4().to_string();
+    let run_id = response.gateway_run_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     conn.execute(
         "INSERT INTO ai_runs
             (id, encounter_id, patient_id, usage_type, provider, model_version,
@@ -2376,7 +2501,7 @@ pub fn generate_clinical_aid(
         &reviewed.turns,
         &history_fields,
     )?;
-    let run_id = uuid::Uuid::new_v4().to_string();
+    let run_id = response.gateway_run_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     conn.execute(
         "INSERT INTO ai_runs
             (id, encounter_id, patient_id, usage_type, provider, model_version,
@@ -2991,6 +3116,36 @@ mod tests {
     }
 
     /// Proveedor que siempre falla, para probar el fallback.
+    #[test]
+    fn gateway_body_carries_schema_only_for_structured_usages() {
+        let request = AiRequest {
+            usage_type: USAGE_CLINICAL_AID.into(),
+            prompt_version: "aid/v1".into(),
+            redacted_input: "contexto P-1".into(),
+        };
+        let body = gateway_request_body(&request, "run-1", Some("modelo-b"));
+        assert_eq!(body["runId"], "run-1");
+        assert_eq!(body["model"], "modelo-b");
+        assert!(body["responseSchema"].is_object());
+        assert_eq!(body["temperature"], 0.1);
+
+        let text = AiRequest { usage_type: USAGE_SUMMARY.into(), ..request };
+        let body = gateway_request_body(&text, "run-2", None);
+        assert!(body["responseSchema"].is_null());
+        assert!(body.get("model").is_none());
+    }
+
+    #[test]
+    fn gateway_errors_degrade_explicitly() {
+        let overloaded = gateway_error(503, r#"{"error":"saturado","code":"PROVIDER_OVERLOADED"}"#, "m");
+        assert!(matches!(overloaded, AiError::Overloaded { .. }));
+        let credits = gateway_error(402, r#"{"error":"No tienes créditos de IA suficientes"}"#, "m");
+        assert!(matches!(&credits, AiError::Invalid(m) if m.starts_with("No tienes créditos")));
+        let disabled = gateway_error(503, r#"{"error":"apagada","code":"GATEWAY_DISABLED"}"#, "m");
+        assert!(matches!(disabled, AiError::Invalid(_)));
+        assert!(matches!(gateway_error(500, "<html>", "m"), AiError::Invalid(m) if m.contains("500")));
+    }
+
     struct FailingProvider;
     impl AiProvider for FailingProvider {
         fn name(&self) -> &str {
@@ -3020,6 +3175,7 @@ mod tests {
 
         fn generate(&self, _request: &AiRequest) -> Result<AiResponse, AiError> {
             Ok(AiResponse {
+                gateway_run_id: None,
                 output: self.output.clone(),
                 model_version: "raw-1".into(),
                 estimated_cost_cents: 3,
@@ -3795,6 +3951,7 @@ mod tests {
             _audio: &AudioInput,
         ) -> Result<AiResponse, AiError> {
             Ok(AiResponse {
+                gateway_run_id: None,
                 output: "texto transcrito en nube".into(),
                 model_version: "gpt-4o-mini-transcribe".into(),
                 estimated_cost_cents: 0,
@@ -3871,6 +4028,7 @@ mod tests {
             _audio: &AudioInput,
         ) -> Result<AiResponse, AiError> {
             Ok(AiResponse {
+                gateway_run_id: None,
                 output: "dialogo diarizado en nube".into(),
                 model_version: "gpt-4o-transcribe-diarize".into(),
                 estimated_cost_cents: 0,
@@ -4312,6 +4470,7 @@ mod tests {
             _audio: &AudioInput,
         ) -> Result<AiResponse, AiError> {
             Ok(AiResponse {
+                gateway_run_id: None,
                 output: "Buenos dias. Me duele la cabeza.".into(),
                 model_version: "fake-1".into(),
                 estimated_cost_cents: 0,

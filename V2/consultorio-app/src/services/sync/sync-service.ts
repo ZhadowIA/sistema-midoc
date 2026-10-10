@@ -474,6 +474,20 @@ async function getOrCreateAiProvider(report: AiUsageReport) {
  * El contenido clinico, prompts y salidas permanecen en la app local; las
  * referencias apuntan a IDs locales que el portal no puede resolver.
  */
+/**
+ * Usos que ya cobro el portal (transcripcion en nube o pasarela de IA, pasos
+ * 29-30): el reporte posterior de la app solo actualiza su estado de revision.
+ */
+function isPortalGoverned(row: { transcriptionMode: string | null; inputReference: Prisma.JsonValue }) {
+  if (row.transcriptionMode !== null) {
+    return true;
+  }
+  const kind = row.inputReference && typeof row.inputReference === "object" && !Array.isArray(row.inputReference)
+    ? (row.inputReference as Record<string, unknown>).kind
+    : undefined;
+  return typeof kind === "string" && kind.startsWith("REMOTE_");
+}
+
 export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
   const parsedResult = aiUsageBatchSchema.safeParse(payload);
   if (!parsedResult.success) {
@@ -505,12 +519,13 @@ export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
       }
     });
 
-    if (existing && existing.transcriptionMode !== null) {
+    if (existing && isPortalGoverned(existing)) {
+      // La referencia de entrada se conserva: marca la fila como cobrada por el portal.
+      // Un borrador sin revisar (PENDING) no regresa un uso que el portal ya completo.
       await prisma.aiUsageLog.update({
         where: { id: existing.id },
         data: {
-          status,
-          inputReference: report.inputReference,
+          status: status === AiUsageStatus.PENDING ? existing.status : status,
           outputReference: report.outputReference,
           reviewedAt,
           reportedAt: now
