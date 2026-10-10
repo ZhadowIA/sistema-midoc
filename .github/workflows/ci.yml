@@ -53,6 +53,59 @@ jobs:
       - name: CIE-10 tests
         run: npm run test:cie10 --if-present
 
+  desktop-rust:
+    name: desktop-app Rust (clippy y pruebas)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: V2/desktop-app
+    env:
+      CARGO_TERM_COLOR: always
+      # SQLCipher bundlado enlaza contra el OpenSSL del sistema (libssl-dev). En
+      # Windows esto lo da src-tauri/.cargo/config.toml, que es local por equipo.
+      OPENSSL_LIB_DIR: /usr/lib/x86_64-linux-gnu
+      OPENSSL_INCLUDE_DIR: /usr/include
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libssl-dev pkg-config
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: V2/desktop-app/src-tauri
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: V2/desktop-app/package-lock.json
+
+      # tauri::generate_context! exige que frontendDist (../dist) exista al compilar.
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Clippy
+        working-directory: V2/desktop-app/src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        working-directory: V2/desktop-app/src-tauri
+        run: cargo test --locked
+
   portal:
     name: consultorio-app (lint, tipos y pruebas)
     runs-on: ubuntu-latest
