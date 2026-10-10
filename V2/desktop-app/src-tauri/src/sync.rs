@@ -454,6 +454,24 @@ pub async fn activate_license(
         .ok_or_else(|| SyncError::Server("respuesta sin licencia".into()))
 }
 
+/// Saldo de creditos de IA de la cuenta (paso 29 r4). Solo un numero.
+pub async fn fetch_credit_balance(server_url: &str, device_token: &str) -> Result<i64, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+    let response = client
+        .get(format!("{base}/api/sync/credits"))
+        .bearer_auth(device_token)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+    let body: serde_json::Value = response.json().await?;
+    body.get("balance")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| SyncError::Server("respuesta sin saldo".into()))
+}
+
 pub async fn fetch_inbox(
     server_url: &str,
     device_token: &str,

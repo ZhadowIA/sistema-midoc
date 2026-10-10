@@ -5,11 +5,7 @@ import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { assertRateLimit } from "../../lib/rate-limit";
 import { hashPassword, passwordNeedsRehash, verifyPassword } from "../../lib/security/password";
-import {
-  getDoctorAiCreditSummary,
-  readAiCreditAllowance,
-  type AiCreditSummary
-} from "../ai/ai-credits";
+import { getDoctorAiCreditSummary, type AiCreditSummary } from "../ai/ai-credits";
 import { createSessionForUser } from "../auth/auth-service";
 
 class PlatformAdminServiceError extends ServiceError {}
@@ -134,69 +130,51 @@ export async function listDoctorAccountsForAdmin(
     }
   });
 
-  // Estado de IA por medico: se resuelve de la suscripcion vigente (TRIAL/ACTIVE)
-  // mas reciente, mezclando las capacidades del plan con el override por medico.
-  // Una sola consulta para todos los perfiles (evita N+1).
-  const profileIds = accounts
-    .map((account) => account.doctorProfile?.id)
-    .filter((id): id is string => Boolean(id));
-
-  const aiByProfileId = await resolveAiStateByProfileId(profileIds);
+  // Licencia y saldo de creditos por medico (paso 29): una consulta para cada
+  // cosa sobre todas las cuentas (evita N+1).
+  const doctorIds = accounts.map((account) => account.id);
+  const now = new Date();
+  const [licenses, balances] = await Promise.all([
+    prisma.license.findMany({
+      where: { doctorId: { in: doctorIds } },
+      select: {
+        doctorId: true,
+        status: true,
+        updatesUntil: true,
+        maxDevices: true,
+        _count: { select: { activations: { where: { releasedAt: null } } } }
+      }
+    }),
+    prisma.aiCreditGrant.groupBy({
+      by: ["doctorId"],
+      where: {
+        doctorId: { in: doctorIds },
+        remaining: { gt: 0 },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }]
+      },
+      _sum: { remaining: true }
+    })
+  ]);
+  const licenseByDoctor = new Map(licenses.map((license) => [license.doctorId, license]));
+  const balanceByDoctor = new Map(balances.map((row) => [row.doctorId, row._sum.remaining ?? 0]));
 
   return {
-    accounts: accounts.map((account) => ({
-      ...account,
-      ai: (account.doctorProfile && aiByProfileId.get(account.doctorProfile.id)) ?? {
-        enabled: false,
-        monthlyCredits: 0
-      }
-    }))
+    accounts: accounts.map((account) => {
+      const license = licenseByDoctor.get(account.id);
+      return {
+        ...account,
+        license: license
+          ? {
+              status: license.status,
+              updatesUntil: license.updatesUntil.toISOString().slice(0, 10),
+              maxDevices: license.maxDevices,
+              activeDevices: license._count.activations
+            }
+          : null,
+        aiCredits: balanceByDoctor.get(account.id) ?? 0
+      };
+    })
   };
-}
-
-interface DoctorAiState {
-  enabled: boolean;
-  monthlyCredits: number;
-}
-
-/** Estado de IA (habilitado + creditos efectivos) por perfil de medico. */
-async function resolveAiStateByProfileId(
-  profileIds: string[]
-): Promise<Map<string, DoctorAiState>> {
-  const result = new Map<string, DoctorAiState>();
-  if (profileIds.length === 0) {
-    return result;
-  }
-
-  const subscriptions = await prisma.doctorSubscription.findMany({
-    where: {
-      doctorProfileId: { in: profileIds },
-      status: { in: [...ENTITLED_SUBSCRIPTION_STATUSES] }
-    },
-    orderBy: { createdAt: "desc" },
-    select: {
-      doctorProfileId: true,
-      capabilitiesPatch: true,
-      plan: { select: { capabilities: true } }
-    }
-  });
-
-  for (const subscription of subscriptions) {
-    // findMany va de mas reciente a mas antigua: la primera por perfil es la vigente.
-    if (result.has(subscription.doctorProfileId)) {
-      continue;
-    }
-    const capabilities = {
-      ...asCapabilityRecord(subscription.plan.capabilities),
-      ...asCapabilityRecord(subscription.capabilitiesPatch)
-    };
-    result.set(subscription.doctorProfileId, {
-      enabled: capabilities.ai === true,
-      monthlyCredits: readAiCreditAllowance(capabilities)
-    });
-  }
-
-  return result;
 }
 
 export async function updateDoctorAccountStatus(

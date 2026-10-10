@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { activationReason, isLicensed, licenseLine, type LicenseStatus } from "./licenseState.ts";
+import { activationReason, creditBalanceLine, creditBalanceTitle, isLicensed, licenseLine, type LicenseStatus } from "./licenseState.ts";
 
 const valid: LicenseStatus = {
   state: "VALID",
@@ -32,4 +32,11 @@ test("el motivo de activacion prefiere el error del portal", () => {
   assert.equal(activationReason(valid, "Tu cuenta no tiene una licencia activa de MiDoc."), "Tu cuenta no tiene una licencia activa de MiDoc.");
   assert.equal(activationReason({ ...valid, state: "INVALID", reason: "La licencia guardada es de otro equipo." }, ""), "La licencia guardada es de otro equipo.");
   assert.match(activationReason(null, ""), /todavía no tiene licencia/);
+});
+
+test("el saldo de creditos se lee en singular y plural", () => {
+  assert.equal(creditBalanceLine(30), "30 créditos de IA");
+  assert.equal(creditBalanceLine(1), "1 crédito de IA");
+  assert.equal(creditBalanceLine(0), "0 créditos de IA");
+  assert.match(creditBalanceTitle(null), /Saldo de tu cuenta/);
 });

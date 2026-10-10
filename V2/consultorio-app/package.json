@@ -14,7 +14,8 @@
     "db:migrate:deploy": "node --env-file=.env.local node_modules/prisma/build/index.js migrate deploy",
     "db:generate": "prisma generate",
     "license:keygen": "tsx scripts/license-keygen.ts",
-    "license:grant": "tsx --env-file=.env.local scripts/license-grant.ts"
+    "license:grant": "tsx --env-file=.env.local scripts/license-grant.ts",
+    "credits:grant": "tsx --env-file=.env.local scripts/credits-grant.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.8.2",

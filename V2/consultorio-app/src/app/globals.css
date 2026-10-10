@@ -2040,6 +2040,71 @@ a.service-card:hover {
   overflow-wrap: anywhere;
 }
 
+/* Licencia y creditos de IA en la cuenta (paso 29). */
+.account-devices {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.account-devices li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.account-device-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.account-device-text small {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.account-movements {
+  width: 100%;
+  margin-top: 14px;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.account-movements caption {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  text-align: left;
+}
+
+.account-movements th,
+.account-movements td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.account-movements th:last-child,
+.account-movements td:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.movement-credit {
+  color: var(--success);
+}
+
+.movement-debit {
+  color: var(--danger);
+}
+
 .form-section-title {
   margin: 8px 0 0;
   padding-bottom: 8px;

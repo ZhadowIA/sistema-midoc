@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { toErrorResponse } from "../../../../../../lib/api-error";
 import { requireAdminUser } from "../../../../../../lib/auth/session-user";
+import { getCreditBalance } from "../../../../../../services/ai/credit-ledger";
 import { grantLicense } from "../../../../../../services/license/license-service";
 
 // Otorgamiento de licencia por el administrador (paso 29) mientras no exista la
@@ -24,7 +25,11 @@ export async function POST(request: Request, context: { params: Promise<{ doctor
       source: payload.source,
       maxDevices: payload.maxDevices
     });
-    return NextResponse.json({ licenseId: license.id, updatesUntil: license.updatesUntil }, { status: 201 });
+    const { balance } = await getCreditBalance(doctorId);
+    return NextResponse.json(
+      { licenseId: license.id, updatesUntil: license.updatesUntil, maxDevices: license.maxDevices, aiCredits: balance },
+      { status: 201 }
+    );
   } catch (error) {
     return toErrorResponse(error, "No se pudo otorgar la licencia.");
   }
