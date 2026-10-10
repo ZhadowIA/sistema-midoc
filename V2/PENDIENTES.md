@@ -13,7 +13,6 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 
 ## Deuda tecnica
 
-- [ ] **La cancelacion ARCO del desktop no limpia tablas agregadas despues** — con `foreign_keys = ON`, si el paciente tiene transcripciones (`consultation_transcriptions` referencia `encounters` sin cascada) el borrado de consultas falla y toda la cancelacion hace rollback; ademas no borra `timeline_events` ni las ordenes de laboratorio dentales, no toca presupuestos dentales y no limpia los datos del responsable (`guardian_*`) ni `patient_links`. Es un derecho ARCO que no se puede ejercer completo. Tarea aparte propuesta (`v2/fix-arco-cancelacion`). _(2026-10-06, paso 28 r6)_
 - [ ] **Retirar `PaymentRecord`, `CashDrawerSession` y `WaitlistEntry` del portal** — vestigio del commit `0bc949e`, sin referencias en `src/` ni `tests/`; la caja y la lista de espera viven en la app del medico. Rama aparte. _(2026-09-05, PR #43)_
 - [ ] **`open_patient_encounter` siempre crea una consulta nueva** — no reutiliza una consulta abierta del mismo paciente, asi que un doble clic o volver a entrar deja consultas vacias en estado OPEN. Ahora es la entrada principal, no la secundaria. _(2026-10-05, paso 27)_
 - [ ] **El mock del navegador (`ipc.ts`) tiene una sola consulta fija** — `open_patient_encounter` devuelve siempre la de Hugo, sin importar el paciente; estorba para verificar flujos en el navegador. _(2026-10-05, paso 27)_
@@ -45,6 +44,7 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 
 ## Resueltos
 
+- [x] **La cancelacion ARCO del desktop no limpiaba tablas agregadas despues** — fallaba por llave foranea si el paciente tenia transcripciones y dejaba linea del tiempo, ordenes de laboratorio, presupuestos dentales, contacto del responsable y liga al portal. Corregido 2026-10-07 en `v2/fix-arco-cancelacion` (el pendiente abierto que trae la rama del paso 28 r6 se cierra con este arreglo).
 - [x] **Retirar la suscripcion heredada** — retiradas del alcance activo las rutas `/api/admin/subscription`, `/api/admin/plans`, `/api/auth/subscribe` y `ai-access` del administrador, el ciclo de vida de la suscripcion y el resumen de creditos por plan; el reporte de usos de IA devuelve el saldo del libro mayor. Queda congelada solo la resolucion de capacidades para los modulos congelados (alta con paso SUBSCRIPTION y notificaciones); las tablas se conservan. 2026-10-08, rama `v2/retirar-suscripcion`.
 - [x] **¿La app debe funcionar sin vincular cuenta?** — Se activa una vez vinculando la cuenta; despues funciona sin conexion con una licencia firmada. La vinculacion solo hace falta para activar, creditos de IA y actualizaciones; nombre y cedula bajan del portal y quedan en el equipo. Decidido 2026-10-06 con el modelo de compra unica (`15_modelo_de_negocio.md`), que reemplaza la respuesta anterior ("requiere estar vinculada por la suscripcion").
 - [x] **Modelo de negocio** — compra unica con 12 meses de actualizaciones + creditos de IA (recargas sin caducidad y plan mensual opcional). Decidido 2026-10-06, `15_modelo_de_negocio.md`.
