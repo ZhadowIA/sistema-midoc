@@ -1,10 +1,11 @@
-import { LicenseSource, LicenseStatus, UserRole, type License, type SyncDevice } from "@prisma/client";
+import { AiCreditGrantKind, LicenseSource, LicenseStatus, UserRole, type License, type SyncDevice } from "@prisma/client";
 
 import { writeAuditLog } from "../../lib/audit";
 import { addUtcMonths, toUtcCalendarDate } from "../../lib/dateTime";
 import { env } from "../../lib/env";
 import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
+import { COURTESY_CREDITS, grantCredits } from "../ai/credit-ledger";
 import {
   LICENSE_TOKEN_VERSION,
   signLicense,
@@ -69,14 +70,26 @@ export async function grantLicense(input: {
   }
 
   const purchasedAt = input.purchasedAt ?? new Date();
-  const license = await prisma.license.create({
-    data: {
-      doctorId: doctor.id,
-      source: input.source,
-      purchasedAt,
-      updatesUntil: addUtcMonths(purchasedAt, INCLUDED_UPDATE_MONTHS),
-      maxDevices
-    }
+  // La compra incluye creditos de cortesia para probar la IA (15_modelo_de_negocio.md).
+  const license = await prisma.$transaction(async (tx) => {
+    const created = await tx.license.create({
+      data: {
+        doctorId: doctor.id,
+        source: input.source,
+        purchasedAt,
+        updatesUntil: addUtcMonths(purchasedAt, INCLUDED_UPDATE_MONTHS),
+        maxDevices
+      }
+    });
+    await grantCredits({
+      tx,
+      doctorUserId: doctor.id,
+      kind: AiCreditGrantKind.COURTESY,
+      credits: COURTESY_CREDITS,
+      note: "Cortesia de la licencia",
+      actorUserId: input.actorUserId
+    });
+    return created;
   });
 
   await writeAuditLog({

@@ -4,7 +4,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 
 import { approveDoctorAccountForTesting } from "../helpers/doctor-accounts";
-import { createDoctorAccount, createDoctorSubscription } from "../../src/services/auth/auth-service";
+import { AiCreditGrantKind } from "@prisma/client";
+import { createDoctorAccount } from "../../src/services/auth/auth-service";
+import { getCreditBalance, grantCredits } from "../../src/services/ai/credit-ledger";
 import {
   authenticateSyncDevice,
   linkSyncDevice,
@@ -81,7 +83,7 @@ function fakeProvider(options: { fail?: boolean } = {}): CloudTranscriptionProvi
 
 const createdEmails: string[] = [];
 
-async function setupDoctor(withSubscription: boolean) {
+async function setupDoctor(credits: number) {
   const email = uniqueEmail("doctor-cloud");
   createdEmails.push(email);
   const account = await createDoctorAccount({
@@ -96,8 +98,8 @@ async function setupDoctor(withSubscription: boolean) {
     privacyVersion: "2026-05"
   });
   await approveDoctorAccountForTesting(prisma, account.user.id);
-  if (withSubscription) {
-    await createDoctorSubscription({ doctorUserId: account.user.id, planCode: "CLINICO" });
+  if (credits > 0) {
+    await grantCredits({ doctorUserId: account.user.id, kind: AiCreditGrantKind.TOP_UP, credits, actorUserId: null });
   }
   const { deviceToken } = await linkSyncDevice(account.user.id, "PC nube");
   const device = await authenticateSyncDevice(bearerRequest(deviceToken));
@@ -131,7 +133,7 @@ afterAll(async () => {
 
 describe("governed cloud transcription service", () => {
   it("charges one credit for a 900s standard transcription", async () => {
-    const { device } = await setupDoctor(true);
+    const { device } = await setupDoctor(10);
     const runId = randomUUID();
 
     const result = await transcribeCloudAudio(
@@ -149,7 +151,7 @@ describe("governed cloud transcription service", () => {
   });
 
   it("charges two credits for a 901s standard transcription", async () => {
-    const { device } = await setupDoctor(true);
+    const { device } = await setupDoctor(10);
     const runId = randomUUID();
     const result = await transcribeCloudAudio(
       { device, runId, mode: "standard", audio: buildWav(901) },
@@ -159,7 +161,7 @@ describe("governed cloud transcription service", () => {
   });
 
   it("charges one credit for a 600s diarized transcription and returns segments", async () => {
-    const { device } = await setupDoctor(true);
+    const { device } = await setupDoctor(10);
     const runId = randomUUID();
     const result = await transcribeCloudAudio(
       { device, runId, mode: "diarized", audio: buildWav(600) },
@@ -171,7 +173,7 @@ describe("governed cloud transcription service", () => {
   });
 
   it("marks a provider failure as FAILED with zero credits", async () => {
-    const { device } = await setupDoctor(true);
+    const { device } = await setupDoctor(10);
     const runId = randomUUID();
     await expect(
       transcribeCloudAudio(
@@ -185,7 +187,7 @@ describe("governed cloud transcription service", () => {
   });
 
   it("is idempotent: a retry with the same runId keeps one row and the same credit", async () => {
-    const { device } = await setupDoctor(true);
+    const { device } = await setupDoctor(10);
     const runId = randomUUID();
     const first = await transcribeCloudAudio(
       { device, runId, mode: "standard", audio: buildWav(900) },
@@ -204,7 +206,7 @@ describe("governed cloud transcription service", () => {
   });
 
   it("rejects reusing a runId with a different mode", async () => {
-    const { device } = await setupDoctor(true);
+    const { device } = await setupDoctor(10);
     const runId = randomUUID();
     await transcribeCloudAudio(
       { device, runId, mode: "standard", audio: buildWav(120) },
@@ -218,19 +220,48 @@ describe("governed cloud transcription service", () => {
     ).rejects.toMatchObject({ status: 409 });
   });
 
-  it("rejects a doctor without AI capability", async () => {
-    const { device } = await setupDoctor(false);
+  it("rejects a doctor without enough credits and leaves no reservation", async () => {
+    const { device } = await setupDoctor(1);
     const runId = randomUUID();
+    // 1801 s estandar cuestan 3 creditos; el saldo es 1.
     await expect(
-      transcribeCloudAudio(
-        { device, runId, mode: "standard", audio: buildWav(120) },
-        fakeProvider()
+      transcribeCloudAudio({ device, runId, mode: "standard", audio: buildWav(1801) }, fakeProvider())
+    ).rejects.toMatchObject({ status: 402 });
+    expect(await usageRow(device.doctorId, runId)).toBeNull();
+    expect((await getCreditBalance(device.doctorId)).balance).toBe(1);
+
+    const broke = await setupDoctor(0);
+    await expect(
+      transcribeCloudAudio({ device: broke.device, runId: randomUUID(), mode: "standard", audio: buildWav(60) }, fakeProvider())
+    ).rejects.toMatchObject({ status: 402 });
+  });
+
+  it("charges the balance once and refunds a provider failure", async () => {
+    const { device } = await setupDoctor(5);
+    const runId = randomUUID();
+    await transcribeCloudAudio({ device, runId, mode: "standard", audio: buildWav(900) }, fakeProvider());
+    await transcribeCloudAudio({ device, runId, mode: "standard", audio: buildWav(900) }, fakeProvider());
+    expect((await getCreditBalance(device.doctorId)).balance).toBe(4);
+
+    await expect(
+      transcribeCloudAudio({ device, runId: randomUUID(), mode: "diarized", audio: buildWav(1200) }, fakeProvider({ fail: true }))
+    ).rejects.toMatchObject({ status: 502 });
+    expect((await getCreditBalance(device.doctorId)).balance).toBe(4);
+  });
+
+  it("does not spend the same credit twice when two transcriptions race", async () => {
+    const { device } = await setupDoctor(1);
+    const attempts = await Promise.allSettled(
+      [randomUUID(), randomUUID(), randomUUID()].map((runId) =>
+        transcribeCloudAudio({ device, runId, mode: "standard", audio: buildWav(60) }, fakeProvider())
       )
-    ).rejects.toMatchObject({ status: 403 });
+    );
+    expect(attempts.filter((a) => a.status === "fulfilled")).toHaveLength(1);
+    expect((await getCreditBalance(device.doctorId)).balance).toBe(0);
   });
 
   it("never persists transcript text or audio in the portal", async () => {
-    const { device } = await setupDoctor(true);
+    const { device } = await setupDoctor(10);
     const runId = randomUUID();
     await transcribeCloudAudio(
       { device, runId, mode: "diarized", audio: buildWav(120) },
@@ -245,7 +276,7 @@ describe("governed cloud transcription service", () => {
 
 describe("sync report preserves portal-authoritative cloud credits", () => {
   it("charges zero credits for a local Whisper transcription report", async () => {
-    const { device } = await setupDoctor(true);
+    const { device } = await setupDoctor(10);
     const runId = randomUUID();
     await recordAiUsageBatch(device, {
       runs: [
@@ -266,7 +297,7 @@ describe("sync report preserves portal-authoritative cloud credits", () => {
   });
 
   it("does not let a later desktop report overwrite the portal credit", async () => {
-    const { device } = await setupDoctor(true);
+    const { device } = await setupDoctor(10);
     const runId = randomUUID();
 
     // 1000 s => 2 creditos; asi el flat de 1 del desktop rompe el test si sobrescribe.

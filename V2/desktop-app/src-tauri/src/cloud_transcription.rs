@@ -145,10 +145,9 @@ impl TranscriptionProvider for PortalTranscriptionProvider {
             .map_err(|e| AiError::Invalid(format!("no se pudo contactar el portal: {e}")))?;
 
         if !response.status().is_success() {
-            return Err(AiError::Invalid(format!(
-                "el portal respondio {}",
-                response.status()
-            )));
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(AiError::Invalid(portal_error_message(status.as_u16(), &body)));
         }
         let body = response
             .text()
@@ -183,9 +182,27 @@ impl TranscriptionProvider for PortalTranscriptionProvider {
     }
 }
 
+/// Mensaje para el medico cuando el portal rechaza la transcripcion: el del
+/// portal si lo trae (p. ej. sin creditos, 402), o el codigo si no.
+fn portal_error_message(status: u16, body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value.get("error").and_then(|e| e.as_str()).map(str::to_string))
+        .filter(|message| !message.trim().is_empty())
+        .unwrap_or_else(|| format!("el portal respondio {status}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shows_the_portal_message_when_credits_run_out() {
+        let body = r#"{"error":"No tienes créditos de IA suficientes: esto cuesta 2 y tu saldo es 0. La transcripción local y el flujo manual siguen disponibles."}"#;
+        assert!(portal_error_message(402, body).starts_with("No tienes créditos de IA suficientes"));
+        assert_eq!(portal_error_message(502, "<html>"), "el portal respondio 502");
+        assert_eq!(portal_error_message(500, r#"{"error":""}"#), "el portal respondio 500");
+    }
 
     #[test]
     fn parses_portal_standard_response() {
