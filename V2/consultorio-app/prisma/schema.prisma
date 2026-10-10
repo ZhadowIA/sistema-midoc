@@ -290,84 +290,89 @@ enum AiUsageStatus {
 }
 
 model User {
-  id                     String               @id @default(cuid())
-  email                  String               @unique
-  emailVerifiedAt        DateTime?
-  passwordHash           String?
-  role                   UserRole
-  status                 UserStatus           @default(ACTIVE)
-  firstName              String
-  lastName               String
+  id                          String                   @id @default(cuid())
+  email                       String                   @unique
+  emailVerifiedAt             DateTime?
+  passwordHash                String?
+  role                        UserRole
+  status                      UserStatus               @default(ACTIVE)
+  firstName                   String
+  lastName                    String
   // CONTACTO privado de la cuenta; para médicos no se expone en el perfil público.
-  phone                  String?
-  lastLoginAt            DateTime?
-  createdAt              DateTime             @default(now())
-  updatedAt              DateTime             @updatedAt
-  doctorProfile          DoctorProfile?
-  patientLinks           Patient[]            @relation("PatientUserAccount")
-  ownedPatients          Patient[]            @relation("DoctorPatients")
-  appointmentsAsDoctor   Appointment[]        @relation("DoctorAppointments")
-  appointmentHoldsAsDoctor AppointmentHold[]  @relation("DoctorAppointmentHolds")
-  documentLinksAsDoctor  DocumentUploadLink[] @relation("DoctorDocumentUploadLinks")
-  notificationsAsDoctor  Notification[]       @relation("DoctorNotifications")
-  shortLinksAsDoctor     ShortLink[]          @relation("DoctorShortLinks")
-  syncDevicesAsDoctor    SyncDevice[]         @relation("DoctorSyncDevices")
-  syncEventsAsDoctor     SyncEvent[]          @relation("DoctorSyncEvents")
-  mailboxDocumentsAsDoctor MailboxDocument[]  @relation("DoctorMailboxDocuments")
-  authorizedSummariesAsDoctor AuthorizedSummary[] @relation("DoctorAuthorizedSummaries")
-  createdShortLinks      ShortLink[]          @relation("ShortLinkCreator")
-  legalAcceptances       LegalAcceptance[]
-  passwordResetTokens    PasswordResetToken[]
-  emailVerificationTokens EmailVerificationToken[]
-  authSessions           AuthSession[]
-  twoFactor              TwoFactorCredential?
-  consentsAsDoctor       Consent[]            @relation("DoctorConsents")
-  auditLogs              AuditLog[]           @relation("ActorAuditLogs")
-  waitlistEntriesAsDoctor WaitlistEntry[]     @relation("DoctorWaitlistEntries")
-  physicalResources      PhysicalResource[]   @relation("DoctorPhysicalResources")
-  paymentRecordsAsDoctor PaymentRecord[]      @relation("DoctorPaymentRecords")
-  paymentRecordsRecorded PaymentRecord[]      @relation("PaymentRecorder")
-  cashDrawerSessionsAsDoctor CashDrawerSession[] @relation("DoctorCashDrawerSessions")
-  cashDrawerSessionsClosed CashDrawerSession[] @relation("CashDrawerCloser")
-  aiBenchmarkRuns        AiBenchmarkRun[]     @relation("AiBenchmarkRunner")
-  aiUsageLogsAsDoctor    AiUsageLog[]         @relation("DoctorAiUsageLogs")
-  license                License?             @relation("DoctorLicense")
-  aiCreditGrants         AiCreditGrant[]      @relation("DoctorAiCreditGrants")
+  phone                       String?
+  lastLoginAt                 DateTime?
+  createdAt                   DateTime                 @default(now())
+  updatedAt                   DateTime                 @updatedAt
+  doctorProfile               DoctorProfile?
+  patientLinks                Patient[]                @relation("PatientUserAccount")
+  ownedPatients               Patient[]                @relation("DoctorPatients")
+  appointmentsAsDoctor        Appointment[]            @relation("DoctorAppointments")
+  appointmentHoldsAsDoctor    AppointmentHold[]        @relation("DoctorAppointmentHolds")
+  documentLinksAsDoctor       DocumentUploadLink[]     @relation("DoctorDocumentUploadLinks")
+  notificationsAsDoctor       Notification[]           @relation("DoctorNotifications")
+  shortLinksAsDoctor          ShortLink[]              @relation("DoctorShortLinks")
+  syncDevicesAsDoctor         SyncDevice[]             @relation("DoctorSyncDevices")
+  syncEventsAsDoctor          SyncEvent[]              @relation("DoctorSyncEvents")
+  mailboxDocumentsAsDoctor    MailboxDocument[]        @relation("DoctorMailboxDocuments")
+  authorizedSummariesAsDoctor AuthorizedSummary[]      @relation("DoctorAuthorizedSummaries")
+  createdShortLinks           ShortLink[]              @relation("ShortLinkCreator")
+  legalAcceptances            LegalAcceptance[]
+  passwordResetTokens         PasswordResetToken[]
+  emailVerificationTokens     EmailVerificationToken[]
+  authSessions                AuthSession[]
+  twoFactor                   TwoFactorCredential?
+  consentsAsDoctor            Consent[]                @relation("DoctorConsents")
+  auditLogs                   AuditLog[]               @relation("ActorAuditLogs")
+  waitlistEntriesAsDoctor     WaitlistEntry[]          @relation("DoctorWaitlistEntries")
+  physicalResources           PhysicalResource[]       @relation("DoctorPhysicalResources")
+  paymentRecordsAsDoctor      PaymentRecord[]          @relation("DoctorPaymentRecords")
+  paymentRecordsRecorded      PaymentRecord[]          @relation("PaymentRecorder")
+  cashDrawerSessionsAsDoctor  CashDrawerSession[]      @relation("DoctorCashDrawerSessions")
+  cashDrawerSessionsClosed    CashDrawerSession[]      @relation("CashDrawerCloser")
+  aiBenchmarkRuns             AiBenchmarkRun[]         @relation("AiBenchmarkRunner")
+  aiUsageLogsAsDoctor         AiUsageLog[]             @relation("DoctorAiUsageLogs")
+  license                     License?                 @relation("DoctorLicense")
+  aiCreditGrants              AiCreditGrant[]          @relation("DoctorAiCreditGrants")
 
   @@index([role, phone])
 }
 
 model DoctorProfile {
-  id                   String                  @id @default(cuid())
-  userId               String                  @unique
-  professionalName     String
-  publicSlug           String                  @unique
-  licenseNumber        String?
-  specialty            ClinicalProfile
-  description          String?
+  id                     String                    @id @default(cuid())
+  userId                 String                    @unique
+  professionalName       String
+  publicSlug             String                    @unique
+  licenseNumber          String?
+  specialty              ClinicalProfile
+  description            String?
   // CONTACTO público del consultorio, visible para pacientes en el perfil.
-  phone                String?
-  addressLine1         String?
-  addressLine2         String?
-  city                 String?
-  state                String?
-  postalCode           String?
-  country              String?
-  profilePhoto         String?
-  coverPhoto           String?
-  isPublic             Boolean                 @default(false)
-  consultationDuration Int                     @default(30)
+  phone                  String?
+  addressLine1           String?
+  addressLine2           String?
+  city                   String?
+  state                  String?
+  postalCode             String?
+  country                String?
+  // CONTACTO: identidad profesional que exige la receta (Reglamento de Insumos
+  // para la Salud). Se captura desde la web o la app; el portal manda (regla 4.6).
+  degreeInstitution      String?
+  specialtyTitle         String?
+  specialtyLicenseNumber String?
+  profilePhoto           String?
+  coverPhoto             String?
+  isPublic               Boolean                   @default(false)
+  consultationDuration   Int                       @default(30)
   // Zona horaria IANA en la que se interpretan las reglas de disponibilidad.
-  timeZone             String                  @default("America/Chihuahua")
-  createdAt            DateTime                @default(now())
-  updatedAt            DateTime                @updatedAt
-  user                 User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  services             DoctorService[]
-  availabilityRules    DoctorAvailability[]
-  availabilityBlocks   DoctorAvailabilityBlock[]
-  reviews              DoctorReview[]
-  galleryImages        DoctorGalleryImage[]
-  subscriptions        DoctorSubscription[]
+  timeZone               String                    @default("America/Chihuahua")
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+  user                   User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services               DoctorService[]
+  availabilityRules      DoctorAvailability[]
+  availabilityBlocks     DoctorAvailabilityBlock[]
+  reviews                DoctorReview[]
+  galleryImages          DoctorGalleryImage[]
+  subscriptions          DoctorSubscription[]
 }
 
 model DoctorGalleryImage {
@@ -383,55 +388,55 @@ model DoctorGalleryImage {
 }
 
 model DoctorReview {
-  id                String        @id @default(cuid())
-  doctorProfileId   String
-  patientName       String
-  patientEmail      String?
-  rating            Int           @default(5)
-  title             String?
-  text              String
-  isVerified        Boolean       @default(false)
-  createdAt         DateTime      @default(now())
-  doctorProfile     DoctorProfile @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
+  id              String        @id @default(cuid())
+  doctorProfileId String
+  patientName     String
+  patientEmail    String?
+  rating          Int           @default(5)
+  title           String?
+  text            String
+  isVerified      Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  doctorProfile   DoctorProfile @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
 
   @@index([doctorProfileId, createdAt])
 }
 
 model DoctorService {
-  id               String              @id @default(cuid())
-  doctorProfileId  String
-  name             String
-  description      String?
-  priceCents       Int
-  currency         String              @default("MXN")
-  durationMinutes  Int
-  status           DoctorServiceStatus @default(ACTIVE)
-  displayOrder     Int                 @default(0)
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
-  doctorProfile    DoctorProfile       @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
-  appointments     Appointment[]
-  holds            AppointmentHold[]
-  waitlistEntries  WaitlistEntry[]
+  id              String              @id @default(cuid())
+  doctorProfileId String
+  name            String
+  description     String?
+  priceCents      Int
+  currency        String              @default("MXN")
+  durationMinutes Int
+  status          DoctorServiceStatus @default(ACTIVE)
+  displayOrder    Int                 @default(0)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  doctorProfile   DoctorProfile       @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
+  appointments    Appointment[]
+  holds           AppointmentHold[]
+  waitlistEntries WaitlistEntry[]
 
   @@index([doctorProfileId, status])
 }
 
 model DoctorAvailability {
-  id               String               @id @default(cuid())
-  doctorProfileId  String
-  ruleType         AvailabilityRuleType @default(WEEKLY)
-  dayOfWeek        Int?
-  specificDate     DateTime?
-  startTime        String
-  endTime          String
-  slotInterval     Int                  @default(30)
-  maxAdvanceDays   Int?
-  minAdvanceHours  Int?
-  isActive         Boolean              @default(true)
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-  doctorProfile    DoctorProfile        @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
+  id              String               @id @default(cuid())
+  doctorProfileId String
+  ruleType        AvailabilityRuleType @default(WEEKLY)
+  dayOfWeek       Int?
+  specificDate    DateTime?
+  startTime       String
+  endTime         String
+  slotInterval    Int                  @default(30)
+  maxAdvanceDays  Int?
+  minAdvanceHours Int?
+  isActive        Boolean              @default(true)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  doctorProfile   DoctorProfile        @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
 }
 
 model DoctorAvailabilityBlock {
@@ -447,7 +452,7 @@ model DoctorAvailabilityBlock {
 }
 
 model Patient {
-  id                    String                @id @default(cuid())
+  id                    String                    @id @default(cuid())
   ownerDoctorId         String
   userId                String?
   firstName             String
@@ -460,14 +465,14 @@ model Patient {
   phone                 String?
   email                 String?
   birthDate             DateTime?
-  sex                   BiologicalSex         @default(UNKNOWN)
-  status                PatientStatus         @default(ACTIVE)
+  sex                   BiologicalSex             @default(UNKNOWN)
+  status                PatientStatus             @default(ACTIVE)
   preferredPhoneChannel PhoneNotificationChannel?
   notes                 String?
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
-  doctor                User                  @relation("DoctorPatients", fields: [ownerDoctorId], references: [id], onDelete: Restrict)
-  user                  User?                 @relation("PatientUserAccount", fields: [userId], references: [id], onDelete: SetNull)
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+  doctor                User                      @relation("DoctorPatients", fields: [ownerDoctorId], references: [id], onDelete: Restrict)
+  user                  User?                     @relation("PatientUserAccount", fields: [userId], references: [id], onDelete: SetNull)
   contacts              PatientContact[]
   appointments          Appointment[]
   holds                 AppointmentHold[]
@@ -483,98 +488,98 @@ model Patient {
   paymentRecords        PaymentRecord[]
   aiUsageLogs           AiUsageLog[]
 
-  @@index([ownerDoctorId, lastName, firstName])
   @@unique([ownerDoctorId, email])
+  @@index([ownerDoctorId, lastName, firstName])
 }
 
 model PatientContact {
-  id            String   @id @default(cuid())
-  patientId     String
-  fullName      String
-  relationship  String?
-  phone         String?
-  email         String?
-  isPrimary     Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  patient       Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  id           String   @id @default(cuid())
+  patientId    String
+  fullName     String
+  relationship String?
+  phone        String?
+  email        String?
+  isPrimary    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  patient      Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
 }
 
 model Appointment {
-  id                 String            @id @default(cuid())
-  doctorId           String
-  patientId          String
-  serviceId          String?
-  status             AppointmentStatus @default(PENDING)
-  source             AppointmentSource @default(PATIENT)
-  scheduledStart     DateTime
-  scheduledEnd       DateTime
-  timeZone           String            @default("America/Chihuahua")
-  reason             String?
-  cancellationReason String?
-  confirmationToken  String?           @unique
-  confirmedAt        DateTime?
-  cancelledAt        DateTime?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
-  doctor             User              @relation("DoctorAppointments", fields: [doctorId], references: [id], onDelete: Restrict)
-  patient            Patient           @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  service            DoctorService?    @relation(fields: [serviceId], references: [id], onDelete: SetNull)
-  holds              AppointmentHold[]
-  precheckins        PrecheckinSubmission[]
-  uploadLinks        DocumentUploadLink[]
-  mailboxDocuments   MailboxDocument[]
+  id                  String                 @id @default(cuid())
+  doctorId            String
+  patientId           String
+  serviceId           String?
+  status              AppointmentStatus      @default(PENDING)
+  source              AppointmentSource      @default(PATIENT)
+  scheduledStart      DateTime
+  scheduledEnd        DateTime
+  timeZone            String                 @default("America/Chihuahua")
+  reason              String?
+  cancellationReason  String?
+  confirmationToken   String?                @unique
+  confirmedAt         DateTime?
+  cancelledAt         DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  doctor              User                   @relation("DoctorAppointments", fields: [doctorId], references: [id], onDelete: Restrict)
+  patient             Patient                @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  service             DoctorService?         @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  holds               AppointmentHold[]
+  precheckins         PrecheckinSubmission[]
+  uploadLinks         DocumentUploadLink[]
+  mailboxDocuments    MailboxDocument[]
   authorizedSummaries AuthorizedSummary[]
-  notifications      Notification[]
-  shortLinks         ShortLink[]
-  resourceBookings   ResourceBooking[]
-  paymentRecords     PaymentRecord[]
+  notifications       Notification[]
+  shortLinks          ShortLink[]
+  resourceBookings    ResourceBooking[]
+  paymentRecords      PaymentRecord[]
 
   @@index([doctorId, scheduledStart, status])
   @@index([patientId, scheduledStart])
 }
 
 model AppointmentHold {
-  id             String      @id @default(cuid())
-  doctorId       String
-  patientId      String?
-  serviceId      String?
-  appointmentId  String?
-  token          String      @unique
-  status         HoldStatus  @default(ACTIVE)
-  slotStart      DateTime
-  slotEnd        DateTime
-  expiresAt      DateTime
-  releasedAt     DateTime?
-  createdAt      DateTime    @default(now())
-  doctor         User        @relation("DoctorAppointmentHolds", fields: [doctorId], references: [id], onDelete: Restrict)
-  patient        Patient?    @relation(fields: [patientId], references: [id], onDelete: SetNull)
-  service        DoctorService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
-  appointment    Appointment?   @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  id            String         @id @default(cuid())
+  doctorId      String
+  patientId     String?
+  serviceId     String?
+  appointmentId String?
+  token         String         @unique
+  status        HoldStatus     @default(ACTIVE)
+  slotStart     DateTime
+  slotEnd       DateTime
+  expiresAt     DateTime
+  releasedAt    DateTime?
+  createdAt     DateTime       @default(now())
+  doctor        User           @relation("DoctorAppointmentHolds", fields: [doctorId], references: [id], onDelete: Restrict)
+  patient       Patient?       @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  service       DoctorService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  appointment   Appointment?   @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
 
   @@index([doctorId, slotStart, slotEnd, status])
 }
 
 model PrecheckinSubmission {
-  id           String          @id @default(cuid())
+  id            String           @id @default(cuid())
   appointmentId String?
-  patientId    String
-  status       PrecheckinStatus @default(DRAFT)
-  kind         PrecheckinKind  @default(GENERIC)
+  patientId     String
+  status        PrecheckinStatus @default(DRAFT)
+  kind          PrecheckinKind   @default(GENERIC)
   // GENERIC (rebanada 6, placeholder) sigue en claro hasta que la rama IA se
   // selle (rebanada 8). MEDICAL_HISTORY (antecedentes) viaja SIEMPRE sellado:
   // `responses` queda nulo y el contenido vive en `ciphertext` (sealed box
   // X25519). La nube no puede abrirlo; se entrega por sync y se purga tras ACK.
-  responses    Json?
-  ciphertext   Bytes?
-  sizeBytes    Int?
-  deliveredAt  DateTime?
-  purgedAt     DateTime?
-  submittedAt  DateTime?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  appointment  Appointment?    @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  patient      Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  responses     Json?
+  ciphertext    Bytes?
+  sizeBytes     Int?
+  deliveredAt   DateTime?
+  purgedAt      DateTime?
+  submittedAt   DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  appointment   Appointment?     @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  patient       Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
   // Un solo precheckin por cita+paciente+tipo: el envio de antecedentes se
   // sobreescribe (upsert) y la preconsulta IA se rechaza si ya existe. Cierra la
@@ -585,27 +590,27 @@ model PrecheckinSubmission {
 }
 
 model DocumentUploadLink {
-  id             String           @id @default(cuid())
-  doctorId       String
-  patientId      String
-  appointmentId  String?
-  token          String           @unique
-  status         UploadLinkStatus @default(ACTIVE)
-  expiresAt      DateTime
-  maxUploads     Int              @default(1)
-  uploadCount    Int              @default(0)
-  createdAt      DateTime         @default(now())
-  revokedAt      DateTime?
-  doctor         User             @relation("DoctorDocumentUploadLinks", fields: [doctorId], references: [id], onDelete: Restrict)
-  patient        Patient          @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  appointment    Appointment?     @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  id               String            @id @default(cuid())
+  doctorId         String
+  patientId        String
+  appointmentId    String?
+  token            String            @unique
+  status           UploadLinkStatus  @default(ACTIVE)
+  expiresAt        DateTime
+  maxUploads       Int               @default(1)
+  uploadCount      Int               @default(0)
+  createdAt        DateTime          @default(now())
+  revokedAt        DateTime?
+  doctor           User              @relation("DoctorDocumentUploadLinks", fields: [doctorId], references: [id], onDelete: Restrict)
+  patient          Patient           @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  appointment      Appointment?      @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
   mailboxDocuments MailboxDocument[]
 
   @@index([patientId, expiresAt, status])
 }
 
 model Notification {
-  id                String             @id @default(cuid())
+  id                String              @id @default(cuid())
   doctorId          String?
   patientId         String?
   appointmentId     String?
@@ -617,91 +622,91 @@ model Notification {
   body              String
   provider          String?
   providerMessageId String?
-  status            NotificationStatus @default(PENDING)
+  status            NotificationStatus  @default(PENDING)
   scheduledFor      DateTime?
   sentAt            DateTime?
   failedAt          DateTime?
-  retryCount        Int                @default(0)
+  retryCount        Int                 @default(0)
   lastError         String?
   metadata          Json?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  doctor            User?              @relation("DoctorNotifications", fields: [doctorId], references: [id], onDelete: SetNull)
-  patient           Patient?           @relation(fields: [patientId], references: [id], onDelete: SetNull)
-  appointment       Appointment?       @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  shortLink         ShortLink?         @relation(fields: [shortLinkId], references: [id], onDelete: SetNull)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  doctor            User?               @relation("DoctorNotifications", fields: [doctorId], references: [id], onDelete: SetNull)
+  patient           Patient?            @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  appointment       Appointment?        @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  shortLink         ShortLink?          @relation(fields: [shortLinkId], references: [id], onDelete: SetNull)
 
   @@index([status, scheduledFor])
 }
 
 model ShortLink {
-  id              String        @id @default(cuid())
-  code            String        @unique
+  id              String         @id @default(cuid())
+  code            String         @unique
   destinationUrl  String
   doctorId        String?
   patientId       String?
   appointmentId   String?
   createdByUserId String?
   expiresAt       DateTime?
-  useCount        Int           @default(0)
+  useCount        Int            @default(0)
   maxUses         Int?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  doctor          User?         @relation("DoctorShortLinks", fields: [doctorId], references: [id], onDelete: SetNull)
-  patient         Patient?      @relation(fields: [patientId], references: [id], onDelete: SetNull)
-  appointment     Appointment?  @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  createdByUser   User?         @relation("ShortLinkCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  doctor          User?          @relation("DoctorShortLinks", fields: [doctorId], references: [id], onDelete: SetNull)
+  patient         Patient?       @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  appointment     Appointment?   @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  createdByUser   User?          @relation("ShortLinkCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
   notifications   Notification[]
 
   @@index([appointmentId])
 }
 
 model LegalAcceptance {
-  id            String            @id @default(cuid())
-  userId        String?
-  patientId     String?
-  documentType  LegalDocumentType
-  version       String
-  acceptedAt    DateTime          @default(now())
-  ipAddress     String?
-  userAgent     String?
-  channel       NotificationChannel?
-  user          User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
-  patient       Patient?          @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  id           String               @id @default(cuid())
+  userId       String?
+  patientId    String?
+  documentType LegalDocumentType
+  version      String
+  acceptedAt   DateTime             @default(now())
+  ipAddress    String?
+  userAgent    String?
+  channel      NotificationChannel?
+  user         User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  patient      Patient?             @relation(fields: [patientId], references: [id], onDelete: SetNull)
 
   @@index([documentType, version])
 }
 
 model Consent {
-  id           String      @id @default(cuid())
-  patientId    String
-  doctorId     String?
-  type         ConsentType
-  version      String
-  granted      Boolean     @default(true)
-  grantedAt    DateTime    @default(now())
-  ipAddress    String?
-  evidence     Json?
-  patient      Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  doctor       User?       @relation("DoctorConsents", fields: [doctorId], references: [id], onDelete: SetNull)
+  id        String      @id @default(cuid())
+  patientId String
+  doctorId  String?
+  type      ConsentType
+  version   String
+  granted   Boolean     @default(true)
+  grantedAt DateTime    @default(now())
+  ipAddress String?
+  evidence  Json?
+  patient   Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor    User?       @relation("DoctorConsents", fields: [doctorId], references: [id], onDelete: SetNull)
 
   @@index([patientId, type, grantedAt])
 }
 
 model PasswordResetToken {
-  id             String              @id @default(cuid())
-  userId         String
-  tokenHash      String              @unique
-  codeHash       String?
+  id              String              @id @default(cuid())
+  userId          String
+  tokenHash       String              @unique
+  codeHash        String?
   deliveryChannel NotificationChannel @default(EMAIL)
-  destination    String?
-  status         PasswordResetStatus @default(ACTIVE)
-  expiresAt      DateTime
-  usedAt         DateTime?
-  requestedIp    String?
-  requestedAgent String?
-  createdAt      DateTime            @default(now())
-  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  destination     String?
+  status          PasswordResetStatus @default(ACTIVE)
+  expiresAt       DateTime
+  usedAt          DateTime?
+  requestedIp     String?
+  requestedAgent  String?
+  createdAt       DateTime            @default(now())
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, status, expiresAt])
   @@index([userId, codeHash, status, expiresAt])
@@ -739,19 +744,19 @@ model AuthSession {
 }
 
 model AuditLog {
-  id           String   @id @default(cuid())
-  actorUserId  String?
-  doctorId     String?
-  patientId    String?
-  entityType   String
-  entityId     String
-  action       String
-  source       String?
-  ipAddress    String?
-  userAgent    String?
-  metadata     Json?
-  createdAt    DateTime @default(now())
-  actorUser    User?    @relation("ActorAuditLogs", fields: [actorUserId], references: [id], onDelete: SetNull)
+  id          String   @id @default(cuid())
+  actorUserId String?
+  doctorId    String?
+  patientId   String?
+  entityType  String
+  entityId    String
+  action      String
+  source      String?
+  ipAddress   String?
+  userAgent   String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  actorUser   User?    @relation("ActorAuditLogs", fields: [actorUserId], references: [id], onDelete: SetNull)
 }
 
 model WaitlistEntry {
@@ -773,52 +778,52 @@ model WaitlistEntry {
 }
 
 model PhysicalResource {
-  id              String            @id @default(cuid())
-  doctorId        String
-  name            String
-  resourceType    ResourceType
-  description     String?
-  isActive        Boolean           @default(true)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  doctor          User              @relation("DoctorPhysicalResources", fields: [doctorId], references: [id], onDelete: Restrict)
-  bookings        ResourceBooking[]
+  id           String            @id @default(cuid())
+  doctorId     String
+  name         String
+  resourceType ResourceType
+  description  String?
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  doctor       User              @relation("DoctorPhysicalResources", fields: [doctorId], references: [id], onDelete: Restrict)
+  bookings     ResourceBooking[]
 }
 
 model ResourceBooking {
-  id                String                @id @default(cuid())
-  resourceId        String
-  appointmentId     String
-  status            ResourceBookingStatus @default(RESERVED)
-  startsAt          DateTime
-  endsAt            DateTime
-  createdAt         DateTime              @default(now())
-  updatedAt         DateTime              @updatedAt
-  resource          PhysicalResource      @relation(fields: [resourceId], references: [id], onDelete: Cascade)
-  appointment       Appointment           @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  id            String                @id @default(cuid())
+  resourceId    String
+  appointmentId String
+  status        ResourceBookingStatus @default(RESERVED)
+  startsAt      DateTime
+  endsAt        DateTime
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  resource      PhysicalResource      @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  appointment   Appointment           @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
 
   @@index([resourceId, startsAt, endsAt])
 }
 
 model PaymentRecord {
-  id              String         @id @default(cuid())
-  doctorId        String
+  id               String        @id @default(cuid())
+  doctorId         String
   recordedByUserId String?
-  patientId       String
-  appointmentId   String?
-  amountCents     Int
-  currency        String         @default("MXN")
-  status          PaymentStatus  @default(PENDING)
-  method          PaymentMethod
-  reference       String?
-  receiptUrl      String?
-  paidAt          DateTime?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  doctor          User           @relation("DoctorPaymentRecords", fields: [doctorId], references: [id], onDelete: Restrict)
-  patient         Patient        @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  appointment     Appointment?   @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  recordedByUser  User?          @relation("PaymentRecorder", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+  patientId        String
+  appointmentId    String?
+  amountCents      Int
+  currency         String        @default("MXN")
+  status           PaymentStatus @default(PENDING)
+  method           PaymentMethod
+  reference        String?
+  receiptUrl       String?
+  paidAt           DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  doctor           User          @relation("DoctorPaymentRecords", fields: [doctorId], references: [id], onDelete: Restrict)
+  patient          Patient       @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  appointment      Appointment?  @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  recordedByUser   User?         @relation("PaymentRecorder", fields: [recordedByUserId], references: [id], onDelete: SetNull)
 }
 
 model CashDrawerSession {
@@ -912,21 +917,21 @@ model TwoFactorRecoveryCode {
 }
 
 model AiProvider {
-  id             String         @id @default(cuid())
+  id             String           @id @default(cuid())
   name           String
   providerType   AiProviderType
-  isActive       Boolean        @default(true)
+  isActive       Boolean          @default(true)
   modelName      String?
   baseUrl        String?
   complianceInfo Json?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
   usageLogs      AiUsageLog[]
   benchmarkRuns  AiBenchmarkRun[]
 }
 
 model AiUsageLog {
-  id                 String        @id @default(cuid())
+  id                 String          @id @default(cuid())
   // OPERATIVO: propiedad SaaS/idempotencia del reporte desde la app local.
   // No contiene contenido clinico; `externalRunId` apunta a la traza local.
   doctorId           String?
@@ -935,12 +940,12 @@ model AiUsageLog {
   patientId          String?
   notificationId     String?
   usageType          AiUsageType
-  status             AiUsageStatus @default(PENDING)
+  status             AiUsageStatus   @default(PENDING)
   inputReference     Json?
   outputReference    Json?
   promptVersion      String?
   modelVersion       String?
-  creditCost         Int           @default(0)
+  creditCost         Int             @default(0)
   estimatedCostCents Int?
   latencyMs          Int?
   // OPERATIVO: metadata de cobro de transcripcion en nube. No contiene
@@ -951,11 +956,11 @@ model AiUsageLog {
   reviewedAt         DateTime?
   feedback           String?
   reportedAt         DateTime?
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
-  doctor             User?         @relation("DoctorAiUsageLogs", fields: [doctorId], references: [id], onDelete: Cascade)
-  provider           AiProvider    @relation(fields: [providerId], references: [id], onDelete: Restrict)
-  patient            Patient?      @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  doctor             User?           @relation("DoctorAiUsageLogs", fields: [doctorId], references: [id], onDelete: Cascade)
+  provider           AiProvider      @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  patient            Patient?        @relation(fields: [patientId], references: [id], onDelete: SetNull)
   creditDebits       AiCreditDebit[]
 
   @@unique([doctorId, externalRunId])
@@ -963,28 +968,28 @@ model AiUsageLog {
 }
 
 model AiBenchmarkRun {
-  id             String       @id @default(cuid())
-  providerId     String
-  executedById   String?
-  name           String
+  id              String              @id @default(cuid())
+  providerId      String
+  executedById    String?
+  name            String
   clinicalProfile ClinicalProfile
-  notes          String?
-  createdAt      DateTime     @default(now())
-  provider       AiProvider   @relation(fields: [providerId], references: [id], onDelete: Restrict)
-  executedBy     User?        @relation("AiBenchmarkRunner", fields: [executedById], references: [id], onDelete: SetNull)
-  results        AiBenchmarkResult[]
+  notes           String?
+  createdAt       DateTime            @default(now())
+  provider        AiProvider          @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  executedBy      User?               @relation("AiBenchmarkRunner", fields: [executedById], references: [id], onDelete: SetNull)
+  results         AiBenchmarkResult[]
 }
 
 model AiBenchmarkResult {
-  id               String         @id @default(cuid())
-  benchmarkRunId   String
-  caseLabel        String
-  language         String?
-  noiseLevel       String?
-  metrics          Json
-  summary          String?
-  createdAt        DateTime       @default(now())
-  benchmarkRun     AiBenchmarkRun @relation(fields: [benchmarkRunId], references: [id], onDelete: Cascade)
+  id             String         @id @default(cuid())
+  benchmarkRunId String
+  caseLabel      String
+  language       String?
+  noiseLevel     String?
+  metrics        Json
+  summary        String?
+  createdAt      DateTime       @default(now())
+  benchmarkRun   AiBenchmarkRun @relation(fields: [benchmarkRunId], references: [id], onDelete: Cascade)
 }
 
 // ---------- Sincronizacion con la app de escritorio (13_contrato_sincronizacion.md) ----------
@@ -1016,19 +1021,19 @@ enum AuthorizedSummaryStatus {
 }
 
 model SyncDevice {
-  id         String           @id @default(cuid())
-  doctorId   String
-  doctor     User             @relation("DoctorSyncDevices", fields: [doctorId], references: [id], onDelete: Cascade)
-  tokenHash  String           @unique
-  deviceName String?
+  id                String           @id @default(cuid())
+  doctorId          String
+  doctor            User             @relation("DoctorSyncDevices", fields: [doctorId], references: [id], onDelete: Cascade)
+  tokenHash         String           @unique
+  deviceName        String?
   // Llave publica X25519 (base64) del medico para cifrar documentos del buzon
   // (sealed box E2E, paso 6). Clase: OPERATIVO (material publico de llave).
   documentPublicKey String?
-  status     SyncDeviceStatus @default(ACTIVE)
-  cursor     Int              @default(0)
-  lastSyncAt DateTime?
-  createdAt  DateTime         @default(now())
-  revokedAt  DateTime?
+  status            SyncDeviceStatus @default(ACTIVE)
+  cursor            Int              @default(0)
+  lastSyncAt        DateTime?
+  createdAt         DateTime         @default(now())
+  revokedAt         DateTime?
 
   @@index([doctorId, status])
 }
