@@ -3,6 +3,9 @@
 import { useState } from "react";
 import type { ClinicalProfile, LicenseStatus, UserStatus } from "@prisma/client";
 
+import type { PrescriberProfile } from "../../../services/doctor/prescriber-profile-service";
+import { PrescriberForm } from "./prescriber-form";
+
 // Fechas de calendario (AAAA-MM-DD) en UTC para no recorrer un dia; instantes en hora local.
 const calendarFormatter = new Intl.DateTimeFormat("es-MX", { dateStyle: "long", timeZone: "UTC" });
 const instantFormatter = new Intl.DateTimeFormat("es-MX", { dateStyle: "medium" });
@@ -46,6 +49,7 @@ interface CreditsInfo {
 
 export function CuentaClient({
   account,
+  prescriber,
   license: initialLicense,
   credits
 }: {
@@ -53,10 +57,9 @@ export function CuentaClient({
     email: string;
     emailVerified: boolean;
     status: UserStatus;
-    professionalName: string;
-    licenseNumber: string | null;
     clinicalProfile: ClinicalProfile;
   };
+  prescriber: PrescriberProfile;
   license: LicenseInfo | null;
   credits: CreditsInfo;
 }) {
@@ -152,21 +155,24 @@ export function CuentaClient({
         </div>
         <dl className="account-facts">
           <div>
-            <dt>Nombre profesional</dt>
-            <dd>{account.professionalName || "Sin capturar"}</dd>
-          </div>
-          <div>
             <dt>Correo</dt>
             <dd>
               {account.email}{" "}
               {account.emailVerified ? null : <span className="pill pill-muted">Sin verificar</span>}
             </dd>
           </div>
-          <div>
-            <dt>Cedula profesional</dt>
-            <dd>{account.licenseNumber || "Sin capturar"}</dd>
-          </div>
         </dl>
+      </article>
+
+      <article className="settings-section">
+        <div className="panel-header">
+          <h2>Datos para la receta</h2>
+          <p>
+            Los pide el Reglamento de Insumos para la Salud y salen impresos en cada receta. Tambien puedes
+            editarlos desde la app de escritorio.
+          </p>
+        </div>
+        <PrescriberForm initial={prescriber} />
       </article>
 
       <article className="settings-section">
