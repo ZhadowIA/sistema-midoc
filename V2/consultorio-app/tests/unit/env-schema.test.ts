@@ -189,3 +189,15 @@ describe("env schema AI gateway (paso 30)", () => {
     expect(envSchema.safeParse(baseEnv({ AI_GATEWAY_PROVIDER: "fake" })).success).toBe(true);
   });
 });
+
+describe("env schema email sender", () => {
+  it("accepts a display-name email sender for provider From headers", () => {
+    const result = envSchema.safeParse(baseEnv({ EMAIL_FROM: "MiDoc <no-reply@midocapp.com.mx>" }));
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a sender without a valid address", () => {
+    const result = envSchema.safeParse(baseEnv({ EMAIL_FROM: "MiDoc <no-reply>" }));
+    expect(issuePaths(result)).toContain("EMAIL_FROM");
+  });
+});

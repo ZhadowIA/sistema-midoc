@@ -73,6 +73,7 @@ describe("doctor auth and session over HTTP (paso 9, step 2)", () => {
       firstName: "Elena",
       lastName: "Vega",
       professionalName: "Dra. Elena Vega",
+      licenseNumber: "1234567",
       specialty: "GENERAL_MEDICINE"
     });
     expect(register.status).toBe(201);
