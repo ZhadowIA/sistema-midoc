@@ -152,7 +152,10 @@ mod tests {
             "sherpa-embedding-campplus.onnx"
         );
         assert!(asset_for("../etc/passwd").is_none());
-        assert!(asset_for("small").is_none(), "no se mezcla con modelos de Whisper");
+        assert!(
+            asset_for("small").is_none(),
+            "no se mezcla con modelos de Whisper"
+        );
         assert!(asset_for("").is_none());
     }
 
@@ -185,7 +188,11 @@ mod tests {
         // Sin override de build, no hay checksum fijado: el modelo es usable pero
         // se marcara como NO verificado (UI honesta).
         for asset in all_assets() {
-            assert!(asset.sha256.is_empty(), "{} sin checksum por defecto", asset.model_id);
+            assert!(
+                asset.sha256.is_empty(),
+                "{} sin checksum por defecto",
+                asset.model_id
+            );
         }
     }
 

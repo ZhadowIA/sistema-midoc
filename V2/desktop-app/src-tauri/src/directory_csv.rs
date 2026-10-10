@@ -108,7 +108,11 @@ fn sex_label(sex: &str) -> &'static str {
 /// Fecha local (AAAA-MM-DD) de un instante RFC 3339; vacio si no parsea.
 fn local_date(raw: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(raw.trim())
-        .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d")
+                .to_string()
+        })
         .unwrap_or_default()
 }
 
@@ -120,7 +124,11 @@ fn csv_line<'a>(fields: impl Iterator<Item = &'a str>) -> String {
 
 /// Un campo CSV: neutraliza formulas y entrecomilla lo que haga falta.
 pub(crate) fn csv_field(raw: &str) -> String {
-    let value = if starts_like_formula(raw) { format!("'{raw}") } else { raw.to_string() };
+    let value = if starts_like_formula(raw) {
+        format!("'{raw}")
+    } else {
+        raw.to_string()
+    };
     let needs_quotes = value.contains([',', '"', '\r', '\n'])
         || value.starts_with(char::is_whitespace)
         || value.ends_with(char::is_whitespace);
@@ -139,7 +147,9 @@ fn starts_like_formula(value: &str) -> bool {
         return false;
     };
     let risky = matches!(first, '=' | '+' | '-' | '@' | '\t' | '\r');
-    let phone_like = value.chars().all(|c| c.is_ascii_digit() || " +-().".contains(c));
+    let phone_like = value
+        .chars()
+        .all(|c| c.is_ascii_digit() || " +-().".contains(c));
     risky && !(phone_like && first != '=' && first != '@')
 }
 
@@ -204,8 +214,15 @@ mod tests {
         )
         .unwrap();
         let with_note = clinical::open_encounter_for_patient(conn, "p-ana").unwrap();
-        clinical::save_note(conn, &with_note.id, &NoteContent { plan: "Control".into(), ..Default::default() })
-            .unwrap();
+        clinical::save_note(
+            conn,
+            &with_note.id,
+            &NoteContent {
+                plan: "Control".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         conn.execute(
             "UPDATE encounters SET opened_at = '2026-09-15T12:00:00+00:00' WHERE id = ?1",
             [&with_note.id],
@@ -222,10 +239,22 @@ mod tests {
         let export = directory_csv(&conn).unwrap();
         let text = String::from_utf8(export.bytes).unwrap();
 
-        assert!(text.starts_with('\u{feff}'), "BOM para que Excel respete los acentos");
-        assert!(text.contains("\r\n") && !text.replace("\r\n", "").contains('\r'), "renglones CRLF");
-        assert!(!text.contains("Penicilina") && !text.contains("Asma"), "nada clinico en el CSV");
-        assert!(!text.contains("ELIMINADO"), "sin pacientes cancelados por ARCO");
+        assert!(
+            text.starts_with('\u{feff}'),
+            "BOM para que Excel respete los acentos"
+        );
+        assert!(
+            text.contains("\r\n") && !text.replace("\r\n", "").contains('\r'),
+            "renglones CRLF"
+        );
+        assert!(
+            !text.contains("Penicilina") && !text.contains("Asma"),
+            "nada clinico en el CSV"
+        );
+        assert!(
+            !text.contains("ELIMINADO"),
+            "sin pacientes cancelados por ARCO"
+        );
         assert_eq!(export.patients, 2);
         assert!(export.file_stem.starts_with("Directorio de pacientes "));
 
@@ -237,7 +266,10 @@ mod tests {
         // Orden por apellidos: Alvarez antes que Ruiz.
         let beto = &rows[1];
         assert_eq!(beto[0], "p-beto");
-        assert_eq!(beto[1], "'=HYPERLINK(\"http://x\")", "la formula queda neutralizada");
+        assert_eq!(
+            beto[1], "'=HYPERLINK(\"http://x\")",
+            "la formula queda neutralizada"
+        );
         assert_eq!(beto[3], "Masculino");
         assert_eq!(beto[11], "0");
         assert_eq!(beto[12], "");
@@ -269,7 +301,11 @@ mod tests {
         let conn = test_conn("empty");
         let export = directory_csv(&conn).unwrap();
         assert_eq!(export.patients, 0);
-        let rows = parse_csv(String::from_utf8(export.bytes).unwrap().trim_start_matches('\u{feff}'));
+        let rows = parse_csv(
+            String::from_utf8(export.bytes)
+                .unwrap()
+                .trim_start_matches('\u{feff}'),
+        );
         assert_eq!(rows.len(), 1);
     }
 
@@ -281,8 +317,14 @@ mod tests {
         let path = std::env::temp_dir()
             .join("midoc-directory-csv-tests")
             .join(format!("directorio-{}.csv", uuid::Uuid::new_v4()));
-        let sha = crate::export::write_export_bytes(&conn, &path, "directorio", "CSV_DIRECTORIO", &export.bytes)
-            .unwrap();
+        let sha = crate::export::write_export_bytes(
+            &conn,
+            &path,
+            "directorio",
+            "CSV_DIRECTORIO",
+            &export.bytes,
+        )
+        .unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), export.bytes);
         let details: String = conn
             .query_row(
@@ -295,7 +337,14 @@ mod tests {
         assert!(!details.contains("Ana"), "la bitacora no guarda contenido");
 
         let not_utf8 = [0xff, 0xfe, 0x00];
-        assert!(crate::export::write_export_bytes(&conn, &path, "directorio", "CSV_DIRECTORIO", &not_utf8).is_err());
+        assert!(crate::export::write_export_bytes(
+            &conn,
+            &path,
+            "directorio",
+            "CSV_DIRECTORIO",
+            &not_utf8
+        )
+        .is_err());
     }
 
     #[test]
@@ -307,8 +356,15 @@ mod tests {
         assert_eq!(csv_field(" espacio"), "\" espacio\"");
         assert_eq!(csv_field("=1+1"), "'=1+1");
         assert_eq!(csv_field("@SUM(A1)"), "'@SUM(A1)");
-        assert_eq!(csv_field("-2+3+cmd|' /C calc'!A0"), "'-2+3+cmd|' /C calc'!A0");
-        assert_eq!(csv_field("+52 55 1234 5678"), "+52 55 1234 5678", "un telefono no es formula");
+        assert_eq!(
+            csv_field("-2+3+cmd|' /C calc'!A0"),
+            "'-2+3+cmd|' /C calc'!A0"
+        );
+        assert_eq!(
+            csv_field("+52 55 1234 5678"),
+            "+52 55 1234 5678",
+            "un telefono no es formula"
+        );
         assert_eq!(csv_field("(55) 1234-5678"), "(55) 1234-5678");
         assert_eq!(csv_field(""), "");
     }

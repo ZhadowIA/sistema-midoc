@@ -463,10 +463,7 @@ mod tests {
     fn assets_use_exact_download_sizes_for_corruption_checks() {
         assert_eq!(asset_for("small").unwrap().size_bytes, 190_085_487);
         assert_eq!(asset_for("medium").unwrap().size_bytes, 539_212_467);
-        assert_eq!(
-            asset_for("large-v3-turbo").unwrap().size_bytes,
-            574_041_195
-        );
+        assert_eq!(asset_for("large-v3-turbo").unwrap().size_bytes, 574_041_195);
         assert_eq!(asset_for("large-v3").unwrap().size_bytes, 1_081_140_203);
     }
 

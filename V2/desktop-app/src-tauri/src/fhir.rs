@@ -36,7 +36,9 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use crate::clinical::CodedDiagnosis;
-use crate::export::{self, ExportDoctor, ExportDocument, ExportEncounter, ExportError, RecordExport};
+use crate::export::{
+    self, ExportDoctor, ExportDocument, ExportEncounter, ExportError, RecordExport,
+};
 use crate::medication;
 
 /// Espacio de nombres de los UUID v5 de MiDoc. No cambiarlo: cambiaria los ids
@@ -92,14 +94,32 @@ pub fn export_record(
     }
 
     let full_record = encounter_id.is_none();
-    let bundle = build_bundle(&data, &prescriptions, &document_data, full_record, Uuid::new_v4());
+    let bundle = build_bundle(
+        &data,
+        &prescriptions,
+        &document_data,
+        full_record,
+        Uuid::new_v4(),
+    );
     let bytes = serde_json::to_vec_pretty(&bundle)
         .map_err(|e| ExportError::Invalid(format!("no se pudo armar el FHIR: {e}")))?;
 
-    let who = format!("{} {}", data.patient.first_name.trim(), data.patient.last_name.trim());
+    let who = format!(
+        "{} {}",
+        data.patient.first_name.trim(),
+        data.patient.last_name.trim()
+    );
     let day = data.generated_at.get(..10).unwrap_or_default();
-    let (kind, label) = if full_record { ("FHIR_EXPEDIENTE", "Expediente") } else { ("FHIR_CONSULTA", "Consulta") };
-    Ok(FhirExport { kind, file_stem: format!("{label} FHIR {} {day}", who.trim()), bytes })
+    let (kind, label) = if full_record {
+        ("FHIR_EXPEDIENTE", "Expediente")
+    } else {
+        ("FHIR_CONSULTA", "Consulta")
+    };
+    Ok(FhirExport {
+        kind,
+        file_stem: format!("{label} FHIR {} {day}", who.trim()),
+        bytes,
+    })
 }
 
 /* ---------- Armado del Bundle (puro) ---------- */
@@ -118,44 +138,56 @@ pub(crate) fn build_bundle(
     let patient_ref = reference(&patient_id);
     let practitioner_ref = reference(&practitioner_id);
 
-    let mut entries = vec![patient(data, &patient_id), practitioner(&data.doctor, &practitioner_id)];
+    let mut entries = vec![
+        patient(data, &patient_id),
+        practitioner(&data.doctor, &practitioner_id),
+    ];
 
-    let allergy_ids: Vec<String> = allergy_terms(data.patient.allergies.as_deref().unwrap_or_default())
-        .into_iter()
-        .map(|term| {
-            let id = resource_id(
-                "AllergyIntolerance",
-                &format!("{}/{}", data.patient.id, medication::normalize_name(&term)),
-            );
-            entries.push(
-                Obj::resource("AllergyIntolerance", &id)
-                    .set(
-                        "clinicalStatus",
-                        concept(
-                            "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
-                            "active",
-                            "Active",
-                        ),
-                    )
-                    .set("code", json!({ "text": term }))
-                    .set("patient", patient_ref.clone())
-                    .build(),
-            );
-            id
-        })
-        .collect();
+    let allergy_ids: Vec<String> =
+        allergy_terms(data.patient.allergies.as_deref().unwrap_or_default())
+            .into_iter()
+            .map(|term| {
+                let id = resource_id(
+                    "AllergyIntolerance",
+                    &format!("{}/{}", data.patient.id, medication::normalize_name(&term)),
+                );
+                entries.push(
+                    Obj::resource("AllergyIntolerance", &id)
+                        .set(
+                            "clinicalStatus",
+                            concept(
+                                "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+                                "active",
+                                "Active",
+                            ),
+                        )
+                        .set("code", json!({ "text": term }))
+                        .set("patient", patient_ref.clone())
+                        .build(),
+                );
+                id
+            })
+            .collect();
 
     if full_record {
-        if let Some(summary) =
-            summary_composition(data, &allergy_ids, &patient_ref, &practitioner_ref, &generated_at)
-        {
+        if let Some(summary) = summary_composition(
+            data,
+            &allergy_ids,
+            &patient_ref,
+            &practitioner_ref,
+            &generated_at,
+        ) {
             entries.push(summary);
         }
     }
 
-    let exported_encounters: HashSet<&str> = data.encounters.iter().map(|e| e.id.as_str()).collect();
+    let exported_encounters: HashSet<&str> =
+        data.encounters.iter().map(|e| e.id.as_str()).collect();
     for encounter in &data.encounters {
-        let groups = prescriptions.get(&encounter.id).map(Vec::as_slice).unwrap_or_default();
+        let groups = prescriptions
+            .get(&encounter.id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         entries.extend(encounter_resources(
             encounter,
             groups,
@@ -289,7 +321,14 @@ fn practitioner(doctor: &ExportDoctor, id: &str) -> Value {
     });
     Obj::resource("Practitioner", id)
         .opt("identifier", identifier)
-        .opt("name", doctor.name.as_deref().and_then(clean).map(|text| json!([{ "text": text }])))
+        .opt(
+            "name",
+            doctor
+                .name
+                .as_deref()
+                .and_then(clean)
+                .map(|text| json!([{ "text": text }])),
+        )
         .build()
 }
 
@@ -332,15 +371,21 @@ fn summary_composition(
         return None;
     }
     Some(
-        Obj::resource("Composition", &resource_id("Composition", &format!("{}/antecedentes", p.id)))
-            .set("status", "final")
-            .set("type", concept(LOINC, "60591-5", "Patient summary Document"))
-            .set("subject", patient_ref.clone())
-            .set("date", generated_at)
-            .set("author", json!([practitioner_ref]))
-            .set("title", "Antecedentes del paciente")
-            .set("section", sections)
-            .build(),
+        Obj::resource(
+            "Composition",
+            &resource_id("Composition", &format!("{}/antecedentes", p.id)),
+        )
+        .set("status", "final")
+        .set(
+            "type",
+            concept(LOINC, "60591-5", "Patient summary Document"),
+        )
+        .set("subject", patient_ref.clone())
+        .set("date", generated_at)
+        .set("author", json!([practitioner_ref]))
+        .set("title", "Antecedentes del paciente")
+        .set("section", sections)
+        .build(),
     )
 }
 
@@ -371,7 +416,15 @@ fn encounter_resources(
     if let Some(note) = &encounter.note {
         for dx in &note.coded_diagnoses {
             let id = resource_id("Condition", &format!("{}/{}", encounter.id, dx.code));
-            resources.push(condition(&id, Some(dx), &dx.name, encounter, &encounter_ref, patient_ref, practitioner_ref));
+            resources.push(condition(
+                &id,
+                Some(dx),
+                &dx.name,
+                encounter,
+                &encounter_ref,
+                patient_ref,
+                practitioner_ref,
+            ));
             diagnoses.push((id, dx.principal));
             diagnosis_lines.push(format!(
                 "{} {}{}",
@@ -383,7 +436,15 @@ fn encounter_resources(
         if let Some(text) = clean(&note.diagnosis) {
             if note.coded_diagnoses.is_empty() {
                 let id = resource_id("Condition", &format!("{}/texto", encounter.id));
-                resources.push(condition(&id, None, &text, encounter, &encounter_ref, patient_ref, practitioner_ref));
+                resources.push(condition(
+                    &id,
+                    None,
+                    &text,
+                    encounter,
+                    &encounter_ref,
+                    patient_ref,
+                    practitioner_ref,
+                ));
                 diagnoses.push((id, false));
             }
             diagnosis_lines.push(text);
@@ -393,7 +454,10 @@ fn encounter_resources(
     // Receta.
     let mut medication_ids = Vec::new();
     for (index, group) in groups.iter().enumerate() {
-        let id = resource_id("MedicationRequest", &format!("{}/{}", encounter.id, index + 1));
+        let id = resource_id(
+            "MedicationRequest",
+            &format!("{}/{}", encounter.id, index + 1),
+        );
         let full_text = group.lines.join("\n");
         let (medication, dosage) = match &group.medication {
             Some(line) => (line.clone(), Some(json!([{ "text": full_text }]))),
@@ -464,22 +528,59 @@ fn encounter_resources(
     };
     let mut sections = Vec::new();
     if let Some(note) = &encounter.note {
-        sections.extend(text_section("Subjetivo", ("61150-9", "Subjective Narrative"), &note.subjective));
-        sections.extend(text_section("Objetivo", ("61149-1", "Objective Narrative"), &note.objective));
-        sections.extend(text_section("Análisis", ("51848-0", "Evaluation note"), &note.assessment));
+        sections.extend(text_section(
+            "Subjetivo",
+            ("61150-9", "Subjective Narrative"),
+            &note.subjective,
+        ));
+        sections.extend(text_section(
+            "Objetivo",
+            ("61149-1", "Objective Narrative"),
+            &note.objective,
+        ));
+        sections.extend(text_section(
+            "Análisis",
+            ("51848-0", "Evaluation note"),
+            &note.assessment,
+        ));
         if !diagnosis_lines.is_empty() {
             let ids: Vec<String> = diagnoses.iter().map(|(id, _)| id.clone()).collect();
-            let title = if note.coded_diagnoses.is_empty() { "Diagnóstico" } else { "Diagnóstico (CIE-10)" };
-            sections.push(section(title, Some(("29548-5", "Diagnosis Narrative")), &diagnosis_lines, &ids));
+            let title = if note.coded_diagnoses.is_empty() {
+                "Diagnóstico"
+            } else {
+                "Diagnóstico (CIE-10)"
+            };
+            sections.push(section(
+                title,
+                Some(("29548-5", "Diagnosis Narrative")),
+                &diagnosis_lines,
+                &ids,
+            ));
         }
-        sections.extend(text_section("Plan", ("18776-5", "Plan of care note"), &note.plan));
-        sections.extend(text_section("Indicaciones", ("69730-0", "Instructions"), &note.instructions));
+        sections.extend(text_section(
+            "Plan",
+            ("18776-5", "Plan of care note"),
+            &note.plan,
+        ));
+        sections.extend(text_section(
+            "Indicaciones",
+            ("69730-0", "Instructions"),
+            &note.instructions,
+        ));
     }
     if let Some(text) = encounter.prescription.as_deref().and_then(clean) {
-        sections.push(section("Receta", Some(("57828-6", "Prescription list")), &[text], &medication_ids));
+        sections.push(section(
+            "Receta",
+            Some(("57828-6", "Prescription list")),
+            &[text],
+            &medication_ids,
+        ));
     }
 
-    let version = encounter.note_version.map(|v| format!(" (versión {v})")).unwrap_or_default();
+    let version = encounter
+        .note_version
+        .map(|v| format!(" (versión {v})"))
+        .unwrap_or_default();
     let mut status_lines = vec![if signed {
         format!(
             "Nota firmada el {}{version}. Huella SHA-256: {}.",
@@ -489,16 +590,21 @@ fn encounter_resources(
     } else {
         format!("Consulta abierta: la nota no está firmada y puede cambiar{version}.")
     }];
-    match (doctor.name.as_deref().and_then(clean), doctor.license.as_deref().and_then(clean)) {
-        (Some(name), Some(license)) => status_lines.push(format!("Médico: {name}, cédula profesional {license}.")),
+    match (
+        doctor.name.as_deref().and_then(clean),
+        doctor.license.as_deref().and_then(clean),
+    ) {
+        (Some(name), Some(license)) => {
+            status_lines.push(format!("Médico: {name}, cédula profesional {license}."))
+        }
         (Some(name), None) => status_lines.push(format!("Médico: {name}.")),
         (None, Some(license)) => status_lines.push(format!("Cédula profesional {license}.")),
         (None, None) => {}
     }
 
-    let attester = signed_at.as_ref().map(|time| {
-        json!([{ "mode": "legal", "time": time, "party": practitioner_ref }])
-    });
+    let attester = signed_at
+        .as_ref()
+        .map(|time| json!([{ "mode": "legal", "time": time, "party": practitioner_ref }]));
     resources.push(
         Obj::resource("Composition", &resource_id("Composition", &encounter.id))
             .set("text", narrative(&status_lines))
@@ -529,7 +635,10 @@ fn condition(
     if let Some(dx) = coded {
         // El nombre oficial va en `text`: la CIE-10 de la Secretaria de Salud
         // es la traduccion al espanol y el `display` del sistema es el de la OMS.
-        code = code.set("coding", json!([{ "system": ICD10, "code": icd10_code(&dx.code) }]));
+        code = code.set(
+            "coding",
+            json!([{ "system": ICD10, "code": icd10_code(&dx.code) }]),
+        );
     }
     Obj::resource("Condition", id)
         .set(
@@ -561,26 +670,32 @@ fn document_reference(
         .opt("title", clean(&document.file_name))
         .opt("size", u32::try_from(document.size_bytes).ok())
         .build();
-    Obj::resource("DocumentReference", &resource_id("DocumentReference", &document.id))
-        .set("status", "current")
-        .list(
-            "category",
-            document
-                .category
-                .as_deref()
-                .and_then(category_label)
-                .map(|label| vec![json!({ "text": label })])
-                .unwrap_or_default(),
-        )
-        .set("subject", patient_ref.clone())
-        .set("date", instant(&document.received_at).unwrap_or_else(|| generated_at.to_string()))
-        .opt("description", document.title.as_deref().and_then(clean))
-        .set("content", json!([{ "attachment": attachment }]))
-        .opt(
-            "context",
-            encounter_id.map(|id| json!({ "encounter": [reference(&resource_id("Encounter", id))] })),
-        )
-        .build()
+    Obj::resource(
+        "DocumentReference",
+        &resource_id("DocumentReference", &document.id),
+    )
+    .set("status", "current")
+    .list(
+        "category",
+        document
+            .category
+            .as_deref()
+            .and_then(category_label)
+            .map(|label| vec![json!({ "text": label })])
+            .unwrap_or_default(),
+    )
+    .set("subject", patient_ref.clone())
+    .set(
+        "date",
+        instant(&document.received_at).unwrap_or_else(|| generated_at.to_string()),
+    )
+    .opt("description", document.title.as_deref().and_then(clean))
+    .set("content", json!([{ "attachment": attachment }]))
+    .opt(
+        "context",
+        encounter_id.map(|id| json!({ "encounter": [reference(&resource_id("Encounter", id))] })),
+    )
+    .build()
 }
 
 fn category_label(category: &str) -> Option<&'static str> {
@@ -597,7 +712,10 @@ fn category_label(category: &str) -> Option<&'static str> {
 fn section(title: &str, code: Option<(&str, &str)>, lines: &[String], entries: &[String]) -> Value {
     Obj::default()
         .set("title", title)
-        .opt("code", code.map(|(code, display)| concept(LOINC, code, display)))
+        .opt(
+            "code",
+            code.map(|(code, display)| concept(LOINC, code, display)),
+        )
         .set("text", narrative(lines))
         .list("entry", entries.iter().map(|id| reference(id)).collect())
         .build()
@@ -611,7 +729,9 @@ struct Obj(Map<String, Value>);
 
 impl Obj {
     fn resource(resource_type: &str, id: &str) -> Self {
-        Self::default().set("resourceType", resource_type).set("id", id)
+        Self::default()
+            .set("resourceType", resource_type)
+            .set("id", id)
     }
 
     fn set(mut self, key: &str, value: impl Into<Value>) -> Self {
@@ -675,7 +795,10 @@ pub(crate) fn clean(raw: &str) -> Option<String> {
 pub(crate) fn instant(raw: &str) -> Option<String> {
     chrono::DateTime::parse_from_rfc3339(raw.trim())
         .ok()
-        .map(|dt| dt.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .map(|dt| {
+            dt.with_timezone(&chrono::Utc)
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        })
 }
 
 /// Fecha FHIR (AAAA-MM-DD) si la de nacimiento es valida.
@@ -726,8 +849,17 @@ fn escape_xml(text: &str) -> String {
 /// Terminos de alergia del texto libre, sin repetir y sin las negaciones
 /// ("niega", "ninguna", "sin alergias"): esas dicen que no hay alergia, no son una.
 pub(crate) fn allergy_terms(raw: &str) -> Vec<String> {
-    const NEGATIONS: &[&str] =
-        &["niega", "negad", "negativ", "ningun", "no ", "sin ", "nkda", "desconoce", "se ignora"];
+    const NEGATIONS: &[&str] = &[
+        "niega",
+        "negad",
+        "negativ",
+        "ningun",
+        "no ",
+        "sin ",
+        "nkda",
+        "desconoce",
+        "se ignora",
+    ];
     let mut seen = HashSet::new();
     raw.split([',', ';', '\n'])
         .filter_map(clean)
@@ -754,7 +886,10 @@ pub(crate) fn group_prescription<E>(
         if names_medication(&line)? {
             let mut lines = std::mem::take(&mut leading);
             lines.push(line.clone());
-            groups.push(MedicationGroup { medication: Some(line), lines });
+            groups.push(MedicationGroup {
+                medication: Some(line),
+                lines,
+            });
         } else if let Some(current) = groups.last_mut() {
             current.lines.push(line);
         } else {
@@ -762,7 +897,10 @@ pub(crate) fn group_prescription<E>(
         }
     }
     if groups.is_empty() && !leading.is_empty() {
-        groups.push(MedicationGroup { medication: None, lines: leading });
+        groups.push(MedicationGroup {
+            medication: None,
+            lines: leading,
+        });
     }
     Ok(groups)
 }
@@ -785,9 +923,11 @@ mod tests {
     fn r4_schema() -> &'static jsonschema::Validator {
         static VALIDATOR: OnceLock<jsonschema::Validator> = OnceLock::new();
         VALIDATOR.get_or_init(|| {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/fhir/fhir-r4.schema.json.gz");
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("test_data/fhir/fhir-r4.schema.json.gz");
             let file = std::fs::File::open(path).expect("esquema FHIR R4 en test_data/fhir");
-            let schema: Value = serde_json::from_reader(flate2::read::GzDecoder::new(file)).unwrap();
+            let schema: Value =
+                serde_json::from_reader(flate2::read::GzDecoder::new(file)).unwrap();
             jsonschema::draft6::new(&schema).expect("el esquema R4 compila")
         })
     }
@@ -835,8 +975,16 @@ mod tests {
                 diagnosis: "Asma en crisis".into(),
                 instructions: "Acudir a urgencias si hay dificultad para respirar".into(),
                 coded_diagnoses: vec![
-                    CodedDiagnosis { code: "J459".into(), name: String::new(), principal: true },
-                    CodedDiagnosis { code: "J00".into(), name: String::new(), principal: false },
+                    CodedDiagnosis {
+                        code: "J459".into(),
+                        name: String::new(),
+                        principal: true,
+                    },
+                    CodedDiagnosis {
+                        code: "J00".into(),
+                        name: String::new(),
+                        principal: false,
+                    },
                 ],
                 ..Default::default()
             },
@@ -857,22 +1005,30 @@ mod tests {
         clinical::save_note(
             conn,
             &open.id,
-            &NoteContent { diagnosis: "Control de asma".into(), plan: "Seguimiento".into(), ..Default::default() },
+            &NoteContent {
+                diagnosis: "Control de asma".into(),
+                plan: "Seguimiento".into(),
+                ..Default::default()
+            },
         )
         .unwrap();
 
-        let doc = |content: &[u8], name: &str, encounter: Option<&str>| crate::documents::NewDocument {
-            patient_id: "p1".into(),
-            encounter_id: encounter.map(str::to_string),
-            file_name: name.into(),
-            title: Some(format!("Estudio {name}")),
-            category: "LABORATORIO".into(),
-            content_base64: STANDARD.encode(content),
-        };
+        let doc =
+            |content: &[u8], name: &str, encounter: Option<&str>| crate::documents::NewDocument {
+                patient_id: "p1".into(),
+                encounter_id: encounter.map(str::to_string),
+                file_name: name.into(),
+                title: Some(format!("Estudio {name}")),
+                category: "LABORATORIO".into(),
+                content_base64: STANDARD.encode(content),
+            };
         crate::documents::add_document(conn, &doc(PDF, "biometria.pdf", Some(&signed.id))).unwrap();
         crate::documents::add_document(conn, &doc(PNG, "radiografia.png", None)).unwrap();
 
-        Seeded { signed: signed.id, open: open.id }
+        Seeded {
+            signed: signed.id,
+            open: open.id,
+        }
     }
 
     fn bundle_of(conn: &Connection, encounter: Option<&str>) -> Value {
@@ -910,7 +1066,11 @@ mod tests {
         seed(&conn);
         let bundle = bundle_of(&conn, None);
         let errors = schema_errors(&bundle);
-        assert!(errors.is_empty(), "el Bundle no cumple el esquema R4:\n{}", errors.join("\n"));
+        assert!(
+            errors.is_empty(),
+            "el Bundle no cumple el esquema R4:\n{}",
+            errors.join("\n")
+        );
     }
 
     #[test]
@@ -934,16 +1094,33 @@ mod tests {
 
         assert_eq!(resources(&bundle, "Encounter").len(), 1);
         let compositions = resources(&bundle, "Composition");
-        assert_eq!(compositions.len(), 1, "sin antecedentes, como el PDF de consulta");
+        assert_eq!(
+            compositions.len(),
+            1,
+            "sin antecedentes, como el PDF de consulta"
+        );
         assert_eq!(compositions[0]["title"], "Nota de consulta");
         let documents = resources(&bundle, "DocumentReference");
         assert_eq!(documents.len(), 1, "solo el documento de esta consulta");
-        assert_eq!(documents[0]["content"][0]["attachment"]["title"], "biometria.pdf");
-        assert_eq!(resources(&bundle, "AllergyIntolerance").len(), 2, "las alergias siempre viajan");
+        assert_eq!(
+            documents[0]["content"][0]["attachment"]["title"],
+            "biometria.pdf"
+        );
+        assert_eq!(
+            resources(&bundle, "AllergyIntolerance").len(),
+            2,
+            "las alergias siempre viajan"
+        );
 
         let export = export_record(&conn, "p1", Some(&seeded.signed)).unwrap();
         assert_eq!(export.kind, "FHIR_CONSULTA");
-        assert!(export.file_stem.starts_with("Consulta FHIR Ana Ruiz López "), "{}", export.file_stem);
+        assert!(
+            export
+                .file_stem
+                .starts_with("Consulta FHIR Ana Ruiz López "),
+            "{}",
+            export.file_stem
+        );
     }
 
     #[test]
@@ -964,7 +1141,10 @@ mod tests {
         let practitioner = resources(&bundle, "Practitioner")[0];
         assert_eq!(practitioner["name"][0]["text"], "Dra. Eva Soto");
         assert_eq!(practitioner["identifier"][0]["value"], "1234567");
-        assert_eq!(practitioner["identifier"][0]["type"]["coding"][0]["code"], "MD");
+        assert_eq!(
+            practitioner["identifier"][0]["type"]["coding"][0]["code"],
+            "MD"
+        );
 
         let allergies: Vec<&str> = resources(&bundle, "AllergyIntolerance")
             .iter()
@@ -975,10 +1155,16 @@ mod tests {
         let encounters = resources(&bundle, "Encounter");
         assert_eq!(encounters.len(), 2, "sin la consulta vacia");
         let signed_id = resource_id("Encounter", &seeded.signed);
-        let signed = encounters.iter().find(|e| e["id"] == signed_id.as_str()).unwrap();
+        let signed = encounters
+            .iter()
+            .find(|e| e["id"] == signed_id.as_str())
+            .unwrap();
         assert_eq!(signed["status"], "finished");
         let open_id = resource_id("Encounter", &seeded.open);
-        let open = encounters.iter().find(|e| e["id"] == open_id.as_str()).unwrap();
+        let open = encounters
+            .iter()
+            .find(|e| e["id"] == open_id.as_str())
+            .unwrap();
         assert_eq!(open["status"], "in-progress");
 
         let conditions = resources(&bundle, "Condition");
@@ -991,22 +1177,40 @@ mod tests {
         assert_eq!(conditions[0]["code"]["text"], "ASMA, NO ESPECIFICADO");
         let principal = &signed["diagnosis"][0];
         assert_eq!(principal["rank"], 1);
-        assert_eq!(principal["condition"]["reference"], format!("urn:uuid:{}", conditions[0]["id"].as_str().unwrap()));
-        let free_text = conditions.iter().find(|c| c["code"].get("coding").is_none()).unwrap();
-        assert_eq!(free_text["code"]["text"], "Control de asma", "la consulta sin CIE-10 conserva su diagnostico");
+        assert_eq!(
+            principal["condition"]["reference"],
+            format!("urn:uuid:{}", conditions[0]["id"].as_str().unwrap())
+        );
+        let free_text = conditions
+            .iter()
+            .find(|c| c["code"].get("coding").is_none())
+            .unwrap();
+        assert_eq!(
+            free_text["code"]["text"], "Control de asma",
+            "la consulta sin CIE-10 conserva su diagnostico"
+        );
 
         let requests = resources(&bundle, "MedicationRequest");
         assert_eq!(requests.len(), 2, "un pedido por medicamento");
-        assert_eq!(requests[0]["medicationCodeableConcept"]["text"], "Paracetamol 500 mg tabletas");
+        assert_eq!(
+            requests[0]["medicationCodeableConcept"]["text"],
+            "Paracetamol 500 mg tabletas"
+        );
         assert_eq!(
             requests[0]["dosageInstruction"][0]["text"],
             "Rx:\nParacetamol 500 mg tabletas\n1 cada 8 horas por 3 dias"
         );
-        assert_eq!(requests[1]["medicationCodeableConcept"]["text"], "Ibuprofeno 400 mg cada 12 horas si hay dolor");
+        assert_eq!(
+            requests[1]["medicationCodeableConcept"]["text"],
+            "Ibuprofeno 400 mg cada 12 horas si hay dolor"
+        );
         assert_eq!(requests[0]["status"], "unknown");
 
         let compositions = resources(&bundle, "Composition");
-        let summary = compositions.iter().find(|c| c["title"] == "Antecedentes del paciente").unwrap();
+        let summary = compositions
+            .iter()
+            .find(|c| c["title"] == "Antecedentes del paciente")
+            .unwrap();
         assert_eq!(summary["section"].as_array().unwrap().len(), 3);
         let note = compositions
             .iter()
@@ -1014,14 +1218,43 @@ mod tests {
             .unwrap();
         assert_eq!(note["status"], "final");
         assert_eq!(note["attester"][0]["mode"], "legal");
-        let hash = clinical::get_encounter_detail(&conn, &seeded.signed).unwrap().encounter.signed_hash.unwrap();
-        assert!(note["text"]["div"].as_str().unwrap().contains(&hash), "la huella de la firma viaja en la nota");
+        let hash = clinical::get_encounter_detail(&conn, &seeded.signed)
+            .unwrap()
+            .encounter
+            .signed_hash
+            .unwrap();
+        assert!(
+            note["text"]["div"].as_str().unwrap().contains(&hash),
+            "la huella de la firma viaja en la nota"
+        );
         let subjective = note["section"][0]["text"]["div"].as_str().unwrap();
-        assert!(subjective.contains("Tos nocturna &lt;3 días&gt; &amp; sibilancias"), "{subjective}");
+        assert!(
+            subjective.contains("Tos nocturna &lt;3 días&gt; &amp; sibilancias"),
+            "{subjective}"
+        );
         let objective = note["section"][1]["text"]["div"].as_str().unwrap();
-        assert!(objective.contains("espiratorias bilaterales"), "sin espacio no separable: {objective}");
-        let titles: Vec<&str> = note["section"].as_array().unwrap().iter().map(|s| s["title"].as_str().unwrap()).collect();
-        assert_eq!(titles, vec!["Subjetivo", "Objetivo", "Análisis", "Diagnóstico (CIE-10)", "Plan", "Indicaciones", "Receta"]);
+        assert!(
+            objective.contains("espiratorias bilaterales"),
+            "sin espacio no separable: {objective}"
+        );
+        let titles: Vec<&str> = note["section"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            titles,
+            vec![
+                "Subjetivo",
+                "Objetivo",
+                "Análisis",
+                "Diagnóstico (CIE-10)",
+                "Plan",
+                "Indicaciones",
+                "Receta"
+            ]
+        );
         let open_note = compositions
             .iter()
             .find(|c| c["encounter"]["reference"] == format!("urn:uuid:{open_id}"))
@@ -1035,9 +1268,15 @@ mod tests {
         assert_eq!(pdf["contentType"], "application/pdf");
         assert_eq!(pdf["data"], STANDARD.encode(PDF));
         assert_eq!(pdf["size"], PDF.len());
-        assert_eq!(documents[0]["context"]["encounter"][0]["reference"], format!("urn:uuid:{signed_id}"));
+        assert_eq!(
+            documents[0]["context"]["encounter"][0]["reference"],
+            format!("urn:uuid:{signed_id}")
+        );
         assert_eq!(documents[0]["category"][0]["text"], "Laboratorio");
-        assert!(documents[1].get("context").is_none(), "la radiografia no es de ninguna consulta");
+        assert!(
+            documents[1].get("context").is_none(),
+            "la radiografia no es de ninguna consulta"
+        );
 
         // Toda referencia apunta a un recurso del mismo Bundle.
         let full_urls: HashSet<&str> = bundle["entry"]
@@ -1046,11 +1285,18 @@ mod tests {
             .iter()
             .map(|entry| entry["fullUrl"].as_str().unwrap())
             .collect();
-        assert_eq!(full_urls.len(), bundle["entry"].as_array().unwrap().len(), "fullUrl repetido");
+        assert_eq!(
+            full_urls.len(),
+            bundle["entry"].as_array().unwrap().len(),
+            "fullUrl repetido"
+        );
         let mut references = Vec::new();
         collect_references(&bundle, &mut references);
         for target in references {
-            assert!(full_urls.contains(target.as_str()), "referencia rota: {target}");
+            assert!(
+                full_urls.contains(target.as_str()),
+                "referencia rota: {target}"
+            );
         }
 
         let export = export_record(&conn, "p1", None).unwrap();
@@ -1062,12 +1308,20 @@ mod tests {
         let conn = test_conn("stable");
         seed(&conn);
         let ids = |bundle: &Value| -> Vec<String> {
-            bundle["entry"].as_array().unwrap().iter().map(|e| e["fullUrl"].as_str().unwrap().to_string()).collect()
+            bundle["entry"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e["fullUrl"].as_str().unwrap().to_string())
+                .collect()
         };
         let first = bundle_of(&conn, None);
         let second = bundle_of(&conn, None);
         assert_eq!(ids(&first), ids(&second));
-        assert_ne!(first["id"], second["id"], "cada exportacion es un Bundle distinto");
+        assert_ne!(
+            first["id"], second["id"],
+            "cada exportacion es un Bundle distinto"
+        );
     }
 
     #[test]
@@ -1083,7 +1337,10 @@ mod tests {
         let errors = schema_errors(&bundle);
         assert!(errors.is_empty(), "{}", errors.join("\n"));
         let patient = resources(&bundle, "Patient")[0];
-        assert!(patient.get("birthDate").is_none(), "fecha que no es AAAA-MM-DD");
+        assert!(
+            patient.get("birthDate").is_none(),
+            "fecha que no es AAAA-MM-DD"
+        );
         assert!(patient["name"][0].get("family").is_none());
         assert_eq!(resources(&bundle, "Practitioner").len(), 1);
     }
@@ -1091,16 +1348,26 @@ mod tests {
     #[test]
     fn groups_prescription_lines_by_medication() {
         let known = |line: &str| Ok::<_, ()>(line.starts_with("Med"));
-        let groups = group_prescription("Rx\nMed A 1 g\ncada 8 h\n\nMed B\n  por 5 dias  ", known).unwrap();
+        let groups =
+            group_prescription("Rx\nMed A 1 g\ncada 8 h\n\nMed B\n  por 5 dias  ", known).unwrap();
         assert_eq!(
             groups,
             vec![
-                MedicationGroup { medication: Some("Med A 1 g".into()), lines: vec!["Rx".into(), "Med A 1 g".into(), "cada 8 h".into()] },
-                MedicationGroup { medication: Some("Med B".into()), lines: vec!["Med B".into(), "por 5 dias".into()] },
+                MedicationGroup {
+                    medication: Some("Med A 1 g".into()),
+                    lines: vec!["Rx".into(), "Med A 1 g".into(), "cada 8 h".into()]
+                },
+                MedicationGroup {
+                    medication: Some("Med B".into()),
+                    lines: vec!["Med B".into(), "por 5 dias".into()]
+                },
             ]
         );
 
-        let unknown = group_prescription("Formula magistral\nAplicar dos veces al dia", |_| Ok::<_, ()>(false)).unwrap();
+        let unknown = group_prescription("Formula magistral\nAplicar dos veces al dia", |_| {
+            Ok::<_, ()>(false)
+        })
+        .unwrap();
         assert_eq!(unknown.len(), 1);
         assert_eq!(unknown[0].medication, None);
         assert_eq!(unknown[0].lines.len(), 2);
@@ -1110,7 +1377,10 @@ mod tests {
 
     #[test]
     fn allergy_terms_skip_negations_and_repeats() {
-        assert_eq!(allergy_terms("Penicilina, PENICILINA; Ácaros\nNiega otras"), vec!["Penicilina", "Ácaros"]);
+        assert_eq!(
+            allergy_terms("Penicilina, PENICILINA; Ácaros\nNiega otras"),
+            vec!["Penicilina", "Ácaros"]
+        );
         assert!(allergy_terms("Ninguna conocida").is_empty());
         assert!(allergy_terms("Negadas").is_empty());
         assert!(allergy_terms("No conocidas").is_empty());
@@ -1123,12 +1393,21 @@ mod tests {
     fn helpers_produce_valid_fhir_primitives() {
         assert_eq!(icd10_code("j459"), "J45.9");
         assert_eq!(icd10_code("A33"), "A33");
-        assert_eq!(instant("2026-10-06T01:13:58.644123456+00:00").as_deref(), Some("2026-10-06T01:13:58Z"));
-        assert_eq!(instant("2026-10-06T08:00:00-06:00").as_deref(), Some("2026-10-06T14:00:00Z"));
+        assert_eq!(
+            instant("2026-10-06T01:13:58.644123456+00:00").as_deref(),
+            Some("2026-10-06T01:13:58Z")
+        );
+        assert_eq!(
+            instant("2026-10-06T08:00:00-06:00").as_deref(),
+            Some("2026-10-06T14:00:00Z")
+        );
         assert_eq!(instant("ayer"), None);
         assert_eq!(date("1990-05-01").as_deref(), Some("1990-05-01"));
         assert_eq!(date("1990-13-01"), None);
-        assert_eq!(clean(" \u{feff}a\u{a0}b\u{7}\r\nc ").as_deref(), Some("a b\nc"));
+        assert_eq!(
+            clean(" \u{feff}a\u{a0}b\u{7}\r\nc ").as_deref(),
+            Some("a b\nc")
+        );
         assert_eq!(clean(" \n\t "), None);
         assert_eq!(
             narrative(&["a<b>\n\"c\" & 'd'".into()])["div"],

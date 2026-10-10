@@ -172,7 +172,7 @@ mod tests {
         let decrypted = sbox
             .decrypt_to_vec(
                 &SummaryNonce::try_from(nonce).unwrap(),
-                &SummaryKey::try_from(key.as_slice()).unwrap()
+                &SummaryKey::try_from(key.as_slice()).unwrap(),
             )
             .unwrap();
         assert_eq!(decrypted, content);

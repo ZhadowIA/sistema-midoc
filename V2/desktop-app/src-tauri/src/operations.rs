@@ -133,10 +133,15 @@ pub struct NewResource {
     pub kind: String,
 }
 
-pub fn create_resource(conn: &Connection, input: &NewResource) -> Result<Resource, OperationsError> {
+pub fn create_resource(
+    conn: &Connection,
+    input: &NewResource,
+) -> Result<Resource, OperationsError> {
     let name = input.name.trim();
     if name.is_empty() {
-        return Err(OperationsError::Invalid("el recurso necesita un nombre".into()));
+        return Err(OperationsError::Invalid(
+            "el recurso necesita un nombre".into(),
+        ));
     }
     let kind = match input.kind.trim().to_uppercase().as_str() {
         "ROOM" | "EQUIPMENT" | "OTHER" => input.kind.trim().to_uppercase(),
@@ -148,7 +153,12 @@ pub fn create_resource(conn: &Connection, input: &NewResource) -> Result<Resourc
          VALUES (?1, ?2, ?3, 1, ?4)",
         params![id, name, kind, now()],
     )?;
-    Ok(Resource { id, name: name.to_string(), kind, active: true })
+    Ok(Resource {
+        id,
+        name: name.to_string(),
+        kind,
+        active: true,
+    })
 }
 
 pub fn set_resource_active(
@@ -167,9 +177,8 @@ pub fn set_resource_active(
 }
 
 pub fn list_resources(conn: &Connection) -> Result<Vec<Resource>, OperationsError> {
-    let mut statement = conn.prepare(
-        "SELECT id, name, kind, active FROM resources ORDER BY active DESC, name ASC",
-    )?;
+    let mut statement = conn
+        .prepare("SELECT id, name, kind, active FROM resources ORDER BY active DESC, name ASC")?;
     let rows = statement
         .query_map([], |row| {
             Ok(Resource {
@@ -303,8 +312,15 @@ pub fn check_in_appointment(
              service_name, state, priority, arrived_at, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'WAITING', ?8, ?9, ?9, ?9)",
         params![
-            id, appointment_id, patient_id, patient_name, phone, reason, service,
-            priority, timestamp
+            id,
+            appointment_id,
+            patient_id,
+            patient_name,
+            phone,
+            reason,
+            service,
+            priority,
+            timestamp
         ],
     )?;
     audit(conn, "visit", &id, "checked-in", Some(appointment_id))?;
@@ -350,8 +366,14 @@ pub fn register_walk_in(conn: &Connection, input: &WalkInInput) -> Result<Visit,
              service_name, state, priority, arrived_at, created_at, updated_at)
          VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, 'WAITING', ?7, ?8, ?8, ?8)",
         params![
-            id, patient_id, name, input.patient_phone, input.reason, input.service_name,
-            input.priority.unwrap_or(0), timestamp
+            id,
+            patient_id,
+            name,
+            input.patient_phone,
+            input.reason,
+            input.service_name,
+            input.priority.unwrap_or(0),
+            timestamp
         ],
     )?;
     audit(conn, "visit", &id, "walk-in", None)?;
@@ -389,8 +411,14 @@ pub fn register_walk_in_for_patient(
              service_name, state, priority, arrived_at, created_at, updated_at)
          VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, 'WAITING', ?7, ?8, ?8, ?8)",
         params![
-            id, patient_id, name, input.patient_phone, input.reason, input.service_name,
-            input.priority.unwrap_or(0), timestamp
+            id,
+            patient_id,
+            name,
+            input.patient_phone,
+            input.reason,
+            input.service_name,
+            input.priority.unwrap_or(0),
+            timestamp
         ],
     )?;
     audit(conn, "visit", &id, "walk-in-linked", Some(patient_id))?;
@@ -446,7 +474,9 @@ pub fn assign_resource(
             |row| row.get(0),
         )?;
         if !exists {
-            return Err(OperationsError::Invalid("recurso inexistente o inactivo".into()));
+            return Err(OperationsError::Invalid(
+                "recurso inexistente o inactivo".into(),
+            ));
         }
     }
     let changed = conn.execute(
@@ -490,7 +520,13 @@ pub fn link_visit_encounter(
     if changed == 0 {
         return Err(OperationsError::NotFound);
     }
-    audit(conn, "visit", visit_id, "encounter-started", Some(encounter_id))?;
+    audit(
+        conn,
+        "visit",
+        visit_id,
+        "encounter-started",
+        Some(encounter_id),
+    )?;
     Ok(())
 }
 
@@ -541,7 +577,9 @@ pub fn open_cash_session(
     opening_float_cents: i64,
 ) -> Result<CashSession, OperationsError> {
     if opening_float_cents < 0 {
-        return Err(OperationsError::Invalid("el fondo de caja no puede ser negativo".into()));
+        return Err(OperationsError::Invalid(
+            "el fondo de caja no puede ser negativo".into(),
+        ));
     }
     if get_open_session(conn)?.is_some() {
         return Err(OperationsError::CashSessionAlreadyOpen);
@@ -586,7 +624,10 @@ pub fn cash_summary(conn: &Connection, session_id: &str) -> Result<CashSummary, 
     ))?;
     let by_method = statement
         .query_map(params![session_id], |row| {
-            Ok(MethodTotal { method: row.get(0)?, total_cents: row.get(1)? })
+            Ok(MethodTotal {
+                method: row.get(0)?,
+                total_cents: row.get(1)?,
+            })
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -660,7 +701,9 @@ pub fn register_payment(
     input: &PaymentInput,
 ) -> Result<Payment, OperationsError> {
     if input.amount_cents <= 0 {
-        return Err(OperationsError::Invalid("el monto debe ser mayor que cero".into()));
+        return Err(OperationsError::Invalid(
+            "el monto debe ser mayor que cero".into(),
+        ));
     }
     let method = input.method.trim().to_uppercase();
     if !PAYMENT_METHODS.contains(&method.as_str()) {
@@ -688,9 +731,18 @@ pub fn register_payment(
              method, kind, concept, budget_id, receipt_number, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
-            id, session.id, input.visit_id, input.appointment_id, input.patient_id,
-            input.amount_cents, method, kind, input.concept, input.budget_id,
-            receipt_number, timestamp
+            id,
+            session.id,
+            input.visit_id,
+            input.appointment_id,
+            input.patient_id,
+            input.amount_cents,
+            method,
+            kind,
+            input.concept,
+            input.budget_id,
+            receipt_number,
+            timestamp
         ],
     )?;
     audit(conn, "payment", &id, "registered", Some(&receipt_number))?;
@@ -913,7 +965,14 @@ mod tests {
     #[test]
     fn resource_assignment_validates_resource() {
         let conn = test_conn("resources");
-        let room = create_resource(&conn, &NewResource { name: "Consultorio 1".into(), kind: "room".into() }).unwrap();
+        let room = create_resource(
+            &conn,
+            &NewResource {
+                name: "Consultorio 1".into(),
+                kind: "room".into(),
+            },
+        )
+        .unwrap();
         assert!(room.active);
         let visit = register_walk_in(
             &conn,

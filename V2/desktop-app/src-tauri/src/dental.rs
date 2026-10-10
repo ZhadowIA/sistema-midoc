@@ -261,7 +261,9 @@ pub fn specialty_history(
 
 pub fn create_budget(conn: &Connection, input: &NewBudget) -> Result<Budget, DentalError> {
     if input.label.trim().is_empty() {
-        return Err(DentalError::Invalid("el presupuesto necesita un nombre".into()));
+        return Err(DentalError::Invalid(
+            "el presupuesto necesita un nombre".into(),
+        ));
     }
     if input.items.is_empty() {
         return Err(DentalError::Invalid(
@@ -275,7 +277,9 @@ pub fn create_budget(conn: &Connection, input: &NewBudget) -> Result<Budget, Den
             ));
         }
         if item.price_cents < 0 {
-            return Err(DentalError::Invalid("el precio no puede ser negativo".into()));
+            return Err(DentalError::Invalid(
+                "el precio no puede ser negativo".into(),
+            ));
         }
     }
     let gross: i64 = input.items.iter().map(|item| item.price_cents).sum();
@@ -394,7 +398,11 @@ pub fn set_item_status(
             "solo un presupuesto aceptado registra avance".into(),
         ));
     }
-    let completed_at = if status == "COMPLETED" { Some(now()) } else { None };
+    let completed_at = if status == "COMPLETED" {
+        Some(now())
+    } else {
+        None
+    };
     conn.execute(
         "UPDATE dental_budget_items SET status = ?1, completed_at = ?2 WHERE id = ?3",
         params![status, completed_at, item_id],
@@ -517,13 +525,19 @@ fn read_lab_order(conn: &Connection, order_id: &str) -> Result<LabOrder, DentalE
 
 pub fn create_lab_order(conn: &Connection, input: &NewLabOrder) -> Result<LabOrder, DentalError> {
     if input.work_type.trim().is_empty() {
-        return Err(DentalError::Invalid("la orden necesita el tipo de trabajo".into()));
+        return Err(DentalError::Invalid(
+            "la orden necesita el tipo de trabajo".into(),
+        ));
     }
     if input.lab_name.trim().is_empty() {
-        return Err(DentalError::Invalid("la orden necesita el laboratorio destino".into()));
+        return Err(DentalError::Invalid(
+            "la orden necesita el laboratorio destino".into(),
+        ));
     }
     if input.cost_cents < 0 {
-        return Err(DentalError::Invalid("el costo no puede ser negativo".into()));
+        return Err(DentalError::Invalid(
+            "el costo no puede ser negativo".into(),
+        ));
     }
     let patient_exists: bool = conn
         .query_row(

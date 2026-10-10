@@ -202,7 +202,8 @@ fn allergy_match(
     drug_class: Option<&str>,
     token: &str,
 ) -> Option<Option<String>> {
-    let contains_either = |a: &str, b: &str| !a.is_empty() && !b.is_empty() && (a.contains(b) || b.contains(a));
+    let contains_either =
+        |a: &str, b: &str| !a.is_empty() && !b.is_empty() && (a.contains(b) || b.contains(a));
 
     if contains_either(token, display_lc) || contains_either(token, ingredient_lc) {
         return Some(None);
@@ -297,7 +298,8 @@ pub fn check_prescription(
         .map(|drug| drug.input.clone())
         .collect();
 
-    let recognized: Vec<&NormalizedDrug> = normalized.iter().filter(|drug| drug.recognized).collect();
+    let recognized: Vec<&NormalizedDrug> =
+        normalized.iter().filter(|drug| drug.recognized).collect();
 
     // 2. Interacciones farmaco-farmaco (pares de ingredientes distintos).
     let mut interactions: Vec<InteractionAlert> = Vec::new();
@@ -338,12 +340,23 @@ pub fn check_prescription(
     let tokens = allergy_tokens(allergies.unwrap_or(""));
     let mut allergy_alerts: Vec<AllergyAlert> = Vec::new();
     for drug in &recognized {
-        let display_lc = drug.display_name.as_deref().unwrap_or_default().to_lowercase();
-        let ingredient_lc = drug.ingredient.as_deref().unwrap_or_default().to_lowercase();
+        let display_lc = drug
+            .display_name
+            .as_deref()
+            .unwrap_or_default()
+            .to_lowercase();
+        let ingredient_lc = drug
+            .ingredient
+            .as_deref()
+            .unwrap_or_default()
+            .to_lowercase();
         for token in &tokens {
-            if let Some(via_class) =
-                allergy_match(&display_lc, &ingredient_lc, drug.drug_class.as_deref(), token)
-            {
+            if let Some(via_class) = allergy_match(
+                &display_lc,
+                &ingredient_lc,
+                drug.drug_class.as_deref(),
+                token,
+            ) {
                 allergy_alerts.push(AllergyAlert {
                     drug: drug.display_name.clone().unwrap_or_default(),
                     matched_allergy: token.clone(),
@@ -410,7 +423,8 @@ pub fn check_prescription(
                 ))
             })?;
             for row in rows {
-                let (class_a, class_b, class_c, severity, description, source, source_version) = row?;
+                let (class_a, class_b, class_c, severity, description, source, source_version) =
+                    row?;
                 if let (Some(a), Some(b), Some(c)) = (
                     class_rep.get(&class_a),
                     class_rep.get(&class_b),
@@ -427,7 +441,8 @@ pub fn check_prescription(
                     });
                 }
             }
-            triple_interactions.sort_by_key(|alert| std::cmp::Reverse(severity_rank(&alert.severity)));
+            triple_interactions
+                .sort_by_key(|alert| std::cmp::Reverse(severity_rank(&alert.severity)));
         }
     }
 
@@ -475,7 +490,10 @@ pub fn check_prescription(
 }
 
 /// Texto de etiqueta (openFDA) de un ingrediente, si existe.
-fn label_text(conn: &Connection, ingredient: &str) -> Result<Option<(String, String)>, MedicationError> {
+fn label_text(
+    conn: &Connection,
+    ingredient: &str,
+) -> Result<Option<(String, String)>, MedicationError> {
     conn.query_row(
         "SELECT interactions_text, source FROM drug_label_text WHERE ingredient = ?1",
         params![ingredient],
@@ -499,12 +517,22 @@ fn label_fallback(
 
     if let Some((text, source)) = label_text(conn, ing_a)? {
         if find_word(&text.to_lowercase(), ing_b).is_some() {
-            return Ok(Some(LabelNote { drug_a: display_a, drug_b: display_b, text, source }));
+            return Ok(Some(LabelNote {
+                drug_a: display_a,
+                drug_b: display_b,
+                text,
+                source,
+            }));
         }
     }
     if let Some((text, source)) = label_text(conn, ing_b)? {
         if find_word(&text.to_lowercase(), ing_a).is_some() {
-            return Ok(Some(LabelNote { drug_a: display_b, drug_b: display_a, text, source }));
+            return Ok(Some(LabelNote {
+                drug_a: display_b,
+                drug_b: display_a,
+                text,
+                source,
+            }));
         }
     }
     Ok(None)
@@ -1105,9 +1133,13 @@ pub fn update_reference(
 
 pub fn reference_status(conn: &Connection) -> Result<ReferenceStatus, MedicationError> {
     let medications: i64 =
-        conn.query_row("SELECT count(*) FROM medication_reference", [], |row| row.get(0))?;
+        conn.query_row("SELECT count(*) FROM medication_reference", [], |row| {
+            row.get(0)
+        })?;
     let interactions: i64 =
-        conn.query_row("SELECT count(*) FROM drug_interactions", [], |row| row.get(0))?;
+        conn.query_row("SELECT count(*) FROM drug_interactions", [], |row| {
+            row.get(0)
+        })?;
     let labels: i64 =
         conn.query_row("SELECT count(*) FROM drug_label_text", [], |row| row.get(0))?;
     Ok(ReferenceStatus {
@@ -1162,7 +1194,9 @@ pub fn extract_medications(conn: &Connection, text: &str) -> Result<Vec<String>,
         "SELECT name, display_name FROM medication_reference ORDER BY length(name) DESC",
     )?;
     let reference = statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut hits: Vec<(usize, String)> = Vec::new();
@@ -1175,7 +1209,10 @@ pub fn extract_medications(conn: &Connection, text: &str) -> Result<Vec<String>,
         }
     }
     hits.sort_by_key(|(pos, _)| *pos);
-    Ok(hits.into_iter().map(|(_, display_name)| display_name).collect())
+    Ok(hits
+        .into_iter()
+        .map(|(_, display_name)| display_name)
+        .collect())
 }
 
 #[cfg(test)]
@@ -1197,7 +1234,10 @@ mod tests {
 
     #[test]
     fn canonical_pair_is_order_independent() {
-        assert_eq!(canonical_pair("warfarina", "ibuprofeno"), canonical_pair("ibuprofeno", "warfarina"));
+        assert_eq!(
+            canonical_pair("warfarina", "ibuprofeno"),
+            canonical_pair("ibuprofeno", "warfarina")
+        );
     }
 
     #[test]
@@ -1207,9 +1247,12 @@ mod tests {
         // interacciones en silencio (el peor caso en seguridad de medicacion).
         assert_eq!(normalize_name("Losartán"), "losartan");
         assert_eq!(normalize_name("Codeína"), "codeina");
-        assert_eq!(normalize_name("  ÁCIDO   Acetilsalicílico "), "acido acetilsalicilico");
+        assert_eq!(
+            normalize_name("  ÁCIDO   Acetilsalicílico "),
+            "acido acetilsalicilico"
+        );
         assert_eq!(normalize_name("Niño"), "nino"); // la enie tambien se pliega
-        // Sin acentos no cambia nada (idempotente para ASCII).
+                                                    // Sin acentos no cambia nada (idempotente para ASCII).
         assert_eq!(normalize_name("Ibuprofeno"), "ibuprofeno");
     }
 
@@ -1217,19 +1260,41 @@ mod tests {
     fn allergy_match_by_class_is_cross_reactive() {
         // "penicilina" coincide con la clase "Penicilina" de la amoxicilina.
         assert_eq!(
-            allergy_match("amoxicilina", "amoxicilina", Some("Penicilina"), "penicilina"),
+            allergy_match(
+                "amoxicilina",
+                "amoxicilina",
+                Some("Penicilina"),
+                "penicilina"
+            ),
             Some(Some("Penicilina".to_string()))
         );
         // Coincidencia por nombre directo.
-        assert_eq!(allergy_match("ibuprofeno", "ibuprofeno", Some("AINE"), "ibuprofeno"), Some(None));
+        assert_eq!(
+            allergy_match("ibuprofeno", "ibuprofeno", Some("AINE"), "ibuprofeno"),
+            Some(None)
+        );
         // Sin coincidencia.
-        assert_eq!(allergy_match("paracetamol", "paracetamol", Some("Analgesico"), "penicilina"), None);
+        assert_eq!(
+            allergy_match(
+                "paracetamol",
+                "paracetamol",
+                Some("Analgesico"),
+                "penicilina"
+            ),
+            None
+        );
     }
 
     #[test]
     fn recognizes_seeded_drug_and_flags_unknown() {
         let conn = test_conn("recognize");
-        let report = check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Farmaco Inventado"]), None).unwrap();
+        let report = check_prescription(
+            &conn,
+            "enc-1",
+            &meds(&["Ibuprofeno", "Farmaco Inventado"]),
+            None,
+        )
+        .unwrap();
         assert_eq!(report.unrecognized, vec!["Farmaco Inventado".to_string()]);
         let ibuprofeno = report.normalized.iter().find(|d| d.recognized).unwrap();
         assert_eq!(ibuprofeno.drug_class.as_deref(), Some("AINE"));
@@ -1239,8 +1304,10 @@ mod tests {
     #[test]
     fn detects_major_interaction_with_source_regardless_of_order() {
         let conn = test_conn("interaction");
-        let forward = check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Warfarina"]), None).unwrap();
-        let backward = check_prescription(&conn, "enc-1", &meds(&["Warfarina", "Ibuprofeno"]), None).unwrap();
+        let forward =
+            check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Warfarina"]), None).unwrap();
+        let backward =
+            check_prescription(&conn, "enc-1", &meds(&["Warfarina", "Ibuprofeno"]), None).unwrap();
         assert_eq!(forward.interactions.len(), 1);
         assert_eq!(backward.interactions.len(), 1);
         let alert = &forward.interactions[0];
@@ -1253,7 +1320,13 @@ mod tests {
     #[test]
     fn detects_contraindicated_interaction() {
         let conn = test_conn("contraindicated");
-        let report = check_prescription(&conn, "enc-1", &meds(&["Sildenafil", "Nitroglicerina"]), None).unwrap();
+        let report = check_prescription(
+            &conn,
+            "enc-1",
+            &meds(&["Sildenafil", "Nitroglicerina"]),
+            None,
+        )
+        .unwrap();
         assert_eq!(report.interactions.len(), 1);
         assert_eq!(report.interactions[0].severity, "CONTRAINDICATED");
     }
@@ -1261,15 +1334,21 @@ mod tests {
     #[test]
     fn detects_allergy_cross_class() {
         let conn = test_conn("allergy");
-        let report = check_prescription(&conn, "enc-1", &meds(&["Amoxicilina"]), Some("Penicilina")).unwrap();
+        let report =
+            check_prescription(&conn, "enc-1", &meds(&["Amoxicilina"]), Some("Penicilina"))
+                .unwrap();
         assert_eq!(report.allergy_alerts.len(), 1);
-        assert_eq!(report.allergy_alerts[0].via_class.as_deref(), Some("Penicilina"));
+        assert_eq!(
+            report.allergy_alerts[0].via_class.as_deref(),
+            Some("Penicilina")
+        );
     }
 
     #[test]
     fn detects_duplicate_therapy_same_class() {
         let conn = test_conn("duplicate");
-        let report = check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Naproxeno"]), None).unwrap();
+        let report =
+            check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Naproxeno"]), None).unwrap();
         assert_eq!(report.duplicate_therapy.len(), 1);
         assert_eq!(report.duplicate_therapy[0].drug_class, "AINE");
     }
@@ -1277,7 +1356,13 @@ mod tests {
     #[test]
     fn safe_combination_has_no_alerts() {
         let conn = test_conn("safe");
-        let report = check_prescription(&conn, "enc-1", &meds(&["Paracetamol", "Amoxicilina"]), Some("Polen")).unwrap();
+        let report = check_prescription(
+            &conn,
+            "enc-1",
+            &meds(&["Paracetamol", "Amoxicilina"]),
+            Some("Polen"),
+        )
+        .unwrap();
         assert!(report.interactions.is_empty());
         assert!(report.allergy_alerts.is_empty());
         assert!(report.duplicate_therapy.is_empty());
@@ -1362,7 +1447,10 @@ mod tests {
         let ddinter = "DDInterID_A,Drug_A,DDInterID_B,Drug_B,Level\n\
                        DDInter1,Warfarina,DDInter2,Aspirina,Major\n";
         assert_eq!(parse_interactions(onchigh).unwrap()[0].source, "ONChigh");
-        assert_eq!(parse_interactions(ddinter).unwrap()[0].source, "DDInter 2.0");
+        assert_eq!(
+            parse_interactions(ddinter).unwrap()[0].source,
+            "DDInter 2.0"
+        );
     }
 
     #[test]
@@ -1390,7 +1478,8 @@ mod tests {
         let summary = update_reference(&conn, &dataset, MIN_MEDICATIONS, MIN_INTERACTIONS).unwrap();
         assert_eq!(summary.interactions, 5);
 
-        let report = check_prescription(&conn, "enc-1", &meds(&["warfarin", "ibuprofen"]), None).unwrap();
+        let report =
+            check_prescription(&conn, "enc-1", &meds(&["warfarin", "ibuprofen"]), None).unwrap();
         assert_eq!(report.interactions.len(), 1);
         assert_eq!(report.interactions[0].severity, "MAJOR");
         // La procedencia citada es la real (ONChigh), no DDInter.
@@ -1405,7 +1494,7 @@ mod tests {
                    AINE,AINE,IECA,MAJOR,ONChigh,onc-2026,repetida\n";
         let rows = parse_triples_csv(csv).unwrap();
         assert_eq!(rows.len(), 1); // la de clases repetidas se descarta
-        // Orden canonico: AINE < Diuretico < IECA.
+                                   // Orden canonico: AINE < Diuretico < IECA.
         assert_eq!(rows[0].class_a, "AINE");
         assert_eq!(rows[0].class_b, "Diuretico");
         assert_eq!(rows[0].class_c, "IECA");
@@ -1462,7 +1551,8 @@ mod tests {
         assert!(full.has_alerts);
 
         // Solo dos de las tres clases -> NO dispara la tripleta (aunque el par si).
-        let only_two = check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Enalapril"]), None).unwrap();
+        let only_two =
+            check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Enalapril"]), None).unwrap();
         assert_eq!(only_two.triple_interactions.len(), 0);
         assert_eq!(only_two.interactions.len(), 1); // el par IECA+AINE sigue
 
@@ -1481,8 +1571,18 @@ mod tests {
     fn import_replaces_reference_and_bumps_version() {
         let conn = test_conn("import");
         let medication_rows = vec![
-            MedicationRow { name: "metoprolol".into(), ingredient: "metoprolol".into(), display_name: "Metoprolol".into(), drug_class: Some("Betabloqueador".into()) },
-            MedicationRow { name: "verapamilo".into(), ingredient: "verapamilo".into(), display_name: "Verapamilo".into(), drug_class: Some("Calcioantagonista".into()) },
+            MedicationRow {
+                name: "metoprolol".into(),
+                ingredient: "metoprolol".into(),
+                display_name: "Metoprolol".into(),
+                drug_class: Some("Betabloqueador".into()),
+            },
+            MedicationRow {
+                name: "verapamilo".into(),
+                ingredient: "verapamilo".into(),
+                display_name: "Verapamilo".into(),
+                drug_class: Some("Calcioantagonista".into()),
+            },
         ];
         let interactions = vec![InteractionRow {
             ingredient_a: "metoprolol".into(),
@@ -1492,7 +1592,8 @@ mod tests {
             source: "DDInter 2.0".into(),
         }];
 
-        let summary = import_reference(&conn, &medication_rows, &interactions, "ddinter-2026-06").unwrap();
+        let summary =
+            import_reference(&conn, &medication_rows, &interactions, "ddinter-2026-06").unwrap();
         assert_eq!(summary.medications, 2);
         assert_eq!(summary.interactions, 1);
 
@@ -1502,7 +1603,8 @@ mod tests {
         assert_eq!(status.interactions, 1);
 
         // La verificacion usa ya los datos importados (y no los sembrados).
-        let report = check_prescription(&conn, "enc-1", &meds(&["Metoprolol", "Verapamilo"]), None).unwrap();
+        let report =
+            check_prescription(&conn, "enc-1", &meds(&["Metoprolol", "Verapamilo"]), None).unwrap();
         assert_eq!(report.interactions.len(), 1);
         assert_eq!(report.interactions[0].severity, "MAJOR");
         assert_eq!(report.reference_version, "ddinter-2026-06");
@@ -1525,7 +1627,10 @@ mod tests {
         let conn = test_conn("extract"); // base sembrada
         let text = "1) Ibuprofeno 400 mg cada 8 h\n2) Amoxicilina 500 mg cada 8 h\nReposo.";
         let found = extract_medications(&conn, text).unwrap();
-        assert_eq!(found, vec!["Ibuprofeno".to_string(), "Amoxicilina".to_string()]);
+        assert_eq!(
+            found,
+            vec!["Ibuprofeno".to_string(), "Amoxicilina".to_string()]
+        );
     }
 
     #[test]
@@ -1542,11 +1647,16 @@ mod tests {
     fn dataset(med_rows: usize, int_rows: usize, version: &str) -> MedicationDataset {
         let mut meds = String::from("name,ingredient,display_name,drug_class\n");
         for i in 0..med_rows {
-            meds.push_str(&format!("farmaco{i},ingrediente{i},Farmaco {i},Clase {i}\n"));
+            meds.push_str(&format!(
+                "farmaco{i},ingrediente{i},Farmaco {i},Clase {i}\n"
+            ));
         }
         let mut ddinter = String::from("DDInterID_A,Drug_A,DDInterID_B,Drug_B,Level\n");
         for i in 0..int_rows {
-            ddinter.push_str(&format!("A{i},ingrediente{i},B{i},ingrediente{},Major\n", i + 1));
+            ddinter.push_str(&format!(
+                "A{i},ingrediente{i},B{i},ingrediente{},Major\n",
+                i + 1
+            ));
         }
         MedicationDataset {
             medications_csv: meds,
@@ -1560,7 +1670,13 @@ mod tests {
     #[test]
     fn update_applies_a_healthy_dataset_and_versions_it() {
         let conn = test_conn("update-ok");
-        let summary = update_reference(&conn, &dataset(8, 6, "ddinter-2026-07"), MIN_MEDICATIONS, MIN_INTERACTIONS).unwrap();
+        let summary = update_reference(
+            &conn,
+            &dataset(8, 6, "ddinter-2026-07"),
+            MIN_MEDICATIONS,
+            MIN_INTERACTIONS,
+        )
+        .unwrap();
         assert_eq!(summary.medications, 8);
         assert_eq!(summary.interactions, 6);
         let status = reference_status(&conn).unwrap();
@@ -1574,7 +1690,12 @@ mod tests {
         // Base sembrada vigente; una descarga truncada (2 meds) no debe reemplazarla.
         let before = reference_status(&conn).unwrap();
         assert!(matches!(
-            update_reference(&conn, &dataset(2, 6, "corrupta"), MIN_MEDICATIONS, MIN_INTERACTIONS),
+            update_reference(
+                &conn,
+                &dataset(2, 6, "corrupta"),
+                MIN_MEDICATIONS,
+                MIN_INTERACTIONS
+            ),
             Err(MedicationError::Invalid(_))
         ));
         let after = reference_status(&conn).unwrap();
@@ -1602,7 +1723,10 @@ mod tests {
         let rows = parse_openfda_labels(OPENFDA_SAMPLE).unwrap();
         assert_eq!(rows.len(), 1); // la cafeina se omite (sin texto)
         assert_eq!(rows[0].ingredient, "paracetamol");
-        assert!(rows[0].interactions_text.to_lowercase().contains("warfarina"));
+        assert!(rows[0]
+            .interactions_text
+            .to_lowercase()
+            .contains("warfarina"));
     }
 
     #[test]
@@ -1613,8 +1737,12 @@ mod tests {
 
         // Paracetamol + Warfarina: no hay interaccion estructurada sembrada para
         // ese par, pero la etiqueta del paracetamol menciona warfarina.
-        let report = check_prescription(&conn, "enc-1", &meds(&["Paracetamol", "Warfarina"]), None).unwrap();
-        assert!(report.interactions.is_empty(), "no debe haber interaccion estructurada");
+        let report =
+            check_prescription(&conn, "enc-1", &meds(&["Paracetamol", "Warfarina"]), None).unwrap();
+        assert!(
+            report.interactions.is_empty(),
+            "no debe haber interaccion estructurada"
+        );
         assert_eq!(report.label_notes.len(), 1);
         assert_eq!(report.label_notes[0].source, "openFDA");
         assert_eq!(report.label_notes[0].drug_a, "Paracetamol");
@@ -1634,7 +1762,8 @@ mod tests {
         import_label_text(&conn, &labels, "openfda-2026-06").unwrap();
         // Ibuprofeno + Warfarina YA tiene interaccion estructurada (sembrada),
         // asi que NO debe duplicarse como nota de etiqueta.
-        let report = check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Warfarina"]), None).unwrap();
+        let report =
+            check_prescription(&conn, "enc-1", &meds(&["Ibuprofeno", "Warfarina"]), None).unwrap();
         assert_eq!(report.interactions.len(), 1);
         assert!(report.label_notes.is_empty());
     }
@@ -1642,7 +1771,13 @@ mod tests {
     #[test]
     fn update_rejects_empty_source() {
         let conn = test_conn("update-empty");
-        let empty = MedicationDataset { medications_csv: String::new(), ddinter_csv: String::new(), triples_csv: String::new(), openfda_json: String::new(), version: "x".into() };
+        let empty = MedicationDataset {
+            medications_csv: String::new(),
+            ddinter_csv: String::new(),
+            triples_csv: String::new(),
+            openfda_json: String::new(),
+            version: "x".into(),
+        };
         assert!(matches!(
             update_reference(&conn, &empty, MIN_MEDICATIONS, MIN_INTERACTIONS),
             Err(MedicationError::Invalid(_))
@@ -1676,11 +1811,17 @@ mod tests {
 
         // Primer arranque: instala el catalogo real empaquetado.
         assert!(ensure_bundled_reference_installed(&conn).unwrap());
-        assert_eq!(reference_status(&conn).unwrap().version, BUNDLED_REFERENCE_VERSION);
+        assert_eq!(
+            reference_status(&conn).unwrap().version,
+            BUNDLED_REFERENCE_VERSION
+        );
 
         // Segundo arranque: ya no esta en la version sembrada, no reinstala.
         assert!(!ensure_bundled_reference_installed(&conn).unwrap());
-        assert_eq!(reference_status(&conn).unwrap().version, BUNDLED_REFERENCE_VERSION);
+        assert_eq!(
+            reference_status(&conn).unwrap().version,
+            BUNDLED_REFERENCE_VERSION
+        );
     }
 
     #[test]
@@ -1706,8 +1847,13 @@ mod tests {
 
         // Marca comercial (Advil) -> ingrediente canonico; interaccion citada
         // desde la fuente ONChigh de dominio publico (ya no DDInter).
-        let report = check_prescription(&conn, "enc-1", &meds(&["Advil", "Warfarina"]), None).unwrap();
-        let advil = report.normalized.iter().find(|drug| drug.input == "Advil").unwrap();
+        let report =
+            check_prescription(&conn, "enc-1", &meds(&["Advil", "Warfarina"]), None).unwrap();
+        let advil = report
+            .normalized
+            .iter()
+            .find(|drug| drug.input == "Advil")
+            .unwrap();
         assert_eq!(advil.ingredient.as_deref(), Some("ibuprofen"));
         assert_eq!(advil.display_name.as_deref(), Some("Ibuprofeno"));
         assert_eq!(report.interactions.len(), 1);
@@ -1740,14 +1886,19 @@ mod tests {
 
         // Marca -> ingrediente canonico.
         let report = check_prescription(&conn, "enc-1", &meds(&["Tafil", "Tempra"]), None).unwrap();
-        let tafil = report.normalized.iter().find(|d| d.input == "Tafil").unwrap();
+        let tafil = report
+            .normalized
+            .iter()
+            .find(|d| d.input == "Tafil")
+            .unwrap();
         assert_eq!(tafil.ingredient.as_deref(), Some("alprazolam"));
         assert_eq!(tafil.display_name.as_deref(), Some("Alprazolam"));
         assert!(report.unrecognized.is_empty(), "Tempra deberia reconocerse");
 
         // Interaccion citada por marcas comerciales: Sintrom (acenocumarol,
         // anticoagulante) + Flanax (naproxeno, AINE) -> sangrado, MAJOR.
-        let bleed = check_prescription(&conn, "enc-1", &meds(&["Sintrom", "Flanax"]), None).unwrap();
+        let bleed =
+            check_prescription(&conn, "enc-1", &meds(&["Sintrom", "Flanax"]), None).unwrap();
         assert_eq!(bleed.interactions.len(), 1);
         assert_eq!(bleed.interactions[0].severity, "MAJOR");
         assert_eq!(bleed.interactions[0].source, "ONChigh");
@@ -1778,13 +1929,18 @@ mod tests {
         install_bundled_reference(&conn).unwrap();
 
         // "Losartán" (ARA2) + "Naproxeno" (AINE) -> deterioro renal, MAJOR.
-        let report = check_prescription(&conn, "enc-1", &meds(&["Losartán", "Naproxeno"]), None).unwrap();
-        assert!(report.unrecognized.is_empty(), "Losartán deberia reconocerse pese al acento");
+        let report =
+            check_prescription(&conn, "enc-1", &meds(&["Losartán", "Naproxeno"]), None).unwrap();
+        assert!(
+            report.unrecognized.is_empty(),
+            "Losartán deberia reconocerse pese al acento"
+        );
         assert_eq!(report.interactions.len(), 1);
         assert_eq!(report.interactions[0].severity, "MAJOR");
 
         // La extraccion desde texto libre tambien tolera acentos y dosis pegada.
-        let extracted = extract_medications(&conn, "Paciente con Losartán 50 mg y Naproxeno 500 mg").unwrap();
+        let extracted =
+            extract_medications(&conn, "Paciente con Losartán 50 mg y Naproxeno 500 mg").unwrap();
         assert!(extracted.iter().any(|d| d == "Losartan"));
         assert!(extracted.iter().any(|d| d == "Naproxeno"));
     }
@@ -1798,8 +1954,15 @@ mod tests {
 
         let contraindicated = |a: &str, b: &str| {
             let report = check_prescription(&conn, "enc-1", &meds(&[a, b]), None).unwrap();
-            assert_eq!(report.interactions.len(), 1, "{a} + {b} deberia dar 1 interaccion");
-            assert_eq!(report.interactions[0].severity, "CONTRAINDICATED", "{a} + {b}");
+            assert_eq!(
+                report.interactions.len(),
+                1,
+                "{a} + {b} deberia dar 1 interaccion"
+            );
+            assert_eq!(
+                report.interactions[0].severity, "CONTRAINDICATED",
+                "{a} + {b}"
+            );
             assert_eq!(report.interactions[0].source, "ONChigh");
         };
 
@@ -1811,7 +1974,9 @@ mod tests {
         contraindicated("amitriptyline", "tranylcypromine");
 
         // Triptan + IMAO (sindrome serotoninergico): MAJOR.
-        let triptan = check_prescription(&conn, "enc-1", &meds(&["sumatriptan", "phenelzine"]), None).unwrap();
+        let triptan =
+            check_prescription(&conn, "enc-1", &meds(&["sumatriptan", "phenelzine"]), None)
+                .unwrap();
         assert_eq!(triptan.interactions.len(), 1);
         assert_eq!(triptan.interactions[0].severity, "MAJOR");
         assert_eq!(triptan.interactions[0].source, "ONChigh");

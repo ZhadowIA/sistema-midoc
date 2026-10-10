@@ -93,7 +93,9 @@ fn validate_template(template: &StoredTemplate) -> Result<(), TemplateError> {
         return Err(TemplateError::Invalid("id de plantilla invalido".into()));
     }
     if template.name.trim().is_empty() {
-        return Err(TemplateError::Invalid("nombre de plantilla requerido".into()));
+        return Err(TemplateError::Invalid(
+            "nombre de plantilla requerido".into(),
+        ));
     }
     if !matches!(
         template.clinical_profile.as_str(),
@@ -113,7 +115,9 @@ fn validate_template(template: &StoredTemplate) -> Result<(), TemplateError> {
             return Err(TemplateError::Invalid("id de segmento invalido".into()));
         }
         if segment.label.trim().is_empty() {
-            return Err(TemplateError::Invalid("etiqueta de segmento requerida".into()));
+            return Err(TemplateError::Invalid(
+                "etiqueta de segmento requerida".into(),
+            ));
         }
         if !is_allowed_target(&template.clinical_profile, &segment.target) {
             return Err(TemplateError::Invalid(

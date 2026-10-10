@@ -180,7 +180,9 @@ pub fn warnings_for(entry: &Cie10Entry, patient: &PatientContext) -> Vec<String>
         }
     }
     if !entry.outpatient {
-        warnings.push("No es valido como causa en consulta externa; busca una subcategoria.".to_string());
+        warnings.push(
+            "No es valido como causa en consulta externa; busca una subcategoria.".to_string(),
+        );
     }
     warnings
 }
@@ -205,7 +207,10 @@ pub fn search(query: &str, patient: &PatientContext, limit: usize) -> Vec<Cie10M
     }
     let code_query = normalize_code(query);
     let looks_like_code = code_query.len() <= 4
-        && code_query.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && code_query
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
         && code_query.chars().skip(1).all(|c| c.is_ascii_digit());
     let tokens: Vec<&str> = normalized.split(' ').collect();
 
@@ -222,7 +227,10 @@ pub fn search(query: &str, patient: &PatientContext, limit: usize) -> Vec<Cie10M
                 return Some((2, entry));
             }
             let words: Vec<&str> = entry.search_name.split(' ').collect();
-            if tokens.iter().all(|t| words.iter().any(|w| w.starts_with(t))) {
+            if tokens
+                .iter()
+                .all(|t| words.iter().any(|w| w.starts_with(t)))
+            {
                 return Some((3, entry));
             }
             None
@@ -248,11 +256,24 @@ mod tests {
     #[test]
     fn the_bundled_catalog_loads_sorted_and_complete() {
         let entries = catalog();
-        assert!(entries.len() > 12_000, "catalogo incompleto: {}", entries.len());
-        assert!(entries.windows(2).all(|w| w[0].code < w[1].code), "debe venir ordenado");
+        assert!(
+            entries.len() > 12_000,
+            "catalogo incompleto: {}",
+            entries.len()
+        );
+        assert!(
+            entries.windows(2).all(|w| w[0].code < w[1].code),
+            "debe venir ordenado"
+        );
         let manifest: serde_json::Value = serde_json::from_str(CATALOG_MANIFEST).unwrap();
-        assert_eq!(manifest["entries"].as_u64().unwrap() as usize, entries.len());
-        assert!(manifest["source"]["license"].as_str().unwrap().contains("CC BY 4.0"));
+        assert_eq!(
+            manifest["entries"].as_u64().unwrap() as usize,
+            entries.len()
+        );
+        assert!(manifest["source"]["license"]
+            .as_str()
+            .unwrap()
+            .contains("CC BY 4.0"));
     }
 
     #[test]
@@ -271,7 +292,10 @@ mod tests {
         let by_code = search("J45", &PatientContext::default(), 10);
         assert_eq!(by_code[0].code, "J450");
         assert!(by_code.iter().all(|m| m.code.starts_with("J45")));
-        assert_eq!(search("j45.9", &PatientContext::default(), 10)[0].code, "J459");
+        assert_eq!(
+            search("j45.9", &PatientContext::default(), 10)[0].code,
+            "J459"
+        );
 
         let by_name = search("colera", &PatientContext::default(), 10);
         assert!(by_name.iter().any(|m| m.code == "A009"), "{by_name:?}");
@@ -287,19 +311,40 @@ mod tests {
     #[test]
     fn warns_on_sex_and_age_from_the_official_catalog() {
         let pregnancy = lookup("O800").expect("parto unico espontaneo");
-        let man = PatientContext { sex: Some("M".into()), age_days: Some(30 * 365) };
+        let man = PatientContext {
+            sex: Some("M".into()),
+            age_days: Some(30 * 365),
+        };
         let warnings = warnings_for(pregnancy, &man);
-        assert!(warnings.iter().any(|w| w.contains("mujeres")), "{warnings:?}");
+        assert!(
+            warnings.iter().any(|w| w.contains("mujeres")),
+            "{warnings:?}"
+        );
 
-        let girl = PatientContext { sex: Some("F".into()), age_days: Some(5 * 365) };
+        let girl = PatientContext {
+            sex: Some("F".into()),
+            age_days: Some(5 * 365),
+        };
         let warnings = warnings_for(pregnancy, &girl);
-        assert!(warnings.iter().any(|w| w.contains("rango de edad")), "{warnings:?}");
+        assert!(
+            warnings.iter().any(|w| w.contains("rango de edad")),
+            "{warnings:?}"
+        );
 
-        let adult_woman = PatientContext { sex: Some("F".into()), age_days: Some(30 * 365) };
+        let adult_woman = PatientContext {
+            sex: Some("F".into()),
+            age_days: Some(30 * 365),
+        };
         assert!(warnings_for(pregnancy, &adult_woman).is_empty());
 
-        let unknown = PatientContext { sex: Some("O".into()), age_days: None };
-        assert!(warnings_for(pregnancy, &unknown).is_empty(), "sin datos no se avisa");
+        let unknown = PatientContext {
+            sex: Some("O".into()),
+            age_days: None,
+        };
+        assert!(
+            warnings_for(pregnancy, &unknown).is_empty(),
+            "sin datos no se avisa"
+        );
     }
 
     #[test]

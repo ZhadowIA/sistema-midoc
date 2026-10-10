@@ -24,7 +24,11 @@ pub struct UpdateSettings {
 }
 
 fn setting(name: &str, compiled: Option<&'static str>) -> Option<String> {
-    let runtime = if cfg!(debug_assertions) { std::env::var(name).ok() } else { None };
+    let runtime = if cfg!(debug_assertions) {
+        std::env::var(name).ok()
+    } else {
+        None
+    };
     compiled
         .map(str::to_string)
         .or(runtime)
@@ -36,7 +40,10 @@ fn setting(name: &str, compiled: Option<&'static str>) -> Option<String> {
 pub fn settings() -> Option<UpdateSettings> {
     Some(UpdateSettings {
         pubkey: setting("MIDOC_UPDATER_PUBKEY", option_env!("MIDOC_UPDATER_PUBKEY"))?,
-        endpoint: setting("MIDOC_UPDATE_ENDPOINT", option_env!("MIDOC_UPDATE_ENDPOINT"))?,
+        endpoint: setting(
+            "MIDOC_UPDATE_ENDPOINT",
+            option_env!("MIDOC_UPDATE_ENDPOINT"),
+        )?,
     })
 }
 
@@ -60,11 +67,26 @@ pub struct UpdateCheck {
 
 fn spanish_date(date: NaiveDate) -> String {
     const MONTHS: [&str; 12] = [
-        "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
-        "noviembre", "diciembre",
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
     ];
     use chrono::Datelike as _;
-    format!("{} de {} de {}", date.day(), MONTHS[date.month0() as usize], date.year())
+    format!(
+        "{} de {} de {}",
+        date.day(),
+        MONTHS[date.month0() as usize],
+        date.year()
+    )
 }
 
 /// Decide si una version corresponde a la licencia. `updates_until` es `None`
@@ -76,7 +98,10 @@ pub fn decide(
     updates_until: Option<NaiveDate>,
 ) -> (bool, String) {
     let Some(until) = updates_until else {
-        return (false, "Activa tu licencia de MiDoc para recibir actualizaciones.".into());
+        return (
+            false,
+            "Activa tu licencia de MiDoc para recibir actualizaciones.".into(),
+        );
     };
     if critical {
         return (
@@ -86,10 +111,19 @@ pub fn decide(
         );
     }
     let Some(published) = published else {
-        return (false, format!("La versión {version} no indica su fecha de publicación; no se instala."));
+        return (
+            false,
+            format!("La versión {version} no indica su fecha de publicación; no se instala."),
+        );
     };
     if published <= until {
-        (true, format!("Incluida en tu licencia (actualizaciones hasta el {}).", spanish_date(until)))
+        (
+            true,
+            format!(
+                "Incluida en tu licencia (actualizaciones hasta el {}).",
+                spanish_date(until)
+            ),
+        )
     } else {
         (
             false,
@@ -112,7 +146,10 @@ pub fn evaluate(
     raw_manifest: &serde_json::Value,
     updates_until: Option<NaiveDate>,
 ) -> UpdateCheck {
-    let critical = raw_manifest.get("critical").and_then(|v| v.as_bool()).unwrap_or(false);
+    let critical = raw_manifest
+        .get("critical")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let (allowed, reason) = decide(version, published, critical, updates_until);
     UpdateCheck {
         configured: true,
@@ -147,7 +184,10 @@ mod tests {
     fn later_versions_are_not_installed_but_the_app_keeps_working() {
         let (allowed, reason) = decide("0.9.0", date(2027, 10, 8), false, date(2027, 10, 7));
         assert!(!allowed);
-        assert!(reason.contains("0.9.0") && reason.contains("8 de octubre de 2027"), "{reason}");
+        assert!(
+            reason.contains("0.9.0") && reason.contains("8 de octubre de 2027"),
+            "{reason}"
+        );
         assert!(reason.contains("sigue funcionando"), "{reason}");
     }
 
@@ -161,7 +201,10 @@ mod tests {
     #[test]
     fn without_license_or_date_nothing_is_installed() {
         assert!(!decide("0.2.0", date(2026, 12, 1), false, None).0);
-        assert!(!decide("0.2.0", date(2026, 12, 1), true, None).0, "sin licencia ni el critico");
+        assert!(
+            !decide("0.2.0", date(2026, 12, 1), true, None).0,
+            "sin licencia ni el critico"
+        );
         let (allowed, reason) = decide("0.2.0", None, false, date(2027, 10, 7));
         assert!(!allowed && reason.contains("fecha"), "{reason}");
     }
@@ -169,12 +212,26 @@ mod tests {
     #[test]
     fn evaluate_reads_the_critical_flag_from_the_manifest() {
         let manifest = serde_json::json!({ "version": "0.3.0", "critical": true });
-        let check = evaluate("0.1.0", "0.3.0", date(2031, 1, 1), Some("  ".into()), &manifest, date(2027, 10, 7));
+        let check = evaluate(
+            "0.1.0",
+            "0.3.0",
+            date(2031, 1, 1),
+            Some("  ".into()),
+            &manifest,
+            date(2027, 10, 7),
+        );
         assert!(check.configured && check.available && check.critical && check.allowed);
         assert_eq!(check.published_at.as_deref(), Some("2031-01-01"));
         assert_eq!(check.notes, None);
 
-        let plain = evaluate("0.1.0", "0.3.0", date(2031, 1, 1), None, &serde_json::json!({}), date(2027, 10, 7));
+        let plain = evaluate(
+            "0.1.0",
+            "0.3.0",
+            date(2031, 1, 1),
+            None,
+            &serde_json::json!({}),
+            date(2027, 10, 7),
+        );
         assert!(!plain.critical && !plain.allowed);
     }
 }

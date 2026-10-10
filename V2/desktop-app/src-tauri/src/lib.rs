@@ -8,20 +8,20 @@ mod consultation_templates;
 mod crypto;
 mod db;
 mod dental;
+mod diarization;
+mod diarization_model;
+mod directory_csv;
 mod documents;
 mod export;
 mod fhir;
-mod directory_csv;
 mod license;
 mod updates;
-mod diarization;
-mod diarization_model;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature
 // `diarization-local`; sin el feature, un stub degrada sin separar hablantes.
-mod sherpa_diarization;
 mod medication;
 mod operations;
 mod search;
+mod sherpa_diarization;
 mod sync;
 mod transcription;
 mod transcription_model;
@@ -164,16 +164,22 @@ fn load_profiles_from_dir(base_dir: &Path) -> Result<Vec<DoctorProfile>, String>
         return Ok(vec![default_profile()]);
     }
     let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut profiles: Vec<DoctorProfile> = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    if !profiles.iter().any(|profile| profile.id == DEFAULT_PROFILE_ID) {
+    let mut profiles: Vec<DoctorProfile> =
+        serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if !profiles
+        .iter()
+        .any(|profile| profile.id == DEFAULT_PROFILE_ID)
+    {
         profiles.insert(0, default_profile());
     }
     profiles.sort_by(|a, b| {
         let a_default = a.id == DEFAULT_PROFILE_ID;
         let b_default = b.id == DEFAULT_PROFILE_ID;
-        b_default
-            .cmp(&a_default)
-            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+        b_default.cmp(&a_default).then_with(|| {
+            a.display_name
+                .to_lowercase()
+                .cmp(&b.display_name.to_lowercase())
+        })
     });
     Ok(profiles)
 }
@@ -437,7 +443,9 @@ struct LinkOutcome {
 }
 
 /// Pide al portal la licencia de este equipo, la verifica y la guarda.
-async fn refresh_license(state: &tauri::State<'_, AppDb>) -> Result<license::LicenseStatus, String> {
+async fn refresh_license(
+    state: &tauri::State<'_, AppDb>,
+) -> Result<license::LicenseStatus, String> {
     let (server_url, token, installation_id) = {
         let guard = state.0.lock().unwrap();
         let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
@@ -461,11 +469,17 @@ async fn refresh_license(state: &tauri::State<'_, AppDb>) -> Result<license::Lic
 }
 
 /// Fecha hasta la que la licencia incluye actualizaciones, si hay licencia valida.
-fn licensed_updates_until(state: &tauri::State<'_, AppDb>) -> Result<Option<chrono::NaiveDate>, String> {
+fn licensed_updates_until(
+    state: &tauri::State<'_, AppDb>,
+) -> Result<Option<chrono::NaiveDate>, String> {
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
-    let status = license::status(conn, &license::trusted_keys(), chrono::Local::now().date_naive())
-        .map_err(|e| e.to_string())?;
+    let status = license::status(
+        conn,
+        &license::trusted_keys(),
+        chrono::Local::now().date_naive(),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(status
         .updates_until
         .filter(|_| status.state == "VALID")
@@ -474,12 +488,17 @@ fn licensed_updates_until(state: &tauri::State<'_, AppDb>) -> Result<Option<chro
 
 /// Consulta el canal de actualizaciones (paso 9) con la llave y el endpoint de
 /// esta compilacion. `None` si la compilacion no tiene canal o no hay version nueva.
-async fn fetch_update(app: &tauri::AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
+async fn fetch_update(
+    app: &tauri::AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
     use tauri_plugin_updater::UpdaterExt;
     let Some(settings) = updates::settings() else {
         return Ok(None);
     };
-    let endpoint = settings.endpoint.parse().map_err(|_| "el endpoint de actualizaciones no es una URL valida")?;
+    let endpoint = settings
+        .endpoint
+        .parse()
+        .map_err(|_| "el endpoint de actualizaciones no es una URL valida")?;
     app.updater_builder()
         .pubkey(settings.pubkey)
         .endpoints(vec![endpoint])
@@ -492,9 +511,9 @@ async fn fetch_update(app: &tauri::AppHandle) -> Result<Option<tauri_plugin_upda
 }
 
 fn release_date(update: &tauri_plugin_updater::Update) -> Option<chrono::NaiveDate> {
-    update
-        .date
-        .and_then(|d| chrono::NaiveDate::from_ymd_opt(d.year(), u8::from(d.month()) as u32, d.day() as u32))
+    update.date.and_then(|d| {
+        chrono::NaiveDate::from_ymd_opt(d.year(), u8::from(d.month()) as u32, d.day() as u32)
+    })
 }
 
 /// Busca una version nueva y dice si la licencia la incluye (paso 29 r5).
@@ -509,7 +528,9 @@ async fn check_for_update(
         return Ok(updates::UpdateCheck {
             configured: false,
             current_version,
-            reason: Some("Esta compilacion de MiDoc no tiene canal de actualizaciones configurado.".into()),
+            reason: Some(
+                "Esta compilacion de MiDoc no tiene canal de actualizaciones configurado.".into(),
+            ),
             ..Default::default()
         });
     }
@@ -534,9 +555,14 @@ async fn check_for_update(
 /// Descarga, verifica la firma e instala la version nueva si la licencia la
 /// incluye; despues reinicia la app. La base cifrada no se toca (paso 9).
 #[tauri::command]
-async fn install_update(app: tauri::AppHandle, state: tauri::State<'_, AppDb>) -> Result<(), String> {
+async fn install_update(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppDb>,
+) -> Result<(), String> {
     let updates_until = licensed_updates_until(&state)?;
-    let update = fetch_update(&app).await?.ok_or("No hay una version nueva para instalar.")?;
+    let update = fetch_update(&app)
+        .await?
+        .ok_or("No hay una version nueva para instalar.")?;
     let check = updates::evaluate(
         &app.package_info().version.to_string(),
         &update.version,
@@ -546,7 +572,9 @@ async fn install_update(app: tauri::AppHandle, state: tauri::State<'_, AppDb>) -
         updates_until,
     );
     if !check.allowed {
-        return Err(check.reason.unwrap_or_else(|| "Esta version no esta incluida en tu licencia.".into()));
+        return Err(check
+            .reason
+            .unwrap_or_else(|| "Esta version no esta incluida en tu licencia.".into()));
     }
     update
         .download_and_install(|_, _| {}, || {})
@@ -560,12 +588,19 @@ async fn install_update(app: tauri::AppHandle, state: tauri::State<'_, AppDb>) -
 fn license_status(state: tauri::State<'_, AppDb>) -> Result<license::LicenseStatus, String> {
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
-    license::status(conn, &license::trusted_keys(), chrono::Local::now().date_naive()).map_err(|e| e.to_string())
+    license::status(
+        conn,
+        &license::trusted_keys(),
+        chrono::Local::now().date_naive(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Activa este equipo con la cuenta vinculada (reintento manual o automatico).
 #[tauri::command]
-async fn activate_license(state: tauri::State<'_, AppDb>) -> Result<license::LicenseStatus, String> {
+async fn activate_license(
+    state: tauri::State<'_, AppDb>,
+) -> Result<license::LicenseStatus, String> {
     refresh_license(&state).await
 }
 
@@ -768,7 +803,8 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
         let guard = state.0.lock().unwrap();
         let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
         sync::set_state(conn, "credit_balance", &balance.to_string()).map_err(|e| e.to_string())?;
-        sync::set_state(conn, "credit_balance_at", &chrono::Utc::now().to_rfc3339()).map_err(|e| e.to_string())?;
+        sync::set_state(conn, "credit_balance_at", &chrono::Utc::now().to_rfc3339())
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(sync::SyncSummary {
@@ -949,12 +985,7 @@ fn attend_appointment(
     force_new: bool,
 ) -> Result<clinical::AttendOutcome, String> {
     with_conn(&state, |conn| {
-        clinical::attend_appointment(
-            conn,
-            &appointment_id,
-            link_patient_id.as_deref(),
-            force_new,
-        )
+        clinical::attend_appointment(conn, &appointment_id, link_patient_id.as_deref(), force_new)
     })
 }
 
@@ -1068,10 +1099,7 @@ fn update_timeline_event(
 }
 
 #[tauri::command]
-fn delete_timeline_event(
-    state: tauri::State<'_, AppDb>,
-    event_id: String,
-) -> Result<(), String> {
+fn delete_timeline_event(state: tauri::State<'_, AppDb>, event_id: String) -> Result<(), String> {
     with_conn(&state, |conn| {
         clinical::delete_timeline_event(conn, &event_id)
     })
@@ -1204,8 +1232,12 @@ fn check_in_appointment(
 #[derive(serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum WalkInOutcome {
-    Visit { visit: Box<operations::Visit> },
-    NeedsResolution { candidates: Vec<clinical::PatientMatch> },
+    Visit {
+        visit: Box<operations::Visit>,
+    },
+    NeedsResolution {
+        candidates: Vec<clinical::PatientMatch>,
+    },
 }
 
 #[tauri::command]
@@ -1316,11 +1348,13 @@ fn start_visit_encounter(
         }
         // Walk-in: el paciente ya se resolvio al registrarlo en recepcion.
         (None, Some(patient_id)) => {
-            let encounter =
-                clinical::open_encounter_for_patient(conn, patient_id).map_err(|e| e.to_string())?;
+            let encounter = clinical::open_encounter_for_patient(conn, patient_id)
+                .map_err(|e| e.to_string())?;
             operations::link_visit_encounter(conn, &visit_id, &encounter.id)
                 .map_err(|e| e.to_string())?;
-            Ok(clinical::AttendOutcome::Encounter { encounter_id: encounter.id })
+            Ok(clinical::AttendOutcome::Encounter {
+                encounter_id: encounter.id,
+            })
         }
         (None, None) => Err("la visita no tiene paciente asociado".into()),
     }
@@ -1404,7 +1438,9 @@ fn documents_list(
     state: tauri::State<'_, AppDb>,
     patient_id: String,
 ) -> Result<Vec<documents::DocumentMeta>, String> {
-    with_documents(&state, |conn| documents::list_patient_documents(conn, &patient_id))
+    with_documents(&state, |conn| {
+        documents::list_patient_documents(conn, &patient_id)
+    })
 }
 
 #[tauri::command]
@@ -1417,7 +1453,9 @@ fn documents_read(
 
 #[tauri::command]
 fn documents_delete(state: tauri::State<'_, AppDb>, document_id: String) -> Result<(), String> {
-    with_documents(&state, |conn| documents::delete_document(conn, &document_id))
+    with_documents(&state, |conn| {
+        documents::delete_document(conn, &document_id)
+    })
 }
 
 #[tauri::command]
@@ -1477,7 +1515,9 @@ async fn pick_export_path(
     .await
     .map_err(|e| e.to_string())?;
 
-    picked.map(|p| p.into_path().map_err(|e| e.to_string())).transpose()
+    picked
+        .map(|p| p.into_path().map_err(|e| e.to_string()))
+        .transpose()
 }
 
 /// Escribe el PDF que dibujo la interfaz y lo deja en la bitacora. `None` si el
@@ -1498,7 +1538,10 @@ async fn save_export(
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
     let sha256 = export::write_export(conn, &path, &patient_id, &kind, &content_base64)
         .map_err(|e| e.to_string())?;
-    Ok(Some(SavedExport { path: path.display().to_string(), sha256 }))
+    Ok(Some(SavedExport {
+        path: path.display().to_string(),
+        sha256,
+    }))
 }
 
 /// Exporta en FHIR R4 la consulta (`encounter_id`) o el expediente completo
@@ -1516,16 +1559,21 @@ async fn save_fhir_export(
     let export = {
         let guard = state.0.lock().unwrap();
         let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
-        fhir::export_record(conn, &patient_id, encounter_id.as_deref()).map_err(|e| e.to_string())?
+        fhir::export_record(conn, &patient_id, encounter_id.as_deref())
+            .map_err(|e| e.to_string())?
     };
-    let Some(path) = pick_export_path(&app, &export.file_stem, "FHIR R4 (JSON)", "json").await? else {
+    let Some(path) = pick_export_path(&app, &export.file_stem, "FHIR R4 (JSON)", "json").await?
+    else {
         return Ok(None);
     };
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
     let sha256 = export::write_export_bytes(conn, &path, &patient_id, export.kind, &export.bytes)
         .map_err(|e| e.to_string())?;
-    Ok(Some(SavedExport { path: path.display().to_string(), sha256 }))
+    Ok(Some(SavedExport {
+        path: path.display().to_string(),
+        sha256,
+    }))
 }
 
 #[derive(serde::Serialize)]
@@ -1553,7 +1601,10 @@ async fn save_directory_csv(
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
     export::write_export_bytes(conn, &path, "directorio", "CSV_DIRECTORIO", &export.bytes)
         .map_err(|e| e.to_string())?;
-    Ok(Some(SavedDirectory { path: path.display().to_string(), patients: export.patients }))
+    Ok(Some(SavedDirectory {
+        path: path.display().to_string(),
+        patients: export.patients,
+    }))
 }
 
 #[tauri::command]
@@ -1596,7 +1647,9 @@ fn dental_decide_budget(
     budget_id: String,
     status: String,
 ) -> Result<dental::Budget, String> {
-    with_dental(&state, |conn| dental::decide_budget(conn, &budget_id, &status))
+    with_dental(&state, |conn| {
+        dental::decide_budget(conn, &budget_id, &status)
+    })
 }
 
 #[tauri::command]
@@ -1605,7 +1658,9 @@ fn dental_set_item_status(
     item_id: String,
     status: String,
 ) -> Result<dental::Budget, String> {
-    with_dental(&state, |conn| dental::set_item_status(conn, &item_id, &status))
+    with_dental(&state, |conn| {
+        dental::set_item_status(conn, &item_id, &status)
+    })
 }
 
 #[tauri::command]
@@ -1613,7 +1668,9 @@ fn dental_list_budgets(
     state: tauri::State<'_, AppDb>,
     patient_id: String,
 ) -> Result<Vec<dental::Budget>, String> {
-    with_dental(&state, |conn| dental::list_patient_budgets(conn, &patient_id))
+    with_dental(&state, |conn| {
+        dental::list_patient_budgets(conn, &patient_id)
+    })
 }
 
 #[tauri::command]
@@ -1621,7 +1678,9 @@ fn dental_patient_balance(
     state: tauri::State<'_, AppDb>,
     patient_id: String,
 ) -> Result<dental::DentalBalance, String> {
-    with_dental(&state, |conn| dental::patient_dental_balance(conn, &patient_id))
+    with_dental(&state, |conn| {
+        dental::patient_dental_balance(conn, &patient_id)
+    })
 }
 
 #[tauri::command]
@@ -2033,13 +2092,7 @@ fn ai_diarize_consultation(
     let provider = resolve_local_transcription_provider(&app)?;
     let (seg_path, emb_path) = diarization_model_paths(&app)?;
     let diarizer = move |samples: &[f32], sample_rate: u32| {
-        sherpa_diarization::diarize_samples(
-            samples,
-            sample_rate,
-            &seg_path,
-            &emb_path,
-            requested,
-        )
+        sherpa_diarization::diarize_samples(samples, sample_rate, &seg_path, &emb_path, requested)
     };
     with_ai(&state, |conn| {
         ai::diarize_consultation(
@@ -2125,15 +2178,24 @@ fn gateway_settings(state: &tauri::State<'_, AppDb>) -> Option<GatewaySettings> 
     let conn = guard.as_ref()?;
     let server_url = sync::get_state(conn, "server_url").ok()??;
     let device_token = sync::get_state(conn, "device_token").ok()??;
-    let status: serde_json::Value = serde_json::from_str(&sync::get_state(conn, "ai_gateway").ok()??).ok()?;
+    let status: serde_json::Value =
+        serde_json::from_str(&sync::get_state(conn, "ai_gateway").ok()??).ok()?;
     if status["enabled"] != true {
         return None;
     }
     let models = status["models"]
         .as_array()
-        .map(|list| list.iter().filter_map(|m| m.as_str().map(str::to_string)).collect())
+        .map(|list| {
+            list.iter()
+                .filter_map(|m| m.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
-    Some(GatewaySettings { server_url, device_token, models })
+    Some(GatewaySettings {
+        server_url,
+        device_token,
+        models,
+    })
 }
 
 /// Valida el override contra el catalogo: elegir un modelo/proveedor no
@@ -2156,11 +2218,9 @@ fn resolve_text_registry(
             }
             None => None,
         };
-        return Ok(ai::ProviderRegistry::new(vec![Box::new(ai::GatewayProvider::new(
-            &gateway.server_url,
-            &gateway.device_token,
-            model,
-        ))]));
+        return Ok(ai::ProviderRegistry::new(vec![Box::new(
+            ai::GatewayProvider::new(&gateway.server_url, &gateway.device_token, model),
+        )]));
     }
     let Some(option_id) = model_override else {
         return Ok(ai::ProviderRegistry::default_local());
@@ -2201,10 +2261,7 @@ fn save_consultation_template(
 }
 
 #[tauri::command]
-fn delete_consultation_template(
-    state: tauri::State<'_, AppDb>,
-    id: String,
-) -> Result<(), String> {
+fn delete_consultation_template(state: tauri::State<'_, AppDb>, id: String) -> Result<(), String> {
     with_consultation_templates(&state, |conn| {
         consultation_templates::delete_template(conn, &id)
     })
@@ -2297,14 +2354,16 @@ fn import_medication_reference(
     openfda_json: String,
     version: String,
 ) -> Result<medication::ImportSummary, String> {
-    let medications = medication::parse_medication_csv(&medications_csv).map_err(|e| e.to_string())?;
+    let medications =
+        medication::parse_medication_csv(&medications_csv).map_err(|e| e.to_string())?;
     let interactions = medication::parse_ddinter_csv(&ddinter_csv).map_err(|e| e.to_string())?;
     let labels = medication::parse_openfda_labels(&openfda_json).map_err(|e| e.to_string())?;
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
-    let mut summary =
-        medication::import_reference(conn, &medications, &interactions, &version).map_err(|e| e.to_string())?;
-    summary.labels = medication::import_label_text(conn, &labels, &version).map_err(|e| e.to_string())?;
+    let mut summary = medication::import_reference(conn, &medications, &interactions, &version)
+        .map_err(|e| e.to_string())?;
+    summary.labels =
+        medication::import_label_text(conn, &labels, &version).map_err(|e| e.to_string())?;
     Ok(summary)
 }
 
@@ -2367,7 +2426,8 @@ async fn update_medication_reference_from_midoc(
 
     let summary = if !configured_medications.is_empty() && !configured_ddinter.is_empty() {
         let client = reqwest::Client::new();
-        let medications_csv = fetch_text(&client, configured_medications, "medicamentos MiDoc").await?;
+        let medications_csv =
+            fetch_text(&client, configured_medications, "medicamentos MiDoc").await?;
         let ddinter_csv = fetch_text(&client, configured_ddinter, "interacciones MiDoc").await?;
         let openfda_json = fetch_text(
             &client,
@@ -2965,7 +3025,10 @@ mod tests {
     fn profile_database_path_separates_doctors() {
         let base = Path::new("C:/MiDocData");
 
-        assert_eq!(profile_database_path(base, "default").unwrap(), base.join("midoc.db"));
+        assert_eq!(
+            profile_database_path(base, "default").unwrap(),
+            base.join("midoc.db")
+        );
         assert_eq!(
             profile_database_path(base, "dr-ana").unwrap(),
             base.join("profiles").join("dr-ana").join("midoc.db")

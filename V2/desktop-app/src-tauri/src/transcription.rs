@@ -831,7 +831,10 @@ mod tests {
             "Intel(R) UHD Graphics 630".to_string(),
             "NVIDIA GeForce RTX 3070".to_string(),
         ];
-        assert_eq!(detect_backend_from_names(mixed), AccelBackend::VulkanDedicated);
+        assert_eq!(
+            detect_backend_from_names(mixed),
+            AccelBackend::VulkanDedicated
+        );
 
         // Solo integrada -> Vulkan integrada (ahora si acelera).
         let integrated = vec!["Intel(R) Iris(R) Xe Graphics".to_string()];

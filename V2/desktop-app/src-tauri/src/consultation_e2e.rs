@@ -79,7 +79,10 @@ fn synced_appointment_drives_a_full_signed_consultation() {
     let detail = get_encounter_detail(&conn, &encounter.id).unwrap();
     assert_eq!(detail.patient.first_name, "Hugo");
     assert_eq!(detail.appointment_reason.as_deref(), Some("Dolor lumbar"));
-    assert_eq!(detail.appointment_start.as_deref(), Some("2026-06-22T15:00:00.000Z"));
+    assert_eq!(
+        detail.appointment_start.as_deref(),
+        Some("2026-06-22T15:00:00.000Z")
+    );
     let medical_history = detail
         .medical_history
         .expect("el cuestionario del paciente debe estar disponible");

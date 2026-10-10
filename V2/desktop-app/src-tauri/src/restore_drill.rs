@@ -22,8 +22,10 @@ fn drill_dir() -> std::path::PathBuf {
 }
 
 fn count(conn: &Connection, table: &str) -> i64 {
-    conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))
-        .unwrap()
+    conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+        row.get(0)
+    })
+    .unwrap()
 }
 
 fn header_hex(path: &std::path::Path) -> String {
