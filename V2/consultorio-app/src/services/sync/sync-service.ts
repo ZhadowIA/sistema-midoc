@@ -16,7 +16,8 @@ import { writeAuditLog } from "../../lib/audit";
 import { ServiceError } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { generateOpaqueToken, hashOpaqueToken } from "../../lib/security/token";
-import { getAiCreditCost, getDoctorAiCreditSummary } from "../ai/ai-credits";
+import { getAiCreditCost } from "../ai/ai-credits";
+import { getCreditBalance } from "../ai/credit-ledger";
 
 const INBOX_BATCH_SIZE = 100;
 const AI_USAGE_BATCH_SIZE = 100;
@@ -205,6 +206,10 @@ export async function getSyncDeviceProfile(device: SyncDevice) {
     select: {
       specialty: true,
       consultationDuration: true,
+      // Identidad profesional para recetas y PDF del expediente (paso 28 r4):
+      // la app la guarda en el equipo y la usa sin conexion.
+      professionalName: true,
+      licenseNumber: true,
       availabilityRules: {
         where: { isActive: true },
         select: { startTime: true, endTime: true, isActive: true }
@@ -469,6 +474,20 @@ async function getOrCreateAiProvider(report: AiUsageReport) {
  * El contenido clinico, prompts y salidas permanecen en la app local; las
  * referencias apuntan a IDs locales que el portal no puede resolver.
  */
+/**
+ * Usos que ya cobro el portal (transcripcion en nube o pasarela de IA, pasos
+ * 29-30): el reporte posterior de la app solo actualiza su estado de revision.
+ */
+function isPortalGoverned(row: { transcriptionMode: string | null; inputReference: Prisma.JsonValue }) {
+  if (row.transcriptionMode !== null) {
+    return true;
+  }
+  const kind = row.inputReference && typeof row.inputReference === "object" && !Array.isArray(row.inputReference)
+    ? (row.inputReference as Record<string, unknown>).kind
+    : undefined;
+  return typeof kind === "string" && kind.startsWith("REMOTE_");
+}
+
 export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
   const parsedResult = aiUsageBatchSchema.safeParse(payload);
   if (!parsedResult.success) {
@@ -500,12 +519,13 @@ export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
       }
     });
 
-    if (existing && existing.transcriptionMode !== null) {
+    if (existing && isPortalGoverned(existing)) {
+      // La referencia de entrada se conserva: marca la fila como cobrada por el portal.
+      // Un borrador sin revisar (PENDING) no regresa un uso que el portal ya completo.
       await prisma.aiUsageLog.update({
         where: { id: existing.id },
         data: {
-          status,
-          inputReference: report.inputReference,
+          status: status === AiUsageStatus.PENDING ? existing.status : status,
           outputReference: report.outputReference,
           reviewedAt,
           reportedAt: now
@@ -555,7 +575,9 @@ export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
     });
   }
 
-  const creditSummary = await getDoctorAiCreditSummary(device.doctorId, now);
+  // Los usos que la app reporta despues no descuentan saldo: ese cobro llega
+  // con la pasarela de IA (paso 30). Se devuelve el saldo del libro mayor.
+  const { balance } = await getCreditBalance(device.doctorId, now);
 
   await writeAuditLog({
     actorUserId: device.doctorId,
@@ -565,12 +587,9 @@ export async function recordAiUsageBatch(device: SyncDevice, payload: unknown) {
     source: "sync-service",
     metadata: {
       runCount: parsed.runs.length,
-      consumedCredits: creditSummary.consumedCredits,
-      remainingCredits: creditSummary.remainingCredits,
-      overageCredits: creditSummary.overageCredits,
-      periodKey: creditSummary.periodKey
+      creditBalance: balance
     }
   });
 
-  return { reported: parsed.runs.length, creditSummary };
+  return { reported: parsed.runs.length, creditBalance: balance };
 }

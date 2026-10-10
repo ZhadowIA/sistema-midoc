@@ -45,6 +45,19 @@ function nextWeekdayDate(targetDay: number) {
   return date;
 }
 
+// Proxima fecha de calendario (mes/dia) que quede completa en el futuro: el
+// anio en curso si aun no llega, o el siguiente. Evita fechas fijas que, al
+// pasar, dejan sin slots a las pruebas (los horarios ya iniciados se filtran).
+function nextFutureCalendarDate(month: number, day: number) {
+  const now = new Date();
+  const tomorrowUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  const year = Date.UTC(now.getUTCFullYear(), month - 1, day) > tomorrowUtc
+    ? now.getUTCFullYear()
+    : now.getUTCFullYear() + 1;
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 async function cleanupUserByEmail(email: string) {
   const user = await prisma.user.findUnique({
     where: { email },
@@ -1117,15 +1130,19 @@ describe("public booking flow", () => {
         durationMinutes: 30
       });
 
-      // Fechas fijas: una en verano (DST) y otra en invierno (estandar).
+      // Un 15 de julio (verano, DST) y un 15 de diciembre (invierno, estandar)
+      // futuros, relativos al reloj real: con fechas fijas la prueba caducaba.
+      const summerDate = nextFutureCalendarDate(7, 15);
+      const winterDate = nextFutureCalendarDate(12, 15);
+
       await createAvailabilityRule(account.user.id, {
-        specificDate: "2026-07-15",
+        specificDate: summerDate,
         startTime: "09:00",
         endTime: "10:00",
         slotInterval: 30
       });
       await createAvailabilityRule(account.user.id, {
-        specificDate: "2026-12-15",
+        specificDate: winterDate,
         startTime: "09:00",
         endTime: "10:00",
         slotInterval: 30
@@ -1134,13 +1151,13 @@ describe("public booking flow", () => {
       const summer = await listPublicAvailability({
         slug,
         serviceId: service.id,
-        dateFrom: "2026-07-15",
+        dateFrom: summerDate,
         days: 1
       });
       const winter = await listPublicAvailability({
         slug,
         serviceId: service.id,
-        dateFrom: "2026-12-15",
+        dateFrom: winterDate,
         days: 1
       });
 

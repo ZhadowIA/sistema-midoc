@@ -1,5 +1,45 @@
 # 10 - Linea de desarrollo V2
 
+## Reenfoque de producto (2026-09-07) — leer antes que nada
+
+La linea que sigue se escribio para un producto mas amplio (agenda, recepcion, caja, portal del paciente). El **2026-09-07 el alcance activo se redujo a expediente clinico + apoyo IA para el medico**. El detalle esta en `14_reenfoque_expediente_ia.md`; aqui queda la consecuencia operativa.
+
+- Los pasos 0-26 **no se reabren ni se borran**: son historia entregada. Lo que sale del alcance se **apaga tras bandera de capacidad**, no se elimina.
+- Los pasos nuevos del producto reenfocado son **27 en adelante**.
+- Regla de ubicacion vigente: una tarea solo se implementa si cae en el alcance activo (expediente, consulta, IA clinica, cuenta/suscripcion/pasarela IA). Todo lo demas se documenta y no se toca.
+
+### Reclasificacion de los pasos 0-26
+
+| Paso | Estado bajo el reenfoque |
+|---|---|
+| 0 Preparacion | Vigente (base tecnica). |
+| 1 Identidad y legal | Vigente (cuenta del medico). |
+| 2 Perfil y disponibilidad | Congelado. |
+| 3 Agenda publica | Congelado. |
+| 4 Atencion integrada | **Vigente — nucleo.** |
+| 5 Medicina general/familiar | **Vigente — nucleo.** |
+| 6 Paciente y documentos | Parcial: la creacion/edicion local del paciente sigue vigente; precheckin, buzon y portal del paciente se congelan. |
+| 7 Comunicaciones | Congelado. |
+| 8 Odontologia | **Vigente — nucleo.** |
+| 9 Piloto seguro | Vigente (respaldo, restauracion, instalador firmado). |
+| 10 Operacion presencial | Congelado, salvo la consulta sin cita, que se muda al expediente (paso 27). |
+| 11 IA gobernada | **Vigente — nucleo.** |
+| 12 SaaS/compliance | Parcial: 2FA, ARCO y retencion vigentes; la suscripcion se sustituye por licencia de compra unica + creditos de IA (paso 29). |
+| 13 Directorio y expediente longitudinal | **Vigente — nucleo.** |
+| 14 Seguridad de medicacion determinista | **Vigente — nucleo.** |
+| 15 Transcripcion local real (Whisper) | **Vigente — nucleo.** |
+| 16 Proveedores de IA reales (BAA) | **Vigente**, ahora detras de la pasarela de IA del portal (paso 30). |
+| 17 Produccion: notificaciones y pago reales | Parcial: pago real de la suscripcion vigente; notificaciones al paciente congeladas. |
+| 18 Agendado con responsable/tutor | Congelado. |
+| 19 Pulido del flujo publico y preconsulta | Congelado. |
+| 20 Multi-perfil y agenda dia/semana | Parcial: multi-perfil vigente; la agenda dia/semana se congela. |
+| 21 Plantillas asistidas por conversacion | **Vigente — nucleo.** |
+| 22 Diarizacion local | **Vigente — nucleo.** |
+| 23 Anamnesis asistida | **Vigente — nucleo.** |
+| 24 Degradacion de proveedor de IA | **Vigente — nucleo.** |
+| 25 Base de medicamentos a escala | **Vigente — nucleo.** |
+| 26 Perfil dentista completo | Parcial: odontograma, indice de placa, plan de tratamiento, dictado, nota de evolucion e indicaciones vigentes; los saldos por avance del presupuesto se congelan con la caja. Las ordenes de laboratorio quedan como decision pendiente. |
+
 ## Estado actual (actualizado 2026-06-12)
 
 **Pasos 0-12 completados.** Toda la implementación del MVP + piloto seguro + operación presencial + IA gobernada + SaaS/compliance está lista:
@@ -10,6 +50,8 @@
 - Operación presencial: recepción, lista de espera, consulta sin cita, recursos, caja diaria, cobros y recibos (todo local, clase OPERATIVO)
 - IA gobernada: capa multi-proveedor, consentimiento, seudonimización, trazas, revisión humana, costo/créditos, benchmark, transcripción de voz y reporte de uso al portal por referencia
 - SaaS/compliance: suscripción con gating por capacidad, 2FA con códigos de recuperación, incidentes, exportación de auditoría, retención y derechos ARCO (residencia local)
+
+**Correccion de residencia (2026-09-05):** se retiro del portal el expediente clinico que quedaba persistido en PostgreSQL desde el commit inicial de V2 (11 tablas, tres rutas y la pantalla `/medico/atencion`). Detalle en el paso 4. Pendiente propuesto: `PaymentRecord`, `CashDrawerSession` y `WaitlistEntry`, el mismo vestigio.
 
 **Paso 13 completado** (post-MVP, app del médico): directorio clínico de pacientes y expediente longitudinal con línea del tiempo editable. Rebanadas 1 (directorio), 2 (línea del tiempo), 3 (independencia agenda/directorio + anti-duplicados) y 4 (agenda semanal por bloques + "Atender" abre expediente) entregadas el 2026-06-12/13.
 
@@ -91,6 +133,11 @@ La sincronizacion sigue un solo patron: la app del medico publica disponibilidad
 | 24 | Degradacion asistida de proveedor de IA | `superpowers:test-driven-development` | Ante sobrecarga del proveedor (503/429), el medico ve la causa y elige reintentar o generar con otro modelo disponible — nunca fallback silencioso. | ✅ DONE |
 | 25 | Base de medicamentos a escala | `superpowers:writing-plans` | Pipeline reproducible de fuentes publicas + catalogo mexicano de marcas; verificacion con interacciones de par y de tres clases (triple whammy), base ONChigh de dominio publico. | ✅ DONE (swap ONChigh + triple whammy + apendice ONChigh completo sin QT + marcas MX por regla; pendiente: regla QT curada, RxClass reproducible, pipeline BRSDM completo, publicar endpoints/ops) |
 | 26 | Perfil dentista completo (paridad Dentis365 + IA dental) | `superpowers:writing-plans` | Odontograma visual interactivo, indice de placa, plan de tratamiento presupuestado con saldos por avance, ordenes de laboratorio y capa IA dental (dictado al odontograma, nota de evolucion, indicaciones post-operatorias). | ✅ DONE (rebanadas 1-6 completas: odontograma visual y anatomico, indice de placa, presupuesto con saldos, laboratorio, dictado al odontograma, nota de evolucion e indicaciones post-operatorias; el uso DENTAL_EVOLUTION queda listo para el proveedor real del paso 16) |
+| 27 | Reenfoque: banderas de alcance y app centrada en el paciente | `impeccable` | La app abre en Pacientes; agenda, recepcion y caja quedan apagadas tras bandera. | 🔜 PLANEADO |
+| 28 | Expediente de calidad: documentos, busqueda y salida | `impeccable` | Documentos locales, busqueda clinica, impresion y exportacion del expediente. | 🔜 PLANEADO |
+| 29 | Suscripcion y capacidades del nuevo producto | `analytics` | El plan cobra por expediente e IA, no por citas. | 🔜 PLANEADO |
+| 30 | Pasarela de IA en el portal y proveedores reales | `codex-security:security-scan` | La IA sale por el portal con claves y BAA del lado servidor. Absorbe el paso 16. | 🔜 PLANEADO |
+| 31 | Copiloto del expediente longitudinal | `superpowers:writing-plans` | Resumen del paciente, preguntas citadas sobre su historia y seguimiento vencido. | 🔜 PLANEADO |
 
 ## Modelo y esfuerzo recomendado por tipo de tarea
 
@@ -265,6 +312,25 @@ Checklist de salida:
 - Receta e indicaciones.
 - Cierre, firma y versionado de nota.
 - Auditoria de cambios criticos.
+
+### Correccion de residencia (2026-09-05): retiro del expediente clinico de la nube
+
+El portal en la nube arrastraba desde el commit inicial de V2 (`0bc949e`, 2026-06-09 — el mismo dia de la decision local-first) una estacion clinica completa que **persistia expediente en PostgreSQL**, en contra de la residencia 1 (`REGLAS_DESARROLLO.md` §2 y §4.1). Este paso 4 se reimplemento en la app del medico, pero la version nube nunca se retiro.
+
+Lo retirado en `v2/retirar-expediente-nube`:
+
+- **11 modelos Prisma y sus tablas**: `ClinicalRecord`, `Encounter`, `ClinicalNote`, `ClinicalNoteVersion`, `Prescription`, `PrescriptionItem`, `PatientInstruction`, `ClinicalDocument`, `DentalChart`, `DentalChartEntry`, `PeriodontalChartEntry`. Migracion destructiva `20260905120000_remove_cloud_clinical_records`. Conteo previo en desarrollo local: **0 filas en las 11**.
+- **8 enums** que solo servian a esas tablas (`EncounterStatus`, `EncounterSource`, `ClinicalRecordStatus`, `NoteType`, `NoteStatus`, `PrescriptionStatus`, `InstructionStatus`, `UploadSource`).
+- **Tres rutas montadas**: `POST|GET /api/admin/appointments/[appointmentId]/encounter`, `PATCH /api/admin/encounters/[encounterId]` y `POST /api/admin/encounters/[encounterId]/close`.
+- **`src/services/clinical/encounter-service.ts`** (unico escritor) y su prueba `tests/integration/clinical-encounter.integration.test.ts`.
+- **La pantalla `/medico/atencion/[appointmentId]`**, unica consumidora de esas rutas, y su enlace desde la agenda del portal (`/medico/agenda`). La agenda sobrevive como vista de solo lectura; la atencion clinica se hace en la app del medico.
+- **Las FK colgantes `encounterId`** de cuatro tablas vivas (`AiUsageLog`, `Consent`, `DocumentUploadLink`, `PrecheckinSubmission`). En `AiUsageLog` la columna ya se guardaba siempre nula: el reporte de uso de IA que llega por sync descarta el id local del encuentro (`sync-service.ts` lo acepta en el payload y no lo persiste), asi que el contrato con la app de escritorio no cambia.
+
+La app de escritorio nunca dependio de estas rutas: `src-tauri/src/sync.rs` solo consume `/api/admin/profile`, `/api/admin/services` y `/api/admin/availability`.
+
+Lo que la nube conserva y sigue siendo legitimo: el buzon temporal cifrado (`MailboxDocument`, sealed box X25519 purgado tras el ACK), los resumenes autorizados (`AuthorizedSummary`, secretbox con la llave solo en el fragmento del enlace) y `PrecheckinSubmission` con antecedentes sellados. Todos son contenido clinico **en transito**, cifrado de punta a punta y purgado, no expediente persistido.
+
+**Deuda relacionada, no ejecutada aqui:** `PaymentRecord`, `CashDrawerSession` y `WaitlistEntry` son el mismo vestigio de `0bc949e` — la caja y la lista de espera autoritativas viven en la app del medico desde el paso 10 y estos tres modelos no tienen **ninguna** referencia en `src/` ni en `tests/`. Se propone retirarlos en una rama aparte.
 
 ## Paso 5 - Medicina familiar/general
 
@@ -1268,7 +1334,127 @@ Rebanada 3 (2026-07-09): plan de tratamiento presupuestado con saldos, entregado
 
 Rebanada 1 (2026-07-09): odontograma visual interactivo entregado en `v2/paso26-odontograma-visual`. Logica pura en `odontogramModel.ts` (denticion temporal FDI 51-85, filas por denticion adulta/mixta/infantil con temporales al centro, orientacion clinica de superficies —vestibular hacia afuera, mesial hacia la linea media, espejado por cuadrante—, ciclado de estado por clic, marcadores clasicos: X ausente, / extraccion indicada, circulo corona, triangulo endodoncia, poste implante, e `inferDentition` que abre la vista segun las piezas con hallazgos) con 11 pruebas en `node --test`. Componente SVG `OdontogramChart.tsx`: glifo de 5 superficies clicables por pieza (clic cicla Sano→Caries→Restaurado→Sellador→Fractura), numero abre la tarjeta de detalle existente (que pasa de grilla de 32 tarjetas a vista de detalle de la pieza seleccionada), toggle de denticion, linea media entre cuadrantes, leyenda, tooltip/aria-label con resumen en espanol. El payload `DentalPayload` NO cambio: es solo capa de presentacion, retrocompatible con notas dentales existentes. Verificado en navegador (mock): ciclado de superficie, seleccion, denticion mixta (52 piezas), marcador de ausente, guardado de nota con nueva version y tema claro/oscuro. 57 pruebas TS + tsc + build en verde.
 
+## Paso 27 - Reenfoque: banderas de alcance y app centrada en el paciente
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que la app abra y se sienta como lo que ahora es: un expediente clinico con apoyo IA, sin modulos apagados a la vista. |
+| Requisitos relacionados | Reenfoque 2026-09-07 (`14_reenfoque_expediente_ia.md`) |
+| Entrada necesaria | Pasos 13 y 20 entregados (directorio, expediente longitudinal, multi-perfil). |
+| Skills IA recomendadas | `impeccable`, `superpowers:writing-plans`, `superpowers:verification-before-completion` |
+| Se construye | Bandera de capacidad de alcance (apagada por omision) para agenda, recepcion, caja y sincronizacion de citas en la app, y para agenda publica, perfil publico, precheckin, buzon y notificaciones en el portal. La app abre en **Pacientes**. La consulta sin cita se muda de Recepcion al expediente (`register_walk_in` accesible desde el directorio y desde el paciente). Navegacion reducida a Pacientes, Consulta, Transcripcion, Medicamentos, Privacidad y Benchmark. |
+| Se valida con | Con la bandera apagada no queda ninguna ruta, boton ni pantalla de agenda/recepcion/caja alcanzable, y el medico puede abrir paciente nuevo, iniciar consulta, documentar y cerrar nota sin pasar por una cita. Con la bandera encendida todo lo congelado vuelve a funcionar igual que antes. |
+| Compuerta de avance | Ningun flujo clinico depende ya de una cita, y nada congelado quedo a medias en la UI. |
+| Push recomendado | Al terminar el apagado y la nueva navegacion, en una sola rama. |
+
+Estado: ✅ DONE (rama `v2/paso27-banderas-alcance`, 2026-10-05; pendiente de merge a `dev`).
+
+- **Rebanada 1 — app del medico.** Bandera `VITE_MIDOC_FROZEN_SCOPE` (apagada por omision, se fija al compilar) en `src/scope.ts`, que deriva la navegacion y la vista inicial. La app abre en Pacientes; sin Agenda ni "Recepcion y caja" en la barra; la consulta pierde el riel de agenda y el panel de presupuesto y saldo dental (el plan de tratamiento sigue en la nota). La consulta sin cita no se muda como `register_walk_in` (eso crea una visita en la lista de espera, que tambien esta congelada): se resuelve con lo que ya existia, alta con anti-duplicados + `open_patient_encounter`, ahora con "Dar de alta e iniciar consulta" en el directorio e "Iniciar consulta" en el expediente. Los comandos Rust de agenda/recepcion/caja no se tocan: quedan sin entrada en la UI.
+- **Rebanada 2 — portal.** Bandera `MIDOC_FROZEN_SCOPE` (apagada por omision, se lee al arrancar) en `src/lib/scope.ts` y `src/proxy.ts`: las rutas congeladas de API responden 404 y las paginas redirigen (las del medico a `/medico/cuenta`, las demas a `/`). Pagina nueva `/medico/cuenta` (datos de la cuenta, perfil clinico que lee la app, estado de la suscripcion); `/medico` decide la entrada tras login y registro; el inicio pasa a ser una pagina para medicos. `/api/sync/*` sigue activo salvo los resumenes autorizados, porque la app vincula, lee su perfil, reporta uso de IA y recorre el buzon en el mismo ciclo.
+- Diferencias con la definicion: la navegacion no lleva entrada "Consulta" (la consulta nace del paciente); queda como decision en `PENDIENTES.md`.
+- Verificacion en la app real (binario Tauri de depuracion contra el portal local, 2026-10-05): perfil nuevo, vinculacion con el medico de prueba del seed, la app abre en Pacientes, "Dar de alta e iniciar consulta" abre la consulta sin cita, nota guardada, consulta firmada y cerrada, el modulo dental sin presupuesto ni saldo, "Iniciar consulta" desde el expediente y "Sincronizar" contra el portal con el `proxy` activo (perfil, dispositivos y buzon en 200).
+
+## Paso 28 - Expediente de calidad: documentos, busqueda y salida
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Cubrir lo que el buzon y el portal del paciente hacian, ahora dentro del expediente local. |
+| Requisitos relacionados | RF de documentos clinicos e historial; NOM-004 |
+| Entrada necesaria | Paso 27. |
+| Skills IA recomendadas | `impeccable`, `superpowers:test-driven-development` |
+| Se construye | Entrada local de documentos (arrastrar y soltar, multiples archivos, previsualizacion, vinculacion al encuentro y al paciente), diagnostico codificado con CIE-10, busqueda dentro del expediente (por paciente, diagnostico, medicamento y texto de nota), y salida del expediente: impresion y exportacion por consulta y por paciente completo, con sello de version, en PDF, HL7 FHIR R4 (JSON) y CSV del directorio. |
+| Se valida con | Un estudio en PDF y una imagen entran al expediente, quedan ligados al encuentro correcto y salen en la exportacion del paciente; un diagnostico se captura con su codigo CIE-10 y la busqueda encuentra la nota por ese codigo, por su texto y por farmaco; el PDF de la consulta lleva nombre y cedula del medico; el FHIR del paciente valida contra el esquema R4. |
+| Compuerta de avance | El medico puede entregar el expediente de un paciente sin abrir la base de datos. |
+| Push recomendado | Por rebanada. |
+
+Decisiones (2026-10-05):
+
+- **Formatos de salida, en este orden:** PDF (por consulta y expediente completo, con sello de version y huella de la nota firmada; PDF/A cuando se archive), despues HL7 FHIR R4 en JSON (interoperabilidad con otros sistemas y portabilidad ARCO, que hoy exporta un JSON propio) y al final CSV solo para el directorio de pacientes.
+- **Word queda fuera de la exportacion oficial:** un .docx editable rompe la integridad de una nota firmada (NOM-004). Si se quiere, llega despues como plantilla editable para documentos sueltos (carta de referencia, justificante), separada del expediente.
+- **HL7 CDA (NOM-024) no entra:** solo se evalua si se busca certificar el sistema o un cliente institucional lo exige.
+- **CIE-10 entra a este paso:** sin diagnosticos codificados, FHIR exporta texto y no datos. El diagnostico en texto libre se conserva para notas anteriores; el catalogo debe ser de fuente oficial con licencia verificada antes de empaquetarlo.
+- **La receta y el PDF llevan nombre y cedula del medico, que bajan de la cuenta del portal** (decidido 2026-10-06): el portal ya los tiene y son la fuente de verdad; la app los guarda al vincular y los refresca en cada sincronizacion. Que la app dependa de estar vinculada era aceptable bajo suscripcion; con el modelo de compra unica (`15_modelo_de_negocio.md`) la vinculacion solo hace falta para activar, para creditos de IA y para actualizaciones: los datos quedan guardados en el equipo y la app funciona sin conexion.
+
+Rebanadas en orden: 1) documentos locales ligados al paciente y a la consulta; 2) diagnostico CIE-10; 3) busqueda en el expediente; 4) PDF por consulta y expediente completo, con nombre y cedula del medico; 5) FHIR R4; 6) CSV del directorio.
+
+Estado: ✅ DONE (rebanadas 1-6, 2026-10-06; ramas apiladas `v2/paso28-*`, pendientes de merge a `dev`). Compuerta cubierta: el expediente sale completo en PDF y FHIR R4 y el directorio en CSV sin abrir la base.
+
+- **Rebanada 1 — documentos locales (2026-10-05).** Migracion v24 sobre la tabla `documents` del buzon: `encounter_id`, `title`, `sha256` y `source` (MAILBOX para lo existente, LOCAL para lo adjuntado en la app). Modulo `documents.rs`: el tipo se decide por la firma del archivo (PDF, PNG, JPG, WEBP), tope de 20 MB, rechazo de duplicados por paciente (sha256), la consulta debe ser del mismo paciente, y la bitacora guarda nombre y huella, nunca contenido; leer un documento tambien queda en bitacora. "Retirar" borra el archivo (existe para corregir un adjunto al paciente equivocado) y deja constancia. UI: `DocumentsPanel` con zona para soltar archivos, selector multiple, categoria, lista agrupada por consulta y vista previa (visor de PDF de WebView2 o imagen); pestaña "Documentos" en el expediente y paso "Documentos" en la consulta, disponible tambien despues de firmar. `dragDropEnabled: false` en la ventana para que el arrastre llegue a la pagina. Verificado en la app real: PDF e imagen entran ligados a la consulta, se ven, el duplicado se rechaza, se retira con confirmacion y el expediente los agrupa por consulta y "Sin consulta".
+- **Rebanada 2 — diagnostico CIE-10 (2026-10-06).** Fuente: "Catalogo CIE-10" de la Secretaria de Salud en datos.gob.mx (CC BY 4.0; la version de la OMS es CC BY-ND y no permite adaptaciones). `npm run cie10:build` lo descarga y deja 12,551 codigos vigentes en `reference_data/cie10.csv` con manifiesto de fuente y licencia; `cie10.rs` lo carga una vez en memoria, busca por clave o por palabras sin acentos y avisa (sin bloquear) por sexo, edad y validez en consulta externa segun el catalogo oficial. La nota guarda `coded_diagnoses` (migracion v25) validados contra el catalogo al guardar: clave canonica, nombre oficial, sin repetidos, un solo principal, maximo 12; el texto libre se conserva. El campo se omite al serializar cuando esta vacio, asi que las notas firmadas antes siguen verificando su huella; con codigos, los codigos quedan dentro de lo firmado. UI: `Cie10Picker` en el campo Diagnostico con teclado (flechas, Enter, Escape), "Hacer principal", "Quitar" y la atribucion del catalogo. Verificado en la app real: busqueda por nombre y por clave, dos diagnosticos con cambio de principal, guardado, firma, y `verify_signature` en verde tanto para la consulta nueva como para una firmada antes del cambio.
+- **Rebanada 3 — busqueda en el expediente (2026-10-06).** `search.rs` busca en la version vigente de cada nota (S, O, A, P, diagnostico libre, indicaciones), en los diagnosticos CIE-10 (clave por prefijo y nombre), en la receta y en los documentos (titulo y nombre de archivo), opcionalmente limitado a un paciente. Ignora acentos, mayusculas y puntuacion; todas las palabras deben aparecer en el mismo campo; un medicamento de la referencia se expande a los nombres con el mismo ingrediente (paracetamol encuentra Tempra) y la respuesta dice cuales se buscaron. Cada resultado trae un fragmento alrededor de la coincidencia; tope de 100. Recorre en memoria lo que da SQLite: suficiente para miles de notas; si un consultorio llega a cientos de miles, el siguiente paso es FTS5 dentro de la base cifrada. UI: vista "Busqueda" en Clinica, resultados por paciente y consulta con la coincidencia resaltada, "Abrir consulta" y "Expediente" regresan a la busqueda conservando lo escrito. La busqueda por nombre de paciente sigue en el directorio. Verificado en la app real: "paracetamol" encuentra una receta de Tempra, "dentin" encuentra el CIE-10 K02.1 y una nota, "k05" el diagnostico principal y "biometria" el documento.
+- **Rebanada 4 — PDF por consulta y expediente completo (2026-10-06).** El perfil de sincronizacion del portal incluye `professionalName` y `licenseNumber`; la app los guarda al vincular y al sincronizar (`doctor_name`, `doctor_license`). `export.rs` arma los datos (paciente, sexo, consultas con su nota vigente, CIE-10, receta, firma y huella, documentos) y `save_export` abre "Guardar como" desde Rust con `tauri-plugin-dialog` (la pagina nunca elige rutas), valida que sea PDF, escribe y deja en bitacora tipo, nombre de archivo y huella, sin contenido. El PDF se dibuja en la interfaz con pdf-lib (MIT, cargado solo al exportar): bloques puros en `recordExportModel.ts` y dibujo tamano carta en `recordPdf.ts`, con encabezado del medico y cedula (o aviso de que faltan), cada consulta con su estado de firma y huella, consultas abiertas advertidas, documentos listados con su huella y pie con fecha y pagina. El PDF de consulta lleva linea de firma con nombre y cedula. Botones "Exportar PDF" en el expediente y en la consulta. Verificado en la app real: expediente completo sin cedula (con el aviso) y consulta firmada con la cedula bajada del portal tras sincronizar.
+- **Rebanada 5 — FHIR R4 (2026-10-06).** `fhir.rs` convierte los mismos datos del PDF (`export::record_export`) en un Bundle R4 de tipo `collection` y `save_fhir_export` lo arma, abre "Guardar como" (filtro .json) y lo escribe desde Rust con los documentos dentro (base64), sin que el contenido pase por la pagina; bitacora `FHIR_CONSULTA`/`FHIR_EXPEDIENTE` con nombre y huella. Mapeo: paciente a `Patient` (sexo, nacimiento, telefono, correo y responsable como `contact`); medico a `Practitioner` con la cedula como identificador (tipo `MD` de v2-0203); alergias a un `AllergyIntolerance` por termino, sin las negaciones ("niega", "ninguna"); antecedentes a una `Composition` "Antecedentes del paciente" (solo expediente completo, como el PDF); cada consulta a `Encounter` + `Composition` (nota de evolucion LOINC 11506-3, secciones SOAP, diagnostico, indicaciones y receta como narrativa, `final` con `attester` legal si esta firmada, `preliminary` si no, y la huella de la firma en el texto); CIE-10 a `Condition` con el sistema ICD-10 de la OMS (`http://hl7.org/fhir/sid/icd-10`, clave con punto) y el nombre oficial en `text`, y sin codigos el diagnostico libre como `Condition` solo con texto; la receta a un `MedicationRequest` por medicamento (la linea que nombra uno de la referencia local abre uno nuevo, las siguientes son sus indicaciones; estado `unknown` porque MiDoc no sabe si se surtio, `draft` si la consulta esta abierta); documentos a `DocumentReference` con el archivo dentro y la liga a la consulta. Los ids son UUID v5 de los ids locales: exportar dos veces da los mismos recursos. Los textos se limpian para el tipo `string` de FHIR (sin control, sin espacios no separables). El esquema JSON oficial de R4 (CC0) vive comprimido en `src-tauri/test_data/fhir/` y las pruebas validan contra el con `jsonschema` (solo dependencia de pruebas); los codigos LOINC, v2-0203, ActCode y las claves ICD-10 se confirmaron en tx.fhir.org. Botones "Exportar FHIR" en el expediente y en la consulta. Verificado en la app real: el expediente de una paciente ficticia (consulta firmada con dos CIE-10, receta y PDF; consulta abierta con diagnostico libre; radiografia suelta) se exporto y valido contra el esquema R4 con un validador independiente (ajv), sin referencias rotas.
+- **Rebanada 6 — CSV del directorio (2026-10-06).** `directory_csv.rs` arma el directorio completo y `save_directory_csv` lo escribe tras "Guardar como" (.csv), con bitacora `CSV_DIRECTORIO` (entidad "directorio", nombre y huella). Columnas: id MiDoc, nombre, apellidos, sexo, fecha de nacimiento, telefono, correo, responsable con parentesco, telefono y correo, numero de consultas con nota (como el directorio), fecha de la ultima y fecha de alta (fechas locales AAAA-MM-DD). **Sin contenido clinico, ni siquiera alergias**: el CSV es texto plano para hoja de calculo; lo clinico sale en PDF o FHIR. Deja fuera a los pacientes con cancelacion ARCO cumplida. Formato para Excel en espanol de Mexico: UTF-8 con BOM, coma, CRLF y comillas RFC 4180; lo que Excel tomaria como formula (`=`, `+`, `-`, `@`) lleva apostrofo inicial, salvo los telefonos. Boton "Exportar CSV" en el directorio. Verificado en la app real: dos pacientes ficticios, acentos y enie intactos, telefono con `+` sin alterar y sin datos clinicos.
+
+## Paso 29 - Licencia de compra unica, activacion y creditos de IA
+
+> **Redefinido el 2026-10-06** sobre el modelo de compra unica + creditos de IA (`15_modelo_de_negocio.md`). Sustituye el planteamiento por suscripcion y capacidades; ese texto queda en el historial de git.
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que el medico sea dueno de su copia: una licencia de compra unica que la app verifica sin conexion despues de activarla una vez, con actualizaciones por 12 meses, y la IA en la nube cobrada por creditos que viven en el servidor. |
+| Requisitos relacionados | `15_modelo_de_negocio.md`; paso 12 (gating por capacidad, que aqui se reduce a licencia + creditos); paso 9 (canal de actualizaciones firmado); paso 30 (pasarela de IA, donde se descuentan los creditos de toda la IA en nube) |
+| Entrada necesaria | Paso 27; paso 28 (nombre y cedula del medico bajan del portal). |
+| Skills IA recomendadas | `superpowers:test-driven-development`, `codex-security:security-scan` |
+| Se construye | Licencia firmada con Ed25519 en el portal (edicion, fecha de compra, actualizaciones hasta, equipos permitidos) y activacion por equipo con limite; verificacion local en la app con llaves publicas embebidas, sin red; el espacio de trabajo deja de depender de la vinculacion y pasa a depender de una licencia valida; libro mayor de creditos de IA en el servidor (cortesia, recargas que no caducan, plan mensual que si caduca, consumo); cuenta del portal con licencia, equipos y saldo. |
+| Se valida con | Tras activar una vez, la app abre y documenta sin red; una licencia alterada o de otro equipo se rechaza; desvincular no quita la licencia; el limite de equipos se respeta y liberar uno permite activar otro; al vencer las actualizaciones la app sigue funcionando; sin saldo la transcripcion en nube se rechaza con un mensaje claro y el flujo manual y la transcripcion local siguen intactos. |
+| Compuerta de avance | Nada que no sea IA en la nube depende de conexion ni de un pago recurrente. |
+| Push recomendado | Por rebanada. |
+
+Decisiones de diseno (2026-10-06):
+
+- **Formato de licencia:** `base64url(payload JSON).base64url(firma Ed25519 del payload)`. Se firman los bytes exactos del payload (sin canonicalizar). El payload lleva version, `kid` de la llave, id de licencia y de activacion, cuenta, nombre y cedula del medico, edicion, fecha de compra, `updatesUntil`, id de instalacion y fecha de emision. No lleva datos clinicos (clase OPERATIVO).
+- **Llaves:** la privada vive solo en el entorno del portal (`LICENSE_SIGNING_KEY`, `LICENSE_SIGNING_KID`); nunca se commitea. La app confia en las llaves publicas fijadas al compilar (`MIDOC_LICENSE_PUBKEYS`, varias para poder rotar); en compilaciones de depuracion tambien acepta las del entorno, para desarrollo. Sin llave configurada, una compilacion de distribucion no activa nada: se configura antes de distribuir.
+- **Instalacion:** cada perfil (base cifrada) tiene un id de instalacion aleatorio; la licencia se liga a el. Piratear la app base se acepta (seccion 4 de `15_modelo_de_negocio.md`): la licencia hace que lo legitimo sea lo comodo y cuente equipos, no es una proteccion fuerte.
+- **Activacion:** ocurre al vincular y se refresca en cada sincronizacion (asi llegan las renovaciones de actualizaciones). Liberar un equipo desde la cuenta solo libera el lugar para otro: no apaga a distancia una licencia ya emitida, porque la app debe funcionar sin conexion aunque MiDoc deje de existir.
+- **Desvincular** detiene sincronizacion, creditos y actualizaciones, pero la licencia se queda en el equipo.
+- **Equipos por licencia:** campo de la licencia, 2 por omision (consultorio y casa) mientras se decide el numero definitivo (`15_modelo_de_negocio.md`, seccion 5).
+- **Sin pasarela de pago todavia:** en desarrollo y piloto la licencia la otorga el administrador de la plataforma (o la semilla de desarrollo). La compra real, las recargas y el CFDI entran con el paso 17.
+- **Suscripcion heredada:** sus tablas se conservan (congelar no es borrar), pero deja de dar derecho a la IA y deja de mostrarse en la cuenta.
+
+Rebanadas en orden: 1) licencia firmada y activacion en el portal; 2) verificacion local y espacio de trabajo por licencia en la app; 3) libro mayor de creditos y cobro de la transcripcion en nube contra saldo; 4) cuenta del portal (licencia, equipos, saldo y movimientos) y saldo visible en la app; 5) el canal de actualizaciones del paso 9 respeta `updatesUntil` (depende de esa infraestructura).
+
+Estado: ✅ DONE (rebanadas 1-5, 2026-10-07; ramas apiladas `v2/paso29-*`, pendientes de merge a `dev`). Compuerta cubierta: tras activar, nada que no sea IA en la nube depende de conexion ni de pago recurrente. Para distribuir faltan las llaves de produccion (licencias y actualizaciones) y el servidor de versiones del paso 9.
+
+- **Rebanada 1 — licencia firmada y activacion en el portal (2026-10-06).** Modelos `License` (una por cuenta: edicion, estado, origen, compra, `updatesUntil`, equipos) y `LicenseActivation` (id de instalacion, nombre del equipo, ultima vez visto, liberada), migracion `20261006180000_license_activation`, clase OPERATIVO. `lib/security/license-token.ts` firma y verifica con Ed25519 de Node (sin dependencias nuevas); `services/license/license-service.ts` otorga (una vez por cuenta, 12 meses de actualizaciones con `addUtcMonths`), activa o refresca (idempotente por instalacion; el limite se serializa con `SELECT ... FOR UPDATE` sobre la licencia, con prueba de carrera que falla sin el candado), libera equipos y resume la licencia para la cuenta. Rutas: `POST /api/sync/license` (token del dispositivo) y `POST /api/platform-admin/doctors/[id]/license` (administrador, origen GRANT o PILOT). Scripts `npm run license:keygen` y `npm run license:grant -- <correo>`. Variables `LICENSE_SIGNING_KEY` y `LICENSE_SIGNING_KID` en el esquema de entorno (opcionales; sin ellas la activacion responde 503).
+- **Rebanada 2 — verificacion local y espacio de trabajo por licencia (2026-10-06).** `license.rs` verifica la licencia con `dryoc` (Ed25519, ya en el proyecto), elige la llave por `kid` entre las de confianza (`MIDOC_LICENSE_PUBKEYS` al compilar; en depuracion tambien la del entorno), la liga al id de instalacion del perfil y la guarda en `sync_state`; una licencia invalida o de otro equipo no sustituye a la buena. La licencia no caduca: `updates_until` solo indica si corresponden actualizaciones. Comandos `license_status` y `activate_license`; `link_account` activa al vincular y `sync_now` refresca. La interfaz abre el espacio de trabajo con licencia valida, no con la vinculacion: pantalla "Activa MiDoc en este equipo" sin vincular, "Falta activar este equipo" con el motivo del portal si esta vinculada sin licencia, intento automatico para los equipos vinculados antes del paso 29, linea de licencia en la tarjeta del perfil y "Vincular cuenta" cuando hay licencia sin vinculo. La sincronizacion automatica al abrir ya no muestra error si no hay red. Prueba cruzada: una licencia firmada por el portal (Node) con semilla de pruebas en `src-tauri/test_data/license/` se verifica en Rust, y firmar los mismos bytes en Rust da la misma licencia. Verificado en la app real con el portal local: un perfil ya vinculado se activo solo; con el portal apagado bloqueo, desbloqueo y apertura del expediente funcionan; desvincular conserva la licencia; un segundo perfil se activa vinculando y un tercero recibe "Tu licencia ya esta activada en 2 equipos".
+- **Rebanada 3 — libro mayor de creditos de IA (2026-10-07).** Modelos `AiCreditGrant` (abono: cortesia, recarga, plan mensual o ajuste, con lo que le queda y caducidad solo para el plan mensual) y `AiCreditDebit` (de que abono tomo cada uso), migracion `20261007090000_ai_credit_ledger`, clase OPERATIVO. `services/ai/credit-ledger.ts` abona (las recargas y la cortesia no caducan), da el saldo vigente, cobra dentro de la transaccion del uso bloqueando los abonos (`FOR UPDATE`; prueba de carrera que falla sin el candado) y devuelve lo cobrado. Se gasta primero lo que caduca. La licencia incluye 30 creditos de cortesia (provisional hasta fijar precios). La transcripcion en nube ya no depende de la suscripcion: calcula el costo con la duracion autoritativa antes de llamar al proveedor, reserva y cobra en una transaccion (sin saldo responde 402 y no deja reserva), devuelve los creditos si el proveedor falla y no vuelve a cobrar un reintento del mismo `runId`. Rutas: `GET /api/sync/credits` (saldo para la app) y `POST /api/platform-admin/doctors/[id]/credits` (recarga o ajuste del administrador). La app muestra el mensaje del portal cuando rechaza una transcripcion ("No tienes creditos de IA suficientes…") en lugar del codigo HTTP. Sin verificacion en la app real: la transcripcion en nube real esta apagada hasta tener BAA (paso 30); la cubren las pruebas de integracion del servicio.
+- **Rebanada 4 — cuenta del portal y saldo en la app (2026-10-07).** La pagina "Cuenta" deja la suscripcion y muestra la licencia (estado, compra, actualizaciones incluidas hasta, equipos activados con "Liberar") y los creditos de IA (saldo, por caducar y movimientos recientes, un renglon por uso). `POST /api/admin/license/devices/[id]/release` libera un equipo de la propia cuenta; `GET /api/admin/ai-credits` lee el libro mayor (`listCreditMovements`). El panel del administrador cambia "IA activa · creditos/mes" de la suscripcion por licencia (equipos y fecha) con "Otorgar licencia (piloto)" y saldo con "Abonar"; el listado resuelve licencias y saldos en una consulta por tipo. La app guarda el saldo en cada sincronizacion y lo muestra en la tarjeta del perfil, tambien sin conexion (ultimo saldo conocido). Script `npm run credits:grant -- <correo> <creditos>` para desarrollo. Verificado en la app real con el portal local: "Cuenta" muestra 2 de 2 equipos, "Liberar" deja 1 de 2, el tercer perfil se activa solo al abrirse y muestra "50 creditos de IA" tras abonar 50, y los movimientos muestran la recarga.
+- **Rebanada 5 — actualizaciones acotadas por la licencia (2026-10-07).** Se cablea el canal del paso 9: `tauri-plugin-updater` registrado y usado solo desde Rust (la pagina no tiene permiso del plugin), con `requireSignedVersion` contra degradaciones e instalacion pasiva en Windows. La llave publica minisign (`MIDOC_UPDATER_PUBKEY`) y el endpoint del manifiesto (`MIDOC_UPDATE_ENDPOINT`) se fijan al compilar (en depuracion tambien del entorno); sin ellos la compilacion dice que no tiene canal. `updates.rs` decide sin red: se instala lo publicado hasta `updates_until` de la licencia, un parche marcado `"critical": true` se entrega aunque las actualizaciones hayan terminado, sin licencia o sin fecha de publicacion no se instala nada, y despues de la fecha la app sigue funcionando con su version. Comandos `check_for_update` e `install_update` (este vuelve a decidir antes de descargar, asi que saltarse la interfaz no instala una version no incluida). UI: "Buscar actualizaciones" en la tarjeta del perfil y un aviso con "Instalar y reiniciar" solo si la licencia la incluye. Verificado en la app real con un manifiesto local y una llave de desarrollo (permiso HTTP activado solo para esa compilacion, sin commitear): version publicada dentro del ano incluida, version posterior rechazada con la explicacion, parche critico permitido, "al dia", e instalacion con firma invalida rechazada sin tocar la app. Falta la infraestructura del paso 9: llave de firma de produccion y servidor de versiones.
+
+## Paso 30 - Pasarela de IA en el portal y proveedores reales
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que las llamadas a proveedores salgan por el portal, con claves y BAA del lado servidor, sin que la nube vea contenido identificable. Absorbe el paso 16. |
+| Requisitos relacionados | Paso 11 (gobernanza), paso 16 (adaptadores reales), paso 24 (degradacion) |
+| Entrada necesaria | Pasos 11, 15, 24 y 29. |
+| Skills IA recomendadas | `codex-security:security-scan`, `superpowers:writing-plans` |
+| Se construye | Endpoint de pasarela autenticado por cuenta del medico, con cuota, trazabilidad por referencia y cero persistencia de contenido; adaptadores reales (LLM base + respaldo, transcripcion en nube opcional) detras de la pasarela; la app deja de necesitar claves de proveedor. |
+| Se valida con | Una consulta asistida real en staging pasa por la pasarela, consume cuota, deja traza sin contenido clinico y degrada de forma explicita ante 429/503. |
+| Compuerta de avance | Ningun contenido clinico identificable sale del equipo del medico sin consentimiento registrado y seudonimizacion. |
+| Push recomendado | Al validar en staging con proveedor real. |
+
+Estado: 🚧 CODIGO LISTO (rama `v2/paso30-pasarela-ia`, 2026-10-08); falta la validacion en staging con proveedor real y BAA.
+
+- **Pasarela de texto (2026-10-08).** Portal: `POST /api/sync/ai/generate` (token del dispositivo) recibe `runId`, tipo de uso, version de prompt, contexto ya seudonimizado y, si aplica, el esquema JSON de la respuesta; `GET /api/sync/ai/gateway` dice si esta encendida y que modelos ofrece. `services/ai/text-gateway-service.ts` valida con Zod, cobra el costo del tipo de uso del libro mayor antes de llamar al proveedor (402 sin saldo, sin reserva), es idempotente por `runId` (repetir un uso completado no vuelve a cobrar), devuelve los creditos si el proveedor falla y degrada de forma explicita con codigos estables (`PROVIDER_OVERLOADED` 503, `PROVIDER_REJECTED` 502, `GATEWAY_DISABLED` 503). El `AiUsageLog` guarda solo metadatos y `inputReference` `REMOTE_TEXT_TRANSIENT`; ni entrada ni salida se persisten ni se registran. Adaptadores en `text-gateway-provider.ts`: Gemini y OpenAI (salida estructurada con esquema, reintentos ante 429/5xx) con la clave del servidor, mas un proveedor de prueba solo fuera de produccion. Entorno: `AI_GATEWAY_PROVIDER` (`none` por omision, `fake`, `gemini`, `openai`), `AI_GATEWAY_MODELS` y `AI_GATEWAY_BAA_APPROVED` (obligatorio con proveedor real). El reporte posterior de la app ya no pisa el cobro ni la referencia de un uso que paso por el portal, ni regresa a "en curso" un uso completado. App: `GatewayProvider` en `ai.rs` manda lo mismo que el proveedor directo (despues del consentimiento y la seudonimizacion de siempre) con el token del dispositivo; la corrida local reusa el `runId` de la pasarela; con la pasarela encendida (estado guardado en cada sincronizacion) la IA de texto sale solo por el portal, sin claves en el equipo, y los modelos alternos vienen de la pasarela. Sin pasarela, la app conserva el comportamiento anterior. Verificado con el portal local contra una base temporal y el proveedor de prueba: un perfil nuevo se vinculo y activo, las indicaciones salieron por la pasarela, el saldo bajo de 50 a 49 y el uso quedo en el portal sin contenido, con un solo renglon y su costo intacto tras el reporte de la app.
+
+## Paso 31 - Copiloto del expediente longitudinal
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que la IA ayude no solo a escribir la consulta, sino a leer la historia del paciente. |
+| Requisitos relacionados | Pasos 13, 23 y 30 |
+| Entrada necesaria | Paso 30 en staging. |
+| Skills IA recomendadas | `superpowers:writing-plans`, `codex-security:security-scan` |
+| Se construye | Resumen del paciente antes de la consulta (que cambio desde la ultima visita, pendientes abiertos, estudios sin revisar), preguntas sobre el expediente con cita de la nota que sustenta cada respuesta, y deteccion de seguimiento vencido. Todo con revision humana y sin escritura automatica en el expediente. |
+| Se valida con | El medico abre un paciente con cinco consultas y obtiene un resumen correcto y citado, y ninguna afirmacion sin fuente en el expediente. |
+| Compuerta de avance | Ninguna salida del copiloto se guarda en el expediente sin confirmacion explicita del medico. |
+| Push recomendado | Por rebanada, con benchmark de calidad antes de habilitarlo por omision. |
+
 ## MVP recomendado
+
+> **Nota del reenfoque (2026-09-07):** el MVP descrito abajo corresponde al producto amplio y ya fue entregado. El MVP vigente del producto reenfocado es el paso 27 mas los pasos 28-30: expediente centrado en el paciente, documentos y salida del expediente, suscripcion reexpresada y pasarela de IA con proveedor real.
 
 El MVP debe cerrar los pasos 0 a 7 y dejar odontologia como paso 8 si el tiempo no permite incluirla desde el primer piloto. El MVP incluye necesariamente las piezas local-first: app de escritorio instalable con base cifrada, sincronizacion con purga de buzon y respaldo con restauracion probada — sin ellas la promesa de residencia de datos no se cumple. El MVP recomendado contiene:
 

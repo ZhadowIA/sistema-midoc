@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
+import { DocumentsPanel } from "./DocumentsPanel";
+import { exportMessage, exportRecordFhir, exportRecordPdf, fhirExportMessage } from "./recordExportAction";
 import { parseDateFlexible } from "./dateOnly";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { MedicalHistoryGroups } from "./MedicalHistoryGroups";
@@ -66,7 +68,7 @@ interface TimelineEvent {
   updated_at: string;
 }
 
-type SectionId = "antecedentes" | "historial" | "timeline";
+type SectionId = "antecedentes" | "historial" | "timeline" | "documentos";
 
 const CATEGORY_LABELS: Record<string, string> = {
   NOTE: "Nota",
@@ -145,9 +147,11 @@ export function Expediente({
   patientId,
   onBack,
   onOpenEncounter,
-  embedded = false
+  embedded = false,
+  backLabel = "Directorio"
 }: {
   patientId: string;
+  backLabel?: string;
   onBack: () => void;
   onOpenEncounter: (encounterId: string) => void;
   embedded?: boolean;
@@ -216,6 +220,34 @@ export function Expediente({
   function cancelEdit() {
     setEditing(null);
     setError("");
+  }
+
+  async function runExport(action: () => Promise<string>) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const text = await action();
+      if (text) setMessage(text);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Consulta sin cita: nace del expediente, no de la agenda.
+  async function startEncounter() {
+    setBusy(true);
+    setError("");
+    try {
+      const encounter = await call<{ id: string }>("open_patient_encounter", { patientId });
+      onOpenEncounter(encounter.id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function submitForm() {
@@ -324,13 +356,14 @@ export function Expediente({
   const navItems: Array<{ id: SectionId; label: string }> = [
     { id: "antecedentes", label: "Antecedentes" },
     { id: "historial", label: "Historial" },
-    { id: "timeline", label: "Linea del tiempo" }
+    { id: "timeline", label: "Linea del tiempo" },
+    { id: "documentos", label: "Documentos" }
   ];
 
   return (
     <section className={embedded ? "expediente-screen" : "content expediente-screen"}>
       <button type="button" className="ghost-button expediente-back" onClick={onBack}>
-        ‹ Directorio
+        ‹ {backLabel}
       </button>
 
       <div className="expediente-hero">
@@ -361,6 +394,28 @@ export function Expediente({
               Alergias: {p.allergies}
             </p>
           ) : null}
+        </div>
+        <div className="button-row expediente-start">
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void runExport(async () => exportMessage(await exportRecordPdf(patientId, "PDF_EXPEDIENTE")))}
+            disabled={busy}
+          >
+            Exportar PDF
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            title="HL7 FHIR R4 (JSON), con los documentos dentro, para llevar el expediente a otro sistema"
+            onClick={() => void runExport(async () => fhirExportMessage(await exportRecordFhir(patientId)))}
+            disabled={busy}
+          >
+            Exportar FHIR
+          </button>
+          <button type="button" className="action-button" onClick={() => void startEncounter()} disabled={busy}>
+            Iniciar consulta
+          </button>
         </div>
       </div>
 
@@ -543,6 +598,12 @@ export function Expediente({
                     ))}
                   </ul>
                 )}
+              </section>
+            ) : null}
+
+            {section === "documentos" ? (
+              <section className="panel">
+                <DocumentsPanel patientId={patientId} />
               </section>
             ) : null}
 

@@ -1222,6 +1222,11 @@ textarea:disabled {
   margin-bottom: 22px;
 }
 
+.expediente-start {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .expediente-avatar {
   display: grid;
   place-items: center;
@@ -5010,4 +5015,337 @@ body.dictating .encounter-modes:focus-within {
   border-radius: 50%;
   background: var(--danger);
   box-shadow: 0 0 0 2px var(--bg, #fff);
+}
+
+/* ---------- Documentos del expediente (paso 28) ---------- */
+
+.documents-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.documents-dropzone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  padding: 18px 20px;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  transition: border-color var(--speed) var(--ease), background var(--speed) var(--ease);
+}
+
+.documents-dropzone p {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.documents-dropzone-active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.documents-dropzone-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.documents-group {
+  display: grid;
+  gap: 8px;
+}
+
+.documents-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.documents-open {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.documents-open strong {
+  overflow-wrap: anywhere;
+}
+
+.documents-preview {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  width: min(1000px, 100%);
+  height: min(860px, calc(100vh - 48px));
+  max-height: none;
+  overflow: hidden;
+}
+
+.documents-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.documents-preview-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.documents-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
+  object-fit: contain;
+  padding: 12px;
+}
+
+/* ---------- Diagnostico CIE-10 (paso 28) ---------- */
+
+.cie10-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.cie10-selected {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cie10-chip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.cie10-code {
+  flex-shrink: 0;
+  min-width: 52px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.cie10-chip-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.cie10-chip-action {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.cie10-chip-action:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.cie10-search {
+  position: relative;
+}
+
+.cie10-search input {
+  width: 100%;
+}
+
+.cie10-results {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+  box-shadow: var(--shadow-overlay);
+}
+
+.cie10-result {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.cie10-result-active {
+  background: var(--primary-soft);
+}
+
+.cie10-result-text {
+  display: grid;
+  gap: 2px;
+  font-size: 0.9rem;
+}
+
+.cie10-warning {
+  color: var(--warning);
+  font-size: 0.8rem;
+}
+
+.cie10-empty {
+  margin: 4px 0 0;
+}
+
+.cie10-attribution {
+  margin: 0;
+  color: var(--faint);
+  font-size: 0.75rem;
+}
+
+/* ---------- Busqueda en expedientes (paso 28) ---------- */
+
+.record-search {
+  display: grid;
+  gap: 16px;
+}
+
+.record-search-input {
+  width: 100%;
+  font-size: 1rem;
+  padding: 11px 14px;
+}
+
+.record-search-summary {
+  margin: 0;
+}
+
+.record-search-patient {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--bg);
+}
+
+.record-search-patient-header,
+.record-search-encounter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.record-search-encounter {
+  display: grid;
+  gap: 6px;
+}
+
+.record-search-hits {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.record-search-hit {
+  display: grid;
+  grid-template-columns: 92px 120px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+
+.record-search-kind {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.record-search-kind-diagnostico {
+  color: var(--primary);
+}
+
+.record-search-kind-receta {
+  color: var(--accent);
+}
+
+.record-search-field {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.record-search-snippet {
+  overflow-wrap: anywhere;
+}
+
+.record-search-snippet mark {
+  background: var(--warning-soft);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+@media (max-width: 720px) {
+  .record-search-hit {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
+/* Licencia de compra unica (paso 29): una linea discreta bajo el nombre. */
+.sidebar-license {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.3;
+}
+
+/* Aviso de actualizaciones (paso 29 r5). */
+.update-notice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.update-notice p {
+  margin: 4px 0 0;
 }

@@ -140,3 +140,64 @@ describe("env schema Deepgram transcription gate", () => {
     }
   });
 });
+
+describe("env schema license signing key (paso 29)", () => {
+  const seed = Buffer.alloc(32, 7).toString("base64");
+
+  it("accepts no key at all: the portal simply does not issue licenses", () => {
+    expect(envSchema.safeParse(baseEnv()).success).toBe(true);
+  });
+
+  it("accepts a 32-byte seed with its kid", () => {
+    const result = envSchema.safeParse(baseEnv({ LICENSE_SIGNING_KEY: seed, LICENSE_SIGNING_KID: "midoc-2026" }));
+    expect(result.success).toBe(true);
+  });
+
+  it("requires both halves and a 32-byte seed", () => {
+    expect(issuePaths(envSchema.safeParse(baseEnv({ LICENSE_SIGNING_KEY: seed })))).toContain("LICENSE_SIGNING_KID");
+    expect(issuePaths(envSchema.safeParse(baseEnv({ LICENSE_SIGNING_KID: "midoc-2026" })))).toContain(
+      "LICENSE_SIGNING_KEY"
+    );
+    expect(
+      issuePaths(
+        envSchema.safeParse(
+          baseEnv({ LICENSE_SIGNING_KEY: Buffer.alloc(16).toString("base64"), LICENSE_SIGNING_KID: "midoc-2026" })
+        )
+      )
+    ).toContain("LICENSE_SIGNING_KEY");
+  });
+});
+
+describe("env schema AI gateway (paso 30)", () => {
+  it("is off by default", () => {
+    const result = envSchema.safeParse(baseEnv());
+    expect(result.success && result.data.AI_GATEWAY_PROVIDER).toBe("none");
+  });
+
+  it("requires the provider key and the BAA confirmation for a real provider", () => {
+    const paths = issuePaths(envSchema.safeParse(baseEnv({ AI_GATEWAY_PROVIDER: "gemini" })));
+    expect(paths).toContain("GEMINI_API_KEY");
+    expect(paths).toContain("AI_GATEWAY_BAA_APPROVED");
+    expect(
+      envSchema.safeParse(
+        baseEnv({ AI_GATEWAY_PROVIDER: "openai", OPENAI_API_KEY: "sk-test", AI_GATEWAY_BAA_APPROVED: "true" })
+      ).success
+    ).toBe(true);
+  });
+
+  it("accepts the fake provider outside production", () => {
+    expect(envSchema.safeParse(baseEnv({ AI_GATEWAY_PROVIDER: "fake" })).success).toBe(true);
+  });
+});
+
+describe("env schema email sender", () => {
+  it("accepts a display-name email sender for provider From headers", () => {
+    const result = envSchema.safeParse(baseEnv({ EMAIL_FROM: "MiDoc <no-reply@midocapp.com.mx>" }));
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a sender without a valid address", () => {
+    const result = envSchema.safeParse(baseEnv({ EMAIL_FROM: "MiDoc <no-reply>" }));
+    expect(issuePaths(result)).toContain("EMAIL_FROM");
+  });
+});

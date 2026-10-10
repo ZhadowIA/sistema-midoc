@@ -133,6 +133,13 @@ pub struct CancellationResult {
     pub deleted_medical_history_versions: usize,
     pub anonymized_visits: usize,
     pub anonymized_appointments: usize,
+    pub deleted_transcriptions: usize,
+    pub deleted_timeline_events: usize,
+    pub deleted_lab_orders: usize,
+    /// Presupuestos dentales borrados (sin abonos) y seudonimizados (con abonos).
+    pub deleted_budgets: usize,
+    pub anonymized_budgets: usize,
+    pub deleted_patient_links: usize,
 }
 
 fn ensure_patient(conn: &Connection, patient_id: &str) -> Result<(), ArcoError> {
@@ -432,7 +439,14 @@ pub fn fulfill_cancellation(
     let patient_id = request.patient_id.clone();
     let tx = conn.transaction()?;
 
-    // Orden respetando llaves foraneas (foreign_keys = ON).
+    // Orden respetando llaves foraneas (foreign_keys = ON). Las transcripciones
+    // apuntan a la consulta y a la corrida de IA: van primero.
+    let deleted_transcriptions = tx.execute(
+        "DELETE FROM consultation_transcriptions
+         WHERE encounter_id IN (SELECT id FROM encounters WHERE patient_id = ?1)
+            OR run_id IN (SELECT id FROM ai_runs WHERE patient_id = ?1)",
+        params![patient_id],
+    )?;
     let deleted_ai_runs = tx.execute(
         "DELETE FROM ai_runs WHERE patient_id = ?1
          OR encounter_id IN (SELECT id FROM encounters WHERE patient_id = ?1)",
@@ -454,10 +468,38 @@ pub fn fulfill_cancellation(
         "DELETE FROM patient_medical_history_versions WHERE patient_id = ?1",
         params![patient_id],
     )?;
-    let deleted_encounters =
-        tx.execute("DELETE FROM encounters WHERE patient_id = ?1", params![patient_id])?;
+    // Los documentos pueden ligarse a una consulta: antes que las consultas.
     let deleted_documents =
         tx.execute("DELETE FROM documents WHERE patient_id = ?1", params![patient_id])?;
+    let deleted_timeline_events =
+        tx.execute("DELETE FROM timeline_events WHERE patient_id = ?1", params![patient_id])?;
+    let deleted_lab_orders =
+        tx.execute("DELETE FROM dental_lab_orders WHERE patient_id = ?1", params![patient_id])?;
+
+    // Presupuestos dentales: los procedimientos son clinicos y se borran. Un
+    // presupuesto con abonos se conserva seudonimizado porque los cobros lo
+    // referencian (una sola contabilidad); sin abonos se borra completo.
+    tx.execute(
+        "DELETE FROM dental_budget_items
+         WHERE budget_id IN (SELECT id FROM dental_budgets WHERE patient_id = ?1)",
+        params![patient_id],
+    )?;
+    let anonymized_budgets = tx.execute(
+        "UPDATE dental_budgets SET label = ?2, notes = NULL, encounter_id = NULL
+         WHERE patient_id = ?1 AND id IN (SELECT budget_id FROM payments WHERE budget_id IS NOT NULL)",
+        params![patient_id, ANON],
+    )?;
+    let deleted_budgets = tx.execute(
+        "DELETE FROM dental_budgets
+         WHERE patient_id = ?1 AND id NOT IN (SELECT budget_id FROM payments WHERE budget_id IS NOT NULL)",
+        params![patient_id],
+    )?;
+
+    let deleted_encounters =
+        tx.execute("DELETE FROM encounters WHERE patient_id = ?1", params![patient_id])?;
+    // La liga con el paciente del portal identifica a la persona.
+    let deleted_patient_links =
+        tx.execute("DELETE FROM patient_links WHERE patient_id = ?1", params![patient_id])?;
     let deleted_precheckins = tx.execute(
         "DELETE FROM precheckins
          WHERE appointment_id IN (SELECT id FROM appointments WHERE patient_id = ?1)",
@@ -466,7 +508,7 @@ pub fn fulfill_cancellation(
 
     // Seudonimizar registros operativos que se conservan por historial/contable.
     let anonymized_visits = tx.execute(
-        "UPDATE visits SET patient_name = ?2, patient_phone = NULL, reason = NULL
+        "UPDATE visits SET patient_name = ?2, patient_phone = NULL, reason = NULL, encounter_id = NULL
          WHERE patient_id = ?1",
         params![patient_id, ANON],
     )?;
@@ -484,7 +526,9 @@ pub fn fulfill_cancellation(
         "UPDATE patients
          SET first_name = ?2, last_name = '', phone = NULL, email = NULL,
              birth_date = NULL, sex = NULL, allergies = NULL,
-             medical_background = NULL, family_background = NULL, updated_at = ?3
+             medical_background = NULL, family_background = NULL,
+             guardian_name = NULL, guardian_relationship = NULL,
+             guardian_phone = NULL, guardian_email = NULL, updated_at = ?3
          WHERE id = ?1",
         params![patient_id, ANON, now()],
     )?;
@@ -521,6 +565,12 @@ pub fn fulfill_cancellation(
         deleted_medical_history_versions,
         anonymized_visits,
         anonymized_appointments,
+        deleted_transcriptions,
+        deleted_timeline_events,
+        deleted_lab_orders,
+        deleted_budgets,
+        anonymized_budgets,
+        deleted_patient_links,
     })
 }
 
@@ -734,6 +784,84 @@ mod tests {
             .query_row("SELECT status FROM arco_requests WHERE id=?1", params![req.id], |r| r.get(0))
             .unwrap();
         assert_eq!(status, "FULFILLED");
+    }
+
+    /// Lo que se agrego al expediente despues de la cancelacion original
+    /// (transcripciones, linea del tiempo, odontologia, responsable, liga al
+    /// portal): tambien debe irse, y la cancelacion no debe fallar por ello.
+    fn seed_later_records(conn: &Connection, patient_id: &str) {
+        conn.execute_batch(&format!(
+            "UPDATE patients SET guardian_name = 'Hugo Lima', guardian_relationship = 'Padre',
+                 guardian_phone = '6140003333', guardian_email = 'hugo@example.com'
+             WHERE id = '{patient_id}';
+             INSERT INTO consultation_transcriptions (id, encounter_id, run_id, transcript_text,
+                 turns_json, created_at, reviewed_at)
+             VALUES ('tr-1', 'enc-1', 'run-1', 'paciente refiere tos', '[]', '0', '0');
+             INSERT INTO timeline_events (id, patient_id, event_date, title, detail, created_at, updated_at)
+             VALUES ('tl-1', '{patient_id}', '2026-01-01', 'Asma', 'diagnostico', '0', '0');
+             INSERT INTO dental_lab_orders (id, patient_id, encounter_id, work_type, lab_name, created_at, updated_at)
+             VALUES ('lab-1', '{patient_id}', 'enc-1', 'Corona pieza 16', 'Lab Norte', '0', '0');
+             INSERT INTO dental_budgets (id, patient_id, encounter_id, label, notes, created_at)
+             VALUES ('bud-paid', '{patient_id}', 'enc-1', 'Rehabilitacion', 'bruxismo', '0'),
+                    ('bud-open', '{patient_id}', NULL, 'Blanqueamiento', NULL, '0');
+             INSERT INTO dental_budget_items (id, budget_id, tooth_id, procedure, price_cents)
+             VALUES ('it-1', 'bud-paid', '16', 'Corona zirconia', 300000),
+                    ('it-2', 'bud-open', 'GENERAL', 'Blanqueamiento', 200000);
+             INSERT INTO payments (id, cash_session_id, patient_id, amount_cents, method, kind,
+                 receipt_number, created_at, budget_id)
+             VALUES ('pay-2', 'cash-1', '{patient_id}', 100000, 'CARD', 'DEPOSIT', 'R-000002', '0', 'bud-paid');
+             INSERT INTO patient_links (portal_patient_id, patient_id, linked_at)
+             VALUES ('portal-pat-1', '{patient_id}', '0');"
+        ))
+        .unwrap();
+    }
+
+    fn count(conn: &Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn cancellation_covers_transcriptions_dental_timeline_and_guardian() {
+        let mut conn = test_conn("cancel-later");
+        seed_patient(&conn, "pat-1");
+        seed_later_records(&conn, "pat-1");
+
+        let req = record_arco_request(&conn, "pat-1", "CANCELLATION", None).unwrap();
+        let result = fulfill_cancellation(&mut conn, &req.id).expect("la cancelacion no falla por transcripciones");
+
+        assert_eq!(result.deleted_transcriptions, 1);
+        assert_eq!(result.deleted_timeline_events, 1);
+        assert_eq!(result.deleted_lab_orders, 1);
+        assert_eq!(result.deleted_budgets, 1, "el presupuesto sin abonos se borra");
+        assert_eq!(result.anonymized_budgets, 1, "el presupuesto con abonos se conserva seudonimizado");
+        assert_eq!(result.deleted_patient_links, 1);
+
+        assert_eq!(count(&conn, "SELECT count(*) FROM consultation_transcriptions"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM timeline_events"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM dental_lab_orders"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM dental_budget_items"), 0, "los procedimientos son clinicos");
+        assert_eq!(count(&conn, "SELECT count(*) FROM patient_links"), 0);
+
+        let (label, notes, encounter): (String, Option<String>, Option<String>) = conn
+            .query_row("SELECT label, notes, encounter_id FROM dental_budgets WHERE id = 'bud-paid'", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap();
+        assert_eq!((label.as_str(), notes, encounter), (ANON, None, None));
+
+        // Lo contable sigue intacto: los dos cobros y su liga al presupuesto.
+        assert_eq!(count(&conn, "SELECT count(*) FROM payments WHERE patient_id = 'pat-1'"), 2);
+        assert_eq!(count(&conn, "SELECT count(*) FROM payments WHERE budget_id = 'bud-paid'"), 1);
+
+        let guardian: (Option<String>, Option<String>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT guardian_name, guardian_relationship, guardian_phone, guardian_email
+                 FROM patients WHERE id = 'pat-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(guardian, (None, None, None, None), "el contacto del responsable tambien se va");
     }
 
     #[test]

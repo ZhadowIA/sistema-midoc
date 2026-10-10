@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
 import { parseDateFlexible } from "./dateOnly";
+import { exportDirectoryCsv } from "./recordExportAction";
 
 interface PatientSummary {
   id: string;
@@ -71,6 +72,8 @@ export function Directorio({
   const [creating, setCreating] = useState(false);
   const [newPatient, setNewPatient] = useState(EMPTY_NEW_PATIENT);
   const [matches, setMatches] = useState<PatientSummary[] | null>(null);
+  // Consulta sin cita: el alta termina abriendo la consulta en vez de la ficha.
+  const [startAfterCreate, setStartAfterCreate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -116,7 +119,8 @@ export function Directorio({
     }
   }
 
-  async function createPatient(force: boolean) {
+  async function createPatient(force: boolean, startConsultation = startAfterCreate) {
+    setStartAfterCreate(startConsultation);
     setBusy(true);
     setError("");
     setMessage("");
@@ -149,6 +153,14 @@ export function Directorio({
       setNewPatient(EMPTY_NEW_PATIENT);
       setCreating(false);
       setMatches(null);
+      setStartAfterCreate(false);
+      if (startConsultation) {
+        const encounter = await call<{ id: string }>("open_patient_encounter", {
+          patientId: created.id
+        });
+        onOpenEncounter(encounter.id);
+        return;
+      }
       setMessage(`Paciente ${created.first_name} ${created.last_name} dado de alta.`);
       loadPatients(search);
       await openProfile(created.id);
@@ -245,8 +257,8 @@ export function Directorio({
         <div className="panel-header">
           <h2>Nuevo paciente</h2>
           <p>
-            Da de alta a un paciente que no agendo por el portal. Queda en tu expediente
-            cifrado local.
+            Da de alta al paciente y, si viene a consulta ahora, empiezala en el mismo
+            paso. Queda en tu expediente cifrado local.
           </p>
         </div>
         {matches && matches.length > 0 ? (
@@ -278,6 +290,15 @@ export function Directorio({
                     <button className="ghost-button" onClick={() => onOpenPatient(m.id)}>
                       Abrir expediente
                     </button>
+                    {startAfterCreate ? (
+                      <button
+                        className="action-button"
+                        onClick={() => void startEncounter(m.id)}
+                        disabled={busy}
+                      >
+                        Iniciar consulta
+                      </button>
+                    ) : null}
                   </div>
                 </li>
               ))}
@@ -288,7 +309,7 @@ export function Directorio({
                 onClick={() => void createPatient(true)}
                 disabled={busy}
               >
-                Crear nuevo de todos modos
+                {startAfterCreate ? "Crear nuevo e iniciar consulta" : "Crear nuevo de todos modos"}
               </button>
             </div>
           </div>
@@ -298,7 +319,7 @@ export function Directorio({
           className="stack"
           onSubmit={(e) => {
             e.preventDefault();
-            void createPatient(false);
+            void createPatient(false, false);
           }}
         >
           <label className="field">
@@ -381,6 +402,17 @@ export function Directorio({
             <button
               className="ghost-button"
               type="button"
+              onClick={() => void createPatient(false, true)}
+              disabled={
+                busy ||
+                (newPatient.first_name.trim() === "" && newPatient.last_name.trim() === "")
+              }
+            >
+              Dar de alta e iniciar consulta
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
               onClick={() => {
                 setCreating(false);
                 setError("");
@@ -396,6 +428,20 @@ export function Directorio({
     );
   }
 
+  async function exportCsv() {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const text = await exportDirectoryCsv();
+      if (text) setMessage(text);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // ---- Lista del directorio ----
   return (
     <div className="directory">
@@ -404,16 +450,27 @@ export function Directorio({
           <h1>Pacientes</h1>
           <p>Directorio de tu expediente cifrado local</p>
         </div>
-        <button
-          className="action-button"
-          onClick={() => {
-            setMatches(null);
-            setError("");
-            setCreating(true);
-          }}
-        >
-          Nuevo paciente
-        </button>
+        <div className="button-row">
+          <button
+            type="button"
+            className="ghost-button"
+            title="Nombre, contacto, responsable y consultas de todos tus pacientes, sin informacion clinica, para hoja de calculo"
+            disabled={busy}
+            onClick={() => void exportCsv()}
+          >
+            Exportar CSV
+          </button>
+          <button
+            className="action-button"
+            onClick={() => {
+              setMatches(null);
+              setError("");
+              setCreating(true);
+            }}
+          >
+            Nuevo paciente
+          </button>
+        </div>
       </div>
 
       {message && (
@@ -444,7 +501,7 @@ export function Directorio({
           <p>
             {search
               ? "Ajusta la busqueda o da de alta un paciente nuevo."
-              : "Los pacientes apareceran aqui cuando agenden por tu portal o cuando los des de alta a mano."}
+              : "Da de alta a tu primer paciente para abrir su expediente o empezar una consulta."}
           </p>
         </div>
       ) : (

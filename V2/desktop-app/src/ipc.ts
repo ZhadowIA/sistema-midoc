@@ -76,6 +76,35 @@ const MOCK_DIARIZATION_SIZES: Record<string, number> = {
   "diarization-embedding": 29_292_684
 };
 
+// Documentos del expediente en memoria (paso 28): metadatos + base64.
+interface MockDocument {
+  meta: {
+    id: string;
+    patient_id: string;
+    encounter_id: string | null;
+    encounter_opened_at: string | null;
+    file_name: string;
+    title: string | null;
+    mime_type: string;
+    category: string | null;
+    size_bytes: number;
+    sha256: string | null;
+    source: string;
+    received_at: string;
+  };
+  content_base64: string;
+}
+
+const mockDocuments: MockDocument[] = [];
+
+function mockMimeFromBase64(content: string): string | null {
+  if (content.startsWith("JVBERi0")) return "application/pdf";
+  if (content.startsWith("iVBORw0KGgo")) return "image/png";
+  if (content.startsWith("/9j/")) return "image/jpeg";
+  if (content.startsWith("UklGR")) return "image/webp";
+  return null;
+}
+
 const mockState = {
   profiles: [
     {
@@ -96,6 +125,7 @@ const mockState = {
     { downloaded: number; total: number; present: boolean; downloading: boolean; error: string | null }
   >,
   linked: true,
+  licensed: true,
   clinicalProfile: "ODONTOLOGY",
   slotMinutes: 30,
   aiConsent: false,
@@ -906,11 +936,54 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         clinical_profile: mockState.clinicalProfile,
         slot_minutes: mockState.slotMinutes,
         work_start_minutes: 9 * 60,
-        work_end_minutes: 14 * 60
+        work_end_minutes: 14 * 60,
+        credit_balance: 30,
+        credit_balance_at: "2026-10-07T12:00:00Z"
       } as T;
     case "link_account":
       mockState.linked = true;
-      return undefined as T;
+      mockState.licensed = true;
+      return { license_error: null } as T;
+    case "check_for_update":
+      return {
+        configured: false,
+        current_version: "0.1.0",
+        available: false,
+        version: null,
+        published_at: null,
+        notes: null,
+        critical: false,
+        allowed: false,
+        reason: "Esta compilacion de MiDoc no tiene canal de actualizaciones configurado."
+      } as T;
+    case "license_status":
+    case "activate_license":
+      if (command === "activate_license" && mockState.linked) mockState.licensed = true;
+      return (
+        mockState.licensed
+          ? {
+              state: "VALID",
+              reason: null,
+              holder_name: "Dra. Demo",
+              holder_license_number: "1234567",
+              edition: "STANDARD",
+              purchased_at: "2026-10-06",
+              updates_until: "2027-10-06",
+              updates_included: true,
+              max_devices: 2
+            }
+          : {
+              state: "MISSING",
+              reason: null,
+              holder_name: null,
+              holder_license_number: null,
+              edition: null,
+              purchased_at: null,
+              updates_until: null,
+              updates_included: false,
+              max_devices: null
+            }
+      ) as T;
     case "sync_now": {
       const pendingAiReports = mockState.aiRuns.filter((run) => !run.reported).length;
       mockState.aiRuns = mockState.aiRuns.map((run) => ({ ...run, reported: true }));
@@ -2024,8 +2097,114 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         deleted_precheckins: 0,
         deleted_medical_history_versions: 0,
         anonymized_visits: 0,
-        anonymized_appointments: 0
+        anonymized_appointments: 0,
+        deleted_transcriptions: 0,
+        deleted_timeline_events: 0,
+        deleted_lab_orders: 0,
+        deleted_budgets: 0,
+        anonymized_budgets: 0,
+        deleted_patient_links: 0
       } as T;
+    }
+    case "search_records": {
+      // Muestra fija: la busqueda real corre en Rust sobre la base cifrada.
+      const q = String(args?.query ?? "").toLowerCase();
+      const hits = [
+        {
+          patient_id: mockState.encounter.patient.id,
+          patient_name: `${mockState.encounter.patient.first_name} ${mockState.encounter.patient.last_name}`,
+          encounter_id: mockState.encounter.id,
+          encounter_opened_at: new Date().toISOString(),
+          encounter_status: "OPEN",
+          kind: "DIAGNOSTICO",
+          field: "CIE-10 principal",
+          snippet: "J45.9 ASMA, NO ESPECIFICADO",
+          document_id: null
+        },
+        {
+          patient_id: mockState.encounter.patient.id,
+          patient_name: `${mockState.encounter.patient.first_name} ${mockState.encounter.patient.last_name}`,
+          encounter_id: mockState.encounter.id,
+          encounter_opened_at: new Date().toISOString(),
+          encounter_status: "OPEN",
+          kind: "RECETA",
+          field: "Receta",
+          snippet: "Salbutamol inhalado 2 disparos c/6h. Tempra 500 mg c/8h por 3 dias",
+          document_id: null
+        }
+      ].filter((h) => h.snippet.toLowerCase().includes(q) || q === "paracetamol");
+      return { hits, truncated: false, expanded_terms: q === "paracetamol" ? ["Tempra"] : [] } as T;
+    }
+    case "cie10_catalog_info":
+      return {
+        version: "cie10-mx-mock",
+        source: {
+          name: "Catalogo CIE-10, Secretaria de Salud (mantenido por el Hospital Juarez de Mexico)",
+          license: "Creative Commons Attribution 4.0 (CC BY 4.0)"
+        }
+      } as T;
+    case "cie10_search": {
+      // Muestra fija del catalogo real para disenar sin la app nativa.
+      const sample = [
+        { code: "J450", name: "ASMA PREDOMINANTEMENTE ALÉRGICA", warnings: [] as string[] },
+        { code: "J459", name: "ASMA, NO ESPECIFICADO", warnings: [] as string[] },
+        { code: "M545", name: "LUMBAGO NO ESPECIFICADO", warnings: [] as string[] },
+        { code: "K021", name: "CARIES DE LA DENTINA", warnings: [] as string[] },
+        { code: "O800", name: "PARTO ÚNICO ESPONTÁNEO, PRESENTACIÓN CEFÁLICA DE VÉRTICE", warnings: ["El catalogo restringe este codigo a mujeres."] }
+      ];
+      const strip = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase();
+      const q = strip(String(args?.query ?? "")).replace(".", "");
+      return sample
+        .filter((m) => m.code.startsWith(q) || q.split(" ").every((w) => strip(m.name).includes(w)))
+        .map((m) => ({ ...m, display_code: m.code.length > 3 ? `${m.code.slice(0, 3)}.${m.code.slice(3)}` : m.code })) as T;
+    }
+    case "documents_list":
+      return mockDocuments
+        .filter((doc) => doc.meta.patient_id === String(args?.patientId))
+        .map((doc) => doc.meta)
+        .reverse() as T;
+    case "documents_add": {
+      const input = args?.document as {
+        patient_id: string;
+        encounter_id: string | null;
+        file_name: string;
+        category: string;
+        title: string | null;
+        content_base64: string;
+      };
+      const mime = mockMimeFromBase64(input.content_base64);
+      if (!mime) throw "solo se admiten PDF, PNG, JPG y WEBP";
+      const duplicate = mockDocuments.find(
+        (doc) => doc.meta.patient_id === input.patient_id && doc.content_base64 === input.content_base64
+      );
+      if (duplicate) throw `este archivo ya esta en el expediente como "${duplicate.meta.file_name}"`;
+      const meta = {
+        id: `doc-${mockDocuments.length + 1}`,
+        patient_id: input.patient_id,
+        encounter_id: input.encounter_id,
+        encounter_opened_at: input.encounter_id ? new Date().toISOString() : null,
+        file_name: input.file_name,
+        title: input.title,
+        mime_type: mime,
+        category: input.category,
+        size_bytes: Math.floor((input.content_base64.length * 3) / 4),
+        sha256: null,
+        source: "LOCAL",
+        received_at: new Date().toISOString()
+      };
+      mockDocuments.push({ meta, content_base64: input.content_base64 });
+      return meta as T;
+    }
+    case "documents_read": {
+      const doc = mockDocuments.find((d) => d.meta.id === String(args?.documentId));
+      if (!doc) throw "documento no encontrado";
+      return { meta: doc.meta, content_base64: doc.content_base64 } as T;
+    }
+    case "documents_delete": {
+      const index = mockDocuments.findIndex((d) => d.meta.id === String(args?.documentId));
+      if (index < 0) throw "documento no encontrado";
+      mockDocuments.splice(index, 1);
+      return undefined as T;
     }
     default:
       throw new Error(`mock sin comando: ${command}`);

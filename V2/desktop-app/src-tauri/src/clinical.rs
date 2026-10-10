@@ -173,6 +173,57 @@ pub struct NoteContent {
     // Blob opaco: Rust no conoce su estructura, solo lo versiona y firma.
     #[serde(default)]
     pub specialty: serde_json::Value,
+    // Diagnosticos codificados con CIE-10 (paso 28 r2). Se omite al serializar
+    // cuando esta vacio para que la huella de las notas firmadas antes de
+    // existir este campo se siga calculando igual.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub coded_diagnoses: Vec<CodedDiagnosis>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct CodedDiagnosis {
+    /// Clave CIE-10 sin punto (J459).
+    pub code: String,
+    /// Nombre oficial del catalogo; al guardar se toma del catalogo, no de la UI.
+    pub name: String,
+    /// El diagnostico principal de la consulta; a lo mas uno.
+    #[serde(default)]
+    pub principal: bool,
+}
+
+/// Maximo de diagnosticos codificados por nota: suficiente para comorbilidades
+/// sin convertir la nota en una lista de facturacion.
+const MAX_CODED_DIAGNOSES: usize = 12;
+
+/// Valida contra el catalogo y normaliza: clave canonica, nombre oficial, sin
+/// repetidos y con un solo principal (el primero marcado; si no hay, el primero).
+fn normalize_coded_diagnoses(
+    input: &[CodedDiagnosis],
+) -> Result<Vec<CodedDiagnosis>, ClinicalError> {
+    if input.len() > MAX_CODED_DIAGNOSES {
+        return Err(ClinicalError::Invalid(format!(
+            "una nota admite hasta {MAX_CODED_DIAGNOSES} diagnosticos codificados"
+        )));
+    }
+    let mut out: Vec<CodedDiagnosis> = Vec::with_capacity(input.len());
+    for item in input {
+        let entry = crate::cie10::lookup(&item.code).ok_or_else(|| {
+            ClinicalError::Invalid(format!("la clave CIE-10 {} no existe en el catalogo", item.code.trim()))
+        })?;
+        if out.iter().any(|d| d.code == entry.code) {
+            continue;
+        }
+        out.push(CodedDiagnosis {
+            code: entry.code.clone(),
+            name: entry.name.clone(),
+            principal: item.principal,
+        });
+    }
+    let principal = out.iter().position(|d| d.principal).unwrap_or(0);
+    for (index, diagnosis) in out.iter_mut().enumerate() {
+        diagnosis.principal = index == principal;
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Serialize)]
@@ -769,12 +820,13 @@ pub fn get_encounter_detail(
     let note = conn
         .query_row(
             "SELECT version, created_at, subjective, objective, assessment, plan,
-                    diagnosis, instructions, specialty_payload
+                    diagnosis, instructions, specialty_payload, coded_diagnoses
              FROM note_versions WHERE encounter_id = ?1
              ORDER BY version DESC LIMIT 1",
             params![encounter_id],
             |row| {
                 let specialty_raw: String = row.get(8)?;
+                let coded_raw: String = row.get(9)?;
                 Ok(NoteVersion {
                     version: row.get(0)?,
                     created_at: row.get(1)?,
@@ -786,6 +838,7 @@ pub fn get_encounter_detail(
                         diagnosis: row.get(6)?,
                         instructions: row.get(7)?,
                         specialty: serde_json::from_str(&specialty_raw).unwrap_or_default(),
+                        coded_diagnoses: serde_json::from_str(&coded_raw).unwrap_or_default(),
                     },
                 })
             },
@@ -1525,12 +1578,14 @@ pub fn save_note(
 
     let specialty_payload =
         serde_json::to_string(&content.specialty).unwrap_or_else(|_| "{}".to_string());
+    let coded = normalize_coded_diagnoses(&content.coded_diagnoses)?;
+    let coded_payload = serde_json::to_string(&coded).unwrap_or_else(|_| "[]".to_string());
 
     conn.execute(
         "INSERT INTO note_versions
             (encounter_id, version, subjective, objective, assessment, plan,
-             diagnosis, instructions, specialty_payload, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             diagnosis, instructions, specialty_payload, coded_diagnoses, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             encounter_id,
             next_version,
@@ -1541,6 +1596,7 @@ pub fn save_note(
             content.diagnosis,
             content.instructions,
             specialty_payload,
+            coded_payload,
             now()
         ],
     )?;
@@ -1758,6 +1814,71 @@ mod tests {
         // El paciente sin responsable no inventa uno.
         let profile = get_patient_profile(&conn, "pat-m").unwrap();
         assert!(profile.patient.guardian.is_some());
+    }
+
+    fn coded(code: &str, principal: bool) -> CodedDiagnosis {
+        CodedDiagnosis { code: code.into(), name: "texto de la interfaz".into(), principal }
+    }
+
+    #[test]
+    fn coded_diagnoses_are_normalized_against_the_catalog() {
+        let conn = test_conn("cie10-save");
+        seed_appointment(&conn, "appt-c", "pat-c");
+        let encounter = open_encounter_for_appointment(&conn, "appt-c").unwrap();
+
+        save_note(
+            &conn,
+            &encounter.id,
+            &NoteContent {
+                diagnosis: "Asma y lumbago".into(),
+                coded_diagnoses: vec![
+                    coded("j45.9", false),
+                    coded("M545", true),
+                    coded("J459", true),
+                ],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let note = get_encounter_detail(&conn, &encounter.id).unwrap().note.unwrap();
+        assert_eq!(
+            note.content.coded_diagnoses,
+            vec![
+                CodedDiagnosis { code: "J459".into(), name: "ASMA, NO ESPECIFICADO".into(), principal: false },
+                CodedDiagnosis { code: "M545".into(), name: "LUMBAGO NO ESPECIFICADO".into(), principal: true },
+            ],
+            "sin repetidos, nombre oficial y un solo principal"
+        );
+        assert_eq!(note.content.diagnosis, "Asma y lumbago", "el texto libre se conserva");
+    }
+
+    #[test]
+    fn the_first_coded_diagnosis_is_principal_when_none_is_marked() {
+        let normalized = normalize_coded_diagnoses(&[coded("M545", false), coded("J459", false)]).unwrap();
+        assert!(normalized[0].principal && !normalized[1].principal);
+        assert!(normalize_coded_diagnoses(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejects_unknown_codes_and_overlong_lists() {
+        let err = normalize_coded_diagnoses(&[coded("Z99.99", false)]).unwrap_err();
+        assert!(err.to_string().contains("no existe en el catalogo"), "{err}");
+
+        let many: Vec<CodedDiagnosis> = (0..13).map(|_| coded("M545", false)).collect();
+        assert!(normalize_coded_diagnoses(&many).is_err());
+    }
+
+    #[test]
+    fn notes_without_coded_diagnoses_keep_their_signature_hash() {
+        // La huella se calcula sobre el contenido serializado: sin diagnosticos
+        // codificados el campo no aparece y las firmas previas siguen validas.
+        let content = NoteContent { diagnosis: "Lumbalgia".into(), ..Default::default() };
+        let json = serde_json::to_value(&content).unwrap();
+        assert!(json.get("coded_diagnoses").is_none());
+
+        let with_codes = NoteContent { coded_diagnoses: vec![coded("M545", true)], ..content };
+        assert!(serde_json::to_value(&with_codes).unwrap().get("coded_diagnoses").is_some());
     }
 
     #[test]

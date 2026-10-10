@@ -10,6 +10,7 @@ export type EncounterSectionId =
   | "nota"
   | "modulo"
   | "receta"
+  | "documentos"
   | "ayuda";
 
 export interface EncounterMode {
@@ -42,6 +43,9 @@ export function buildEncounterModes({
   modes.push({ id: "nota", label: "Nota clinica (SOAP)" });
   modes.push({ id: "modulo", label: moduleLabel });
   modes.push({ id: "receta", label: "Receta" });
+  // Los documentos siguen disponibles tras firmar: un estudio puede llegar
+  // despues y se liga a la consulta sin tocar la nota firmada.
+  modes.push({ id: "documentos", label: "Documentos" });
   // La Ayuda IA es la última ruta: propone SOAP, segmentos y posibilidades
   // clínicas para aplicar al editor. Desaparece una vez firmada la consulta.
   if (!signed) modes.push({ id: "ayuda", label: "Ayuda IA" });

@@ -58,6 +58,10 @@ pub struct ProfileMetadata {
     pub slot_minutes: Option<i64>,
     pub work_start_minutes: Option<i64>,
     pub work_end_minutes: Option<i64>,
+    /// Identidad profesional (paso 28 r4) para recetas y PDF: fuente de verdad
+    /// en la cuenta del portal, guardada en el equipo para usarla sin conexion.
+    pub professional_name: Option<String>,
+    pub license_number: Option<String>,
 }
 
 #[derive(Debug)]
@@ -318,6 +322,16 @@ fn extract_working_hours(body: &serde_json::Value) -> (Option<i64>, Option<i64>)
 /// Reune los metadatos del perfil (perfil clinico, duracion de cita y horario
 /// laboral) desde una respuesta con el campo `profile`. Mismo shape en
 /// `/api/admin/profile` (al vincular) y `/api/sync/profile` (al sincronizar).
+/// Texto no vacio de `profile.<key>`.
+fn extract_profile_text(body: &serde_json::Value, key: &str) -> Option<String> {
+    body.get("profile")
+        .and_then(|profile| profile.get(key))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from)
+}
+
 fn profile_metadata_from_body(body: &serde_json::Value) -> ProfileMetadata {
     let (work_start_minutes, work_end_minutes) = extract_working_hours(body);
     ProfileMetadata {
@@ -325,6 +339,8 @@ fn profile_metadata_from_body(body: &serde_json::Value) -> ProfileMetadata {
         slot_minutes: extract_slot_minutes(body),
         work_start_minutes,
         work_end_minutes,
+        professional_name: extract_profile_text(body, "professionalName"),
+        license_number: extract_profile_text(body, "licenseNumber"),
     }
 }
 
@@ -408,6 +424,67 @@ pub async fn link_account(
         device_token,
         metadata,
     })
+}
+
+/// Activa (o refresca) la licencia de este equipo (paso 29). Devuelve la
+/// licencia firmada; quien llama la verifica antes de guardarla.
+pub async fn activate_license(
+    server_url: &str,
+    device_token: &str,
+    installation_id: &str,
+    device_name: &str,
+) -> Result<String, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+    let response = client
+        .post(format!("{base}/api/sync/license"))
+        .bearer_auth(device_token)
+        .json(&serde_json::json!({ "installationId": installation_id, "deviceName": device_name }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+
+    let body: serde_json::Value = response.json().await?;
+    body.get("license")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| SyncError::Server("respuesta sin licencia".into()))
+}
+
+/// Estado de la pasarela de IA del portal (paso 30): `{ enabled, models }`.
+pub async fn fetch_gateway_status(server_url: &str, device_token: &str) -> Result<serde_json::Value, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+    let response = client
+        .get(format!("{base}/api/sync/ai/gateway"))
+        .bearer_auth(device_token)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+    Ok(response.json().await?)
+}
+
+/// Saldo de creditos de IA de la cuenta (paso 29 r4). Solo un numero.
+pub async fn fetch_credit_balance(server_url: &str, device_token: &str) -> Result<i64, SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+    let response = client
+        .get(format!("{base}/api/sync/credits"))
+        .bearer_auth(device_token)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+    let body: serde_json::Value = response.json().await?;
+    body.get("balance")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| SyncError::Server("respuesta sin saldo".into()))
 }
 
 pub async fn fetch_inbox(
@@ -1098,6 +1175,8 @@ mod tests {
             "profile": {
                 "specialty": "ODONTOLOGY",
                 "consultationDuration": 20,
+                "professionalName": " Dra. Eva Soto ",
+                "licenseNumber": "1234567",
                 "availabilityRules": [
                     { "startTime": "09:00", "endTime": "13:00", "isActive": true },
                     { "startTime": "16:00", "endTime": "20:00", "isActive": true }
@@ -1105,6 +1184,10 @@ mod tests {
             }
         });
         let meta = profile_metadata_from_body(&body);
+        assert_eq!(meta.professional_name.as_deref(), Some("Dra. Eva Soto"));
+        assert_eq!(meta.license_number.as_deref(), Some("1234567"));
+        let empty = profile_metadata_from_body(&serde_json::json!({ "profile": { "licenseNumber": "  " } }));
+        assert_eq!(empty.license_number, None, "vacio no pisa lo guardado");
         assert_eq!(meta.clinical_profile.as_deref(), Some("ODONTOLOGY"));
         assert_eq!(meta.slot_minutes, Some(20));
         assert_eq!(meta.work_start_minutes, Some(9 * 60));

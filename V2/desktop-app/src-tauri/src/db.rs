@@ -526,6 +526,21 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_dental_lab_orders_patient ON dental_lab_orders (patient_id);
     CREATE INDEX idx_dental_lab_orders_status ON dental_lab_orders (status);",
+    // Documentos locales (paso 28 rebanada 1). Clase CLINICO. La tabla del
+    // buzon (v5) se reutiliza: los archivos ahora tambien entran desde la app,
+    // ligados al paciente y opcionalmente a la consulta. `source` distingue los
+    // que llegaron por el buzon (MAILBOX, valor de las filas existentes) de los
+    // adjuntados aqui (LOCAL); `sha256` evita duplicados por paciente.
+    "ALTER TABLE documents ADD COLUMN encounter_id TEXT REFERENCES encounters (id);
+    ALTER TABLE documents ADD COLUMN title TEXT;
+    ALTER TABLE documents ADD COLUMN sha256 TEXT;
+    ALTER TABLE documents ADD COLUMN source TEXT NOT NULL DEFAULT 'MAILBOX';
+    CREATE INDEX idx_documents_encounter ON documents (encounter_id);
+    CREATE INDEX idx_documents_patient_sha ON documents (patient_id, sha256);",
+    // Diagnosticos codificados CIE-10 por version de nota (paso 28 r2). Clase
+    // CLINICO. JSON [{code, name, principal}] validado contra el catalogo al
+    // guardar; el diagnostico en texto libre se conserva aparte.
+    "ALTER TABLE note_versions ADD COLUMN coded_diagnoses TEXT NOT NULL DEFAULT '[]';",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
