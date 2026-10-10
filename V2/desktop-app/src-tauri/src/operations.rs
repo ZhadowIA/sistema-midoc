@@ -740,6 +740,8 @@ pub fn list_session_payments(
 }
 
 #[cfg(test)]
+// Los montos en centavos se agrupan pesos_centavos (`300_00` = $300.00) a proposito.
+#[allow(clippy::inconsistent_digit_grouping)]
 mod tests {
     use super::*;
     use crate::db::open_encrypted;
