@@ -13,6 +13,7 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 
 ## Deuda tecnica
 
+- [ ] **El portal no envia correos con el alcance congelado apagado** — la verificacion de correo y la recuperacion de contrasena se encolan (`queueNotification`), pero quien las envia es `/api/internal/notifications`, congelado desde el paso 27, y el cron esta deshabilitado. El medico puede entrar sin verificar, pero no puede recuperar su contrasena. Separar los correos de cuenta de las notificaciones al paciente y enviarlos directo (o descongelar solo ese envio). _(2026-10-10, al preparar el despliegue de pruebas)_
 - [ ] **Retirar `PaymentRecord`, `CashDrawerSession` y `WaitlistEntry` del portal** — vestigio del commit `0bc949e`, sin referencias en `src/` ni `tests/`; la caja y la lista de espera viven en la app del medico. Rama aparte. _(2026-09-05, PR #43)_
 - [ ] **El mock del navegador (`ipc.ts`) tiene una sola consulta fija** — `open_patient_encounter` devuelve siempre la de Hugo, sin importar el paciente; estorba para verificar flujos en el navegador. _(2026-10-05, paso 27)_
 - [ ] **Escape no cierra la vista previa de un PDF** — el visor de WebView2 retiene el teclado; se cierra con "Cerrar" o clic fuera. En imagenes si funciona. _(2026-10-05, paso 28 r1)_
