@@ -374,8 +374,22 @@ fn sync_status(state: tauri::State<'_, AppDb>) -> Result<SyncStatus, String> {
 /// para re-vincular tras cambiar de servidor, reinstalar el portal o si el
 /// dispositivo fue revocado (el token local queda huerfano y el sync da 401).
 /// El cursor se limpia para que el proximo vinculo baje el buzon desde cero.
+///
+/// Antes avisa al portal para liberar el lugar del equipo en la licencia; sin
+/// conexion se desvincula igual y el portal lo revocara cuando haga falta lugar.
 #[tauri::command]
-fn unlink_device(state: tauri::State<'_, AppDb>) -> Result<(), String> {
+async fn unlink_device(state: tauri::State<'_, AppDb>) -> Result<(), String> {
+    let credentials = {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let server_url = sync::get_state(conn, "server_url").map_err(|e| e.to_string())?;
+        let token = sync::get_state(conn, "device_token").map_err(|e| e.to_string())?;
+        server_url.zip(token)
+    };
+    if let Some((server_url, token)) = credentials {
+        let _ = sync::revoke_device(&server_url, &token).await;
+    }
+
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
     sync::delete_state(conn, "device_token").map_err(|e| e.to_string())?;

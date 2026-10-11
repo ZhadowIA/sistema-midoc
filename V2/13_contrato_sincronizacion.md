@@ -16,7 +16,7 @@ La app de escritorio es la fuente de verdad clinica; el portal es agenda publica
 ## Autenticacion del dispositivo
 
 - Al vincular la app (primer login del medico en el escritorio), el portal emite un **device token** opaco (mismo patron que `AuthSession`: token aleatorio, hash SHA-256 en BD, revocable) con alcance `sync` y vida larga (90 dias, renovacion automatica en cada sync exitoso).
-- Header: `Authorization: Bearer <deviceToken>`. Un dispositivo activo por medico en MVP; vincular uno nuevo revoca el anterior (alcance "un dispositivo" de `01_contexto_v2.md`).
+- Header: `Authorization: Bearer <deviceToken>`. Hasta `License.maxDevices` dispositivos activos por medico (uno sin licencia); vincular uno de mas revoca el de contacto mas antiguo (`lastSyncAt`, que se refresca en cada llamada autenticada). `DELETE /api/sync/devices` lo revoca desde la app al desvincular. El buzon (`/api/sync/inbox`, ACK y descargas) es solo del **equipo principal**, el ultimo vinculado: el contenido se purga al confirmar y los documentos se cifran con su llave; los demas reciben `events: []` y `primary: false`. Actualizado 2026-10-10.
 - Todos los endpoints de sync viven bajo `/api/sync/*`, con rate limit por dispositivo y auditoria de cada llamada.
 
 ## Que viaja y en que direccion

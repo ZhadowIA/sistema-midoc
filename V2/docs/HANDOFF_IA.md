@@ -76,7 +76,7 @@ Siempre, sin importar el modelo:
 - Recuperación: `POST /api/auth/password-recovery/request {email}` → respuesta no enumerable.
 - Sync (Bearer `deviceToken`): `GET /api/sync/inbox?cursor=` → `{events, nextCursor}`, `POST /api/sync/ack {cursor}` → `{purgedClinicalEvents}`, `GET /api/sync/documents/{id}`.
 - Documentos: `createUploadLink(doctorId,{patientId,maxUploads})` (servicio) → token; `GET /api/public/upload/{token}` → `{documentPublicKey, patientFirstName}`; `POST /api/public/upload/{token} {ciphertext(base64)}` → 201 `{id}`.
-- Dispositivo de sync se vincula con `linkSyncDevice(doctorId, label, publicKeyBase64)` (servicio) → `{deviceToken}`. Vincular uno nuevo **revoca** el anterior.
+- Dispositivo de sync se vincula con `linkSyncDevice(doctorId, label, publicKeyBase64)` (servicio) → `{deviceToken}`. Admite hasta `License.maxDevices` activos; vincular uno de mas **revoca** el de contacto mas antiguo. Solo el ultimo vinculado (principal) recibe el buzon.
 
 ## Bitácora de sesiones
 
