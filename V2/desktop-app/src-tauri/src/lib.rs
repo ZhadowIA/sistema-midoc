@@ -1649,13 +1649,16 @@ async fn save_fhir_export(
     state: tauri::State<'_, AppDb>,
     patient_id: String,
     encounter_id: Option<String>,
+    // Historia clinica y plantilla redactadas por los formateadores del PDF.
+    narratives: Option<fhir::FhirNarratives>,
 ) -> Result<Option<SavedExport>, String> {
     // Se arma antes del dialogo para no pedir ruta si algo falla, y sin
     // retener la base mientras el medico elige donde guardar.
+    let narratives = narratives.unwrap_or_default();
     let export = {
         let guard = state.0.lock().unwrap();
         let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
-        fhir::export_record(conn, &patient_id, encounter_id.as_deref())
+        fhir::export_record(conn, &patient_id, encounter_id.as_deref(), &narratives)
             .map_err(|e| e.to_string())?
     };
     let Some(path) = pick_export_path(&app, &export.file_stem, "FHIR R4 (JSON)", "json").await?

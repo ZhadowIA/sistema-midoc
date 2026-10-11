@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ageInYears, buildBlocks, doctorHeader, footerText, suggestedName, type RecordExport } from "./recordExportModel.ts";
+import { ageInYears, buildBlocks, doctorHeader, fhirNarratives, footerText, suggestedName, type RecordExport } from "./recordExportModel.ts";
 
 function sample(): RecordExport {
   return {
@@ -236,4 +236,25 @@ test("una nota sin plantilla de especialidad no agrega bloques", () => {
   const before = buildBlocks(data, "PDF_CONSULTA").length;
   data.encounters[0].note!.specialty = {};
   assert.equal(buildBlocks(data, "PDF_CONSULTA").length, before);
+});
+
+test("las narrativas del FHIR salen de los mismos formateadores que el PDF", () => {
+  const data = sample();
+  data.medical_history = JSON.stringify({ allergies: "Penicilina", identification: { bloodType: "O+" } });
+  data.encounters[0].note!.specialty = { physicalExam: "Sibilancias", labs: "" };
+
+  const narratives = fhirNarratives(data);
+
+  assert.deepEqual(narratives.history, [
+    { title: "Datos generales", lines: ["Alergias: Penicilina"] },
+    { title: "Ficha de identificacion", lines: ["Grupo sanguineo: O+"] }
+  ]);
+  assert.deepEqual(narratives.encounters[data.encounters[0].id], [
+    { title: "Exploracion fisica", lines: ["Sibilancias"] }
+  ]);
+});
+
+test("sin historia ni plantilla las narrativas van vacias", () => {
+  const narratives = fhirNarratives(sample());
+  assert.deepEqual(narratives, { history: [], encounters: {} });
 });
