@@ -316,7 +316,8 @@ function mockDetail() {
         encounter_id: "enc-0",
         signed_at: new Date(Date.now() - 40 * 86400_000).toISOString(),
         status: "SIGNED",
-        diagnosis: "Gastritis aguda"
+        diagnosis: "Gastritis aguda",
+        coded_diagnoses: [{ code: "K297", name: "GASTRITIS, NO ESPECIFICADA", principal: true }]
       }
     ]
   };
@@ -1152,7 +1153,8 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
                   encounter_id: "enc-0",
                   signed_at: new Date(Date.now() - 40 * 86400_000).toISOString(),
                   status: "SIGNED",
-                  diagnosis: "Gastritis aguda"
+                  diagnosis: "Gastritis aguda",
+                  coded_diagnoses: [{ code: "K297", name: "GASTRITIS, NO ESPECIFICADA", principal: true }]
                 }
               ]
             : []

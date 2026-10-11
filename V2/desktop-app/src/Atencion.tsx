@@ -88,6 +88,8 @@ import {
   type MedicalHistoryProposal
 } from "./medicalHistoryAi";
 import type { EditableConsultationTemplate } from "./ConsultationTemplateEditor";
+import { HistoryDiagnosis } from "./HistoryDiagnosis";
+import type { HistoryEntry } from "./historyModel";
 
 type SpecialtyPayload = GeneralMedicinePayload | DentalPayload;
 type RecordingState = "idle" | "recording" | "paused" | "stopping";
@@ -137,12 +139,7 @@ interface EncounterDetail {
   }) | null;
   note_version_count: number;
   prescription: string | null;
-  history: Array<{
-    encounter_id: string;
-    signed_at: string | null;
-    status: string;
-    diagnosis: string;
-  }>;
+  history: HistoryEntry[];
 }
 
 interface PatientMedicalHistoryVersion {
@@ -1338,7 +1335,7 @@ export function Atencion({
                           ? dateTimeFormatter.format(new Date(entry.signed_at))
                           : "(sin firmar)"}
                       </span>{" "}
-                      {entry.diagnosis || "Sin diagnostico registrado"}
+                      <HistoryDiagnosis entry={entry} />
                     </li>
                   ))}
                 </ul>
