@@ -595,9 +595,10 @@ describe("notification flow (paso 7)", () => {
         }
       });
 
+      // El correo de recuperacion ya salio al pedirlo (sendAccountNotification):
+      // la cola solo procesa la notificacion con reintento.
       const firstPass = await processNotificationQueue({ limit: 20, doctorId: account.user.id });
-      expect(firstPass.processed).toBeGreaterThanOrEqual(2);
-      expect(firstPass.sent).toBeGreaterThanOrEqual(1);
+      expect(firstPass.processed).toBeGreaterThanOrEqual(1);
       expect(firstPass.retried).toBeGreaterThanOrEqual(1);
 
       const retryNotification = await prisma.notification.findFirstOrThrow({
@@ -757,6 +758,9 @@ describe("notification flow (paso 7)", () => {
       // El registro encola una notificación de verificación de correo; la quitamos
       // para que la cola procese únicamente la notificación bajo prueba.
       await prisma.notification.deleteMany({ where: { doctorId: account.user.id } });
+      // La verificación ya salió en el momento por el Resend simulado: su llamada
+      // tampoco cuenta.
+      fetchMock.mockClear();
 
       await prisma.notification.create({
         data: {
