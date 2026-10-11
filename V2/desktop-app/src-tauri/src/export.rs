@@ -380,7 +380,10 @@ mod tests {
     fn exports_the_current_structured_medical_history() {
         let conn = test_conn("record-history");
         seed(&conn);
-        assert_eq!(record_export(&conn, "p1", None).unwrap().medical_history, None);
+        assert_eq!(
+            record_export(&conn, "p1", None).unwrap().medical_history,
+            None
+        );
 
         for (version, payload) in [(1, r#"{"bloodType":"O+"}"#), (2, r#"{"bloodType":"A+"}"#)] {
             conn.execute(
@@ -394,7 +397,10 @@ mod tests {
 
         // La historia clinica que sale es la version vigente, no la primera.
         let export = record_export(&conn, "p1", None).unwrap();
-        assert_eq!(export.medical_history.as_deref(), Some(r#"{"bloodType":"A+"}"#));
+        assert_eq!(
+            export.medical_history.as_deref(),
+            Some(r#"{"bloodType":"A+"}"#)
+        );
     }
 
     #[test]
