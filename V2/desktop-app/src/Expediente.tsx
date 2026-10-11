@@ -6,6 +6,8 @@ import { parseDateFlexible } from "./dateOnly";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { MedicalHistoryGroups } from "./MedicalHistoryGroups";
 import { formatMedicalHistoryForDisplay } from "./medicalHistoryFormat";
+import { HistoryDiagnosis } from "./HistoryDiagnosis";
+import type { HistoryEntry } from "./historyModel";
 
 interface Guardian {
   name: string;
@@ -31,13 +33,6 @@ interface PatientRecord {
 function guardianContactLine(guardian: Guardian): string {
   const parts = [guardian.phone, guardian.email].filter(Boolean);
   return parts.length > 0 ? parts.join(" · ") : "Sin contacto";
-}
-
-interface HistoryEntry {
-  encounter_id: string;
-  signed_at: string | null;
-  status: string;
-  diagnosis: string;
 }
 
 interface PatientProfile {
@@ -579,7 +574,7 @@ export function Expediente({
                               ? dateTimeFormatter.format(new Date(entry.signed_at))
                               : "Sin firmar"}
                           </span>
-                          <strong>{entry.diagnosis || "Sin diagnostico registrado"}</strong>
+                          <HistoryDiagnosis entry={entry} strong />
                         </div>
                         {entry.status !== "SIGNED" ? (
                           <div className="row-actions">

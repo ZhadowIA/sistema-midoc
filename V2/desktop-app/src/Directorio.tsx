@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
 import { parseDateFlexible } from "./dateOnly";
 import { exportDirectoryCsv } from "./recordExportAction";
+import { HistoryDiagnosis } from "./HistoryDiagnosis";
+import type { HistoryEntry } from "./historyModel";
 
 interface PatientSummary {
   id: string;
@@ -25,13 +27,6 @@ interface PatientRecord {
   allergies: string | null;
   medical_background: string | null;
   family_background: string | null;
-}
-
-interface HistoryEntry {
-  encounter_id: string;
-  signed_at: string | null;
-  status: string;
-  diagnosis: string;
 }
 
 interface PatientProfile {
@@ -235,7 +230,7 @@ export function Directorio({
                     ? dateTimeFormatter.format(new Date(entry.signed_at))
                     : "(sin firmar)"}
                 </span>{" "}
-                {entry.diagnosis || "Sin diagnostico registrado"}
+                <HistoryDiagnosis entry={entry} />
               </li>
             ))}
           </ul>

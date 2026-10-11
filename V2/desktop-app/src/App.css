@@ -5376,3 +5376,10 @@ body.dictating .encounter-modes:focus-within {
     grid-template-columns: 1fr;
   }
 }
+
+/* Claves CIE-10 de un renglon del historial. */
+.history-codes {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+}

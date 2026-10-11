@@ -243,6 +243,41 @@ pub struct HistoryEntry {
     pub signed_at: Option<String>,
     pub status: String,
     pub diagnosis: String,
+    /// Diagnosticos CIE-10 de la version vigente de la nota.
+    pub coded_diagnoses: Vec<CodedDiagnosis>,
+}
+
+/// Consultas del paciente con algo escrito (al menos una version de nota), con
+/// el diagnostico de su version vigente; un encuentro abierto y vacio no se
+/// registra. `exclude` deja fuera la consulta desde la que se consulta.
+fn history_entries(
+    conn: &Connection,
+    patient_id: &str,
+    exclude: Option<&str>,
+) -> Result<Vec<HistoryEntry>, ClinicalError> {
+    let mut statement = conn.prepare(
+        "SELECT e.id, e.signed_at, e.status,
+                COALESCE(latest.diagnosis, ''), COALESCE(latest.coded_diagnoses, '[]')
+         FROM encounters e
+         JOIN note_versions latest ON latest.encounter_id = e.id
+          AND latest.version = (SELECT MAX(n.version) FROM note_versions n
+                                WHERE n.encounter_id = e.id)
+         WHERE e.patient_id = ?1 AND (?2 IS NULL OR e.id != ?2)
+         ORDER BY e.opened_at DESC",
+    )?;
+    let entries = statement
+        .query_map(params![patient_id, exclude], |row| {
+            let coded_raw: String = row.get(4)?;
+            Ok(HistoryEntry {
+                encounter_id: row.get(0)?,
+                signed_at: row.get(1)?,
+                status: row.get(2)?,
+                diagnosis: row.get(3)?,
+                coded_diagnoses: serde_json::from_str(&coded_raw).unwrap_or_default(),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(entries)
 }
 
 #[derive(Debug, Serialize)]
@@ -931,30 +966,8 @@ pub fn get_encounter_detail(
         )
         .optional()?;
 
-    // Expediente desde la cita: encuentros previos del mismo paciente con su
-    // diagnostico mas reciente. Solo aparecen los que tienen algo escrito (al
-    // menos una version de nota); los encuentros abiertos y vacios no ensucian
-    // el historial.
-    let mut statement = conn.prepare(
-        "SELECT e.id, e.signed_at, e.status,
-                COALESCE((SELECT diagnosis FROM note_versions n
-                          WHERE n.encounter_id = e.id
-                          ORDER BY n.version DESC LIMIT 1), '')
-         FROM encounters e
-         WHERE e.patient_id = ?1 AND e.id != ?2
-           AND EXISTS (SELECT 1 FROM note_versions nv WHERE nv.encounter_id = e.id)
-         ORDER BY e.opened_at DESC",
-    )?;
-    let history = statement
-        .query_map(params![encounter.patient_id, encounter_id], |row| {
-            Ok(HistoryEntry {
-                encounter_id: row.get(0)?,
-                signed_at: row.get(1)?,
-                status: row.get(2)?,
-                diagnosis: row.get(3)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+    // Expediente desde la cita: encuentros previos del mismo paciente.
+    let history = history_entries(conn, &encounter.patient_id, Some(encounter_id))?;
 
     Ok(EncounterDetail {
         encounter,
@@ -1113,28 +1126,7 @@ pub fn get_patient_profile(
         .optional()?
         .ok_or(ClinicalError::NotFound)?;
 
-    // Solo encuentros con algo escrito (al menos una version de nota): un
-    // encuentro abierto y vacio no se registra en el historial.
-    let mut statement = conn.prepare(
-        "SELECT e.id, e.signed_at, e.status,
-                COALESCE((SELECT diagnosis FROM note_versions n
-                          WHERE n.encounter_id = e.id
-                          ORDER BY n.version DESC LIMIT 1), '')
-         FROM encounters e
-         WHERE e.patient_id = ?1
-           AND EXISTS (SELECT 1 FROM note_versions nv WHERE nv.encounter_id = e.id)
-         ORDER BY e.opened_at DESC",
-    )?;
-    let history = statement
-        .query_map(params![patient_id], |row| {
-            Ok(HistoryEntry {
-                encounter_id: row.get(0)?,
-                signed_at: row.get(1)?,
-                status: row.get(2)?,
-                diagnosis: row.get(3)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+    let history = history_entries(conn, patient_id, None)?;
 
     Ok(PatientProfile { patient, history })
 }
@@ -2888,5 +2880,52 @@ mod tests {
 
         assert_ne!(second.id, first.id);
         assert_eq!(second.status, "OPEN");
+    }
+
+    #[test]
+    fn history_lists_the_coded_diagnoses_of_the_current_note_version() {
+        let conn = test_conn("history-cie10");
+        let patient_id = walk_in_patient(&conn);
+        let today = chrono::Local::now().date_naive();
+        let past = open_encounter_for_patient(&conn, &patient_id, today).unwrap();
+        save_note(
+            &conn,
+            &past.id,
+            &NoteContent {
+                diagnosis: "Primera impresion".into(),
+                coded_diagnoses: vec![coded("M545", true)],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // La version vigente corrige el diagnostico: el historial muestra esta.
+        save_note(
+            &conn,
+            &past.id,
+            &NoteContent {
+                diagnosis: "Crisis asmatica".into(),
+                coded_diagnoses: vec![coded("J459", true)],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        sign_encounter(&conn, &past.id).unwrap();
+
+        let profile = get_patient_profile(&conn, &patient_id).unwrap();
+        assert_eq!(profile.history[0].diagnosis, "Crisis asmatica");
+        assert_eq!(
+            profile.history[0].coded_diagnoses,
+            vec![CodedDiagnosis {
+                code: "J459".into(),
+                name: "ASMA, NO ESPECIFICADO".into(),
+                principal: true,
+            }]
+        );
+
+        // Dentro de otra consulta del paciente, el historial trae lo mismo.
+        let current = open_encounter_for_patient(&conn, &patient_id, today).unwrap();
+        let detail = get_encounter_detail(&conn, &current.id).unwrap();
+        assert_eq!(detail.history.len(), 1);
+        assert_eq!(detail.history[0].coded_diagnoses[0].code, "J459");
     }
 }
