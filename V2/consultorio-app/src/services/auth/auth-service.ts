@@ -31,7 +31,7 @@ import { prisma } from "../../lib/prisma";
 import { assertRateLimit } from "../../lib/rate-limit";
 import { hashPassword, passwordNeedsRehash, verifyPassword } from "../../lib/security/password";
 import { generateOpaqueToken, hashOpaqueToken } from "../../lib/security/token";
-import { queueNotification } from "../notifications/notification-service";
+import { sendAccountNotification } from "../notifications/notification-service";
 import {
   consumeTwoFactorChallenge,
   isTwoFactorEnabled,
@@ -423,7 +423,7 @@ export async function requestDoctorEmailVerification(input: {
     }
   });
 
-  await queueNotification({
+  await sendAccountNotification({
     doctorId: user.id,
     channel: NotificationChannel.EMAIL,
     kind: NotificationKind.EMAIL_VERIFICATION,
@@ -635,7 +635,7 @@ export async function requestPasswordReset(input: {
   });
 
   if (channel) {
-    await queueNotification({
+    await sendAccountNotification({
       doctorId: user.id,
       channel,
       kind: NotificationKind.PASSWORD_RESET,
@@ -654,7 +654,7 @@ export async function requestPasswordReset(input: {
     // bounded by the 15-minute TTL and single use.
     const resetUrl = `${env.APP_BASE_URL}/recuperar?token=${resetToken}`;
 
-    await queueNotification({
+    await sendAccountNotification({
       doctorId: user.id,
       channel: "EMAIL",
       kind: NotificationKind.PASSWORD_RESET,

@@ -332,53 +332,80 @@ export async function processNotificationQueue(input?: { limit?: number; now?: D
 
   for (const notification of queue) {
     stats.processed += 1;
-
-    try {
-      const delivery = await deliverNotification(notification);
-      await prisma.notification.update({
-        where: { id: notification.id },
-        data: {
-          provider: delivery.provider,
-          providerMessageId: delivery.providerMessageId,
-          status: NotificationStatus.SENT,
-          sentAt: now,
-          failedAt: null,
-          lastError: null
-        }
-      });
-      stats.sent += 1;
-    } catch (error) {
-      const nextRetryCount = notification.retryCount + 1;
-      const message = error instanceof Error ? error.message : "Unknown notification error.";
-
-      if (nextRetryCount < MAX_NOTIFICATION_ATTEMPTS) {
-        await prisma.notification.update({
-          where: { id: notification.id },
-          data: {
-            status: NotificationStatus.RETRIED,
-            retryCount: nextRetryCount,
-            failedAt: now,
-            lastError: message,
-            scheduledFor: new Date(now.getTime() + retryDelayMs(nextRetryCount))
-          }
-        });
-        stats.retried += 1;
-      } else {
-        await prisma.notification.update({
-          where: { id: notification.id },
-          data: {
-            status: NotificationStatus.FAILED,
-            retryCount: nextRetryCount,
-            failedAt: now,
-            lastError: message
-          }
-        });
-        stats.failed += 1;
-      }
-    }
+    const updated = await attemptDelivery(notification, now);
+    if (updated.status === NotificationStatus.SENT) stats.sent += 1;
+    else if (updated.status === NotificationStatus.RETRIED) stats.retried += 1;
+    else stats.failed += 1;
   }
 
   return stats;
+}
+
+/**
+ * Un intento de envio: lo marca enviado, o reintentable / fallido segun los
+ * intentos. Nunca lanza por un error del proveedor; queda en `lastError`.
+ */
+async function attemptDelivery(notification: Notification, now: Date): Promise<Notification> {
+  try {
+    const delivery = await deliverNotification(notification);
+    return await prisma.notification.update({
+      where: { id: notification.id },
+      data: {
+        provider: delivery.provider,
+        providerMessageId: delivery.providerMessageId,
+        status: NotificationStatus.SENT,
+        sentAt: now,
+        failedAt: null,
+        lastError: null
+      }
+    });
+  } catch (error) {
+    const nextRetryCount = notification.retryCount + 1;
+    const message = error instanceof Error ? error.message : "Unknown notification error.";
+
+    if (nextRetryCount < MAX_NOTIFICATION_ATTEMPTS) {
+      return prisma.notification.update({
+        where: { id: notification.id },
+        data: {
+          status: NotificationStatus.RETRIED,
+          retryCount: nextRetryCount,
+          failedAt: now,
+          lastError: message,
+          scheduledFor: new Date(now.getTime() + retryDelayMs(nextRetryCount))
+        }
+      });
+    }
+    return prisma.notification.update({
+      where: { id: notification.id },
+      data: {
+        status: NotificationStatus.FAILED,
+        retryCount: nextRetryCount,
+        failedAt: now,
+        lastError: message
+      }
+    });
+  }
+}
+
+/** Avisos de la cuenta del medico: no forman parte de las notificaciones congeladas. */
+const ACCOUNT_NOTIFICATION_KINDS: ReadonlySet<NotificationKind> = new Set([
+  NotificationKind.EMAIL_VERIFICATION,
+  NotificationKind.PASSWORD_RESET
+]);
+
+/**
+ * Verificar correo y recuperar contrasena salen en el momento, sin esperar la
+ * cola: su envio programado (`/api/internal/notifications`) esta congelado con
+ * las notificaciones al paciente desde el paso 27, y un enlace de verificacion
+ * que llega horas despues no sirve. Si el proveedor falla, la peticion del
+ * medico no se cae: la notificacion queda para reintento con su error.
+ */
+export async function sendAccountNotification(input: QueueNotificationInput): Promise<Notification> {
+  if (!ACCOUNT_NOTIFICATION_KINDS.has(input.kind)) {
+    throw new NotificationServiceError("Solo los avisos de la cuenta salen en el momento.", 400);
+  }
+  const notification = await queueNotification(input);
+  return attemptDelivery(notification, new Date());
 }
 
 export async function resolveShortLink(code: string, context?: { ipAddress?: string }) {

@@ -10,8 +10,9 @@ Entorno para **probar** el portal con la app de escritorio. No es produccion:
 
 | Funciona | No funciona en este entorno |
 |---|---|
-| Registro e inicio de sesion del medico | **Correos** (verificacion, recuperar contrasena): se encolan pero nadie los envia; el envio esta congelado desde el paso 27 (ver `PENDIENTES.md`) |
-| Cuenta, datos para la receta (regla 4.6) | SMS y pagos (proveedores simulados) |
+| Registro e inicio de sesion del medico | SMS y pagos (proveedores simulados) |
+| Correos de la cuenta (verificar correo, recuperar contrasena) con Resend, ver seccion 5 | Notificaciones al paciente (congeladas desde el paso 27) |
+| Cuenta, datos para la receta (regla 4.6) | |
 | Licencia, equipos y creditos | IA (`AI_GATEWAY_PROVIDER=none` hasta tener proveedor real con BAA) |
 | Vincular la app de escritorio y sincronizar perfil y licencia | Transcripcion en nube: apagada, y ademas Vercel limita cada peticion a 4.5 MB |
 
@@ -57,6 +58,16 @@ Guarda el archivo de variables en un lugar seguro **fuera del repositorio** (p. 
 1. En `V2/desktop-app/src-tauri/.env` agrega la llave publica de licencias que viene al final del archivo de variables (`MIDOC_LICENSE_PUBKEYS=...`). Sin ella la app no reconoce las licencias que firma este portal.
 2. En `V2/desktop-app/.env` agrega `VITE_MIDOC_PORTAL_URL=https://<tu-proyecto>.vercel.app` (sin la variable, la app usa `http://localhost:3000`).
 3. Arranca la app (`npm run tauri:dev`), abre tu perfil y usa **Vincular cuenta** con el correo y la contrasena del paso 3.
+
+## 5. Correos con Resend
+
+Verificar correo y recuperar contrasena salen en el momento en que se piden (no dependen de la cola congelada).
+
+1. Crea una cuenta en [resend.com](https://resend.com) (plan Free: 3,000 correos al mes, 100 al dia).
+2. **API Keys → Create API Key**, con permiso de solo envio (*Sending access*). Pegala en Vercel como `EMAIL_API_KEY`; nunca en el repositorio ni en un chat.
+3. En Vercel deja `EMAIL_PROVIDER=resend`, `EMAIL_BASE_URL=https://api.resend.com` y `EMAIL_FROM=MiDoc Pruebas <onboarding@resend.dev>`, y vuelve a desplegar.
+4. **Sin dominio propio**, el remitente `onboarding@resend.dev` solo entrega al correo de tu cuenta de Resend: registra al medico de prueba con ese mismo correo. Para que lleguen a cualquier destinatario, verifica un dominio en Resend (registros DNS) y cambia `EMAIL_FROM` a una direccion de ese dominio.
+5. Si un correo no llega, revisa en Resend la seccion **Emails/Logs**: un `403` con el remitente de pruebas indica que el destinatario no es el correo de tu cuenta.
 
 ## Secretos
 
