@@ -196,6 +196,18 @@ fn to_match(entry: &Cie10Entry, patient: &PatientContext) -> Cie10Match {
     }
 }
 
+/// Revisa los codigos ya elegidos en la nota con los datos actuales del
+/// paciente: el aviso no se queda en el buscador, y si el sexo o la fecha de
+/// nacimiento se corrigen despues, vuelve a salir. Lo que ya no esta en el
+/// catalogo se omite.
+pub fn check_codes(codes: &[String], patient: &PatientContext) -> Vec<Cie10Match> {
+    codes
+        .iter()
+        .filter_map(|code| lookup(code))
+        .map(|entry| to_match(entry, patient))
+        .collect()
+}
+
 /// Busca por clave ("J45", "j45.9") o por palabras del nombre ("asma alerg").
 /// Orden: clave exacta, clave que empieza igual, nombre que empieza con lo
 /// escrito, nombre con todas las palabras; dentro de cada grupo primero lo
@@ -345,6 +357,23 @@ mod tests {
             warnings_for(pregnancy, &unknown).is_empty(),
             "sin datos no se avisa"
         );
+    }
+
+    #[test]
+    fn checks_the_codes_already_chosen_against_the_current_patient() {
+        let man = PatientContext {
+            sex: Some("M".into()),
+            age_days: Some(30 * 365),
+        };
+        // Lo elegido antes se revisa con los datos de hoy: un parto en un hombre
+        // avisa aunque ya este en la nota; un codigo valido no; uno que ya no
+        // existe en el catalogo no rompe nada.
+        let checked = check_codes(&["O800".into(), "j45.9".into(), "Z99.99".into()], &man);
+        assert_eq!(checked.len(), 2);
+        assert_eq!(checked[0].code, "O800");
+        assert!(checked[0].warnings.iter().any(|w| w.contains("mujeres")));
+        assert_eq!(checked[1].code, "J459");
+        assert!(checked[1].warnings.is_empty());
     }
 
     #[test]

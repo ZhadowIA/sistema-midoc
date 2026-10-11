@@ -1556,6 +1556,20 @@ fn cie10_search(
     Ok(cie10::search(&query, &patient, 20))
 }
 
+/// Avisos del catalogo para los diagnosticos ya elegidos en la nota.
+#[tauri::command]
+fn cie10_check(
+    state: tauri::State<'_, AppDb>,
+    codes: Vec<String>,
+    patient_id: String,
+) -> Result<Vec<cie10::Cie10Match>, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let patient = cie10::patient_context(conn, &patient_id, chrono::Local::now().date_naive())
+        .map_err(|e| e.to_string())?;
+    Ok(cie10::check_codes(&codes, &patient))
+}
+
 #[tauri::command]
 fn record_export(
     state: tauri::State<'_, AppDb>,
@@ -3036,6 +3050,7 @@ pub fn run() {
             dental_list_lab_orders,
             dental_pending_lab_orders,
             cie10_search,
+            cie10_check,
             search_records,
             record_export,
             save_export,

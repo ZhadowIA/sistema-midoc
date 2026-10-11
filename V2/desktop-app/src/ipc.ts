@@ -105,6 +105,15 @@ function mockMimeFromBase64(content: string): string | null {
   return null;
 }
 
+// Muestra fija del catalogo real para disenar sin la app nativa.
+const MOCK_CIE10_SAMPLE = [
+  { code: "J450", name: "ASMA PREDOMINANTEMENTE ALÉRGICA", warnings: [] as string[] },
+  { code: "J459", name: "ASMA, NO ESPECIFICADO", warnings: [] as string[] },
+  { code: "M545", name: "LUMBAGO NO ESPECIFICADO", warnings: [] as string[] },
+  { code: "K021", name: "CARIES DE LA DENTINA", warnings: [] as string[] },
+  { code: "O800", name: "PARTO ÚNICO ESPONTÁNEO, PRESENTACIÓN CEFÁLICA DE VÉRTICE", warnings: ["El catalogo restringe este codigo a mujeres."] }
+];
+
 const mockState = {
   // Copia de los datos de la receta (regla 4.6); misma regla de version que el portal.
   prescriber: {
@@ -2175,15 +2184,15 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
           license: "Creative Commons Attribution 4.0 (CC BY 4.0)"
         }
       } as T;
+    case "cie10_check": {
+      const codes = (args?.codes as string[]) ?? [];
+      return MOCK_CIE10_SAMPLE.filter((m) => codes.includes(m.code)).map((m) => ({
+        ...m,
+        display_code: `${m.code.slice(0, 3)}.${m.code.slice(3)}`
+      })) as T;
+    }
     case "cie10_search": {
-      // Muestra fija del catalogo real para disenar sin la app nativa.
-      const sample = [
-        { code: "J450", name: "ASMA PREDOMINANTEMENTE ALÉRGICA", warnings: [] as string[] },
-        { code: "J459", name: "ASMA, NO ESPECIFICADO", warnings: [] as string[] },
-        { code: "M545", name: "LUMBAGO NO ESPECIFICADO", warnings: [] as string[] },
-        { code: "K021", name: "CARIES DE LA DENTINA", warnings: [] as string[] },
-        { code: "O800", name: "PARTO ÚNICO ESPONTÁNEO, PRESENTACIÓN CEFÁLICA DE VÉRTICE", warnings: ["El catalogo restringe este codigo a mujeres."] }
-      ];
+      const sample = MOCK_CIE10_SAMPLE;
       const strip = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase();
       const q = strip(String(args?.query ?? "")).replace(".", "");
       return sample

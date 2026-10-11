@@ -5219,6 +5219,11 @@ body.dictating .encounter-modes:focus-within {
   font-size: 0.8rem;
 }
 
+/* Aviso bajo un diagnostico ya elegido: ocupa su propio renglon del chip. */
+.cie10-chip-warning {
+  flex-basis: 100%;
+}
+
 .cie10-empty {
   margin: 4px 0 0;
 }
