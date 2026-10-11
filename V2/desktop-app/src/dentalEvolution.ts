@@ -17,7 +17,8 @@ function statusLabel(list: Array<{ value: string; label: string }>, value: strin
   return (list.find((option) => option.value === value)?.label ?? value).toLowerCase();
 }
 
-export function buildDentalSessionSummary(payload: DentalPayload): string {
+/** Renglones del resumen de la sesion, sin encabezado (tambien los usa el PDF). */
+export function dentalSessionLines(payload: DentalPayload): string[] {
   const lines: string[] = [];
 
   const findings = Object.keys(payload.odontogram)
@@ -68,6 +69,11 @@ export function buildDentalSessionSummary(payload: DentalPayload): string {
     lines.push(`Proxima revision: ${payload.nextRevision.trim()}`);
   }
 
+  return lines;
+}
+
+export function buildDentalSessionSummary(payload: DentalPayload): string {
+  const lines = dentalSessionLines(payload);
   if (lines.length === 0) {
     return "";
   }

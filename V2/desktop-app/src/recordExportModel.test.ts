@@ -192,3 +192,48 @@ test("el expediente completo incluye la historia clinica estructurada; la nota d
   data.medical_history = null;
   assert.ok(!buildBlocks(data, "PDF_EXPEDIENTE").some((b) => b.type === "heading" && b.text === "Historia clínica"));
 });
+
+test("la consulta lleva la plantilla de medicina general despues del objetivo", () => {
+  const data = sample();
+  data.encounters[0].note!.objective = "TA 120/80";
+  data.encounters[0].note!.specialty = {
+    riskFactors: "",
+    physicalExam: "Sibilancias espiratorias bilaterales",
+    labs: "Espirometria pendiente",
+    followUp: "  "
+  };
+  const blocks = buildBlocks(data, "PDF_CONSULTA");
+  const labels = blocks.filter((b) => b.type === "field").map((b) => (b.type === "field" ? b.label : ""));
+  const objective = labels.indexOf("Objetivo");
+  assert.equal(labels[objective + 1], "Exploracion fisica");
+  assert.equal(labels[objective + 2], "Laboratorios y estudios");
+  assert.ok(!labels.includes("Factores de riesgo"), "los campos vacios no salen");
+  assert.ok(!labels.includes("Seguimiento / proxima cita"));
+});
+
+test("la consulta dental lleva el resumen del odontograma y el plan", () => {
+  const data = sample();
+  data.encounters[0].note!.specialty = {
+    schemaVersion: 2,
+    odontogram: { "16": { status: "MISSING", surfaces: {}, notes: "" } },
+    periodontogram: {},
+    plaque: {},
+    mouthConditions: [],
+    treatmentPlan: [{ id: "t1", toothId: "16", procedure: "Implante", priority: "HIGH", status: "PLANNED" }],
+    hygienePlan: "Cepillado 3 veces al dia",
+    nextRevision: ""
+  };
+  const dental = buildBlocks(data, "PDF_EXPEDIENTE").find((b) => b.type === "field" && b.label === "Odontología");
+  assert.ok(dental && dental.type === "field");
+  assert.match(dental.text, /Pieza 16/);
+  assert.match(dental.text, /Implante/);
+  assert.match(dental.text, /Plan de higiene: Cepillado 3 veces al dia/);
+  assert.doesNotMatch(dental.text, /Evolucion dental de la sesion/);
+});
+
+test("una nota sin plantilla de especialidad no agrega bloques", () => {
+  const data = sample();
+  const before = buildBlocks(data, "PDF_CONSULTA").length;
+  data.encounters[0].note!.specialty = {};
+  assert.equal(buildBlocks(data, "PDF_CONSULTA").length, before);
+});

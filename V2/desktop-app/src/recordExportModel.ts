@@ -2,6 +2,8 @@
 // bloques independiente del dibujo. Puro y probable sin pdf-lib.
 
 import { displayCode, type CodedDiagnosis } from "./cie10Model.ts";
+import { coerceDentalPayload, coerceGeneralMedicinePayload, GENERAL_MEDICINE_FIELDS } from "./clinicalProfiles.ts";
+import { dentalSessionLines } from "./dentalEvolution.ts";
 import { categoryLabel } from "./documentsModel.ts";
 import { formatMedicalHistoryForDisplay } from "./medicalHistoryFormat.ts";
 import { shortHash } from "./pdfText.ts";
@@ -55,6 +57,8 @@ export interface RecordExport {
       diagnosis: string;
       instructions: string;
       coded_diagnoses?: CodedDiagnosis[];
+      /** Plantilla de especialidad: medicina general u odontologia. */
+      specialty?: unknown;
     } | null;
     prescription: string | null;
   }>;
@@ -153,6 +157,24 @@ export function doctorHeader(data: RecordExport): { lines: string[]; missing: bo
   return { lines, missing: missingItems.length > 0, missingItems };
 }
 
+/**
+ * La plantilla de especialidad de la nota, como bloques del PDF: cada campo de
+ * medicina general con contenido, o el resumen dental de la sesion (el mismo
+ * de la nota de evolucion). Sin contenido no agrega nada.
+ */
+export function specialtyBlocks(specialty: unknown): Block[] {
+  if (!specialty || typeof specialty !== "object") return [];
+  if ("odontogram" in specialty) {
+    const lines = dentalSessionLines(coerceDentalPayload(specialty));
+    return lines.length > 0 ? [{ type: "field", label: "Odontología", text: lines.join("\n") }] : [];
+  }
+  const general = coerceGeneralMedicinePayload(specialty);
+  return GENERAL_MEDICINE_FIELDS.flatMap(({ key, label }) => {
+    const text = general[key]?.trim();
+    return text ? [{ type: "field" as const, label, text }] : [];
+  });
+}
+
 function codedLine(d: CodedDiagnosis): string {
   return `${displayCode(d.code)}  ${d.name}${d.principal ? "  (principal)" : ""}`;
 }
@@ -180,6 +202,7 @@ function encounterBlocks(encounter: RecordExport["encounters"][number], kind: Ex
   if (note) {
     field("Subjetivo", note.subjective);
     field("Objetivo", note.objective);
+    blocks.push(...specialtyBlocks(note.specialty));
     field("Análisis", note.assessment);
     const coded = note.coded_diagnoses ?? [];
     const diagnosisText = [...coded.map(codedLine), note.diagnosis.trim()].filter(Boolean).join("\n");
