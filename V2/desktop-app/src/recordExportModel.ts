@@ -3,6 +3,7 @@
 
 import { displayCode, type CodedDiagnosis } from "./cie10Model.ts";
 import { categoryLabel } from "./documentsModel.ts";
+import { formatMedicalHistoryForDisplay } from "./medicalHistoryFormat.ts";
 import { shortHash } from "./pdfText.ts";
 
 export type ExportKind = "PDF_CONSULTA" | "PDF_EXPEDIENTE";
@@ -37,6 +38,8 @@ export interface RecordExport {
     guardian: { name: string; relationship: string | null } | null;
   };
   sex: string | null;
+  /** Historia clinica estructurada vigente (JSON); opcional en motores anteriores. */
+  medical_history?: string | null;
   encounters: Array<{
     id: string;
     opened_at: string;
@@ -229,6 +232,18 @@ export function buildBlocks(data: RecordExport, kind: ExportKind, today = new Da
   if (kind === "PDF_EXPEDIENTE") {
     if (p.medical_background?.trim()) blocks.push({ type: "field", label: "Antecedentes personales", text: p.medical_background.trim() });
     if (p.family_background?.trim()) blocks.push({ type: "field", label: "Antecedentes familiares", text: p.family_background.trim() });
+    // La historia clinica estructurada, con los mismos grupos que el expediente.
+    const history = formatMedicalHistoryForDisplay(data.medical_history ?? null);
+    if (history.length > 0) {
+      blocks.push({ type: "heading", text: "Historia clínica" });
+      for (const group of history) {
+        blocks.push({
+          type: "field",
+          label: group.title,
+          text: group.rows.map((row) => `${row.label}: ${row.value}`).join("\n")
+        });
+      }
+    }
   }
   blocks.push({ type: "spacer" });
 
