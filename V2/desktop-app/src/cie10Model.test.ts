@@ -7,8 +7,7 @@ import {
   nextActiveIndex,
   removeDiagnosis,
   setPrincipal,
-  type CodedDiagnosis
-} from "./cie10Model.ts";
+  type CodedDiagnosis, warningsByCode } from "./cie10Model.ts";
 
 const asma = { code: "J459", name: "ASMA, NO ESPECIFICADO" };
 const lumbago = { code: "M545", name: "LUMBAGO NO ESPECIFICADO" };
@@ -59,4 +58,15 @@ test("las flechas recorren los resultados dando la vuelta", () => {
   assert.equal(nextActiveIndex(2, 3, "ArrowDown"), 0);
   assert.equal(nextActiveIndex(0, 3, "ArrowUp"), 2);
   assert.equal(nextActiveIndex(0, 0, "ArrowDown"), -1);
+});
+
+test("agrupa los avisos de los diagnosticos ya elegidos por clave", () => {
+  assert.deepEqual(
+    warningsByCode([
+      { code: "O800", display_code: "O80.0", name: "PARTO", warnings: ["El catalogo restringe este codigo a mujeres."] },
+      { code: "J459", display_code: "J45.9", name: "ASMA", warnings: [] }
+    ]),
+    { O800: ["El catalogo restringe este codigo a mujeres."] }
+  );
+  assert.deepEqual(warningsByCode([]), {});
 });

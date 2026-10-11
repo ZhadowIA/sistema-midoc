@@ -7,6 +7,7 @@ import {
   nextActiveIndex,
   removeDiagnosis,
   setPrincipal,
+  warningsByCode,
   type Cie10Match,
   type CodedDiagnosis
 } from "./cie10Model";
@@ -38,8 +39,10 @@ export function Cie10Picker({
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [catalog, setCatalog] = useState<CatalogInfo | null>(null);
+  const [chosenWarnings, setChosenWarnings] = useState<Record<string, string[]>>({});
   const listId = useId();
   const requestRef = useRef(0);
+  const codesKey = value.map((d) => d.code).join(",");
 
   useEffect(() => {
     call<CatalogInfo>("cie10_catalog_info")
@@ -68,6 +71,28 @@ export function Cie10Picker({
     }, 150);
     return () => clearTimeout(handle);
   }, [query, patientId]);
+
+  // Los diagnosticos ya elegidos se revisan con los datos actuales del paciente
+  // al abrir la nota y al cambiar la seleccion: el aviso no se queda en el
+  // buscador, y si se corrige el sexo o la fecha de nacimiento, vuelve a salir.
+  useEffect(() => {
+    const codes = codesKey ? codesKey.split(",") : [];
+    if (codes.length === 0) {
+      setChosenWarnings({});
+      return;
+    }
+    let current = true;
+    call<Cie10Match[]>("cie10_check", { codes, patientId })
+      .then((checked) => {
+        if (current) setChosenWarnings(warningsByCode(checked));
+      })
+      .catch(() => {
+        if (current) setChosenWarnings({});
+      });
+    return () => {
+      current = false;
+    };
+  }, [codesKey, patientId]);
 
   function choose(match: Cie10Match) {
     onChange(addDiagnosis(value, match));
@@ -108,6 +133,11 @@ export function Cie10Picker({
                   Quitar
                 </button>
               ) : null}
+              {chosenWarnings[diagnosis.code]?.map((warning) => (
+                <small key={warning} className="cie10-warning cie10-chip-warning">
+                  {warning}
+                </small>
+              ))}
             </li>
           ))}
         </ul>

@@ -52,3 +52,8 @@ export function nextActiveIndex(current: number, total: number, key: "ArrowDown"
   if (key === "ArrowDown") return current >= total - 1 ? 0 : current + 1;
   return current <= 0 ? total - 1 : current - 1;
 }
+
+/** Avisos de los diagnosticos ya elegidos, por clave; sin entrada si no hay aviso. */
+export function warningsByCode(checked: Cie10Match[]): Record<string, string[]> {
+  return Object.fromEntries(checked.filter((m) => m.warnings.length > 0).map((m) => [m.code, m.warnings]));
+}
