@@ -20,6 +20,7 @@ import {
 } from "./PatientResolution";
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
 import { defaultView, isViewAvailable, parseFrozenScopeFlag, workspaceNav, type WorkspaceView } from "./scope";
+import { parsePortalUrl } from "./portalConfig";
 import { LinkAccountForm, PendingActivation } from "./LicenseActivation";
 import {
   creditBalanceLine,
@@ -67,7 +68,7 @@ type AppointmentRow = EncounterAgendaAppointment;
 
 // La URL del portal se configura con cada entorno de despliegue; no forma
 // parte de las opciones que puede modificar el médico desde la aplicación.
-const PORTAL_URL = "http://localhost:3000";
+const PORTAL_URL = parsePortalUrl(import.meta.env.VITE_MIDOC_PORTAL_URL);
 
 // Desenlace de "Atender" desde la agenda: o se identifico el expediente del
 // paciente (se abre), o hay candidatos a duplicado que el medico debe revisar.
