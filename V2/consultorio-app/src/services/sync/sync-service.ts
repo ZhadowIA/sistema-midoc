@@ -20,6 +20,7 @@ import { getAiCreditCost } from "../ai/ai-credits";
 import { getCreditBalance } from "../ai/credit-ledger";
 
 const INBOX_BATCH_SIZE = 100;
+const CONTACT_REFRESH_MS = 5 * 60 * 1000;
 const AI_USAGE_BATCH_SIZE = 100;
 
 class SyncServiceError extends ServiceError {}
@@ -150,10 +151,29 @@ export async function linkSyncDevice(
   const deviceToken = generateOpaqueToken();
 
   const device = await prisma.$transaction(async (tx) => {
-    await tx.syncDevice.updateMany({
-      where: { doctorId: doctorUserId, status: SyncDeviceStatus.ACTIVE },
-      data: { status: SyncDeviceStatus.REVOKED, revokedAt: new Date() }
+    // Serializa los vinculos del mismo medico: dos al mismo tiempo no deben
+    // dejar mas equipos activos que los que admite la licencia.
+    await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${doctorUserId} FOR UPDATE`;
+
+    // Hasta `maxDevices` equipos sincronizan a la vez; sin licencia, uno (como
+    // antes). Al vincular uno de mas se revoca el de contacto mas antiguo.
+    const license = await tx.license.findUnique({
+      where: { doctorId: doctorUserId },
+      select: { maxDevices: true }
     });
+    const limit = license?.maxDevices ?? 1;
+    const active = await tx.syncDevice.findMany({
+      where: { doctorId: doctorUserId, status: SyncDeviceStatus.ACTIVE },
+      orderBy: [{ lastSyncAt: { sort: "asc", nulls: "first" } }, { createdAt: "asc" }],
+      select: { id: true }
+    });
+    const excess = active.slice(0, Math.max(0, active.length - (limit - 1)));
+    if (excess.length > 0) {
+      await tx.syncDevice.updateMany({
+        where: { id: { in: excess.map((item) => item.id) } },
+        data: { status: SyncDeviceStatus.REVOKED, revokedAt: new Date() }
+      });
+    }
 
     return tx.syncDevice.create({
       data: {
@@ -182,6 +202,36 @@ export async function linkSyncDevice(
  * dispositivo vinculado o aun no publico una llave). La usa la carga de
  * documentos del paciente para cifrar con sealed box.
  */
+/**
+ * El equipo principal es el ultimo vinculado: el unico que recibe y purga el
+ * buzon, porque el contenido se borra al confirmar y los documentos se cifran
+ * con su llave. Los demas equipos usan creditos, perfil y licencia.
+ */
+async function isPrimarySyncDevice(device: SyncDevice): Promise<boolean> {
+  const primary = await prisma.syncDevice.findFirst({
+    where: { doctorId: device.doctorId, status: SyncDeviceStatus.ACTIVE },
+    orderBy: { createdAt: "desc" },
+    select: { id: true }
+  });
+  return primary?.id === device.id;
+}
+
+/** El equipo se desvincula desde la app: deja libre su lugar. */
+export async function revokeSyncDevice(device: SyncDevice) {
+  await prisma.syncDevice.update({
+    where: { id: device.id },
+    data: { status: SyncDeviceStatus.REVOKED, revokedAt: new Date() }
+  });
+
+  await writeAuditLog({
+    actorUserId: device.doctorId,
+    entityType: "SyncDevice",
+    entityId: device.id,
+    action: "sync.device-unlinked",
+    source: "sync-service"
+  });
+}
+
 export async function getActiveDeviceDocumentKey(doctorId: string): Promise<string | null> {
   const device = await prisma.syncDevice.findFirst({
     where: { doctorId, status: SyncDeviceStatus.ACTIVE },
@@ -237,10 +287,22 @@ export async function authenticateSyncDevice(request: Request): Promise<SyncDevi
     throw new SyncServiceError("No autorizado.", 401);
   }
 
+  // Ultimo contacto del equipo, para saber cual revocar si se vincula uno de
+  // mas. Como mucho una escritura cada 5 minutos por equipo.
+  const now = new Date();
+  if (!device.lastSyncAt || now.getTime() - device.lastSyncAt.getTime() > CONTACT_REFRESH_MS) {
+    await prisma.syncDevice.update({ where: { id: device.id }, data: { lastSyncAt: now } });
+    return { ...device, lastSyncAt: now };
+  }
+
   return device;
 }
 
 export async function getSyncInbox(device: SyncDevice, cursor: number) {
+  if (!(await isPrimarySyncDevice(device))) {
+    return { events: [], nextCursor: cursor, primary: false };
+  }
+
   const events = await prisma.syncEvent.findMany({
     where: {
       doctorId: device.doctorId,
@@ -258,7 +320,8 @@ export async function getSyncInbox(device: SyncDevice, cursor: number) {
 
   return {
     events,
-    nextCursor: events.length > 0 ? events[events.length - 1]!.seq : cursor
+    nextCursor: events.length > 0 ? events[events.length - 1]!.seq : cursor,
+    primary: true
   };
 }
 
@@ -270,6 +333,11 @@ export async function getSyncInbox(device: SyncDevice, cursor: number) {
 export async function ackSyncEvents(device: SyncDevice, cursor: number) {
   if (!Number.isInteger(cursor) || cursor < 0) {
     throw new SyncServiceError("Cursor invalido.");
+  }
+
+  // Solo el equipo principal purga: un secundario no recibio el contenido.
+  if (!(await isPrimarySyncDevice(device))) {
+    return { acknowledged: device.cursor, purgedClinicalEvents: 0 };
   }
 
   const now = new Date();
@@ -369,6 +437,11 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
  * mientras no se haya purgado. La nube no puede descifrarlo.
  */
 export async function getMailboxDocumentForDevice(device: SyncDevice, documentId: string) {
+  // Cifrado para la llave del equipo principal: otro equipo no podria abrirlo.
+  if (!(await isPrimarySyncDevice(device))) {
+    throw new SyncServiceError("El buzon se entrega al equipo vinculado mas reciente.", 403);
+  }
+
   const document = await prisma.mailboxDocument.findFirst({
     where: { id: documentId, doctorId: device.doctorId },
     select: { id: true, ciphertext: true, sizeBytes: true, status: true }
@@ -396,6 +469,11 @@ export async function getMailboxDocumentForDevice(device: SyncDevice, documentId
  * descargarlo, solo mientras no se haya purgado, y la nube no puede descifrarlo.
  */
 export async function getMailboxPrecheckinForDevice(device: SyncDevice, precheckinId: string) {
+  // Cifrado para la llave del equipo principal: otro equipo no podria abrirlo.
+  if (!(await isPrimarySyncDevice(device))) {
+    throw new SyncServiceError("El buzon se entrega al equipo vinculado mas reciente.", 403);
+  }
+
   const submission = await prisma.precheckinSubmission.findFirst({
     where: {
       id: precheckinId,

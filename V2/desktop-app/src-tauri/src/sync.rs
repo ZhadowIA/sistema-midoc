@@ -521,6 +521,25 @@ pub async fn save_prescriber(
     })
 }
 
+/// Avisa al portal que este equipo se desvincula, para que deje libre su lugar
+/// de la licencia. Con poco tiempo de espera: desvincular nunca debe colgarse.
+pub async fn revoke_device(server_url: &str, device_token: &str) -> Result<(), SyncError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    let base = server_url.trim_end_matches('/');
+    let response = client
+        .delete(format!("{base}/api/sync/devices"))
+        .bearer_auth(device_token)
+        .send()
+        .await?;
+    // 401: el portal ya lo habia revocado; el resultado es el mismo.
+    if response.status().is_success() || response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(());
+    }
+    Err(error_from_response(response).await)
+}
+
 /// Inicia sesion en el portal y registra este equipo como dispositivo de
 /// sincronizacion. Devuelve el device token (se guarda en la base cifrada).
 pub async fn link_account(

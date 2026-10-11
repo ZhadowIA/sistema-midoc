@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { toErrorResponse } from "../../../../lib/api-error";
 import { requireDoctorUser } from "../../../../lib/auth/session-user";
-import { linkSyncDevice } from "../../../../services/sync/sync-service";
+import { authenticateSyncDevice, linkSyncDevice, revokeSyncDevice } from "../../../../services/sync/sync-service";
 
 const linkSchema = z.object({
   deviceName: z.string().max(120).optional(),
@@ -35,5 +35,16 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     return toErrorResponse(error, "No se pudo vincular el dispositivo.");
+  }
+}
+
+// La app se desvincula: el equipo deja de ocupar un lugar de la licencia.
+export async function DELETE(request: Request) {
+  try {
+    const device = await authenticateSyncDevice(request);
+    await revokeSyncDevice(device);
+    return NextResponse.json({ revoked: true });
+  } catch (error) {
+    return toErrorResponse(error, "No se pudo desvincular el equipo.");
   }
 }
