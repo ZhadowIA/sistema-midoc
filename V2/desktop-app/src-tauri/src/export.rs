@@ -88,6 +88,9 @@ pub struct RecordExport {
     pub doctor: ExportDoctor,
     pub patient: PatientRecord,
     pub sex: Option<String>,
+    /// Historia clinica estructurada vigente (JSON de antecedentes del paso 19),
+    /// para que el expediente exportado no se quede en el texto libre.
+    pub medical_history: Option<String>,
     pub encounters: Vec<ExportEncounter>,
     pub documents: Vec<ExportDocument>,
 }
@@ -198,6 +201,8 @@ pub fn record_export(
         },
         patient: profile.patient,
         sex,
+        medical_history: clinical::latest_patient_medical_history(conn, patient_id)?
+            .map(|version| version.payload_json),
         encounters,
         documents,
     })
@@ -369,6 +374,33 @@ mod tests {
         )
         .unwrap();
         (first.id, second.id)
+    }
+
+    #[test]
+    fn exports_the_current_structured_medical_history() {
+        let conn = test_conn("record-history");
+        seed(&conn);
+        assert_eq!(
+            record_export(&conn, "p1", None).unwrap().medical_history,
+            None
+        );
+
+        for (version, payload) in [(1, r#"{"bloodType":"O+"}"#), (2, r#"{"bloodType":"A+"}"#)] {
+            conn.execute(
+                "INSERT INTO patient_medical_history_versions
+                    (id, patient_id, version, payload_json, source, created_at)
+                 VALUES (?1, 'p1', ?2, ?3, 'DOCTOR_EDIT', '2026-10-01')",
+                params![format!("h{version}"), version, payload],
+            )
+            .unwrap();
+        }
+
+        // La historia clinica que sale es la version vigente, no la primera.
+        let export = record_export(&conn, "p1", None).unwrap();
+        assert_eq!(
+            export.medical_history.as_deref(),
+            Some(r#"{"bloodType":"A+"}"#)
+        );
     }
 
     #[test]

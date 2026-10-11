@@ -170,3 +170,25 @@ test("pie y nombre de archivo", () => {
   assert.match(footerText(sample(), 2, 3), /Ana Ruiz · Página 2 de 3$/);
   assert.equal(suggestedName(sample(), "PDF_EXPEDIENTE"), "Expediente Ana Ruiz 2026-10-06");
 });
+
+test("el expediente completo incluye la historia clinica estructurada; la nota de consulta no", () => {
+  const data = sample();
+  data.medical_history = JSON.stringify({
+    allergies: "Penicilina",
+    identification: { bloodType: "O+", ocupacion: "Docente" }
+  });
+  const expediente = buildBlocks(data, "PDF_EXPEDIENTE");
+  const heading = expediente.findIndex((b) => b.type === "heading" && b.text === "Historia clínica");
+  assert.ok(heading >= 0, "falta la seccion");
+  const fields = expediente.filter((b) => b.type === "field");
+  assert.ok(fields.some((b) => b.type === "field" && b.label === "Datos generales" && b.text.includes("Alergias: Penicilina")));
+  assert.ok(
+    fields.some(
+      (b) => b.type === "field" && b.label === "Ficha de identificacion" && b.text.includes("Grupo sanguineo: O+")
+    )
+  );
+  assert.ok(!buildBlocks(data, "PDF_CONSULTA").some((b) => b.type === "heading" && b.text === "Historia clínica"));
+
+  data.medical_history = null;
+  assert.ok(!buildBlocks(data, "PDF_EXPEDIENTE").some((b) => b.type === "heading" && b.text === "Historia clínica"));
+});
