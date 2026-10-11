@@ -1,13 +1,14 @@
 // Exportar a PDF (paso 28 r4): Rust arma los datos, la interfaz dibuja el PDF y
 // Rust abre "Guardar como", escribe el archivo y lo deja en la bitacora.
 // Exportar a FHIR R4 (paso 28 r5): Rust arma el Bundle con los documentos dentro
-// y lo escribe; el contenido no pasa por la pagina.
+// y lo escribe; los documentos no pasan por la pagina. La historia clinica y la
+// plantilla de especialidad las redacta la pagina con los formateadores del PDF.
 // Directorio en CSV (paso 28 r6): identificacion, contacto y actividad, sin
 // contenido clinico; tambien lo arma y lo escribe Rust.
 
 import { bytesToBase64 } from "./base64";
 import { call } from "./ipc";
-import { doctorHeader, suggestedName, type ExportKind, type RecordExport } from "./recordExportModel";
+import { doctorHeader, fhirNarratives, suggestedName, type ExportKind, type RecordExport } from "./recordExportModel";
 
 export interface ExportOutcome {
   /** null si el medico cancelo "Guardar como". */
@@ -44,7 +45,14 @@ export function exportMessage(outcome: ExportOutcome): string {
 
 /** Consulta (`encounterId`) o expediente completo en FHIR R4. null si el medico cancelo. */
 export async function exportRecordFhir(patientId: string, encounterId: string | null = null): Promise<string | null> {
-  const saved = await call<{ path: string; sha256: string } | null>("save_fhir_export", { patientId, encounterId });
+  // La historia clinica y la plantilla se redactan aqui con los formateadores del
+  // PDF; Rust arma el resto del Bundle y lo escribe.
+  const data = await call<RecordExport>("record_export", { patientId, encounterId });
+  const saved = await call<{ path: string; sha256: string } | null>("save_fhir_export", {
+    patientId,
+    encounterId,
+    narratives: fhirNarratives(data)
+  });
   return saved?.path ?? null;
 }
 

@@ -25,13 +25,18 @@
 //!
 //! Los ids son UUID v5 derivados de los ids locales: exportar dos veces el mismo
 //! expediente da los mismos recursos y el sistema receptor puede reconocerlos.
-//! La plantilla de especialidad (odontograma, etc.) todavia no se exporta.
+//! - Historia clinica estructurada y plantilla de especialidad -> secciones
+//!   narrativas (de `FhirNarratives`): la interfaz las arma con los mismos
+//!   formateadores del PDF, asi ambos documentos dicen lo mismo. La historia va
+//!   en "Antecedentes del paciente"; la plantilla, despues del objetivo de cada
+//!   consulta. Aun no se codifican (p. ej. el odontograma por pieza).
 
 use std::collections::{HashMap, HashSet};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Datelike as _;
 use rusqlite::{params, Connection};
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
@@ -47,6 +52,69 @@ const NAMESPACE: Uuid = Uuid::from_u128(0x8a33e6da_182a_475a_a41a_8b7c3d706990);
 
 const LOINC: &str = "http://loinc.org";
 const ICD10: &str = "http://hl7.org/fhir/sid/icd-10";
+
+/// Limites de lo que la interfaz puede mandar como narrativa (frontera).
+const MAX_NARRATIVE_SECTIONS: usize = 60;
+const MAX_NARRATIVE_ENCOUNTERS: usize = 5000;
+const MAX_NARRATIVE_LINES: usize = 400;
+const MAX_NARRATIVE_TITLE: usize = 120;
+pub(crate) const MAX_NARRATIVE_LINE: usize = 8000;
+
+/// Una seccion narrativa ya redactada por los formateadores de la interfaz.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct NarrativeSection {
+    pub title: String,
+    pub lines: Vec<String>,
+}
+
+/// Historia clinica estructurada (del expediente) y plantilla de especialidad
+/// (por consulta, con el id local de la consulta).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FhirNarratives {
+    #[serde(default)]
+    pub history: Vec<NarrativeSection>,
+    #[serde(default)]
+    pub encounters: HashMap<String, Vec<NarrativeSection>>,
+}
+
+impl FhirNarratives {
+    pub fn validate(&self) -> Result<(), ExportError> {
+        let invalid = |what: &str| Err(ExportError::Invalid(format!("narrativa invalida: {what}")));
+        if self.encounters.len() > MAX_NARRATIVE_ENCOUNTERS {
+            return invalid("demasiadas consultas");
+        }
+        for sections in std::iter::once(&self.history).chain(self.encounters.values()) {
+            if sections.len() > MAX_NARRATIVE_SECTIONS {
+                return invalid("demasiadas secciones");
+            }
+            for section in sections {
+                let title = section.title.trim();
+                if title.is_empty() || title.chars().count() > MAX_NARRATIVE_TITLE {
+                    return invalid("titulo vacio o demasiado largo");
+                }
+                if section.lines.len() > MAX_NARRATIVE_LINES
+                    || section
+                        .lines
+                        .iter()
+                        .any(|line| line.chars().count() > MAX_NARRATIVE_LINE)
+                {
+                    return invalid("demasiado texto");
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn narrative_sections(sections: &[NarrativeSection]) -> Vec<Value> {
+    sections
+        .iter()
+        .filter_map(|item| {
+            let lines: Vec<String> = item.lines.iter().filter_map(|line| clean(line)).collect();
+            (!lines.is_empty()).then(|| section(item.title.trim(), None, &lines, &[]))
+        })
+        .collect()
+}
 
 /// Un Bundle listo para escribir.
 pub struct FhirExport {
@@ -70,7 +138,9 @@ pub fn export_record(
     conn: &Connection,
     patient_id: &str,
     encounter_id: Option<&str>,
+    narratives: &FhirNarratives,
 ) -> Result<FhirExport, ExportError> {
+    narratives.validate()?;
     let data = export::record_export(conn, patient_id, encounter_id)?;
 
     let mut prescriptions = HashMap::new();
@@ -98,6 +168,7 @@ pub fn export_record(
         &data,
         &prescriptions,
         &document_data,
+        narratives,
         full_record,
         Uuid::new_v4(),
     );
@@ -128,6 +199,7 @@ pub(crate) fn build_bundle(
     data: &RecordExport,
     prescriptions: &HashMap<String, Vec<MedicationGroup>>,
     document_data: &HashMap<String, Vec<u8>>,
+    narratives: &FhirNarratives,
     full_record: bool,
     bundle_id: Uuid,
 ) -> Value {
@@ -173,6 +245,7 @@ pub(crate) fn build_bundle(
         if let Some(summary) = summary_composition(
             data,
             &allergy_ids,
+            &narratives.history,
             &patient_ref,
             &practitioner_ref,
             &generated_at,
@@ -188,9 +261,15 @@ pub(crate) fn build_bundle(
             .get(&encounter.id)
             .map(Vec::as_slice)
             .unwrap_or_default();
+        let template = narratives
+            .encounters
+            .get(&encounter.id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         entries.extend(encounter_resources(
             encounter,
             groups,
+            template,
             &data.doctor,
             &patient_ref,
             &practitioner_ref,
@@ -335,12 +414,13 @@ fn practitioner(doctor: &ExportDoctor, id: &str) -> Value {
 fn summary_composition(
     data: &RecordExport,
     allergy_ids: &[String],
+    history: &[NarrativeSection],
     patient_ref: &Value,
     practitioner_ref: &Value,
     generated_at: &str,
 ) -> Option<Value> {
     let p = &data.patient;
-    let sections: Vec<Value> = [
+    let mut sections: Vec<Value> = [
         (
             "Alergias",
             ("48765-2", "Allergies and adverse reactions Document"),
@@ -366,6 +446,8 @@ fn summary_composition(
         Some(section(title, Some(code), &[text], entries))
     })
     .collect();
+    // La historia clinica estructurada, despues de los antecedentes en texto.
+    sections.extend(narrative_sections(history));
 
     if sections.is_empty() {
         return None;
@@ -392,6 +474,7 @@ fn summary_composition(
 fn encounter_resources(
     encounter: &ExportEncounter,
     groups: &[MedicationGroup],
+    template: &[NarrativeSection],
     doctor: &ExportDoctor,
     patient_ref: &Value,
     practitioner_ref: &Value,
@@ -538,6 +621,8 @@ fn encounter_resources(
             ("61149-1", "Objective Narrative"),
             &note.objective,
         ));
+        // La plantilla de especialidad, despues del objetivo como en el PDF.
+        sections.extend(narrative_sections(template));
         sections.extend(text_section(
             "Análisis",
             ("51848-0", "Evaluation note"),
@@ -1041,7 +1126,12 @@ mod tests {
     }
 
     fn bundle_of(conn: &Connection, encounter: Option<&str>) -> Value {
-        serde_json::from_slice(&export_record(conn, "p1", encounter).unwrap().bytes).unwrap()
+        serde_json::from_slice(
+            &export_record(conn, "p1", encounter, &FhirNarratives::default())
+                .unwrap()
+                .bytes,
+        )
+        .unwrap()
     }
 
     fn resources<'a>(bundle: &'a Value, resource_type: &str) -> Vec<&'a Value> {
@@ -1121,7 +1211,13 @@ mod tests {
             "las alergias siempre viajan"
         );
 
-        let export = export_record(&conn, "p1", Some(&seeded.signed)).unwrap();
+        let export = export_record(
+            &conn,
+            "p1",
+            Some(&seeded.signed),
+            &FhirNarratives::default(),
+        )
+        .unwrap();
         assert_eq!(export.kind, "FHIR_CONSULTA");
         assert!(
             export
@@ -1308,7 +1404,7 @@ mod tests {
             );
         }
 
-        let export = export_record(&conn, "p1", None).unwrap();
+        let export = export_record(&conn, "p1", None, &FhirNarratives::default()).unwrap();
         assert_eq!(export.kind, "FHIR_EXPEDIENTE");
     }
 
@@ -1422,5 +1518,102 @@ mod tests {
             narrative(&["a<b>\n\"c\" & 'd'".into()])["div"],
             "<div xmlns=\"http://www.w3.org/1999/xhtml\"><p>a&lt;b&gt;<br/>&quot;c&quot; &amp; &#39;d&#39;</p></div>"
         );
+    }
+
+    fn narratives_for(encounter_id: &str) -> FhirNarratives {
+        FhirNarratives {
+            history: vec![NarrativeSection {
+                title: "Datos generales".into(),
+                lines: vec!["Alergias: Penicilina".into(), "Grupo sanguineo: O+".into()],
+            }],
+            encounters: HashMap::from([(
+                encounter_id.to_string(),
+                vec![NarrativeSection {
+                    title: "Exploracion fisica".into(),
+                    lines: vec!["Sibilancias espiratorias bilaterales".into()],
+                }],
+            )]),
+        }
+    }
+
+    #[test]
+    fn carries_the_structured_history_and_the_specialty_template_as_narrative() {
+        let conn = test_conn("narratives");
+        let seeded = seed(&conn);
+        let narratives = narratives_for(&seeded.signed);
+        let bundle: Value =
+            serde_json::from_slice(&export_record(&conn, "p1", None, &narratives).unwrap().bytes)
+                .unwrap();
+        assert!(
+            schema_errors(&bundle).is_empty(),
+            "{:?}",
+            schema_errors(&bundle)
+        );
+
+        let compositions = resources(&bundle, "Composition");
+        let summary = compositions
+            .iter()
+            .find(|c| c["title"] == "Antecedentes del paciente")
+            .unwrap();
+        let general = summary["section"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["title"] == "Datos generales")
+            .expect("la historia clinica estructurada");
+        assert!(general["text"]["div"]
+            .as_str()
+            .unwrap()
+            .contains("Grupo sanguineo: O+"));
+
+        // La plantilla va despues del objetivo, como en el PDF.
+        let signed_note = compositions
+            .iter()
+            .find(|c| {
+                c["encounter"]["reference"]
+                    == format!("urn:uuid:{}", resource_id("Encounter", &seeded.signed))
+            })
+            .unwrap();
+        let titles: Vec<&str> = signed_note["section"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["title"].as_str().unwrap())
+            .collect();
+        let objective = titles.iter().position(|t| *t == "Objetivo").unwrap();
+        assert_eq!(titles[objective + 1], "Exploracion fisica");
+    }
+
+    #[test]
+    fn rejects_narratives_beyond_the_limits() {
+        let mut narratives = FhirNarratives::default();
+        assert!(narratives.validate().is_ok());
+
+        narratives.history.push(NarrativeSection {
+            title: " ".into(),
+            lines: vec!["x".into()],
+        });
+        assert!(narratives.validate().is_err(), "titulo vacio");
+
+        narratives.history[0].title = "Datos".into();
+        narratives.history[0].lines = vec!["x".repeat(MAX_NARRATIVE_LINE + 1)];
+        assert!(narratives.validate().is_err(), "renglon demasiado largo");
+    }
+
+    #[test]
+    fn accepts_the_narratives_exactly_as_the_interface_sends_them() {
+        // Misma forma que `fhirNarratives` en recordExportModel.ts.
+        let narratives: FhirNarratives = serde_json::from_value(json!({
+            "history": [{ "title": "Datos generales", "lines": ["Alergias: Penicilina"] }],
+            "encounters": { "enc-1": [{ "title": "Odontología", "lines": ["Pieza 16: Ausente"] }] }
+        }))
+        .unwrap();
+        assert!(narratives.validate().is_ok());
+        assert_eq!(narratives.history[0].lines, vec!["Alergias: Penicilina"]);
+        assert_eq!(narratives.encounters["enc-1"][0].title, "Odontología");
+
+        // Sin narrativas (una interfaz anterior) tambien sirve.
+        let empty: FhirNarratives = serde_json::from_value(json!({})).unwrap();
+        assert!(empty.history.is_empty() && empty.encounters.is_empty());
     }
 }

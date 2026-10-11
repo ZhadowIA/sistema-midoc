@@ -294,6 +294,37 @@ export function buildBlocks(data: RecordExport, kind: ExportKind, today = new Da
   return blocks;
 }
 
+export interface NarrativeSection {
+  title: string;
+  lines: string[];
+}
+
+export interface FhirNarratives {
+  history: NarrativeSection[];
+  /** Por id local de la consulta. */
+  encounters: Record<string, NarrativeSection[]>;
+}
+
+/**
+ * Historia clinica estructurada y plantilla de especialidad para el FHIR,
+ * redactadas con los mismos formateadores del PDF: ambos documentos dicen lo
+ * mismo. Rust las valida y las pone como secciones narrativas.
+ */
+export function fhirNarratives(data: RecordExport): FhirNarratives {
+  const history = formatMedicalHistoryForDisplay(data.medical_history ?? null).map((group) => ({
+    title: group.title,
+    lines: group.rows.map((row) => `${row.label}: ${row.value}`)
+  }));
+  const encounters: Record<string, NarrativeSection[]> = {};
+  for (const encounter of data.encounters) {
+    const sections = specialtyBlocks(encounter.note?.specialty).flatMap((block) =>
+      block.type === "field" ? [{ title: block.label, lines: block.text.split("\n") }] : []
+    );
+    if (sections.length > 0) encounters[encounter.id] = sections;
+  }
+  return { history, encounters };
+}
+
 export function footerText(data: RecordExport, page: number, pages: number): string {
   return `Generado con MiDoc el ${formatDateTime(data.generated_at)} · ${patientName(data)} · Página ${page} de ${pages}`;
 }
