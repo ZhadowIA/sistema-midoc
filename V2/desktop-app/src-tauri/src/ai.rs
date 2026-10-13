@@ -1553,6 +1553,34 @@ fn build_context(detail: &clinical::EncounterDetail) -> String {
     parts.join("\n")
 }
 
+/// Lo que el medico ya capturo en la nota de esta consulta, mas alla del
+/// subjetivo que trae `build_context`. Sin esto, el SOAP asistido dejaba vacios
+/// objetivo, analisis y plan, y la evolucion dental no veia el plan. Solo lo
+/// usan los asistentes de texto: acomodo y Ayuda IA tienen su propio contexto.
+fn current_note_context(detail: &clinical::EncounterDetail) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(note) = &detail.note {
+        let content = &note.content;
+        for (label, value) in [
+            ("Objetivo capturado", &content.objective),
+            ("Analisis capturado", &content.assessment),
+            ("Plan capturado", &content.plan),
+            ("Diagnostico de esta consulta", &content.diagnosis),
+            ("Indicaciones capturadas", &content.instructions),
+        ] {
+            if !value.trim().is_empty() {
+                parts.push(format!("{label}: {value}"));
+            }
+        }
+    }
+    if let Some(prescription) = detail.prescription.as_deref() {
+        if !prescription.trim().is_empty() {
+            parts.push(format!("Receta capturada: {prescription}"));
+        }
+    }
+    parts.join("\n")
+}
+
 /// Borrador de texto libre (resumen, instrucciones, brechas). Como el SOAP, es
 /// solo un punto de partida para revision humana; nada se guarda automaticamente.
 #[derive(Debug, Serialize)]
@@ -1874,6 +1902,11 @@ fn run_assist(
     ensure_within_budget(conn)?;
 
     let mut context = build_context(&detail);
+    let note_context = current_note_context(&detail);
+    if !note_context.is_empty() {
+        context.push('\n');
+        context.push_str(&note_context);
+    }
     // La nota de evolucion dental se redacta desde lo capturado en la sesion:
     // el payload de especialidad (odontograma, plan, placa) entra al contexto
     // solo para este uso, ya seudonimizado como el resto.
@@ -1937,26 +1970,27 @@ fn run_assist(
 fn assist_task(usage_type: &str) -> (&'static str, &'static [&'static str]) {
     const COMMON: &str =
         "Usa solo lo que dice el contexto; si falta informacion, dilo en vez de suponerla.";
+    const PREVIOUS: &str = "Los diagnosticos previos son de otras consultas: no los presentes como diagnostico de esta consulta.";
     match usage_type {
         USAGE_SUMMARY => (
             "Redacta un resumen longitudinal del paciente para el medico: problemas activos, diagnosticos previos, alergias y antecedentes relevantes, y pendientes de seguimiento.",
-            &[COMMON, "Escribe en espanol, en parrafos breves o vinetas.", "No propongas tratamientos nuevos."],
+            &[COMMON, PREVIOUS, "Escribe en espanol, en parrafos breves o vinetas.", "No propongas tratamientos nuevos."],
         ),
         USAGE_INSTRUCTIONS => (
             "Redacta indicaciones para el paciente a partir del plan y las indicaciones capturadas por el medico.",
-            &[COMMON, "Usa lenguaje claro, sin tecnicismos, en segunda persona.", "No agregues medicamentos, dosis ni estudios que el medico no haya indicado.", "Incluye datos de alarma solo si se desprenden del contexto."],
+            &[COMMON, PREVIOUS, "Usa lenguaje claro, sin tecnicismos, en segunda persona.", "No agregues medicamentos, dosis ni estudios que el medico no haya indicado.", "Incluye datos de alarma solo si se desprenden del contexto."],
         ),
         USAGE_GAPS => (
             "Senala posibles brechas clinicas a revisar en esta consulta: datos faltantes, seguimientos pendientes o inconsistencias del expediente.",
-            &[COMMON, "Presentalas como preguntas o recordatorios para el criterio del medico, nunca como indicaciones.", "Escribe en vinetas."],
+            &[COMMON, PREVIOUS, "Presentalas como preguntas o recordatorios para el criterio del medico, nunca como indicaciones.", "Escribe en vinetas."],
         ),
         USAGE_DENTAL_EVOLUTION => (
             "Redacta la nota de evolucion odontologica de esta sesion a partir de lo capturado (odontograma, procedimientos, plan e indice de placa).",
-            &[COMMON, "Menciona pieza dental (FDI), hallazgo y procedimiento realizado o planeado.", "No inventes materiales, tecnicas ni piezas que no esten capturados."],
+            &[COMMON, PREVIOUS, "Menciona pieza dental (FDI), hallazgo y procedimiento realizado o planeado.", "No inventes materiales, tecnicas ni piezas que no esten capturados."],
         ),
         _ => (
             "Redacta un borrador de nota SOAP de esta consulta: subjetivo, objetivo, analisis, plan, diagnostico e indicaciones.",
-            &[COMMON, "Devuelve JSON valido siguiendo el schema.", "Deja vacia la seccion de la que no haya informacion; no la rellenes con supuestos."],
+            &[COMMON, PREVIOUS, "Devuelve JSON valido siguiendo el schema.", "Conserva lo que el medico ya capturo en cada seccion; puedes ordenarlo y redactarlo mejor, sin cambiar su sentido.", "Deja vacia la seccion de la que no haya informacion; no la rellenes con supuestos."],
         ),
     }
 }
@@ -3302,6 +3336,15 @@ mod tests {
         let conn = test_conn("assist-task");
         let (encounter_id, patient_id) = seed_encounter(&conn);
         grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+        let captured = NoteContent {
+            subjective: "Tos seca".into(),
+            objective: "Murmullo vesicular conservado".into(),
+            plan: "Hidratacion y control en 7 dias".into(),
+            ..NoteContent::default()
+        };
+        clinical::save_note(&conn, &encounter_id, &captured).unwrap();
+        clinical::save_prescription(&conn, &encounter_id, "Dextrometorfano 15 mg cada 8 h")
+            .unwrap();
         let soap = r#"{"subjective":"Tos de tres dias","objective":"","assessment":"","plan":"","diagnosis":"","instructions":""}"#;
         let recorder = RecordingProvider::new(soap);
         let registry = ProviderRegistry::new(vec![Box::new(recorder)]);
@@ -3318,6 +3361,16 @@ mod tests {
             .unwrap();
         assert!(input.starts_with("Tarea: Redacta un borrador de nota SOAP"));
         assert!(input.contains("Tos persistente"));
+        // Lo ya capturado en la nota y la receta llega al modelo, no solo el subjetivo.
+        assert!(input.contains("Subjetivo capturado: Tos seca"));
+        assert!(input.contains("Objetivo capturado: Murmullo vesicular conservado"));
+        assert!(input.contains("Plan capturado: Hidratacion y control en 7 dias"));
+        assert!(input.contains("Receta capturada: Dextrometorfano 15 mg cada 8 h"));
+        assert!(
+            !input.contains("Analisis capturado"),
+            "secciones vacias no se mandan"
+        );
+        assert!(input.contains("no los presentes como diagnostico de esta consulta"));
         assert!(!input.contains("Hugo"), "el nombre no sale del equipo");
         assert!(!input.contains("Paz"), "el apellido no sale del equipo");
         let version: String = conn
