@@ -208,6 +208,43 @@ pub fn record_export(
     })
 }
 
+const LAST_EXPORT_DIR_KEY: &str = "last_export_dir";
+
+/// Carpeta en la que abre "Guardar como": la de la ultima exportacion de este
+/// perfil si sigue existiendo; si no, `fallback` (Documentos). Sin esto el
+/// dialogo abre la primera vez en la carpeta de trabajo del proceso.
+pub fn export_start_dir(
+    conn: &Connection,
+    fallback: Option<std::path::PathBuf>,
+) -> Result<Option<std::path::PathBuf>, ExportError> {
+    let remembered: Option<String> = conn
+        .query_row(
+            "SELECT value FROM app_meta WHERE key = ?1",
+            params![LAST_EXPORT_DIR_KEY],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(remembered
+        .map(std::path::PathBuf::from)
+        .filter(|dir| dir.is_dir())
+        .or(fallback))
+}
+
+fn remember_export_dir(conn: &Connection, path: &std::path::Path) -> Result<(), ExportError> {
+    let Some(dir) = path.parent().and_then(|dir| dir.to_str()) else {
+        return Ok(());
+    };
+    if dir.is_empty() {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO app_meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = ?2",
+        params![LAST_EXPORT_DIR_KEY, dir],
+    )?;
+    Ok(())
+}
+
 /// Nombre de archivo seguro para sugerir en "Guardar como".
 pub fn suggested_file_name(stem: &str, extension: &str) -> String {
     let cleaned: String = stem
@@ -282,6 +319,7 @@ pub fn write_export_bytes(
         ));
     }
     std::fs::write(path, bytes)?;
+    remember_export_dir(conn, path)?;
     let sha256: String = Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -308,6 +346,42 @@ mod tests {
     use super::*;
     use crate::clinical::{CodedDiagnosis, NoteContent};
     use crate::db::open_encrypted;
+
+    #[test]
+    fn save_as_opens_in_the_last_export_folder() {
+        let conn = test_conn("start-dir");
+        let documents = std::path::PathBuf::from("C:/Users/medico/Documents");
+        assert_eq!(
+            export_start_dir(&conn, Some(documents.clone())).unwrap(),
+            Some(documents.clone())
+        );
+
+        let out = std::env::temp_dir()
+            .join("midoc-export-tests")
+            .join(format!("salida-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&out).unwrap();
+        let csv = out.join("directorio.csv");
+        write_export_bytes(
+            &conn,
+            &csv,
+            "directorio",
+            "CSV_DIRECTORIO",
+            b"a,b
+",
+        )
+        .unwrap();
+        assert_eq!(
+            export_start_dir(&conn, Some(documents.clone())).unwrap(),
+            Some(out.clone())
+        );
+
+        // Si la carpeta ya no existe se vuelve a Documentos.
+        std::fs::remove_dir_all(&out).unwrap();
+        assert_eq!(
+            export_start_dir(&conn, Some(documents.clone())).unwrap(),
+            Some(documents)
+        );
+    }
 
     fn test_conn(name: &str) -> Connection {
         let dir = std::env::temp_dir().join("midoc-export-tests");
