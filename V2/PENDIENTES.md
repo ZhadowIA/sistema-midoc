@@ -16,7 +16,6 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 ## Deuda tecnica
 
 - [ ] **Retirar `PaymentRecord`, `CashDrawerSession` y `WaitlistEntry` del portal** — vestigio del commit `0bc949e`, sin referencias en `src/` ni `tests/`; la caja y la lista de espera viven en la app del medico. Rama aparte. _(2026-09-05, PR #43)_
-- [ ] **El mock del navegador (`ipc.ts`) tiene una sola consulta fija** — `open_patient_encounter` devuelve siempre la de Hugo, sin importar el paciente; estorba para verificar flujos en el navegador. _(2026-10-05, paso 27)_
 - [ ] **Escape no cierra la vista previa de un PDF** — el visor de WebView2 retiene el teclado; se cierra con "Cerrar" o clic fuera. En imagenes si funciona. _(2026-10-05, paso 28 r1)_
 - [ ] **Arrastrar archivos desde el Explorador no se probo en la app real** — la prueba automatizada no puede arrastrar desde el Explorador; se verifico el soltar en el navegador y el selector de archivos en la app real. Probarlo a mano una vez. _(2026-10-05, paso 28 r1)_
 - [ ] **El visor de PDF permite descargar el archivo descifrado** — es una accion del medico y no viaja a la red, pero deja una copia en claro fuera de la base cifrada. Decidir si se oculta la barra del visor o se acepta como salida deliberada. _(2026-10-05, paso 28 r1)_
@@ -39,6 +38,7 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 
 ## Resueltos
 
+- [x] **El mock del navegador (`ipc.ts`) tenia una sola consulta fija** — `open_patient_encounter` abre una consulta por paciente y reutiliza la abierta de hoy, como el comando real; el `encounterId` de cada llamada elige la consulta y el historial muestra solo las firmadas del mismo paciente. 2026-10-12, rama `v2/mock-consultas-por-paciente`.
 - [x] **El portal no enviaba correos con el alcance congelado apagado** — verificar correo y recuperar contrasena salen en el momento (`sendAccountNotification`), sin depender de la cola congelada con las notificaciones al paciente. Si el proveedor falla, la peticion no se cae y la notificacion queda con su error para reintento. 2026-10-11, rama `v2/correos-de-cuenta`.
 - [x] **Los diagnosticos ya elegidos no mostraban los avisos del catalogo** — cada diagnostico elegido muestra su aviso de sexo, edad o consulta externa bajo el chip; se revisa con los datos actuales del paciente al abrir la nota y al cambiar la seleccion (`cie10_check`), asi que si se corrige el sexo o la fecha de nacimiento, vuelve a avisar. 2026-10-10, rama `v2/avisos-cie10-elegidos`.
 - [x] **El historial del expediente solo mostraba el diagnostico en texto libre** — el historial (expediente, directorio y dentro de la consulta) muestra tambien las claves CIE-10 de la version vigente de la nota, con la principal primero. Las dos consultas SQL duplicadas del historial quedaron en una. 2026-10-10, rama `v2/historial-cie10`.
