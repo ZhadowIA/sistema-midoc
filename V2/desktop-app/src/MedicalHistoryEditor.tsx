@@ -8,9 +8,9 @@ import {
 import type { MedicalHistoryPayload } from "./medicalHistoryReconciliation";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 
-function objectValue(value: unknown): Record<string, any> {
+function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, any>)
+    ? (value as Record<string, unknown>)
     : {};
 }
 

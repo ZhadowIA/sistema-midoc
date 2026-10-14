@@ -1,4 +1,4 @@
-export type MedicalHistoryPayload = Record<string, any>;
+export type MedicalHistoryPayload = Record<string, unknown>;
 export type ConflictDecision = "current" | "incoming";
 
 export interface MedicalHistoryConflict {
