@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import { parseIpcResponse } from "./ipcSchemas";
 
@@ -38,6 +39,26 @@ async function callMock<T>(command: string, args?: Record<string, unknown>): Pro
   const { mockCall } = await import("./ipcMock");
   const raw = await mockCall<unknown>(command, args);
   return parseIpcResponse<T>(command, raw);
+}
+
+/**
+ * Escape visto por el proceso nativo (`escape_key.rs`). Llega aunque el foco
+ * este dentro del visor de PDF de WebView2, que no deja pasar el teclado a la
+ * pagina. Devuelve la funcion para dejar de escuchar. En el navegador no hace
+ * nada: ahi el `keydown` de la pagina basta.
+ */
+export function onNativeEscape(handler: () => void): () => void {
+  if (!isTauri) return () => {};
+  let stopped = false;
+  let unlisten: (() => void) | undefined;
+  void listen("midoc://escape", handler).then((stop) => {
+    if (stopped) stop();
+    else unlisten = stop;
+  });
+  return () => {
+    stopped = true;
+    unlisten?.();
+  };
 }
 
 function formatIpcError(command: string, error: unknown): Error {
