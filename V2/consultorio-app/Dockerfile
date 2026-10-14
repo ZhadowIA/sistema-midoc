@@ -26,7 +26,7 @@ RUN npx prisma generate
 # inyectan en runtime desde Key Vault / App Settings (el server standalone
 # re-lee process.env al arrancar). No son secretos.
 ENV DATABASE_URL="postgresql://user:pass@localhost:5432/db?schema=public" \
-    NEXTAUTH_SECRET="build-time-placeholder" \
+    SESSION_SECRET="build-time-placeholder" \
     APP_BASE_URL="https://example.com" \
     QUESTIONNAIRE_TOKEN_SECRET="build-time-placeholder" \
     TERMS_VERSION="2026-05" \

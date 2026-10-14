@@ -45,9 +45,8 @@ jobs:
       NODE_ENV: test
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/consultorio_test?schema=public
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/consultorio_test?schema=public
-      NEXTAUTH_SECRET: ci_nextauth_secret_min_32_chars_for_tests
+      SESSION_SECRET: ci_session_secret_min_32_chars_for_tests
       APP_BASE_URL: http://localhost:3000
-      APP_TIMEZONE: America/Chihuahua
       QUESTIONNAIRE_TOKEN_SECRET: ci_questionnaire_secret_min_32_chars
       TERMS_VERSION: v1
       PRIVACY_VERSION: v1
