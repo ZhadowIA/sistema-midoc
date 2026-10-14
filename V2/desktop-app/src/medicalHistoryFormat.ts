@@ -135,7 +135,7 @@ export const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
       { key: "nombre", label: "Nombre(s)" },
       { key: "apellidoPaterno", label: "Apellido paterno" },
       { key: "apellidoMaterno", label: "Apellido materno" },
-      { key: "fechaNacimiento", label: "Fecha de nacimiento" },
+      { key: "fechaNacimiento", label: "Fecha de nacimiento", kind: "date" },
       { key: "lugarNacimiento", label: "Lugar de nacimiento" },
       { key: "estadoCivil", label: "Estado civil" },
       { key: "ocupacion", label: "Ocupacion" },
@@ -162,16 +162,16 @@ export const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
     key: "nonPathological",
     title: "Antecedentes personales no patologicos",
     fields: [
-      { key: "banoDiario", label: "Bano (veces/sem)" },
-      { key: "aseoBucal", label: "Aseo bucal (veces/sem)" },
-      { key: "cambioRopa", label: "Cambio de ropa (veces/sem)" },
-      { key: "leche", label: "Leche (veces/sem)" },
-      { key: "carne", label: "Carne (veces/sem)" },
-      { key: "huevos", label: "Huevos (veces/sem)" },
-      { key: "verduras", label: "Verduras (veces/sem)" },
-      { key: "frutas", label: "Frutas (veces/sem)" },
-      { key: "cereales", label: "Cereales (veces/sem)" },
-      { key: "leguminosas", label: "Leguminosas (veces/sem)" },
+      { key: "banoDiario", label: "Bano (veces/sem)", kind: "number" },
+      { key: "aseoBucal", label: "Aseo bucal (veces/sem)", kind: "number" },
+      { key: "cambioRopa", label: "Cambio de ropa (veces/sem)", kind: "number" },
+      { key: "leche", label: "Leche (veces/sem)", kind: "number" },
+      { key: "carne", label: "Carne (veces/sem)", kind: "number" },
+      { key: "huevos", label: "Huevos (veces/sem)", kind: "number" },
+      { key: "verduras", label: "Verduras (veces/sem)", kind: "number" },
+      { key: "frutas", label: "Frutas (veces/sem)", kind: "number" },
+      { key: "cereales", label: "Cereales (veces/sem)", kind: "number" },
+      { key: "leguminosas", label: "Leguminosas (veces/sem)", kind: "number" },
       ...immunization("antitetanica", "Inmunizacion antitetanica"),
       ...immunization("antisarampion", "Inmunizacion antisarampion"),
       ...immunization("antirubeola", "Inmunizacion antirubeola"),
@@ -189,8 +189,8 @@ export const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
         { value: "rentada", label: "Rentada" },
         { value: "prestada", label: "Prestada" }
       ] },
-      { key: "personasCasa", label: "Personas que habitan la casa" },
-      { key: "habitaciones", label: "Habitaciones" },
+      { key: "personasCasa", label: "Personas que habitan la casa", kind: "number" },
+      { key: "habitaciones", label: "Habitaciones", kind: "number" },
       { key: "aguaPotable", label: "Cuenta con agua potable", kind: "yesno" },
       { key: "drenaje", label: "Cuenta con drenaje", kind: "yesno" },
       { key: "animales", label: "Animales en casa" },
@@ -207,7 +207,7 @@ export const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
     title: "Antecedentes gineco-obstetricos",
     onlyForSex: "F",
     fields: [
-      { key: "menarca", label: "Edad de la primera menstruacion" },
+      { key: "menarca", label: "Edad de la primera menstruacion", kind: "number" },
       { key: "ciclo", label: "Ciclo (cada cuantos dias y duracion)" },
       { key: "dismenorrea", label: "Presenta dolor", kind: "yesno" },
       { key: "dismenorreaMedicamento", label: "Requiere medicamentos", kind: "yesno", showWhen: { field: "dismenorrea", equals: "si" } },
@@ -215,7 +215,7 @@ export const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
       { key: "gestas", label: "Numero de embarazos", kind: "number", showWhen: { field: "embarazos", equals: "si" } },
       { key: "abortos", label: "Abortos", kind: "number", showWhen: { field: "embarazos", equals: "si" } },
       { key: "complicacionesObst", label: "Complicaciones", showWhen: { field: "embarazos", equals: "si" } },
-      { key: "fum", label: "Fecha de ultima regla" }
+      { key: "fum", label: "Fecha de ultima regla", kind: "date" }
     ]
   },
   {
@@ -274,10 +274,10 @@ export const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
       ]),
       { key: "genuColor", label: "Color, cantidad, olor" },
       { key: "genuAnticonceptivo", label: "Usa metodo anticonceptivo", kind: "yesno" },
-      { key: "genuAnticonceptivoCual", label: "Cual metodo" },
-      { key: "genuAnticonceptivoDesde", label: "Desde cuando" },
+      { key: "genuAnticonceptivoCual", label: "Cual metodo", showWhen: { field: "genuAnticonceptivo", equals: "si" } },
+      { key: "genuAnticonceptivoDesde", label: "Desde cuando", showWhen: { field: "genuAnticonceptivo", equals: "si" } },
       { key: "nervDuermesBien", label: "Duerme bien", kind: "yesno" },
-      { key: "nervHorasDuermes", label: "Horas que duerme" },
+      { key: "nervHorasDuermes", label: "Horas que duerme", kind: "number" },
       ...yesNo([
         ["nervVision", "Problemas de vision"],
         ["nervAudicion", "Problemas de audicion"],
@@ -285,11 +285,11 @@ export const MEDICAL_HISTORY_GROUPS: GroupDef[] = [
         ["muscDoloresArticulares", "Dolores articulares"],
         ["muscDoloresMusculares", "Dolores musculares"]
       ]),
-      { key: "embFur", label: "Embarazo: fecha de ultima regla" },
-      { key: "embProbableParto", label: "Embarazo: fecha probable de parto" },
-      { key: "embSemanas", label: "Semanas de embarazo" },
-      { key: "embSintomas", label: "Embarazo: sintomas" },
-      { key: "embAntecedentes", label: "Embarazo: antecedentes de importancia" }
+      { key: "embFur", label: "Embarazo: fecha de ultima regla", kind: "date" },
+      { key: "embProbableParto", label: "Embarazo: fecha probable de parto", kind: "date" },
+      { key: "embSemanas", label: "Semanas de embarazo", kind: "number" },
+      { key: "embSintomas", label: "Embarazo: sintomas", kind: "textarea" },
+      { key: "embAntecedentes", label: "Embarazo: antecedentes de importancia", kind: "textarea" }
     ]
   }
 ];
