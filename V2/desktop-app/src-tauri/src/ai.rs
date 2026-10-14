@@ -68,11 +68,13 @@ const TEXT_USAGES: &[&str] = &[
     USAGE_DENTAL_EVOLUTION,
 ];
 
-const PROMPT_VERSION_SOAP: &str = "soap-assist/v1";
-const PROMPT_VERSION_SUMMARY: &str = "summary/v1";
-const PROMPT_VERSION_INSTRUCTIONS: &str = "instructions/v1";
-const PROMPT_VERSION_GAPS: &str = "gaps/v1";
-const PROMPT_VERSION_DENTAL_EVOLUTION: &str = "dental-evolution/v1";
+// v2 (2026-10-13): el modelo recibe la tarea y las reglas de cada uso; en v1
+// solo recibia el contexto y un proveedor real no sabia que redactar.
+const PROMPT_VERSION_SOAP: &str = "soap-assist/v2";
+const PROMPT_VERSION_SUMMARY: &str = "summary/v2";
+const PROMPT_VERSION_INSTRUCTIONS: &str = "instructions/v2";
+const PROMPT_VERSION_GAPS: &str = "gaps/v2";
+const PROMPT_VERSION_DENTAL_EVOLUTION: &str = "dental-evolution/v2";
 const PROMPT_VERSION_TRANSCRIPTION: &str = "transcription/v1";
 pub const PROMPT_VERSION_CONSULTATION_STRUCTURING: &str = "consultation-structuring/v1";
 pub const PROMPT_VERSION_CLINICAL_AID: &str = "clinical-aid/v2";
@@ -299,7 +301,13 @@ impl AiProvider for FakeProvider {
 
     fn generate(&self, request: &AiRequest) -> Result<AiResponse, AiError> {
         let start = std::time::Instant::now();
-        let context = request.redacted_input.trim();
+        // Los asistentes de texto anteponen tarea y reglas (`assist_prompt`): el
+        // borrador de demostracion repite solo el contexto de la consulta.
+        let context = request
+            .redacted_input
+            .split_once(ASSIST_CONTEXT_HEADER)
+            .map_or(request.redacted_input.as_str(), |(_, context)| context)
+            .trim();
 
         // Cada tipo de uso produce una salida determinista. El SOAP es JSON
         // estructurado (precarga el editor); los demas son texto. Ninguna
@@ -574,20 +582,13 @@ impl AiProvider for GeminiProvider {
             self.model_path()
         );
 
-        let generation_config = if request.usage_type == USAGE_CONSULTATION_STRUCTURING {
-            serde_json::json!({
+        let generation_config = match response_schema_for(&request.usage_type) {
+            Some(schema) => serde_json::json!({
                 "temperature": 0.1,
                 "responseMimeType": "application/json",
-                "responseJsonSchema": consultation_structuring_schema()
-            })
-        } else if request.usage_type == USAGE_CLINICAL_AID {
-            serde_json::json!({
-                "temperature": 0.1,
-                "responseMimeType": "application/json",
-                "responseJsonSchema": clinical_aid_schema()
-            })
-        } else {
-            serde_json::json!({ "temperature": 0.2 })
+                "responseJsonSchema": schema
+            }),
+            None => serde_json::json!({ "temperature": 0.2 }),
         };
 
         let body = serde_json::json!({
@@ -728,27 +729,16 @@ impl AiProvider for OpenAiProvider {
         // strict=false: los esquemas no declaran additionalProperties y el modo
         // estricto de OpenAI los rechazaria; la validacion dura ya ocurre al
         // deserializar la salida en Rust.
-        let response_format = if request.usage_type == USAGE_CONSULTATION_STRUCTURING {
-            Some(serde_json::json!({
+        let response_format = response_schema_for(&request.usage_type).map(|schema| {
+            serde_json::json!({
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "consultation_structuring",
+                    "name": request.usage_type.to_lowercase(),
                     "strict": false,
-                    "schema": consultation_structuring_schema()
+                    "schema": schema
                 }
-            }))
-        } else if request.usage_type == USAGE_CLINICAL_AID {
-            Some(serde_json::json!({
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "clinical_aid",
-                    "strict": false,
-                    "schema": clinical_aid_schema()
-                }
-            }))
-        } else {
-            None
-        };
+            })
+        });
 
         // Sin `temperature`: la familia gpt-5 solo acepta el valor por defecto y
         // fijarlo rechazaria la solicitud completa.
@@ -847,6 +837,35 @@ impl AiProvider for OpenAiProvider {
 }
 
 #[cfg_attr(test, allow(dead_code))]
+/// Esquema JSON que se pide al proveedor para los usos de salida estructurada.
+/// Gemini, OpenAI y la pasarela usan el mismo: un uso sin esquema recibe texto.
+pub fn response_schema_for(usage_type: &str) -> Option<serde_json::Value> {
+    match usage_type {
+        USAGE_SOAP_ASSIST => Some(soap_schema()),
+        USAGE_CONSULTATION_STRUCTURING => Some(consultation_structuring_schema()),
+        USAGE_CLINICAL_AID => Some(clinical_aid_schema()),
+        _ => None,
+    }
+}
+
+/// Borrador SOAP: las secciones de `NoteContent` que el medico revisa. La
+/// plantilla de especialidad y las claves CIE-10 no las propone la IA.
+fn soap_schema() -> serde_json::Value {
+    let section = serde_json::json!({ "type": "string" });
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "subjective": section,
+            "objective": section,
+            "assessment": section,
+            "plan": section,
+            "diagnosis": section,
+            "instructions": section
+        },
+        "required": ["subjective", "objective", "assessment", "plan", "diagnosis", "instructions"]
+    })
+}
+
 fn consultation_structuring_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -902,13 +921,7 @@ pub fn gateway_request_body(
     run_id: &str,
     model: Option<&str>,
 ) -> serde_json::Value {
-    let schema = if request.usage_type == USAGE_CONSULTATION_STRUCTURING {
-        Some(consultation_structuring_schema())
-    } else if request.usage_type == USAGE_CLINICAL_AID {
-        Some(clinical_aid_schema())
-    } else {
-        None
-    };
+    let schema = response_schema_for(&request.usage_type);
     let mut body = serde_json::json!({
         "runId": run_id,
         "usageType": request.usage_type,
@@ -1540,6 +1553,34 @@ fn build_context(detail: &clinical::EncounterDetail) -> String {
     parts.join("\n")
 }
 
+/// Lo que el medico ya capturo en la nota de esta consulta, mas alla del
+/// subjetivo que trae `build_context`. Sin esto, el SOAP asistido dejaba vacios
+/// objetivo, analisis y plan, y la evolucion dental no veia el plan. Solo lo
+/// usan los asistentes de texto: acomodo y Ayuda IA tienen su propio contexto.
+fn current_note_context(detail: &clinical::EncounterDetail) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(note) = &detail.note {
+        let content = &note.content;
+        for (label, value) in [
+            ("Objetivo capturado", &content.objective),
+            ("Analisis capturado", &content.assessment),
+            ("Plan capturado", &content.plan),
+            ("Diagnostico de esta consulta", &content.diagnosis),
+            ("Indicaciones capturadas", &content.instructions),
+        ] {
+            if !value.trim().is_empty() {
+                parts.push(format!("{label}: {value}"));
+            }
+        }
+    }
+    if let Some(prescription) = detail.prescription.as_deref() {
+        if !prescription.trim().is_empty() {
+            parts.push(format!("Receta capturada: {prescription}"));
+        }
+    }
+    parts.join("\n")
+}
+
 /// Borrador de texto libre (resumen, instrucciones, brechas). Como el SOAP, es
 /// solo un punto de partida para revision humana; nada se guarda automaticamente.
 #[derive(Debug, Serialize)]
@@ -1861,6 +1902,11 @@ fn run_assist(
     ensure_within_budget(conn)?;
 
     let mut context = build_context(&detail);
+    let note_context = current_note_context(&detail);
+    if !note_context.is_empty() {
+        context.push('\n');
+        context.push_str(&note_context);
+    }
     // La nota de evolucion dental se redacta desde lo capturado en la sesion:
     // el payload de especialidad (odontograma, plan, placa) entra al contexto
     // solo para este uso, ya seudonimizado como el resto.
@@ -1874,8 +1920,9 @@ fn run_assist(
             }
         }
     }
+    let prompt = assist_prompt(usage_type, &context);
     let redacted = redact(
-        &context,
+        &prompt,
         &detail.patient.first_name,
         &detail.patient.last_name,
     );
@@ -1917,6 +1964,60 @@ fn run_assist(
     Ok((run_id, provider, response))
 }
 
+/// Tarea y reglas de cada asistente de texto. Sin ellas el modelo solo recibe
+/// el contexto de la consulta y no sabe que redactar (el proveedor fake si lo
+/// sabe porque arma su salida por tipo de uso, y eso ocultaba el hueco).
+fn assist_task(usage_type: &str) -> (&'static str, &'static [&'static str]) {
+    const COMMON: &str =
+        "Usa solo lo que dice el contexto; si falta informacion, dilo en vez de suponerla.";
+    const PREVIOUS: &str = "Los diagnosticos previos son de otras consultas: no los presentes como diagnostico de esta consulta.";
+    match usage_type {
+        USAGE_SUMMARY => (
+            "Redacta un resumen longitudinal del paciente para el medico: problemas activos, diagnosticos previos, alergias y antecedentes relevantes, y pendientes de seguimiento.",
+            &[COMMON, PREVIOUS, "Escribe en espanol, en parrafos breves o vinetas.", "No propongas tratamientos nuevos."],
+        ),
+        USAGE_INSTRUCTIONS => (
+            "Redacta indicaciones para el paciente a partir del plan y las indicaciones capturadas por el medico.",
+            &[COMMON, PREVIOUS, "Usa lenguaje claro, sin tecnicismos, en segunda persona.", "No agregues medicamentos, dosis ni estudios que el medico no haya indicado.", "Incluye datos de alarma solo si se desprenden del contexto."],
+        ),
+        USAGE_GAPS => (
+            "Senala posibles brechas clinicas a revisar en esta consulta: datos faltantes, seguimientos pendientes o inconsistencias del expediente.",
+            &[COMMON, PREVIOUS, "Presentalas como preguntas o recordatorios para el criterio del medico, nunca como indicaciones.", "Escribe en vinetas."],
+        ),
+        USAGE_DENTAL_EVOLUTION => (
+            "Redacta la nota de evolucion odontologica de esta sesion a partir de lo capturado (odontograma, procedimientos, plan e indice de placa).",
+            &[COMMON, PREVIOUS, "Menciona pieza dental (FDI), hallazgo y procedimiento realizado o planeado.", "No inventes materiales, tecnicas ni piezas que no esten capturados."],
+        ),
+        _ => (
+            "Redacta un borrador de nota SOAP de esta consulta: subjetivo, objetivo, analisis, plan, diagnostico e indicaciones.",
+            &[COMMON, PREVIOUS, "Devuelve JSON valido siguiendo el schema.", "Conserva lo que el medico ya capturo en cada seccion; puedes ordenarlo y redactarlo mejor, sin cambiar su sentido.", "Deja vacia la seccion de la que no haya informacion; no la rellenes con supuestos."],
+        ),
+    }
+}
+
+const ASSIST_CONTEXT_HEADER: &str = "Contexto de la consulta:\n";
+
+/// Entrada que recibe el modelo: tarea, reglas y el contexto de la consulta.
+fn assist_prompt(usage_type: &str, context: &str) -> String {
+    let (task, rules) = assist_task(usage_type);
+    let rules: Vec<String> = rules.iter().map(|rule| format!("- {rule}")).collect();
+    format!(
+        "Tarea: {task}\nReglas:\n{}\n\n{ASSIST_CONTEXT_HEADER}{context}",
+        rules.join("\n")
+    )
+}
+
+/// Quita la cerca de codigo (```json ... ```) con que algunos modelos envuelven
+/// el JSON aun cuando se les pide salida estructurada.
+fn strip_json_fence(output: &str) -> &str {
+    let trimmed = output.trim();
+    let Some(inner) = trimmed.strip_prefix("```") else {
+        return trimmed;
+    };
+    let inner = inner.strip_prefix("json").unwrap_or(inner);
+    inner.strip_suffix("```").unwrap_or(inner).trim()
+}
+
 /// Genera un borrador SOAP asistido (estructurado). No guarda nota.
 pub fn assist_soap(
     conn: &Connection,
@@ -1924,7 +2025,7 @@ pub fn assist_soap(
     registry: &ProviderRegistry,
 ) -> Result<SoapDraft, AiError> {
     let (run_id, provider, response) = run_assist(conn, encounter_id, USAGE_SOAP_ASSIST, registry)?;
-    let draft: NoteContent = serde_json::from_str(&response.output)
+    let draft: NoteContent = serde_json::from_str(strip_json_fence(&response.output))
         .map_err(|e| AiError::Invalid(format!("borrador IA invalido: {e}")))?;
     Ok(SoapDraft {
         run_id,
@@ -3172,6 +3273,147 @@ mod tests {
         assert!(body.get("model").is_none());
     }
 
+    /// Guarda la entrada que recibio el modelo y devuelve una salida fija.
+    struct RecordingProvider {
+        output: String,
+        seen: std::sync::Mutex<Vec<AiRequest>>,
+    }
+
+    impl RecordingProvider {
+        fn new(output: &str) -> Self {
+            Self {
+                output: output.into(),
+                seen: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl AiProvider for RecordingProvider {
+        fn name(&self) -> &str {
+            "grabadora"
+        }
+
+        fn generate(&self, request: &AiRequest) -> Result<AiResponse, AiError> {
+            self.seen.lock().unwrap().push(AiRequest {
+                usage_type: request.usage_type.clone(),
+                prompt_version: request.prompt_version.clone(),
+                redacted_input: request.redacted_input.clone(),
+            });
+            Ok(AiResponse {
+                gateway_run_id: None,
+                output: self.output.clone(),
+                model_version: "grabadora-1".into(),
+                estimated_cost_cents: 0,
+                latency_ms: 0,
+                cloud_transcription: None,
+            })
+        }
+    }
+
+    #[test]
+    fn every_text_assist_tells_the_model_its_task() {
+        for usage in [
+            USAGE_SOAP_ASSIST,
+            USAGE_SUMMARY,
+            USAGE_INSTRUCTIONS,
+            USAGE_GAPS,
+            USAGE_DENTAL_EVOLUTION,
+        ] {
+            let prompt = assist_prompt(usage, "Motivo de consulta: Tos persistente");
+            let (task, rules) = assist_task(usage);
+            assert!(prompt.starts_with(&format!("Tarea: {task}")), "{usage}");
+            assert!(rules.iter().all(|rule| prompt.contains(rule)), "{usage}");
+            assert!(
+                prompt.ends_with("Motivo de consulta: Tos persistente"),
+                "{usage}"
+            );
+        }
+        assert_ne!(assist_task(USAGE_SUMMARY).0, assist_task(USAGE_GAPS).0);
+    }
+
+    #[test]
+    fn the_task_reaches_the_provider_still_pseudonymized() {
+        let conn = test_conn("assist-task");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+        let captured = NoteContent {
+            subjective: "Tos seca".into(),
+            objective: "Murmullo vesicular conservado".into(),
+            plan: "Hidratacion y control en 7 dias".into(),
+            ..NoteContent::default()
+        };
+        clinical::save_note(&conn, &encounter_id, &captured).unwrap();
+        clinical::save_prescription(&conn, &encounter_id, "Dextrometorfano 15 mg cada 8 h")
+            .unwrap();
+        let soap = r#"{"subjective":"Tos de tres dias","objective":"","assessment":"","plan":"","diagnosis":"","instructions":""}"#;
+        let recorder = RecordingProvider::new(soap);
+        let registry = ProviderRegistry::new(vec![Box::new(recorder)]);
+
+        let draft = assist_soap(&conn, &encounter_id, &registry).unwrap();
+        assert_eq!(draft.draft.subjective, "Tos de tres dias");
+
+        let input: String = conn
+            .query_row(
+                "SELECT input_redacted FROM ai_runs WHERE id = ?1",
+                params![draft.run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(input.starts_with("Tarea: Redacta un borrador de nota SOAP"));
+        assert!(input.contains("Tos persistente"));
+        // Lo ya capturado en la nota y la receta llega al modelo, no solo el subjetivo.
+        assert!(input.contains("Subjetivo capturado: Tos seca"));
+        assert!(input.contains("Objetivo capturado: Murmullo vesicular conservado"));
+        assert!(input.contains("Plan capturado: Hidratacion y control en 7 dias"));
+        assert!(input.contains("Receta capturada: Dextrometorfano 15 mg cada 8 h"));
+        assert!(
+            !input.contains("Analisis capturado"),
+            "secciones vacias no se mandan"
+        );
+        assert!(input.contains("no los presentes como diagnostico de esta consulta"));
+        assert!(!input.contains("Hugo"), "el nombre no sale del equipo");
+        assert!(!input.contains("Paz"), "el apellido no sale del equipo");
+        let version: String = conn
+            .query_row(
+                "SELECT prompt_version FROM ai_runs WHERE id = ?1",
+                params![draft.run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, "soap-assist/v2");
+    }
+
+    #[test]
+    fn the_soap_draft_is_requested_as_json_from_every_provider() {
+        let schema = response_schema_for(USAGE_SOAP_ASSIST).unwrap();
+        assert_eq!(schema["required"].as_array().unwrap().len(), 6);
+        assert!(response_schema_for(USAGE_SUMMARY).is_none());
+        assert!(response_schema_for(USAGE_DENTAL_EVOLUTION).is_none());
+
+        let request = AiRequest {
+            usage_type: USAGE_SOAP_ASSIST.into(),
+            prompt_version: PROMPT_VERSION_SOAP.into(),
+            redacted_input: "Tarea: ...".into(),
+        };
+        let body = gateway_request_body(&request, "run-soap", None);
+        assert_eq!(body["responseSchema"], schema);
+        assert_eq!(body["temperature"], 0.1);
+    }
+
+    #[test]
+    fn a_soap_draft_wrapped_in_a_code_fence_is_accepted() {
+        let conn = test_conn("assist-fence");
+        let (encounter_id, patient_id) = seed_encounter(&conn);
+        grant_consent(&conn, &patient_id, SCOPE_TEXT_ASSIST).unwrap();
+        let fenced = "```json\n{\"subjective\":\"Tos\",\"objective\":\"\",\"assessment\":\"\",\"plan\":\"Reposo\",\"diagnosis\":\"\",\"instructions\":\"\"}\n```";
+        let registry = ProviderRegistry::new(vec![Box::new(RawProvider::new(fenced))]);
+        let draft = assist_soap(&conn, &encounter_id, &registry).unwrap();
+        assert_eq!(draft.draft.plan, "Reposo");
+
+        assert_eq!(strip_json_fence("  {\"a\":1}  "), "{\"a\":1}");
+        assert_eq!(strip_json_fence("```\n{}\n```"), "{}");
+    }
+
     #[test]
     fn gateway_errors_degrade_explicitly() {
         let overloaded = gateway_error(
@@ -3789,7 +4031,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(prompt, "dental-evolution/v1");
+        assert_eq!(prompt, "dental-evolution/v2");
     }
 
     #[test]
@@ -3830,9 +4072,9 @@ mod tests {
         // Cada ejecucion dejo su traza con la version de prompt correcta.
         let runs = list_runs(&conn, &encounter_id).unwrap();
         assert_eq!(runs.len(), 3);
-        assert!(runs.iter().any(|r| r.prompt_version == "summary/v1"));
-        assert!(runs.iter().any(|r| r.prompt_version == "instructions/v1"));
-        assert!(runs.iter().any(|r| r.prompt_version == "gaps/v1"));
+        assert!(runs.iter().any(|r| r.prompt_version == "summary/v2"));
+        assert!(runs.iter().any(|r| r.prompt_version == "instructions/v2"));
+        assert!(runs.iter().any(|r| r.prompt_version == "gaps/v2"));
 
         // No se guardo ninguna nota automaticamente.
         let note_count: i64 = conn
