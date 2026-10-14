@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { bytesToBase64 } from "./base64";
-import { call } from "./ipc";
+import { call, onNativeEscape } from "./ipc";
 import {
   DOCUMENT_CATEGORIES,
   DOCUMENT_INPUT_ACCEPT,
@@ -65,15 +65,19 @@ export function DocumentsPanel({
   }, [load]);
 
   // Libera la URL del archivo en memoria al cerrar la vista previa, y deja
-  // cerrarla con Escape.
+  // cerrarla con Escape. Dentro de un PDF el visor de WebView2 se queda con el
+  // teclado; ese Escape llega por el proceso nativo.
   useEffect(() => {
     if (!preview) return;
+    const close = () => setPreview(null);
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPreview(null);
+      if (event.key === "Escape") close();
     };
     window.addEventListener("keydown", onKey);
+    const stopNativeEscape = onNativeEscape(close);
     return () => {
       window.removeEventListener("keydown", onKey);
+      stopNativeEscape();
       URL.revokeObjectURL(preview.url);
     };
   }, [preview]);
@@ -275,9 +279,8 @@ export function DocumentsPanel({
           >
             <div className="documents-preview-header">
               <strong>{preview.meta.title ?? preview.meta.file_name}</strong>
-              {/* Foco inicial en "Cerrar": Escape cierra la vista de imagenes.
-                  El visor de PDF de WebView2 retiene el teclado, ahi se cierra
-                  con este boton o con clic fuera. */}
+              {/* Foco inicial en "Cerrar". Escape cierra la vista previa, tambien
+                  con el foco dentro de un PDF (ver `onNativeEscape`). */}
               <button className="ghost-button" type="button" autoFocus onClick={() => setPreview(null)}>
                 Cerrar
               </button>
