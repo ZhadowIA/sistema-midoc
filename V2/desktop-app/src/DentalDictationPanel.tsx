@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { holdAwake } from "./inactivity";
 import { call } from "./ipc";
 import type { DentalPayload } from "./clinicalProfiles.ts";
 import {
@@ -48,6 +49,11 @@ export function DentalDictationPanel({
   const [review, setReview] = useState<ReviewableProposal[]>([]);
   const [voiceConsent, setVoiceConsent] = useState<boolean | null>(null);
   const [recording, setRecording] = useState(false);
+  // Dictar al odontograma no es inactividad: no bloquear a mitad del dictado.
+  useEffect(() => {
+    if (!recording) return;
+    return holdAwake();
+  }, [recording]);
   const [transcribing, setTranscribing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

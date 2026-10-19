@@ -5388,3 +5388,10 @@ body.dictating .encounter-modes:focus-within {
   color: var(--muted);
   font-size: 0.85rem;
 }
+
+/* Bloqueo por inactividad: cubre toda la app, opaco, por encima de modales. */
+.inactivity-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
