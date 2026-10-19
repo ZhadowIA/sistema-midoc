@@ -20,6 +20,8 @@ import {
 } from "./PatientResolution";
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
 import { defaultView, isViewAvailable, parseFrozenScopeFlag, workspaceNav, type WorkspaceView } from "./scope";
+import { LabOrdersBoard } from "./LabOrdersBoard";
+import { OpenEncounters } from "./OpenEncounters";
 import { parsePortalUrl } from "./portalConfig";
 import { LinkAccountForm, PendingActivation } from "./LicenseActivation";
 import {
@@ -323,6 +325,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const autoSyncedRef = useRef(false);
   const [activeEncounter, setActiveEncounter] = useState<string | null>(null);
   const [activePatient, setActivePatient] = useState<string | null>(null);
+  // Contadores de trabajo pendiente para la navegacion.
+  const [openEncounterCount, setOpenEncounterCount] = useState(0);
+  const [pendingLabCount, setPendingLabCount] = useState(0);
   const [resolution, setResolution] = useState<{
     appointmentId: string;
     intent: "record" | "encounter";
@@ -355,6 +360,21 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     }
   }, [theme]);
 
+  // Conteos de "Consultas abiertas" y "Laboratorio". Sin licencia o con la base
+  // recien abierta pueden fallar; la navegacion simplemente no muestra numero.
+  const refreshWorkCounts = useCallback(async (profile: ClinicalProfile) => {
+    try {
+      const open = await call<unknown[]>("list_open_encounters");
+      setOpenEncounterCount(open.length);
+      setPendingLabCount(
+        profile === "ODONTOLOGY" ? (await call<unknown[]>("dental_pending_lab_orders")).length : 0
+      );
+    } catch {
+      setOpenEncounterCount(0);
+      setPendingLabCount(0);
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       const [nextStatus, nextLicense, rows] = await Promise.all([
@@ -364,7 +384,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       ]);
       setStatus(nextStatus);
       setLicense(nextLicense);
-      setClinicalProfile(coerceClinicalProfile(nextStatus.clinical_profile));
+      const profile = coerceClinicalProfile(nextStatus.clinical_profile);
+      setClinicalProfile(profile);
+      void refreshWorkCounts(profile);
       setSlotMinutes(nextStatus.slot_minutes && nextStatus.slot_minutes > 0 ? nextStatus.slot_minutes : 30);
       setWorkStartMinutes(nextStatus.work_start_minutes);
       setWorkEndMinutes(nextStatus.work_end_minutes);
@@ -372,7 +394,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [refreshWorkCounts]);
 
   useEffect(() => {
     void refresh();
@@ -623,6 +645,8 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
               ? "Expediente"
               : view === "agenda"
                 ? "Agenda"
+                : view === "open-encounters"
+                  ? "Consultas abiertas"
                 : view === "reception"
                   ? "Recepción"
                   : view === "search"
@@ -644,12 +668,21 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     );
   }
 
-  const navSections = workspaceNav(FROZEN_SCOPE);
+  const navSections = workspaceNav(FROZEN_SCOPE, { dental: clinicalProfile === "ODONTOLOGY" });
   // Defensa: una vista congelada nunca se pinta aunque quede en el estado.
   const effectiveView = isViewAvailable(view, FROZEN_SCOPE) ? view : defaultView(FROZEN_SCOPE);
   const licensed = isLicensed(license);
-  const navBadge = (id: WorkspaceView) =>
-    id === "agenda" && appointments.length > 0 ? String(appointments.length) : "";
+  const navBadge = (id: WorkspaceView) => {
+    const count =
+      id === "agenda"
+        ? appointments.length
+        : id === "open-encounters"
+          ? openEncounterCount
+          : id === "lab-orders"
+            ? pendingLabCount
+            : 0;
+    return count > 0 ? String(count) : "";
+  };
   // El expediente abierto cuenta como "Pacientes" en la navegacion.
   const isNavActive = (id: WorkspaceView) => (activePatient !== null ? id === "patients" : effectiveView === id);
 
@@ -818,7 +851,15 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
               {activePatient ? (
                 <Expediente
                   patientId={activePatient}
-                  backLabel={effectiveView === "search" ? "Búsqueda" : "Directorio"}
+                  backLabel={
+                    effectiveView === "search"
+                      ? "Búsqueda"
+                      : effectiveView === "open-encounters"
+                        ? "Consultas abiertas"
+                        : effectiveView === "lab-orders"
+                          ? "Laboratorio"
+                          : "Directorio"
+                  }
                   onBack={() => setActivePatient(null)}
                   onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
                   embedded
@@ -827,6 +868,16 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 <Directorio
                   onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
                   onOpenPatient={(patientId) => setActivePatient(patientId)}
+                />
+              ) : effectiveView === "open-encounters" ? (
+                <OpenEncounters
+                  onOpenEncounter={(encounterId) => setActiveEncounter(encounterId)}
+                  onOpenPatient={(patientId) => setActivePatient(patientId)}
+                />
+              ) : effectiveView === "lab-orders" ? (
+                <LabOrdersBoard
+                  onOpenPatient={(patientId) => setActivePatient(patientId)}
+                  onChanged={() => void refreshWorkCounts(clinicalProfile)}
                 />
               ) : effectiveView === "search" ? (
                 <RecordSearch
