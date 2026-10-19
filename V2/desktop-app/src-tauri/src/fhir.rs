@@ -346,7 +346,17 @@ fn patient(data: &RecordExport, id: &str) -> Value {
                         .relationship
                         .as_deref()
                         .and_then(clean)
-                        .map(|text| vec![json!({ "text": text })])
+                        // v2-0131 "N" (familiar cercano): el codigo que pide el
+                        // conjunto de valores; el parentesco exacto va en el texto.
+                        .map(|text| {
+                            vec![json!({
+                                "coding": [{
+                                    "system": "http://terminology.hl7.org/CodeSystem/v2-0131",
+                                    "code": "N"
+                                }],
+                                "text": text
+                            })]
+                        })
                         .unwrap_or_default(),
                 )
                 .opt("name", name.map(|text| json!({ "text": text })))
@@ -595,10 +605,7 @@ fn summary_composition(
             &resource_id("Composition", &format!("{}/antecedentes", p.id)),
         )
         .set("status", "final")
-        .set(
-            "type",
-            concept(LOINC, "60591-5", "Patient summary Document"),
-        )
+        .set("type", loinc("60591-5", "Resumen del paciente"))
         .set("subject", patient_ref.clone())
         .set("date", generated_at)
         .set("author", json!([practitioner_ref]))
@@ -831,7 +838,7 @@ fn encounter_resources(
         Obj::resource("Composition", &resource_id("Composition", &encounter.id))
             .set("text", narrative(&status_lines))
             .set("status", if signed { "final" } else { "preliminary" })
-            .set("type", concept(LOINC, "11506-3", "Progress note"))
+            .set("type", loinc("11506-3", "Nota de evolución"))
             .set("subject", patient_ref.clone())
             .set("encounter", encounter_ref)
             .set("date", note_date)
@@ -936,7 +943,8 @@ fn section(title: &str, code: Option<(&str, &str)>, lines: &[String], entries: &
         .set("title", title)
         .opt(
             "code",
-            code.map(|(code, display)| concept(LOINC, code, display)),
+            // El nombre en ingles de la tupla documenta el codigo; el legible es el titulo.
+            code.map(|(code, _english)| loinc(code, title)),
         )
         .set("text", narrative(lines))
         .list("entry", entries.iter().map(|id| reference(id)).collect())
@@ -987,6 +995,14 @@ pub(crate) fn resource_id(resource_type: &str, local_id: &str) -> String {
 
 fn reference(id: &str) -> Value {
     json!({ "reference": format!("urn:uuid:{id}") })
+}
+
+/// Codigo LOINC sin `display`. Los recursos van en espanol y el validador de HL7
+/// exige entonces el nombre oficial de LOINC en espanol, que es su forma larga
+/// ("Subjetivo: Paciente:Punto temporal:Tipo:Narrativo:"). El codigo basta para
+/// interoperar; el nombre legible va en `text`.
+fn loinc(code: &str, text: &str) -> Value {
+    json!({ "coding": [{ "system": LOINC, "code": code }], "text": text })
 }
 
 fn concept(system: &str, code: &str, display: &str) -> Value {
@@ -1402,6 +1418,55 @@ mod tests {
                 .map(|(key, label)| (key.to_string(), label.to_string()))
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// Escribe el expediente completo de prueba (datos ficticios) para pasarlo
+    /// por el validador oficial de HL7, que revisa invariantes y terminologias
+    /// que el esquema JSON no ve:
+    /// `MIDOC_FHIR_DUMP=<ruta> cargo test dump_bundle_for_hl7_validator -- --ignored`
+    /// y despues `java -jar validator_cli.jar <ruta> -version 4.0.1`.
+    #[test]
+    #[ignore = "genera un archivo para el validador externo de HL7"]
+    fn dump_bundle_for_hl7_validator() {
+        let path = std::env::var("MIDOC_FHIR_DUMP").expect("MIDOC_FHIR_DUMP con la ruta de salida");
+        let conn = test_conn("hl7-dump");
+        let seeded = seed(&conn);
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&bundle_of(&conn, None)).unwrap(),
+        )
+        .unwrap();
+        let single = std::path::Path::new(&path).with_extension("consulta.json");
+        std::fs::write(
+            single,
+            serde_json::to_vec_pretty(&bundle_of(&conn, Some(&seeded.signed))).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn loinc_codes_carry_no_english_display() {
+        // El validador oficial de HL7 rechaza el nombre en ingles de LOINC en
+        // recursos en espanol (2026-10-18): solo codigo, y el texto en espanol.
+        fn walk(value: &Value, found: &mut Vec<String>) {
+            match value {
+                Value::Object(map) => {
+                    if map.get("system").and_then(Value::as_str) == Some(LOINC) {
+                        if let Some(display) = map.get("display") {
+                            found.push(display.to_string());
+                        }
+                    }
+                    map.values().for_each(|child| walk(child, found));
+                }
+                Value::Array(items) => items.iter().for_each(|child| walk(child, found)),
+                _ => {}
+            }
+        }
+        let conn = test_conn("loinc-display");
+        seed(&conn);
+        let mut found = Vec::new();
+        walk(&bundle_of(&conn, None), &mut found);
+        assert!(found.is_empty(), "codigos LOINC con display: {found:?}");
     }
 
     #[test]
