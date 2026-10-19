@@ -7,7 +7,9 @@
 //! escucha esa senal y se reenvia a la interfaz como evento. No se marca como
 //! manejada: la pagina sigue recibiendo Escape cuando tiene el foco.
 
-/// Evento que recibe la interfaz cuando se presiona Escape en la ventana.
+/// Evento que recibe la interfaz cuando se presiona Escape en la ventana. Solo
+/// se emite en Windows, donde existe el visor que retiene el teclado.
+#[cfg(windows)]
 pub const ESCAPE_EVENT: &str = "midoc://escape";
 
 #[cfg(windows)]
