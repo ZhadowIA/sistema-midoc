@@ -14,6 +14,8 @@
 export type WorkspaceView =
   | "agenda"
   | "patients"
+  | "open-encounters"
+  | "lab-orders"
   | "search"
   | "reception"
   | "transcription"
@@ -48,13 +50,20 @@ export function defaultView(frozenScope: boolean): WorkspaceView {
   return frozenScope ? "agenda" : "patients";
 }
 
-export function workspaceNav(frozenScope: boolean): NavSection[] {
+export interface NavOptions {
+  /** Perfil odontologico: agrega la lista global de ordenes de laboratorio. */
+  dental?: boolean;
+}
+
+export function workspaceNav(frozenScope: boolean, options: NavOptions = {}): NavSection[] {
   const sections: NavSection[] = [
     {
       heading: "Clínica",
       items: [
         { id: "agenda", label: "Agenda" },
         { id: "patients", label: "Pacientes" },
+        { id: "open-encounters", label: "Consultas abiertas" },
+        ...(options.dental ? [{ id: "lab-orders" as const, label: "Laboratorio" }] : []),
         { id: "search", label: "Búsqueda" }
       ]
     },

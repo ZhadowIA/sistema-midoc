@@ -1321,6 +1321,22 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       mockState.patients.push(created);
       return asPatientRecord(created) as T;
     }
+    case "list_open_encounters":
+      return [...mockEncounters.values()]
+        .filter((item) => item.status === "OPEN")
+        .sort((a, b) => (a.opened_at < b.opened_at ? 1 : -1))
+        .map((item) => {
+          const last = item.notes[item.notes.length - 1];
+          return {
+            encounter_id: item.id,
+            patient_id: item.patient.id,
+            patient_name: `${item.patient.first_name} ${item.patient.last_name}`.trim(),
+            opened_at: item.opened_at,
+            appointment_id: item.appointment_id,
+            diagnosis: last?.diagnosis ?? "",
+            has_note: item.notes.length > 0
+          };
+        }) as T;
     case "open_patient_encounter":
       return encounterRow(openMockPatientEncounter(String(args?.patientId ?? ""))) as T;
     case "list_timeline_events": {
