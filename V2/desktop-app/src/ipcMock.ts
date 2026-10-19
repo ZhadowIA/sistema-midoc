@@ -94,6 +94,7 @@ const MOCK_CIE10_SAMPLE = [
 ];
 
 const mockState = {
+  inactivityLockMinutes: 30,
   // Copia de los datos de la receta (regla 4.6); misma regla de version que el portal.
   prescriber: {
     professionalName: "Dra. Eva Soto",
@@ -1321,6 +1322,12 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       mockState.patients.push(created);
       return asPatientRecord(created) as T;
     }
+    case "get_inactivity_lock_minutes":
+      return mockState.inactivityLockMinutes as T;
+    case "set_inactivity_lock_minutes":
+      if (![0, 5, 10, 15, 30, 60, 120].includes(Number(args?.minutes))) throw "tiempo de bloqueo no valido";
+      mockState.inactivityLockMinutes = Number(args?.minutes);
+      return undefined as T;
     case "list_open_encounters":
       return [...mockEncounters.values()]
         .filter((item) => item.status === "OPEN")

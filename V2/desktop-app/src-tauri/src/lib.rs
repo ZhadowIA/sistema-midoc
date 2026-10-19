@@ -21,6 +21,7 @@ mod updates;
 // `diarization-local`; sin el feature, un stub degrada sin separar hablantes.
 mod medication;
 mod operations;
+mod preferences;
 mod search;
 mod sherpa_diarization;
 mod sync;
@@ -1116,6 +1117,21 @@ fn resolve_appointment_patient(
             force_new,
         )
     })
+}
+
+/// Minutos sin actividad antes de bloquear la base (0 = desactivado).
+#[tauri::command]
+fn get_inactivity_lock_minutes(state: tauri::State<'_, AppDb>) -> Result<i64, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    preferences::inactivity_lock_minutes(conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_inactivity_lock_minutes(state: tauri::State<'_, AppDb>, minutes: i64) -> Result<(), String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    preferences::set_inactivity_lock_minutes(conn, minutes).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -3063,6 +3079,8 @@ pub fn run() {
             get_encounter,
             list_patients,
             list_open_encounters,
+            get_inactivity_lock_minutes,
+            set_inactivity_lock_minutes,
             get_patient_profile,
             find_patient_matches,
             create_patient,
