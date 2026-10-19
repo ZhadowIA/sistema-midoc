@@ -132,6 +132,8 @@ enum NotificationKind {
   EMAIL_VERIFICATION
   CLINICAL_SUMMARY
   GENERAL
+  // Aviso al medico de que se acaban las actualizaciones incluidas (2026-10-18).
+  LICENSE_UPDATES_ENDING
 }
 
 enum NotificationStatus {

@@ -149,6 +149,15 @@ function templateMessage(kind: NotificationKind, channel: NotificationChannel, c
         subject: channel === NotificationChannel.EMAIL ? "Verifica tu correo MiDoc" : null,
         body: `Verifica tu correo para poder publicar tu perfil medico en MiDoc: ${actionUrl}${expiresText ? `\nEl enlace vence el ${expiresText}.` : ""}`
       };
+    case NotificationKind.LICENSE_UPDATES_ENDING: {
+      const until = context.expiresAt
+        ? new Intl.DateTimeFormat("es-MX", { dateStyle: "long" }).format(context.expiresAt)
+        : null;
+      return {
+        subject: channel === NotificationChannel.EMAIL ? "Tus actualizaciones de MiDoc estan por terminar" : null,
+        body: `Las actualizaciones incluidas en tu licencia de MiDoc terminan${until ? ` el ${until}` : " pronto"}. Tu expediente y la app siguen funcionando igual despues de esa fecha; solo dejaras de recibir versiones nuevas. Si quieres seguir recibiendolas, renueva desde tu cuenta: ${actionUrl}`
+      };
+    }
     case NotificationKind.GENERAL:
       return {
         subject: channel === NotificationChannel.EMAIL ? "Mensaje MiDoc" : null,
@@ -390,7 +399,8 @@ async function attemptDelivery(notification: Notification, now: Date): Promise<N
 /** Avisos de la cuenta del medico: no forman parte de las notificaciones congeladas. */
 const ACCOUNT_NOTIFICATION_KINDS: ReadonlySet<NotificationKind> = new Set([
   NotificationKind.EMAIL_VERIFICATION,
-  NotificationKind.PASSWORD_RESET
+  NotificationKind.PASSWORD_RESET,
+  NotificationKind.LICENSE_UPDATES_ENDING
 ]);
 
 /**
