@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "node scripts/vercel-build.mjs",
-  "ignoreCommand": "[ \"$VERCEL_GIT_COMMIT_REF\" != \"dev\" ]"
+  "ignoreCommand": "[ \"$VERCEL_GIT_COMMIT_REF\" != \"dev\" ]",
+  "crons": [
+    {
+      "path": "/api/internal/license/reminders",
+      "schedule": "0 15 * * *"
+    }
+  ]
 }
