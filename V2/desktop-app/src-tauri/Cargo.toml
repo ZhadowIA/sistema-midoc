@@ -103,3 +103,8 @@ tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
 # guardado comprimido en `test_data/fhir/`. Solo pruebas; sin resolucion remota.
 jsonschema = { version = "0.58", default-features = false }
 flate2 = "1"
+
+# Escape dentro del visor de PDF de WebView2 (`escape_key.rs`). Misma version
+# que ya trae Tauri a traves de wry: no agrega crates al arbol.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
