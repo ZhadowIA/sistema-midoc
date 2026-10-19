@@ -114,9 +114,8 @@ export function WeekAgenda({
 
   const today = new Date();
   const days = useMemo(() => getAgendaVisibleDays(anchorDate, viewMode), [anchorDate, viewMode]);
-  const todayIndex = useMemo(() => {
-    return days.findIndex((day) => sameDay(day, today));
-  }, [days, today]);
+  // A lo mas siete dias: se calcula en cada render para no quedarse en ayer.
+  const todayIndex = days.findIndex((day) => sameDay(day, today));
 
   // Agrupa las citas de la semana visible por bloque (slot horario) y dia.
   const byBlockDay = useMemo(() => {

@@ -427,21 +427,25 @@ export function Atencion({
     load();
   }, [load]);
 
+  // Solo se recarga al cambiar de paciente o de cuestionario recibido, no en
+  // cada recarga del detalle de la consulta.
+  const historyPatientId = detail?.patient.id ?? null;
+  const receivedMedicalHistory = detail?.medical_history ?? null;
   useEffect(() => {
-    if (!detail) return;
+    if (!historyPatientId) return;
     setPermanentMedicalHistoryLoaded(false);
     call<PatientMedicalHistoryVersion | null>("get_patient_medical_history", {
-      patientId: detail.patient.id
+      patientId: historyPatientId
     })
       .then(setPermanentMedicalHistory)
       .catch(() => setPermanentMedicalHistory(null))
       .finally(() => setPermanentMedicalHistoryLoaded(true));
-    if (detail.medical_history) {
-      void sha256Hex(detail.medical_history).then(setMedicalHistorySourceHash);
+    if (receivedMedicalHistory) {
+      void sha256Hex(receivedMedicalHistory).then(setMedicalHistorySourceHash);
     } else {
       setMedicalHistorySourceHash(null);
     }
-  }, [detail?.patient.id, detail?.medical_history]);
+  }, [historyPatientId, receivedMedicalHistory]);
 
   useEffect(() => {
     setNote((current) => ({
