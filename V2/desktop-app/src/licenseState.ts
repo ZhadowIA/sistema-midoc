@@ -47,6 +47,25 @@ export function creditBalanceTitle(readAt: string | null): string {
   return `Saldo de tu cuenta MiDoc al sincronizar el ${formatDateFlexible(readAt)}`;
 }
 
+/**
+ * Aviso discreto de creditos bajos (decision del 2026-10-18). Una consulta con
+ * IA en la nube toma de 2 a 4 creditos: con 10 o menos quedan pocas.
+ */
+export const LOW_CREDIT_THRESHOLD = 10;
+
+export function lowCreditNotice(balance: number | null | undefined): string | null {
+  if (balance == null || balance > LOW_CREDIT_THRESHOLD) return null;
+  if (balance <= 0) {
+    return "Ya no tienes créditos de IA. La IA en la nube se detiene hasta que recargues; lo demás sigue igual.";
+  }
+  return `Te quedan ${creditBalanceLine(balance)}. Recarga antes de quedarte sin IA en la nube.`;
+}
+
+/** Al abrir la app solo se avisa si hay una version nueva: estar al dia no es noticia. */
+export function shouldAnnounceUpdate(check: UpdateCheck): boolean {
+  return check.configured && check.available;
+}
+
 /** Resultado de buscar actualizaciones (paso 29 r5), tal como lo decide Rust. */
 export interface UpdateCheck {
   configured: boolean;

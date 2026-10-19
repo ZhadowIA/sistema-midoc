@@ -5395,3 +5395,37 @@ body.dictating .encounter-modes:focus-within {
   inset: 0;
   z-index: 1000;
 }
+
+/* Aviso discreto de creditos bajos: una linea, sin robar atencion al trabajo. */
+.credit-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--primary-soft);
+  color: var(--ink);
+  font-size: 0.875rem;
+}
+
+.credit-notice span {
+  flex: 1;
+}
+
+.credit-notice-action,
+.credit-notice-close {
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.credit-notice-close {
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+}
