@@ -1452,6 +1452,18 @@ Estado: 🚧 CODIGO LISTO (rama `v2/paso30-pasarela-ia`, 2026-10-08; en `dev` po
 | Compuerta de avance | Ninguna salida del copiloto se guarda en el expediente sin confirmacion explicita del medico. |
 | Push recomendado | Por rebanada, con benchmark de calidad antes de habilitarlo por omision. |
 
+## Paso 32 - Cuestionario de preconsulta configurable
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que cada medico pregunte antes de la consulta lo que su practica necesita, sin un cuestionario unico para todos. |
+| Requisitos relacionados | Pasos 6 y 19 (buzon cifrado y cuestionario de antecedentes) y regla 4.4 |
+| Entrada necesaria | Decision del 2026-10-18 que descongela la preconsulta en esta forma; referencia en `backup/preconsulta-por-servicio`. |
+| Se construye | Editor de formularios en la app del medico (tipo "forms": preguntas, tipos de respuesta y opciones). El cuestionario tiene dos partes: (1) informacion general del paciente, que el paciente puede saltarse si ya la contesto antes, y (2) preguntas sobre el motivo de consulta. El paciente lo contesta desde un enlace; la respuesta viaja cifrada para la llave del medico por el buzon y se purga al confirmarla la app. |
+| Se valida con | Un medico arma su cuestionario, un paciente lo contesta desde el enlace y el medico ve las respuestas en la consulta; la nube nunca guarda las respuestas en claro. |
+| Compuerta de avance | Ninguna respuesta queda legible en la nube y la prueba de clasificacion de datos sigue pasando (las respuestas solo viven en modelos del buzon). |
+| Push recomendado | Por rebanada: editor en la app, formulario publico, entrega cifrada. |
+
 ## MVP recomendado
 
 > **Nota del reenfoque (2026-09-07):** el MVP descrito abajo corresponde al producto amplio y ya fue entregado. El MVP vigente del producto reenfocado es el paso 27 mas los pasos 28-30: expediente centrado en el paciente, documentos y salida del expediente, suscripcion reexpresada y pasarela de IA con proveedor real.
