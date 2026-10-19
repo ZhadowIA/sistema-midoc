@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   EMPTY_DENTAL_PAYLOAD,
   getDefaultDentalToothRecord,
@@ -516,19 +516,19 @@ export function OdontogramWorkspace({
     onChange(next);
   }
 
-  function undo() {
+  const undo = useCallback(() => {
     const result = undoOdontogramAction(undoState, payload);
     if (!result) return;
     setUndoState(result.state);
     onChange(result.payload);
-  }
+  }, [undoState, payload, onChange]);
 
-  function redo() {
+  const redo = useCallback(() => {
     const result = redoOdontogramAction(undoState, payload);
     if (!result) return;
     setUndoState(result.state);
     onChange(result.payload);
-  }
+  }, [undoState, payload, onChange]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -549,7 +549,7 @@ export function OdontogramWorkspace({
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [disabled, payload, undoState]);
+  }, [disabled, undo, redo]);
 
   function selectTool(tool: OdontogramTool) {
     setActiveTool((current) => toolKey(current) === toolKey(tool) ? null : tool);
