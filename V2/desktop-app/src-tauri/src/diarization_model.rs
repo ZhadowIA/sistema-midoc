@@ -12,11 +12,11 @@
 //! `transcription_model` (rutas, holgura de disco, reanudacion, checksum, estado),
 //! para no duplicar logica. La descarga por red vive en `lib.rs` (frontera fina).
 //!
-//! Las URLs/checksums/tamanos por defecto apuntan a los modelos ONNX que publica el
-//! mantenedor de sherpa-onnx y son fijables por build (`MIDOC_DIARIZE_*`); el
-//! contrato real y el rehospedaje para distribucion comercial (verificacion de la
-//! cadena de licencias de los pesos) se cierran en staging (regla 5). Sin checksum
-//! fijado, el modelo se marca como NO verificado para que la UI sea honesta.
+//! Los `.onnx` se rehospedan sin cambios en el release `modelos-diarizacion-v1`
+//! del repositorio (2026-10-18), con sus licencias: segmentacion MIT (pyannote) y
+//! embedding CC BY 4.0 (WeSpeaker/VoxCeleb). URL, SHA-256 y tamano quedan fijados
+//! aqui y siguen siendo configurables por build (`MIDOC_DIARIZE_*`). Un archivo
+//! que no coincide con su SHA-256 no se acepta.
 
 use crate::transcription_model::ModelAsset;
 
@@ -62,7 +62,7 @@ impl DiarizationModel {
 }
 
 /// URL de descarga del modelo. Configurable por build (`MIDOC_DIARIZE_*_URL`); por
-/// defecto, los `.onnx` que publica el mantenedor de sherpa-onnx en HuggingFace.
+/// defecto, el release del repositorio que los rehospeda.
 fn model_url(model: DiarizationModel) -> String {
     let configured = match model {
         DiarizationModel::Segmentation => option_env!("MIDOC_DIARIZE_SEGMENTATION_URL"),
@@ -75,29 +75,43 @@ fn model_url(model: DiarizationModel) -> String {
     }
     match model {
         DiarizationModel::Segmentation => {
-            "https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.onnx"
-                .to_string()
+            format!("{MODELS_RELEASE}/pyannote-segmentation-3.0.onnx")
         }
+        // `++` codificado en la URL del archivo `wespeaker_en_voxceleb_CAM++.onnx`.
         DiarizationModel::Embedding => {
-            // `++` codificado: HuggingFace sirve el archivo `wespeaker_en_voxceleb_CAM++.onnx`.
-            "https://huggingface.co/csukuangfj/speaker-embedding-models/resolve/main/wespeaker_en_voxceleb_CAM%2B%2B.onnx"
-                .to_string()
+            format!("{MODELS_RELEASE}/wespeaker_en_voxceleb_CAM%2B%2B.onnx")
         }
     }
 }
 
-/// SHA-256 fijado del modelo, si el build lo aporta (`MIDOC_DIARIZE_*_SHA256`).
+/// Release del repositorio que rehospeda los modelos (ver su `LICENCIAS.md`).
+const MODELS_RELEASE: &str =
+    "https://github.com/ZhadowIA/sistema-midoc/releases/download/modelos-diarizacion-v1";
+
+/// SHA-256 del modelo: el del archivo rehospedado, o el que fije el build
+/// (`MIDOC_DIARIZE_*_SHA256`) si apunta a otra copia.
 fn model_sha256(model: DiarizationModel) -> String {
     let configured = match model {
         DiarizationModel::Segmentation => option_env!("MIDOC_DIARIZE_SEGMENTATION_SHA256"),
         DiarizationModel::Embedding => option_env!("MIDOC_DIARIZE_EMBEDDING_SHA256"),
     };
-    configured.unwrap_or("").trim().to_lowercase()
+    let pinned = match model {
+        DiarizationModel::Segmentation => {
+            "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079"
+        }
+        DiarizationModel::Embedding => {
+            "c46fad10b5f81e1aa4a60c162714208577093655076c5450f8c469e522ec54ef"
+        }
+    };
+    configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(pinned)
+        .to_lowercase()
 }
 
 /// Tamano exacto del `.onnx` (bytes), para detectar descargas corruptas. Fijable
-/// por build (`MIDOC_DIARIZE_*_SIZE_BYTES`); por defecto, el Content-Length real de
-/// la fuente publica al momento de fijar este catalogo.
+/// por build (`MIDOC_DIARIZE_*_SIZE_BYTES`); por defecto, el del archivo rehospedado.
 fn model_download_size(model: DiarizationModel) -> u64 {
     let configured = match model {
         DiarizationModel::Segmentation => option_env!("MIDOC_DIARIZE_SEGMENTATION_SIZE_BYTES"),
@@ -160,15 +174,13 @@ mod tests {
     }
 
     #[test]
-    fn default_urls_point_to_sherpa_onnx_models() {
+    fn default_urls_point_to_the_rehosted_files() {
         let seg = asset_for("diarization-segmentation").unwrap();
-        assert!(seg.url.contains("pyannote-segmentation-3-0"));
-        assert!(seg.url.ends_with("model.onnx"));
+        assert!(seg.url.ends_with("/pyannote-segmentation-3.0.onnx"));
 
         let emb = asset_for("diarization-embedding").unwrap();
-        assert!(emb.url.contains("speaker-embedding-models"));
         // `++` codificado en la URL.
-        assert!(emb.url.contains("CAM%2B%2B"));
+        assert!(emb.url.ends_with("/wespeaker_en_voxceleb_CAM%2B%2B.onnx"));
     }
 
     #[test]
@@ -184,15 +196,17 @@ mod tests {
     }
 
     #[test]
-    fn checksum_is_empty_until_pinned_by_build() {
-        // Sin override de build, no hay checksum fijado: el modelo es usable pero
-        // se marcara como NO verificado (UI honesta).
+    fn models_come_from_the_rehosted_release_with_pinned_checksums() {
+        // Sin override de build: el release del repositorio, con SHA-256 fijado
+        // para que una descarga alterada o corrupta no se acepte.
         for asset in all_assets() {
             assert!(
-                asset.sha256.is_empty(),
-                "{} sin checksum por defecto",
+                asset.url.starts_with(MODELS_RELEASE),
+                "{} desde el release rehospedado",
                 asset.model_id
             );
+            assert_eq!(asset.sha256.len(), 64, "{} con SHA-256", asset.model_id);
+            assert!(asset.sha256.chars().all(|c| c.is_ascii_hexdigit()));
         }
     }
 
