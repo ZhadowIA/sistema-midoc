@@ -41,18 +41,24 @@ export function parseFrozenScopeFlag(raw: string | undefined): boolean {
   return raw?.trim().toLowerCase() === "on";
 }
 
-export function isViewAvailable(view: WorkspaceView, frozenScope: boolean): boolean {
+export interface NavOptions {
+  /** Perfil odontologico: agrega la lista global de ordenes de laboratorio. */
+  dental?: boolean;
+  /**
+   * Revision de seguridad de medicamentos (paso 33): la decide Rust al compilar
+   * y se lee con `get_capabilities`. Apagada si no se sabe.
+   */
+  medicationSafety?: boolean;
+}
+
+export function isViewAvailable(view: WorkspaceView, frozenScope: boolean, options: NavOptions = {}): boolean {
+  if (view === "medications" && !options.medicationSafety) return false;
   return frozenScope || !FROZEN_VIEWS.has(view);
 }
 
 /** La app abre en Pacientes; la Agenda solo es la entrada con el alcance congelado. */
 export function defaultView(frozenScope: boolean): WorkspaceView {
   return frozenScope ? "agenda" : "patients";
-}
-
-export interface NavOptions {
-  /** Perfil odontologico: agrega la lista global de ordenes de laboratorio. */
-  dental?: boolean;
 }
 
 export function workspaceNav(frozenScope: boolean, options: NavOptions = {}): NavSection[] {
@@ -90,6 +96,6 @@ export function workspaceNav(frozenScope: boolean, options: NavOptions = {}): Na
 
   return sections.map((section) => ({
     ...section,
-    items: section.items.filter((item) => isViewAvailable(item.id, frozenScope))
+    items: section.items.filter((item) => isViewAvailable(item.id, frozenScope, options))
   }));
 }

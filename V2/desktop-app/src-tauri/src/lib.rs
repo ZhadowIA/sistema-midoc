@@ -1,6 +1,7 @@
 mod ai;
 mod arco;
 mod audio;
+mod capabilities;
 mod cie10;
 mod clinical;
 mod cloud_transcription;
@@ -2474,6 +2475,13 @@ fn ai_list_benchmarks(state: tauri::State<'_, AppDb>) -> Result<Vec<ai::Benchmar
     with_ai(&state, ai::list_benchmarks)
 }
 
+/// Capacidades fijadas al compilar (paso 33): la interfaz muestra u oculta lo
+/// que dependen de ellas. No necesita la base.
+#[tauri::command]
+fn get_capabilities() -> capabilities::Capabilities {
+    capabilities::current()
+}
+
 /// Verifica la seguridad de una lista de medicamentos (interacciones, alergias
 /// cruzadas y duplicidad terapeutica) de forma determinista, sin IA. Toma las
 /// alergias del expediente del paciente del encuentro. La prescripcion no sale
@@ -2484,6 +2492,7 @@ fn check_medication_safety(
     encounter_id: String,
     medications: Vec<String>,
 ) -> Result<medication::SafetyReport, String> {
+    capabilities::require_medication_safety()?;
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
     let detail = clinical::get_encounter_detail(conn, &encounter_id).map_err(|e| e.to_string())?;
@@ -2501,6 +2510,7 @@ fn check_medication_safety(
 fn medication_reference_status(
     state: tauri::State<'_, AppDb>,
 ) -> Result<medication::ReferenceStatus, String> {
+    capabilities::require_medication_safety()?;
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
     medication::reference_status(conn).map_err(|e| e.to_string())
@@ -2518,6 +2528,7 @@ fn import_medication_reference(
     openfda_json: String,
     version: String,
 ) -> Result<medication::ImportSummary, String> {
+    capabilities::require_medication_safety()?;
     let medications =
         medication::parse_medication_csv(&medications_csv).map_err(|e| e.to_string())?;
     let interactions = medication::parse_ddinter_csv(&ddinter_csv).map_err(|e| e.to_string())?;
@@ -2545,6 +2556,7 @@ async fn update_medication_reference(
     openfda_url: String,
     version: String,
 ) -> Result<medication::ImportSummary, String> {
+    capabilities::require_medication_safety()?;
     // Descarga (red): se hace antes de tomar el lock; no se retiene el lock
     // durante ningun await.
     let client = reqwest::Client::new();
@@ -2585,6 +2597,7 @@ const MIDOC_TRIPLES_URL: Option<&str> = option_env!("MIDOC_TRIPLES_URL");
 async fn update_medication_reference_from_midoc(
     state: tauri::State<'_, AppDb>,
 ) -> Result<medication::ImportSummary, String> {
+    capabilities::require_medication_safety()?;
     let configured_medications = MIDOC_MEDICATIONS_URL.unwrap_or("").trim();
     let configured_ddinter = MIDOC_DDINTER_URL.unwrap_or("").trim();
 
@@ -2661,6 +2674,7 @@ fn extract_prescription_medications(
     state: tauri::State<'_, AppDb>,
     prescription: String,
 ) -> Result<Vec<String>, String> {
+    capabilities::require_medication_safety()?;
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
     medication::extract_medications(conn, &prescription).map_err(|e| e.to_string())
@@ -3165,6 +3179,7 @@ pub fn run() {
             download_transcription_model,
             diarization_model_status,
             download_diarization_model,
+            get_capabilities,
             check_medication_safety,
             medication_reference_status,
             import_medication_reference,

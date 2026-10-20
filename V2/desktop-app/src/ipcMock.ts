@@ -95,9 +95,12 @@ const MOCK_CIE10_SAMPLE = [
 
 // Escenarios para trabajar el diseno de los avisos sin tocar codigo:
 // `?mockCreditos=5` simula saldo bajo y `?mockActualizacion=1` una version nueva.
+// `?mockSeguridad=1` enciende la revision de seguridad de medicamentos, apagada
+// por omision como en el instalador que se vende (paso 33).
 const mockParams = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
 const MOCK_CREDITS = Number(mockParams.get("mockCreditos") ?? 30);
 const MOCK_UPDATE = mockParams.get("mockActualizacion") === "1";
+const MOCK_MEDICATION_SAFETY = mockParams.get("mockSeguridad") === "1";
 
 const mockState = {
   inactivityLockMinutes: 30,
@@ -1341,6 +1344,8 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       mockState.patients.push(created);
       return asPatientRecord(created) as T;
     }
+    case "get_capabilities":
+      return { medication_safety: MOCK_MEDICATION_SAFETY } as T;
     case "get_inactivity_lock_minutes":
       return mockState.inactivityLockMinutes as T;
     case "set_inactivity_lock_minutes":

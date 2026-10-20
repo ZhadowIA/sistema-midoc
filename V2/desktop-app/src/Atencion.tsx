@@ -301,6 +301,7 @@ export function Atencion({
   encounterId,
   clinicalProfile,
   frozenScope,
+  medicationSafety,
   backLabel,
   appointments,
   appointmentSelectionBusy,
@@ -311,6 +312,8 @@ export function Atencion({
   clinicalProfile: ClinicalProfile;
   /** Alcance congelado del reenfoque: agenda del dia y saldos del presupuesto dental. */
   frozenScope: boolean;
+  /** Revision de seguridad de medicamentos (paso 33); apagada en el instalador que se vende. */
+  medicationSafety: boolean;
   /** A donde regresa "volver": la consulta se abre desde la agenda, el directorio o el expediente. */
   backLabel: string;
   appointments: EncounterAgendaAppointment[];
@@ -1690,7 +1693,9 @@ export function Atencion({
               </button>
             </div>
           ) : null}
-          <MedicationSafety encounterId={encounterId} disabled={signed} prescription={prescription} />
+          {medicationSafety ? (
+            <MedicationSafety encounterId={encounterId} disabled={signed} prescription={prescription} />
+          ) : null}
         </section>
             ) : null}
 

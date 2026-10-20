@@ -71,7 +71,15 @@ Todo por ingrediente:
 
 ## 7. Separar lo regulado para poder lanzar antes (decision 2026-10-20)
 
-Mientras no haya respuesta de COFEPRIS, todo lo que **avisa al médico sobre la seguridad** de un medicamento queda tras un interruptor de capacidad (`capability flag`), apagado en el instalador que se venda: la revisión de interacciones que ya existe, las alergias, la duplicidad y, cuando llegue, medicamento contra padecimiento. Igual que los módulos congelados del reenfoque: apagado, nunca borrado, y se enciende sin reinstalar cuando la consulta lo permita.
+Mientras no haya respuesta de COFEPRIS, todo lo que **avisa al médico sobre la seguridad** de un medicamento queda tras un interruptor de capacidad (`capability flag`), apagado en el instalador que se venda: la revisión de interacciones que ya existe, las alergias, la duplicidad y, cuando llegue, medicamento contra padecimiento. Igual que los módulos congelados del reenfoque: apagado, nunca borrado.
+
+Cómo quedó (2026-10-20, rama `v2/interruptor-seguridad-farmaco`):
+
+- El interruptor lo fija Rust al compilar: `MIDOC_MEDICATION_SAFETY=on` lo enciende; sin esa variable, o con cualquier otro valor, va apagado.
+- Con el interruptor apagado, los comandos de la revisión se niegan a correr aunque alguien los llame, no solo se ocultan: verificar la receta, extraer sus medicamentos para verificarlos, y ver, importar o actualizar la base de interacciones.
+- La interfaz pregunta a Rust (`get_capabilities`) y oculta la verificación en la consulta y la pantalla "Medicamentos". Si no puede saberlo, la deja apagada.
+- Para encenderla basta compilar con la variable y publicar la versión. Llega a los equipos como una actualización normal, sin reinstalar. Ojo: los equipos con las actualizaciones de su licencia vencidas no la recibirían. Si eso importa al llegar la respuesta, la alternativa es que la licencia firmada traiga la capacidad.
+- En el navegador de desarrollo, `?mockSeguridad=1` la enciende.
 
 Lo que **no** queda tras el interruptor, porque solo registra o describe y no sugiere conductas clínicas: el CNIS, el desglose de marcas a genérico, la receta con doble denominación y el FHIR codificado. Así las etapas 1 a 4 pueden salir con la app y las 5 en adelante esperan la consulta.
 

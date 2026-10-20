@@ -58,6 +58,7 @@ Guarda el archivo de variables en un lugar seguro **fuera del repositorio** (p. 
 1. En `V2/desktop-app/src-tauri/.env` agrega la llave publica de licencias que viene al final del archivo de variables (`MIDOC_LICENSE_PUBKEYS=...`). Sin ella la app no reconoce las licencias que firma este portal.
 2. En `V2/desktop-app/.env` agrega `VITE_MIDOC_PORTAL_URL=https://<tu-proyecto>.vercel.app` (sin la variable, la app usa `http://localhost:3000`).
 3. Arranca la app (`npm run tauri:dev`), abre tu perfil y usa **Vincular cuenta** con el correo y la contrasena del paso 3.
+4. La revision de seguridad de medicamentos (interacciones, alergias y duplicidad) va apagada mientras no responda COFEPRIS (paso 33). Para probarla, compila con la variable de entorno `MIDOC_MEDICATION_SAFETY=on` (en PowerShell: `$env:MIDOC_MEDICATION_SAFETY = "on"; npm run tauri:dev`). No va en `.env`: Rust la lee al compilar.
 
 ## 5. Correos con Resend
 
