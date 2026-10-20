@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
+import { exportRecordFhir, fhirExportMessage } from "./recordExportAction";
 
 /**
  * Derechos ARCO (paso 12): el medico atiende Acceso, Rectificacion, Cancelacion
@@ -72,21 +73,17 @@ export function Arco() {
       .finally(() => setBusy(false));
   }
 
+  // Acceso y portabilidad (decision del 2026-10-19): el paciente recibe su
+  // expediente en FHIR R4, el estandar que otros sistemas leen. Rust lo arma, lo
+  // guarda donde elija el medico y lo deja en la bitacora.
   function exportData(id: string) {
     setError("");
     setMessage("");
-    call<unknown>("arco_export_patient_data", { patientId: id })
-      .then((data) => {
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `expediente-${id}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        setMessage("Expediente exportado.");
-      })
-      .catch((e: unknown) => setError(String(e)));
+    setBusy(true);
+    exportRecordFhir(id)
+      .then((path) => setMessage(fhirExportMessage(path)))
+      .catch((e: unknown) => setError(String(e)))
+      .finally(() => setBusy(false));
   }
 
   function fulfillCancellation(request: ArcoRequest) {
@@ -216,8 +213,13 @@ export function Arco() {
                 </div>
                 <div className="list-row-actions">
                   {request.request_type === "ACCESS" ? (
-                    <button className="tab" onClick={() => exportData(request.patient_id)}>
-                      Exportar expediente
+                    <button
+                      className="tab"
+                      onClick={() => exportData(request.patient_id)}
+                      disabled={busy}
+                      title="Guarda el expediente completo en FHIR R4 (JSON) para entregarlo al paciente"
+                    >
+                      Entregar expediente (FHIR)
                     </button>
                   ) : null}
                   {request.status !== "FULFILLED" &&

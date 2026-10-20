@@ -2255,26 +2255,6 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       req.result_summary = String(args?.resultSummary ?? "");
       return req as T;
     }
-    case "arco_export_patient_data":
-      return {
-        patient_id: String(args?.patientId ?? "pat-1"),
-        first_name: "Hugo",
-        last_name: "Paz",
-        phone: "614 000 1111",
-        email: "hugo@example.com",
-        birth_date: null,
-        sex: null,
-        allergies: "ninguna",
-        medical_background: null,
-        family_background: null,
-        guardian: null,
-        is_minor: false,
-        rights_exercised_by: null,
-        encounters: [],
-        documents: [],
-        medical_history_versions: mockState.medicalHistoryVersions,
-        generated_at: new Date().toISOString()
-      } as T;
     case "arco_fulfill_cancellation": {
       const req = mockState.arcoRequests.find((r) => r.id === args?.requestId);
       if (req) {
