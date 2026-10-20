@@ -311,7 +311,6 @@ test("el mock de navegador cumple los contratos", async () => {
     notes: null
   });
   await run("arco_list_requests", { patientId: patient.id });
-  await run("arco_export_patient_data", { patientId: patient.id });
   await run("arco_mark_fulfilled", { requestId: request.id, resultSummary: "Entregado" });
   const cancellation = await run<{ id: string }>("arco_record_request", {
     patientId: patient.id,

@@ -795,56 +795,6 @@ const arcoRequest = z.looseObject({
   result_summary: textoONulo
 });
 
-const patientDataExport = z.looseObject({
-  patient_id: texto,
-  first_name: texto,
-  last_name: texto,
-  phone: textoONulo,
-  email: textoONulo,
-  birth_date: textoONulo,
-  sex: textoONulo,
-  allergies: textoONulo,
-  medical_background: textoONulo,
-  family_background: textoONulo,
-  guardian: guardian.nullable(),
-  is_minor: z.boolean(),
-  rights_exercised_by: textoONulo,
-  encounters: z.array(
-    z.looseObject({
-      id: texto,
-      appointment_id: textoONulo,
-      status: texto,
-      opened_at: texto,
-      signed_at: textoONulo,
-      notes: z.array(
-        z.looseObject({
-          version: entero,
-          subjective: texto,
-          objective: texto,
-          assessment: texto,
-          plan: texto,
-          diagnosis: texto,
-          instructions: texto,
-          created_at: texto
-        })
-      ),
-      prescriptions: listaDeTextos
-    })
-  ),
-  documents: z.array(
-    z.looseObject({
-      id: texto,
-      file_name: texto,
-      mime_type: texto,
-      category: textoONulo,
-      size_bytes: entero,
-      received_at: texto
-    })
-  ),
-  medical_history_versions: z.array(medicalHistoryVersion),
-  generated_at: texto
-});
-
 const cancellationResult = z.looseObject({
   patient_id: texto,
   deleted_encounters: entero,
@@ -1002,7 +952,6 @@ export const IPC_RESPONSE_SCHEMAS = {
   arco_list_requests: z.array(arcoRequest),
   arco_record_request: arcoRequest,
   arco_mark_fulfilled: arcoRequest,
-  arco_export_patient_data: patientDataExport,
   arco_fulfill_cancellation: cancellationResult
 } satisfies Record<string, z.ZodType>;
 
