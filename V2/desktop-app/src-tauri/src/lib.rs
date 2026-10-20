@@ -4,6 +4,7 @@ mod audio;
 mod cie10;
 mod clinical;
 mod cloud_transcription;
+mod cnis;
 mod consultation_templates;
 mod crypto;
 mod db;

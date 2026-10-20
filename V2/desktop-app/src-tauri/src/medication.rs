@@ -1152,7 +1152,7 @@ pub fn reference_status(conn: &Connection) -> Result<ReferenceStatus, Medication
 
 /// Busca `needle` dentro de `haystack` respetando limites de palabra (para no
 /// confundir, p. ej., "litio" dentro de otra palabra). Devuelve la posicion.
-fn find_word(haystack: &str, needle: &str) -> Option<usize> {
+pub(crate) fn find_word(haystack: &str, needle: &str) -> Option<usize> {
     if needle.is_empty() {
         return None;
     }
