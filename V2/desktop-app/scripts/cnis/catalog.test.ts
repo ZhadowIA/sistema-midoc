@@ -5,6 +5,8 @@ import {
   alternatives,
   applyCorrections,
   canonicalStrength,
+  displayAlternatives,
+  uninvert,
   diffTables,
   genericName,
   isSingleIngredient,
@@ -162,6 +164,11 @@ test("reconoce genericos con notas y sus alternativas", () => {
   assert.equal(genericName("Generalidades"), null);
   assert.deepEqual(alternatives("PANTOPRAZOL O RABEPRAZOL U OMEPRAZOL"), ["pantoprazol", "rabeprazol", "omeprazol"]);
   assert.deepEqual(alternatives("PARACETAMOL"), ["paracetamol"]);
+  assert.deepEqual(displayAlternatives("ÁCIDO ACETILSALICÍLICO"), ["Ácido acetilsalicílico"]);
+  assert.deepEqual(displayAlternatives("ANFEBUTAMONA O BUPROPIÓN"), ["Anfebutamona", "Bupropión"]);
+  assert.deepEqual(displayAlternatives("ISOSORBIDA, DINITRATO DE"), ["Dinitrato de isosorbida"]);
+  assert.deepEqual(displayAlternatives("FACTOR IX Ó NONACOG ALFA"), ["Factor ix", "Nonacog alfa"]);
+  assert.equal(uninvert("LIDOCAÍNA, EPINEFRINA"), "LIDOCAÍNA, EPINEFRINA", "una combinacion no se invierte");
 });
 
 test("lee generico, forma, concentracion y envase de una clave limpia", () => {
@@ -169,6 +176,7 @@ test("lee generico, forma, concentracion y envase de una clave limpia", () => {
     clave: "010.000.0104.00",
     product: "010.000.0104",
     generic: "paracetamol",
+    genericDisplay: "Paracetamol",
     form: "tableta",
     strengthValue: "500",
     strengthUnit: "mg",
@@ -288,12 +296,12 @@ test("las correcciones reemplazan la lectura y exigen motivo y revisor", () => {
 test("la tabla es estable y la comparacion muestra lo que cambia", () => {
   const csv = toCsv(entries);
   const lines = csv.trimEnd().split("\n");
-  assert.equal(lines[0], "clave,product,generic,form,strength_value,strength_unit,package_qty,packages,complete,source");
-  assert.ok(lines.includes("010.000.0104.00,010.000.0104,paracetamol,tableta,500,mg,10,1,1,pdf"));
+  assert.equal(lines[0], "clave,product,generic,form,strength_value,strength_unit,package_qty,packages,complete,source,generic_display");
+  assert.ok(lines.includes("010.000.0104.00,010.000.0104,paracetamol,tableta,500,mg,10,1,1,pdf,Paracetamol"));
   assert.equal(toCsv(parseCnisText(TEXT)), csv, "misma entrada, misma tabla");
 
   const next = csv
-    .replace("010.000.0104.00,010.000.0104,paracetamol,tableta,500,mg,10,1,1,pdf", "010.000.0104.00,010.000.0104,paracetamol,tableta,500,mg,20,1,1,pdf")
+    .replace("010.000.0104.00,010.000.0104,paracetamol,tableta,500,mg,10,1,1,pdf,Paracetamol", "010.000.0104.00,010.000.0104,paracetamol,tableta,500,mg,20,1,1,pdf,Paracetamol")
     .replace(/^040\.000\.2612\.00.*\n/m, "");
   const diff = diffTables(csv, `${next}099.000.0000.00,x,nuevo,,,,,1,0,pdf\n`);
   assert.deepEqual(diff.changed, ["010.000.0104.00 paracetamol"]);

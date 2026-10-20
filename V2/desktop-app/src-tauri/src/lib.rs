@@ -17,6 +17,7 @@ mod documents;
 mod escape_key;
 mod export;
 mod fhir;
+mod ingredients;
 mod license;
 mod updates;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature

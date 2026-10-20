@@ -1,6 +1,6 @@
 {
   "version": "cnis-2025-04-26",
-  "generatedAt": "2026-10-20T07:34:21.158Z",
+  "generatedAt": "2026-10-20T23:35:25.661Z",
   "source": {
     "name": "Compendio Nacional de Insumos para la Salud, Consejo de Salubridad General",
     "edition": "Edicion publicada en el DOF el 2025-04-26; no incluye las actualizaciones posteriores",
@@ -10,9 +10,9 @@
     "changes": "Solo medicamentos (grupos 010, 020, 030 y 040). Por clave y generico (una fila por alternativa): producto, forma, concentracion, unidades del envase y numero de envases del producto; lo que no se pudo leer sin ambiguedad queda marcado como incompleto y no se codifica. Las correcciones escritas a mano (correcciones.csv) llevan motivo y revisor."
   },
   "entries": 2662,
-  "complete": 1601,
-  "completeProducts": 1224,
+  "complete": 1612,
+  "completeProducts": 1234,
   "corrections": 0,
-  "codable": 982,
-  "sha256": "c9e8d7eab6f1a1d3d9fc1140e99845172bb395fd1a7be3b0290ab8bcdf192776"
+  "codable": 991,
+  "sha256": "e578222acdf5885ce642d0f465ff095f541d1cd3c11746973136ffc9f07376f1"
 }

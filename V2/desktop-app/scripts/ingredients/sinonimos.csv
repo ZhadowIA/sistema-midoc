@@ -1,0 +1,4 @@
+# Sinonimos revisados (paso 33, etapa 2). Cada fila agrega un nombre a un ingrediente del catalogo
+# y, si coincide con un nombre de la base de interacciones, liga ambos. Motivo y revisor obligatorios.
+# Candidatos en por-revisar.csv.
+ingrediente,sinonimo,motivo,revisado_por
