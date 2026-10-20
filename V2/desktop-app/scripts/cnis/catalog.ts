@@ -16,6 +16,8 @@ export interface CnisEntry {
   product: string;
   /** Nombre generico en minusculas y sin acentos (una fila por alternativa). */
   generic: string;
+  /** El mismo nombre como lo escribe el compendio, con acentos ("Ácido acetilsalicílico"). */
+  genericDisplay: string;
   /** Forma farmaceutica en minusculas y sin acentos ("tableta", "solucion inyectable"). */
   form: string;
   /** Concentracion de este generico, en unidad canonica (mg, mcg, UI, mL, %). */
@@ -130,10 +132,29 @@ export function genericName(raw: string): string | null {
 
 /** Alternativas de un mismo producto: "PANTOPRAZOL O RABEPRAZOL U OMEPRAZOL". */
 export function alternatives(generic: string): string[] {
-  return normalize(generic)
-    .split(/\s+[ou]\s+/)
+  return displayAlternatives(generic).map(normalize);
+}
+
+/** "ÁCIDO ACETILSALICÍLICO" -> "Ácido acetilsalicílico". */
+export function displayName(raw: string): string {
+  const lower = raw.trim().replace(/\s+/g, " ").toLocaleLowerCase("es-MX");
+  return lower.charAt(0).toLocaleUpperCase("es-MX") + lower.slice(1);
+}
+
+/** "ISOSORBIDA, DINITRATO DE" -> "DINITRATO DE ISOSORBIDA": el compendio invierte algunas sales. */
+export function uninvert(generic: string): string {
+  const m = /^([^,]+),\s*(.+\s(?:DE|DEL|de|del))$/.exec(generic.trim());
+  return m ? `${m[2]} ${m[1]}` : generic;
+}
+
+/** Alternativas con su escritura original, en formato de oracion. */
+export function displayAlternatives(generic: string): string[] {
+  return uninvert(generic)
+    // "FACTOR IX Ó NONACOG ALFA": el compendio a veces acentua la conjuncion.
+    .split(/\s+[OoÓóUu]\s+/)
     .map((g) => g.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map(displayName);
 }
 
 /** Combinaciones y nombres compuestos: no se codifican en esta version. */
@@ -350,14 +371,16 @@ export function parseCnisText(text: string): CnisEntry[] {
   const readings = new Map<string, CnisEntry[]>();
   for (const e of raw) {
     const unambiguous = (productsByBlock.get(e.block)?.size ?? 0) === 1;
-    const single = isSingleIngredient(e.generic);
-    for (const name of alternatives(e.generic)) {
+    const single = isSingleIngredient(uninvert(e.generic));
+    for (const display of displayAlternatives(e.generic)) {
+      const name = normalize(display);
       const strength = strengthAfter(name, e.content);
       const verified = normalize(e.content).includes(name.split(/[\s/]/)[0]);
       const entry: CnisEntry = {
         clave: e.clave,
         product: e.clave.slice(0, 12),
         generic: name,
+        genericDisplay: display,
         form: e.form ? normalize(e.form).replace(/[.\s]+$/, "") : "",
         strengthValue: strength?.value ?? "",
         strengthUnit: strength?.unit ?? "",
@@ -429,6 +452,7 @@ function sortEntries(entries: CnisEntry[]): CnisEntry[] {
 export interface Correction {
   clave: string;
   generic: string;
+  genericDisplay: string;
   form: string;
   strengthValue: string;
   strengthUnit: string;
@@ -482,6 +506,7 @@ export function parseCorrections(csv: string): Correction[] {
     return {
       clave,
       generic: normalize(generic),
+      genericDisplay: displayName(generic),
       form: normalize(form),
       strengthValue: strength.value,
       strengthUnit: strength.unit,
@@ -500,6 +525,7 @@ export function applyCorrections(entries: CnisEntry[], corrections: Correction[]
       clave: c.clave,
       product: c.clave.slice(0, 12),
       generic: c.generic,
+      genericDisplay: c.genericDisplay,
       form: c.form,
       strengthValue: c.strengthValue,
       strengthUnit: c.strengthUnit,
@@ -521,7 +547,7 @@ export function allKeys(text: string): string[] {
 
 /* ---------- Tabla y comparacion ---------- */
 
-const CSV_HEADER = "clave,product,generic,form,strength_value,strength_unit,package_qty,packages,complete,source";
+const CSV_HEADER = "clave,product,generic,form,strength_value,strength_unit,package_qty,packages,complete,source,generic_display";
 
 function csvField(value: string): string {
   return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
@@ -541,7 +567,8 @@ export function toCsv(entries: CnisEntry[]): string {
         e.packageQty ?? "",
         String(e.packages),
         e.complete ? "1" : "0",
-        e.source
+        e.source,
+        csvField(e.genericDisplay)
       ].join(",")
     );
   }

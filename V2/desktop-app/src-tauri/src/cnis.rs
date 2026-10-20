@@ -57,8 +57,9 @@ pub struct CnisCoding {
 
 struct Catalog {
     entries: Vec<Entry>,
-    /// Genericos distintos, del mas largo al mas corto.
-    generics: Vec<String>,
+    /// Nombres con los que se busca cada generico (el propio y los sinonimos
+    /// revisados del catalogo de ingredientes), del mas largo al mas corto.
+    terms: Vec<(String, String)>,
     version: String,
 }
 
@@ -94,10 +95,12 @@ fn catalog() -> &'static Catalog {
     static CATALOG: OnceLock<Catalog> = OnceLock::new();
     CATALOG.get_or_init(|| {
         let entries = parse(BUNDLED_CNIS_CSV);
-        let mut generics: Vec<String> = entries.iter().map(|e| e.generic.clone()).collect();
-        generics.sort();
-        generics.dedup();
-        generics.sort_by_key(|g| std::cmp::Reverse(g.len()));
+        let synonyms: Vec<(String, String)> = crate::ingredients::catalog()
+            .iter()
+            .filter(|i| i.cnis)
+            .flat_map(|i| i.names.iter().map(|n| (n.clone(), i.id.clone())))
+            .collect();
+        let terms = search_terms(&entries, &synonyms);
         let version = serde_json::from_str::<serde_json::Value>(CATALOG_MANIFEST)
             .ok()
             .and_then(|m| {
@@ -108,10 +111,31 @@ fn catalog() -> &'static Catalog {
             .unwrap_or_default();
         Catalog {
             entries,
-            generics,
+            terms,
             version,
         }
     })
+}
+
+/// Cada generico se busca por su nombre y por los sinonimos que apuntan a el
+/// (`(sinonimo, generico)`); los que no son genericos del compendio se ignoran.
+fn search_terms(entries: &[Entry], synonyms: &[(String, String)]) -> Vec<(String, String)> {
+    let generics: std::collections::BTreeSet<&str> =
+        entries.iter().map(|e| e.generic.as_str()).collect();
+    let mut terms: Vec<(String, String)> = generics
+        .iter()
+        .map(|g| (g.to_string(), g.to_string()))
+        .chain(
+            synonyms
+                .iter()
+                .filter(|(_, generic)| generics.contains(generic.as_str()))
+                .cloned(),
+        )
+        .collect();
+    terms.sort();
+    terms.dedup();
+    terms.sort_by_key(|(term, _)| std::cmp::Reverse(term.len()));
+    terms
 }
 
 /// Unidad canonica, igual que el pipeline (scripts/cnis/catalog.ts).
@@ -333,22 +357,23 @@ fn code_with(catalog: &Catalog, line: &str) -> Option<CnisCoding> {
         return None;
     }
 
-    // Un solo generico: el mas largo encontrado, y ningun otro que no sea parte de el.
-    let mut found: Vec<(usize, &String)> = Vec::new();
-    for generic in &catalog.generics {
-        if let Some(pos) = find_word(&text, generic) {
-            found.push((pos, generic));
+    // Un solo generico: el nombre mas largo encontrado, y ningun otro generico
+    // cuyo nombre no sea parte de el.
+    let mut found: Vec<(usize, &String, &String)> = Vec::new();
+    for (term, generic) in &catalog.terms {
+        if let Some(pos) = find_word(&text, term) {
+            found.push((pos, term, generic));
         }
     }
-    let (pos, generic) = *found.first()?;
+    let (pos, term, generic) = *found.first()?;
     if found
         .iter()
-        .any(|(_, other)| !generic.contains(other.as_str()))
+        .any(|(_, other_term, other)| other != &generic && !term.contains(other_term.as_str()))
     {
         return None;
     }
 
-    let (value, unit) = match first_strength(&text, pos + generic.len()) {
+    let (value, unit) = match first_strength(&text, pos + term.len()) {
         Strength::Found(value, unit) => (value, unit),
         Strength::PerVolume | Strength::Missing => return None,
     };
@@ -461,13 +486,17 @@ mod tests {
 
     fn test_catalog() -> Catalog {
         let entries = parse(CSV);
-        let mut generics: Vec<String> = entries.iter().map(|e| e.generic.clone()).collect();
-        generics.sort();
-        generics.dedup();
-        generics.sort_by_key(|g| std::cmp::Reverse(g.len()));
+        let synonyms = vec![
+            ("acetaminofen".to_string(), "paracetamol".to_string()),
+            (
+                "tempra".to_string(),
+                "no existe en el compendio".to_string(),
+            ),
+        ];
+        let terms = search_terms(&entries, &synonyms);
         Catalog {
             entries,
-            generics,
+            terms,
             version: "2025-04-26".into(),
         }
     }
@@ -503,6 +532,24 @@ mod tests {
         let coding = code_with(&test_catalog(), "Metformina 850 mg").unwrap();
         assert_eq!(coding.product, "010.000.2501");
         assert_eq!(coding.version, "2025-04-26");
+    }
+
+    #[test]
+    fn reviewed_synonyms_find_their_generic() {
+        assert_eq!(
+            code("Acetaminofén 500 mg tabletas").as_deref(),
+            Some("010.000.0104.00")
+        );
+        assert_eq!(
+            product("Tempra 500 mg"),
+            None,
+            "solo sinonimos de genericos del compendio"
+        );
+        assert_eq!(
+            product("Acetaminofén 500 mg con metformina 850 mg"),
+            None,
+            "dos farmacos"
+        );
     }
 
     #[test]

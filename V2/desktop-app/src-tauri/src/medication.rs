@@ -275,6 +275,12 @@ pub fn check_prescription(
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
+        // Sin el nombre en la base, el catalogo de ingredientes (paso 33) puede
+        // saber a que ingrediente de la base se refiere ("Paroxetina").
+        let found = match found {
+            Some(found) => Some(found),
+            None => reference_by_ingredient_name(conn, &key)?,
+        };
         normalized.push(match found {
             Some((ingredient, display_name, drug_class)) => NormalizedDrug {
                 input: input.clone(),
@@ -1180,6 +1186,28 @@ pub(crate) fn find_word(haystack: &str, needle: &str) -> Option<usize> {
     None
 }
 
+/// Ingrediente de la base de interacciones al que apunta un nombre del catalogo
+/// de ingredientes: `(ingrediente, nombre a mostrar, clase)`.
+fn reference_by_ingredient_name(
+    conn: &Connection,
+    name: &str,
+) -> Result<Option<(String, String, Option<String>)>, MedicationError> {
+    let Some(key) = crate::ingredients::catalog()
+        .resolve(name)
+        .and_then(|i| i.interaction_key.clone())
+    else {
+        return Ok(None);
+    };
+    Ok(conn
+        .query_row(
+            "SELECT ingredient, display_name, drug_class
+             FROM medication_reference WHERE ingredient = ?1 ORDER BY name LIMIT 1",
+            params![key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?)
+}
+
 /// Extrae los nombres de medicamentos reconocidos del texto libre de la receta,
 /// en el orden en que aparecen, sin duplicar. Asi el medico no tiene que volver
 /// a escribir la lista para verificarla.
@@ -1205,6 +1233,15 @@ pub fn extract_medications(conn: &Connection, text: &str) -> Result<Vec<String>,
         if let Some(pos) = find_word(&haystack, &name) {
             if seen.insert(display_name.clone()) {
                 hits.push((pos, display_name));
+            }
+        }
+    }
+    // Ingredientes del catalogo con datos de interacciones que la base no
+    // nombra con esa escritura.
+    for found in crate::ingredients::catalog().find_in_text(&haystack) {
+        if let Some((_, display_name, _)) = reference_by_ingredient_name(conn, found.name)? {
+            if seen.insert(display_name.clone()) {
+                hits.push((found.position, display_name));
             }
         }
     }
@@ -1640,6 +1677,35 @@ mod tests {
         let text = "litioxido no contiene el ingrediente. Ibuprofeno. Ibuprofeno de nuevo.";
         let found = extract_medications(&conn, text).unwrap();
         assert_eq!(found, vec!["Ibuprofeno".to_string()]);
+    }
+
+    #[test]
+    fn ingredient_catalog_resolves_names_the_reference_lacks() {
+        // La base nombra "paroxetine" pero no "paroxetina": el catalogo de
+        // ingredientes (paso 33) la liga por su generico del CNIS.
+        let conn = test_conn("ingredient-fallback");
+        install_bundled_reference(&conn).unwrap();
+        let found = extract_medications(
+            &conn,
+            "Paroxetina 20 mg cada 24 h
+Fentanilo",
+        )
+        .unwrap();
+        assert_eq!(
+            found,
+            vec!["Paroxetina".to_string(), "Fentanilo".to_string()]
+        );
+
+        let report = check_prescription(
+            &conn,
+            "enc-ingredientes",
+            &["Paroxetina".to_string(), "fentanyl".to_string()],
+            None,
+        )
+        .unwrap();
+        assert!(report.unrecognized.is_empty(), "{:?}", report.unrecognized);
+        assert_eq!(report.interactions.len(), 1);
+        assert_eq!(report.interactions[0].severity, "MAJOR");
     }
 
     /* ---------- Rebanada 3: pipeline de actualizacion ---------- */

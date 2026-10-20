@@ -48,6 +48,7 @@ use crate::cnis;
 use crate::export::{
     self, ExportDoctor, ExportDocument, ExportEncounter, ExportError, RecordExport,
 };
+use crate::ingredients;
 use crate::medication;
 
 /// Espacio de nombres de los UUID v5 de MiDoc. No cambiarlo: cambiaria los ids
@@ -150,8 +151,16 @@ pub fn export_record(
     let mut prescriptions = HashMap::new();
     for encounter in &data.encounters {
         if let Some(text) = encounter.prescription.as_deref() {
+            // Una linea abre un medicamento si nombra uno de la base de
+            // interacciones (incluye marcas) o un ingrediente del catalogo
+            // (genericos del CNIS y sinonimos revisados).
             let groups = group_prescription(text, |line| {
-                Ok::<_, ExportError>(!medication::extract_medications(conn, line)?.is_empty())
+                Ok::<_, ExportError>(
+                    !medication::extract_medications(conn, line)?.is_empty()
+                        || !ingredients::catalog()
+                            .find_in_text(&medication::normalize_name(line))
+                            .is_empty(),
+                )
             })?;
             prescriptions.insert(encounter.id.clone(), groups);
         }

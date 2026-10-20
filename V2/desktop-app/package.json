@@ -14,6 +14,8 @@
     "cie10:build": "node scripts/cie10/build.ts",
     "test:cnis": "node --test scripts/cnis/*.test.ts",
     "cnis:build": "node scripts/cnis/build.ts",
+    "test:ingredients": "node --test scripts/ingredients/*.test.ts",
+    "ingredients:build": "node scripts/ingredients/build.ts",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "node ./scripts/tauri-dev.mjs --features whisper-local",

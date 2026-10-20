@@ -1,0 +1,16 @@
+{
+  "version": "ingredientes-2026-10-20",
+  "generatedAt": "2026-10-20T23:35:26.432Z",
+  "sources": {
+    "cnis": "cnis-2025-04-26",
+    "interactions": "onchigh-mx-2026-07-08",
+    "reviewedSynonyms": 0
+  },
+  "ingredients": 1025,
+  "cnis": 1004,
+  "withInteractionData": 89,
+  "cnisLinkedToInteractions": 68,
+  "pendingReview": 75,
+  "conflicts": [],
+  "sha256": "6ea247dd15013ca800394e4c16614a67c9dc40abbf7503bbbe48d3bc8ece6d3f"
+}
