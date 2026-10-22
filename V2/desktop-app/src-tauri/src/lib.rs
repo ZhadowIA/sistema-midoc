@@ -1,6 +1,7 @@
 mod ai;
 mod arco;
 mod audio;
+mod brands;
 mod capabilities;
 mod cie10;
 mod clinical;
@@ -2476,6 +2477,52 @@ fn ai_list_benchmarks(state: tauri::State<'_, AppDb>) -> Result<Vec<ai::Benchmar
     with_ai(&state, ai::list_benchmarks)
 }
 
+/// Principios activos del catalogo para el selector de "que contiene" una
+/// marca (paso 33, etapa 3). Referencia publica; no necesita la base.
+#[tauri::command]
+fn search_ingredients(query: String) -> Vec<brands::IngredientOption> {
+    brands::search_ingredients(&query, 12)
+}
+
+/// Marcas que el medico agrego en esta app (solo locales).
+#[tauri::command]
+fn list_local_brands(state: tauri::State<'_, AppDb>) -> Result<Vec<brands::LocalBrand>, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    brands::list_local(conn).map_err(|e| e.to_string())
+}
+
+/// Guarda (o corrige) que contiene una marca. Se queda en esta computadora.
+#[tauri::command]
+fn save_local_brand(
+    state: tauri::State<'_, AppDb>,
+    display: String,
+    ingredient_ids: Vec<String>,
+) -> Result<brands::LocalBrand, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    brands::save_local(conn, &display, &ingredient_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_local_brand(state: tauri::State<'_, AppDb>, id: String) -> Result<(), String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    brands::delete_local(conn, &id).map_err(|e| e.to_string())
+}
+
+/// Lineas de la receta con dosis que no nombran ningun medicamento conocido,
+/// para preguntarle al medico que contienen. La receta no sale del equipo.
+#[tauri::command]
+fn detect_unknown_medications(
+    state: tauri::State<'_, AppDb>,
+    prescription: String,
+) -> Result<Vec<brands::UnknownMedication>, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    brands::unknown_medications(conn, &prescription).map_err(|e| e.to_string())
+}
+
 /// Capacidades fijadas al compilar (paso 33): la interfaz muestra u oculta lo
 /// que dependen de ellas. No necesita la base.
 #[tauri::command]
@@ -3181,6 +3228,11 @@ pub fn run() {
             diarization_model_status,
             download_diarization_model,
             get_capabilities,
+            search_ingredients,
+            list_local_brands,
+            save_local_brand,
+            delete_local_brand,
+            detect_unknown_medications,
             check_medication_safety,
             medication_reference_status,
             import_medication_reference,

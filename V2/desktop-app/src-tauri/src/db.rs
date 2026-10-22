@@ -541,6 +541,17 @@ const MIGRATIONS: &[&str] = &[
     // CLINICO. JSON [{code, name, principal}] validado contra el catalogo al
     // guardar; el diagnostico en texto libre se conserva aparte.
     "ALTER TABLE note_versions ADD COLUMN coded_diagnoses TEXT NOT NULL DEFAULT '[]';",
+    // Marcas que el medico agrega en su app (paso 33, etapa 3). Clase OPERATIVO:
+    // referencia de medicamentos (marca -> ingredientes del catalogo), sin datos
+    // de pacientes. Viven solo en esta base; nunca se sincronizan.
+    "CREATE TABLE local_brands (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL UNIQUE,
+        display TEXT NOT NULL,
+        ingredients TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

@@ -107,6 +107,11 @@ test("el mock de navegador cumple los contratos", async () => {
   await run("list_patients");
   await run("list_open_encounters");
   await run("get_capabilities");
+  await run("search_ingredients", { query: "para" });
+  const brand = await run("save_local_brand", { display: "Fictimed", ingredientIds: ["paracetamol"] });
+  await run("list_local_brands");
+  await run("detect_unknown_medications", { prescription: "Fictimed 500 mg\nProbadol 10 mg" });
+  await run("delete_local_brand", { id: (brand as { id: string }).id });
   await run("get_inactivity_lock_minutes");
   await run("set_inactivity_lock_minutes", { minutes: 15 });
   await run("find_patient_matches", { firstName: "Hugo", lastName: "Paz Olivares" });

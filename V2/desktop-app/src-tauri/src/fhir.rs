@@ -152,13 +152,15 @@ pub fn export_record(
     for encounter in &data.encounters {
         if let Some(text) = encounter.prescription.as_deref() {
             // Una linea abre un medicamento si nombra uno de la base de
-            // interacciones (incluye marcas) o un ingrediente del catalogo
-            // (genericos del CNIS y sinonimos revisados).
+            // interacciones, un ingrediente del catalogo (genericos del CNIS y
+            // sinonimos revisados) o una marca (nucleo curado o del medico).
             let groups = group_prescription(text, |line| {
+                let text = medication::normalize_name(line);
                 Ok::<_, ExportError>(
                     !medication::extract_medications(conn, line)?.is_empty()
-                        || !ingredients::catalog()
-                            .find_in_text(&medication::normalize_name(line))
+                        || !ingredients::catalog().find_in_text(&text).is_empty()
+                        || !crate::brands::find_in_text(conn, &text)
+                            .map_err(|e| ExportError::Invalid(e.to_string()))?
                             .is_empty(),
                 )
             })?;
