@@ -727,6 +727,20 @@ const modelStatus = z.looseObject({
 
 /* ---------- Seguridad de medicacion (medication.rs) ---------- */
 
+const ingredientOption = z.looseObject({
+  id: z.string(),
+  display: z.string(),
+  cnis: z.boolean(),
+  has_interaction_data: z.boolean()
+});
+
+const localBrand = z.looseObject({
+  id: z.string(),
+  display: z.string(),
+  ingredients: z.array(z.looseObject({ id: z.string(), display: z.string() })),
+  created_at: z.string()
+});
+
 const safetyReport = z.looseObject({
   normalized: z.array(
     z.looseObject({
@@ -941,6 +955,12 @@ export const IPC_RESPONSE_SCHEMAS = {
   download_transcription_model: NADA,
   diarization_model_status: z.array(modelStatus),
   download_diarization_model: NADA,
+  // Marcas e ingredientes (paso 33, etapa 3): no dependen del interruptor
+  search_ingredients: z.array(ingredientOption),
+  list_local_brands: z.array(localBrand),
+  save_local_brand: localBrand,
+  delete_local_brand: NADA,
+  detect_unknown_medications: z.array(z.looseObject({ line: z.string(), candidate: z.string() })),
   // Seguridad de medicacion (tras el interruptor del paso 33)
   get_capabilities: z.looseObject({ medication_safety: z.boolean() }),
   check_medication_safety: safetyReport,
