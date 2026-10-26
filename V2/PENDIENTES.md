@@ -2,6 +2,40 @@
 
 Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cada pendiente nace con fecha y origen; al resolverlo se mueve a "Resueltos" con la fecha y el PR o commit que lo cerro. Lo que ya es un paso de la linea (`10_linea_de_desarrollo.md`) no se duplica aqui.
 
+## Te toca a ti (indice)
+
+Lo que solo puede hacer el dueno o su equipo, en un solo lugar. El detalle vive en el pendiente de cada seccion; al resolverse, sale de aqui y el pendiente pasa a "Resueltos". Actualizado 2026-10-25.
+
+**Fusionar y configurar**
+- [ ] Fusionar los PRs apilados en orden, del #78 al #110, hacia `dev`. El #93 borra tablas vestigio en la base Neon de pruebas al desplegar. Despues, de `dev` a `main` (el aviso semanal del CNIS solo corre desde `main`). _(2026-10-25)_
+- [ ] Poner `CRON_SECRET` en Vercel (proyecto `midoc-pruebas`): lo usa el correo de fin de actualizaciones de la licencia. _(2026-10-18)_
+- [ ] Probar el despliegue de pruebas de punta a punta: ver "Despliegue de pruebas".
+
+**Probar a mano en la app real**
+- [ ] Escape en la vista previa de un PDF: ver "Escape no cierra la vista previa".
+- [ ] Arrastrar un archivo desde el Explorador: ver "Arrastrar archivos desde el Explorador".
+- [ ] Opcional: borrar los perfiles de prueba "QA CSP" y "QA Contrato IPC" de la app de escritorio de esta laptop. _(2026-10-13)_
+
+**Llaves y seguridad**
+- [ ] Regenerar el certificado de staging, descartar `~/.tauri/midoc-updater.key` de la otra laptop y cambiar la contrasena de cualquier cuenta que haya usado el viejo `reset-admin`: ver "Regenerar el certificado de firma de staging".
+- [ ] Antes de distribuir: llave de licencias y canal de actualizaciones de produccion: ver "Llave de licencias de produccion" y "Canal de actualizaciones de produccion".
+
+**Con el farmaceutico y el medico piloto (paso 33)**
+- [ ] Revisar `por-revisar.csv` (sinonimos y marcas): ver "Revisar los nombres de por-revisar.csv".
+- [ ] Llenar el nucleo curado de marcas: ver "Llenar el nucleo curado de marcas".
+- [ ] Escribir las reglas medicamento contra padecimiento: ver "Escribir las reglas medicamento contra padecimiento".
+- [ ] Aplicar los 10 acuerdos de actualizacion del CNIS: ver "CNIS: aplicar los 10 acuerdos".
+
+**Legal, regulatorio y negocio**
+- [ ] Consulta regulatoria con COFEPRIS o un especialista (software como dispositivo medico): ver su pendiente.
+- [ ] Confirmar en el DOF el art. 31 del Reglamento de Insumos para la Salud: ver su pendiente.
+- [ ] Revision fiscal y de consumidor con contador: ver "Revision fiscal y de consumidor".
+- [ ] Firmar el BAA/ZDR con el proveedor de IA para validar la pasarela: ver "Validar la pasarela de IA en staging".
+- [ ] Validar los precios con medicos piloto: ver "Precios del nuevo modelo".
+
+**Decisiones**
+- [ ] Dar luz verde para implementar el paso 32 (preconsulta), ya disenado: ver "Cuestionario de preconsulta configurable".
+
 ## Decisiones de producto
 
 - [ ] **Despliegue de pruebas: falta probarlo de punta a punta** — el portal de pruebas ya esta arriba en https://midoc-pruebas.vercel.app (Vercel `midoc-pruebas` con rama de produccion `dev`, base Neon `midoc-pruebas` en us-east-1; funciona desde el PR #77) y las variables con secretos viven fuera del repo. Falta: crear una cuenta de medico de prueba, otorgarle licencia y creditos, vincular una app de escritorio contra ese portal y confirmar que `EMAIL_API_KEY` de Resend envia de verdad (verificar correo y recuperar contrasena). _(2026-10-11; actualizado 2026-10-12)_
