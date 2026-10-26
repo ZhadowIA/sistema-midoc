@@ -114,6 +114,13 @@ const MOCK_KNOWN_WORDS = ["paracetamol", "ibuprofeno", "amoxicilina", "loratadin
 const mockState = {
   inactivityLockMinutes: 30,
   severeAcknowledged: false,
+  preconsulta: {
+    draft: null as Record<string, unknown> | null,
+    published: null as Record<string, unknown> | null,
+    version: 0,
+    publishedAt: null as string | null,
+    link: null as { url: string; status: string; created_at: string } | null
+  },
   localBrands: [] as { id: string; name: string; display: string; ingredients: string[]; created_at: string }[],
   // Copia de los datos de la receta (regla 4.6); misma regla de version que el portal.
   prescriber: {
@@ -638,6 +645,19 @@ function matchPatientsMock(fullName: string | null | undefined, phone: string | 
 }
 
 /** Latencia simulada; las pruebas la bajan a 0. */
+function mockPreconsultaState() {
+  const p = mockState.preconsulta;
+  return {
+    draft: p.draft,
+    published_version: p.version || null,
+    published_at: p.publishedAt,
+    published: p.published,
+    link: p.link,
+    linked: true,
+    offline: false
+  };
+}
+
 function mockBrandView(brand: { id: string; display: string; ingredients: string[]; created_at: string }) {
   return {
     id: brand.id,
@@ -1367,6 +1387,27 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       mockState.patients.push(created);
       return asPatientRecord(created) as T;
     }
+    case "preconsulta_state":
+      return mockPreconsultaState() as T;
+    case "preconsulta_save_draft":
+      mockState.preconsulta.draft = args?.definition as Record<string, unknown>;
+      return null as T;
+    case "preconsulta_publish":
+      mockState.preconsulta.draft = args?.definition as Record<string, unknown>;
+      mockState.preconsulta.published = args?.definition as Record<string, unknown>;
+      mockState.preconsulta.version += 1;
+      mockState.preconsulta.publishedAt = new Date().toISOString();
+      return mockPreconsultaState() as T;
+    case "preconsulta_regenerate_link":
+      mockState.preconsulta.link = {
+        url: `https://midoc-pruebas.vercel.app/preconsulta/${crypto.randomUUID().replace(/-/g, "")}`,
+        status: "ACTIVE",
+        created_at: new Date().toISOString()
+      };
+      return mockPreconsultaState() as T;
+    case "preconsulta_set_link_status":
+      if (mockState.preconsulta.link) mockState.preconsulta.link.status = String(args?.status);
+      return mockPreconsultaState() as T;
     case "search_ingredients": {
       const query = String(args?.query ?? "").toLowerCase();
       return (query.length < 2 ? [] : MOCK_INGREDIENTS.filter((i) => i.id.includes(query))) as T;

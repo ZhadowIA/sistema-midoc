@@ -26,6 +26,7 @@ mod updates;
 // `diarization-local`; sin el feature, un stub degrada sin separar hablantes.
 mod medication;
 mod operations;
+mod preconsulta;
 mod preferences;
 mod prescription;
 mod search;
@@ -2486,6 +2487,111 @@ fn ai_list_benchmarks(state: tauri::State<'_, AppDb>) -> Result<Vec<ai::Benchmar
     with_ai(&state, ai::list_benchmarks)
 }
 
+/* ---------- Preconsulta configurable (paso 32, rebanada 1) ---------- */
+
+/// Cuenta vinculada: (servidor, token del equipo), o nada.
+fn linked_portal(state: &tauri::State<'_, AppDb>) -> Result<Option<(String, String)>, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    let server = sync::get_state(conn, "server_url").map_err(|e| e.to_string())?;
+    let token = sync::get_state(conn, "device_token").map_err(|e| e.to_string())?;
+    Ok(server.zip(token))
+}
+
+fn require_portal(state: &tauri::State<'_, AppDb>) -> Result<(String, String), String> {
+    linked_portal(state)?
+        .ok_or_else(|| "vincula tu cuenta para publicar tu preconsulta".to_string())
+}
+
+fn portal_error(error: sync::SyncError) -> String {
+    match error {
+        sync::SyncError::Http(_) => {
+            "Sin conexion con el portal: tu borrador queda guardado; publica cuando tengas conexion.".to_string()
+        }
+        other => other.to_string(),
+    }
+}
+
+/// Borrador, lo publicado y el enlace general. Sin conexion, lo ultimo conocido.
+#[tauri::command]
+async fn preconsulta_state(
+    state: tauri::State<'_, AppDb>,
+) -> Result<preconsulta::PreconsultaState, String> {
+    let portal = linked_portal(&state)?;
+    let remote = match &portal {
+        Some((server, token)) => preconsulta::fetch_status(server, token).await.ok(),
+        None => None,
+    };
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    preconsulta::compose_state(conn, portal.is_some(), remote.as_ref()).map_err(|e| e.to_string())
+}
+
+/// Guarda el borrador del cuestionario en este equipo (no publica).
+#[tauri::command]
+fn preconsulta_save_draft(
+    state: tauri::State<'_, AppDb>,
+    definition: serde_json::Value,
+) -> Result<(), String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    preconsulta::save_draft(conn, &definition).map_err(|e| e.to_string())
+}
+
+/// Publica el cuestionario en el portal (lo valida su contrato).
+#[tauri::command]
+async fn preconsulta_publish(
+    state: tauri::State<'_, AppDb>,
+    definition: serde_json::Value,
+) -> Result<preconsulta::PreconsultaState, String> {
+    {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        preconsulta::save_draft(conn, &definition).map_err(|e| e.to_string())?;
+    }
+    let (server, token) = require_portal(&state)?;
+    let (version, at) = preconsulta::publish(&server, &token, &definition)
+        .await
+        .map_err(portal_error)?;
+    {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        preconsulta::record_published(conn, &definition, version, &at)
+            .map_err(|e| e.to_string())?;
+    }
+    preconsulta_state(state).await
+}
+
+/// Crea o regenera el enlace general (el anterior deja de servir).
+#[tauri::command]
+async fn preconsulta_regenerate_link(
+    state: tauri::State<'_, AppDb>,
+) -> Result<preconsulta::PreconsultaState, String> {
+    let (server, token) = require_portal(&state)?;
+    let (url, _status, created_at) = preconsulta::regenerate_link(&server, &token)
+        .await
+        .map_err(portal_error)?;
+    {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        preconsulta::record_new_link(conn, &url, &created_at).map_err(|e| e.to_string())?;
+    }
+    preconsulta_state(state).await
+}
+
+/// Pausa (`PAUSED`) o reanuda (`ACTIVE`) el enlace general.
+#[tauri::command]
+async fn preconsulta_set_link_status(
+    state: tauri::State<'_, AppDb>,
+    status: String,
+) -> Result<preconsulta::PreconsultaState, String> {
+    let (server, token) = require_portal(&state)?;
+    preconsulta::set_link_status(&server, &token, &status)
+        .await
+        .map_err(portal_error)?;
+    preconsulta_state(state).await
+}
+
 /// Principios activos del catalogo para el selector de "que contiene" una
 /// marca (paso 33, etapa 3). Referencia publica; no necesita la base.
 #[tauri::command]
@@ -3289,6 +3395,11 @@ pub fn run() {
             download_diarization_model,
             get_capabilities,
             search_ingredients,
+            preconsulta_state,
+            preconsulta_save_draft,
+            preconsulta_publish,
+            preconsulta_regenerate_link,
+            preconsulta_set_link_status,
             list_local_brands,
             save_local_brand,
             delete_local_brand,

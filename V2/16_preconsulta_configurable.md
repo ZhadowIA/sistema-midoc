@@ -83,7 +83,7 @@ Sin cuenta, la identificación es lo que permite encontrar la preconsulta. Son *
 
 ## 9. Rebanadas
 
-1. **Editor y publicación:** editor de la parte 2 en la app con plantillas y vista previa; la definición se publica en el portal. Enlace general con pausar y regenerar.
+1. **Editor y publicación** (entregada 2026-10-25, rama `v2/paso32-preconsulta-editor`): editor de la parte 2 en la app (vista "Preconsulta") con plantillas de medicina general y odontología, condiciones, vista previa en formato de celular y borrador guardado en el equipo; la definición se publica en el portal (`PUT /api/sync/preconsulta`, contrato Zod en `lib/preconsulta-questionnaire.ts` con espejo en el escritorio y prueba de deriva). Enlace general con crear, pausar y regenerar (`/api/sync/preconsulta/link`; el portal guarda solo el hash del token y entrega la URL una vez). Tablas nuevas OPERATIVO: `PreconsultaQuestionnaire` y `PreconsultaLink`. El enlace todavía no abre formulario: eso es la rebanada 2.
 2. **Formulario del paciente:** pantalla de inicio, primera vez o ya paciente, parte 1, parte 2, identificación obligatoria, guardado local, condiciones, revisión, consentimiento y envío cifrado. Límites contra abuso.
 3. **Bandeja y "Buscar preconsulta":** descarga y descifrado en la app, coincidencias automáticas, búsqueda, adjuntar, descartar, conciliación de antecedentes, paso al Subjetivo y retención configurable.
 4. **Enlace personal:** generar desde el expediente, compartir por WhatsApp, enlace o QR, y adjuntado automático.
