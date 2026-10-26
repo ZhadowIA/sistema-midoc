@@ -312,6 +312,7 @@ model User {
   aiCreditGrants              AiCreditGrant[]           @relation("DoctorAiCreditGrants")
   preconsultaQuestionnaire    PreconsultaQuestionnaire? @relation("DoctorPreconsultaQuestionnaire")
   preconsultaLinks            PreconsultaLink[]         @relation("DoctorPreconsultaLinks")
+  preconsultaSubmissions      PreconsultaSubmission[]   @relation("DoctorPreconsultaSubmissions")
 
   @@index([role, phone])
 }
@@ -343,20 +344,41 @@ enum PreconsultaLinkStatus {
 
 /// Clase: OPERATIVO - enlace de preconsulta (token como hash); el personal referencia al paciente solo por un id opaco de la app, nunca por su nombre.
 model PreconsultaLink {
-  id         String                @id @default(cuid())
-  doctorId   String
-  doctor     User                  @relation("DoctorPreconsultaLinks", fields: [doctorId], references: [id], onDelete: Cascade)
-  kind       PreconsultaLinkKind
-  status     PreconsultaLinkStatus @default(ACTIVE)
-  tokenHash  String                @unique
+  id          String                  @id @default(cuid())
+  doctorId    String
+  doctor      User                    @relation("DoctorPreconsultaLinks", fields: [doctorId], references: [id], onDelete: Cascade)
+  kind        PreconsultaLinkKind
+  status      PreconsultaLinkStatus   @default(ACTIVE)
+  tokenHash   String                  @unique
   // Solo enlaces personales: id opaco que la app reconoce, vencimiento y un solo envio.
-  patientRef String?
-  expiresAt  DateTime?
-  usedAt     DateTime?
-  createdAt  DateTime              @default(now())
-  revokedAt  DateTime?
+  patientRef  String?
+  expiresAt   DateTime?
+  usedAt      DateTime?
+  createdAt   DateTime                @default(now())
+  revokedAt   DateTime?
+  submissions PreconsultaSubmission[]
 
   @@index([doctorId, kind, status])
+}
+
+/// Clase: CLINICO - en transito: preconsulta cifrada (sealed box) para la llave del medico; se purga cuando la app confirma la descarga.
+model PreconsultaSubmission {
+  id                   String           @id @default(cuid())
+  doctorId             String
+  doctor               User             @relation("DoctorPreconsultaSubmissions", fields: [doctorId], references: [id], onDelete: Cascade)
+  linkId               String?
+  link                 PreconsultaLink? @relation(fields: [linkId], references: [id], onDelete: SetNull)
+  // Version del cuestionario que contesto el paciente (la definicion es OPERATIVO).
+  questionnaireVersion Int
+  // Sealed box X25519: identificacion, antecedentes y respuestas. La nube no
+  // puede abrirlo; se entrega a la app y se borra (null) al purgar.
+  ciphertext           Bytes?
+  sizeBytes            Int
+  submittedAt          DateTime         @default(now())
+  deliveredAt          DateTime?
+  purgedAt             DateTime?
+
+  @@index([doctorId, purgedAt])
 }
 
 /// Clase: CONTACTO - perfil profesional y del consultorio que el medico publica o imprime en la receta.
