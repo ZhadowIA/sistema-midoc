@@ -18,6 +18,8 @@
     "ingredients:build": "node scripts/ingredients/build.ts",
     "test:brands": "node --test scripts/brands/*.test.ts",
     "brands:build": "node scripts/brands/build.ts",
+    "test:contraindications": "node --test scripts/contraindications/*.test.ts",
+    "contraindications:build": "node scripts/contraindications/build.ts",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "node ./scripts/tauri-dev.mjs --features whisper-local",

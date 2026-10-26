@@ -1,0 +1,4 @@
+# Reglas medicamento contra padecimiento revisadas (paso 33, etapa 5). Fuente y revisor obligatorios.
+# gravedad: contraindicada | precaucion. cie10: clave sin punto o el inicio de un grupo (N18 cubre N180...N189).
+# Materia prima: propuestas.csv (texto del CNIS). Ver README.
+ingrediente,cie10,padecimiento,gravedad,recomendacion,fuente,revisado_por

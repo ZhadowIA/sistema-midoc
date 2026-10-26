@@ -6,6 +6,7 @@ const base: PrescriptionItem = {
   line: "Paracetamol 500 mg tabletas",
   brand: null,
   generic: "Paracetamol",
+  ingredient_ids: ["paracetamol"],
   cnis_description: "Paracetamol 500 mg tableta",
   cnis_product: "010.000.0104",
   cnis_clave: "010.000.0104.00",

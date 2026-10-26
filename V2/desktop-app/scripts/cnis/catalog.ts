@@ -177,6 +177,64 @@ interface RawEntry {
   packageQty: number | null;
 }
 
+/**
+ * Generico que abre su tabla en la linea `i`, o null: en la misma linea del
+ * encabezado, o a columna 0 (a veces con "Via de administracion" a la derecha)
+ * seguido del encabezado en las lineas siguientes.
+ */
+export function genericStartingAt(lines: string[], i: number): string | null {
+  const line = lines[i];
+  if (isHeader(line)) {
+    const before = genericName(line.slice(0, line.indexOf("Descripci")));
+    return before && before !== "CLAVE" ? before : null;
+  }
+  if (line.startsWith(" ") || CLAVE.test(line)) return null;
+  const name = genericName(chunks(line)[0] ?? "");
+  const header = lines
+    .slice(i + 1, i + 8)
+    .filter((l) => l.trim())
+    .slice(0, 3)
+    .find(isHeader);
+  return name && header && ["", "Clave"].includes(header.slice(0, header.indexOf("Descripci")).trim()) ? name : null;
+}
+
+/** Apartados que cierran "Contraindicaciones y Precauciones" en el compendio. */
+const SECTION_TITLES = ["Interacciones", "Generalidades", "Efectos adversos", "Riesgo en el Embarazo"];
+
+export interface ContraindicationText {
+  /** Generico del compendio, como lo escribe (con alternativas y combinaciones). */
+  generic: string;
+  text: string;
+}
+
+/**
+ * Texto del apartado "Contraindicaciones y Precauciones" de cada generico (paso
+ * 33, etapa 5). Es materia prima para que una persona escriba reglas
+ * revisadas; la app no lo usa directamente.
+ */
+export function contraindicationTexts(text: string): ContraindicationText[] {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const found: ContraindicationText[] = [];
+  let generic: string | null = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const name = genericStartingAt(lines, i);
+    if (name) {
+      generic = name;
+      continue;
+    }
+    if (lines[i].trim() !== "Contraindicaciones y Precauciones" || !generic) continue;
+    const body: string[] = [];
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const current = lines[j].trim();
+      if (SECTION_TITLES.some((title) => current.startsWith(title)) || genericStartingAt(lines, j)) break;
+      if (current && !current.includes("DIARIO OFICIAL")) body.push(current);
+    }
+    const joined = body.join(" ").replace(/\s+/g, " ").trim();
+    if (joined) found.push({ generic: displayName(uninvert(generic)), text: joined });
+  }
+  return found;
+}
+
 /** Recorre el texto del PDF y devuelve cada aparicion de clave con lo leido antes de ella. */
 function readEntries(lines: string[]): RawEntry[] {
   const entries: RawEntry[] = [];
@@ -223,20 +281,13 @@ function readEntries(lines: string[]): RawEntry[] {
     // Encabezado de tabla; a veces el generico va en la misma linea.
     if (isHeader(line)) {
       indicationsCol = line.indexOf("Indicaciones");
-      const before = genericName(line.slice(0, line.indexOf("Descripci")));
-      if (before && before !== "CLAVE") reset(before);
+      const name = genericStartingAt(lines, i);
+      if (name) reset(name);
       continue;
     }
-    // Generico a columna 0 (a veces con "Via de administracion" a la derecha),
-    // seguido del encabezado en las lineas siguientes.
     if (!line.startsWith(" ") && !CLAVE.test(line)) {
-      const name = genericName(chunks(line)[0] ?? "");
-      const header = lines
-        .slice(i + 1, i + 8)
-        .filter((l) => l.trim())
-        .slice(0, 3)
-        .find(isHeader);
-      if (name && header && ["", "Clave"].includes(header.slice(0, header.indexOf("Descripci")).trim())) {
+      const name = genericStartingAt(lines, i);
+      if (name) {
         reset(name);
         continue;
       }

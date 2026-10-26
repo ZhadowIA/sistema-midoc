@@ -113,6 +113,9 @@ test("el mock de navegador cumple los contratos", async () => {
   await run("detect_unknown_medications", { prescription: "Fictimed 500 mg\nProbadol 10 mg" });
   await run("analyze_prescription", { prescription: "Paracetamol 500 mg tabletas\nFictimed 500 mg" });
   await run("delete_local_brand", { id: (brand as { id: string }).id });
+  await run("check_contraindications", { encounterId: "enc-1", prescription: "Ibuprofeno 400 mg" });
+  await run("pending_severe_alerts", { encounterId: "enc-1" });
+  await run("acknowledge_severe_alerts", { encounterId: "enc-1", fingerprint: "mock" });
   await run("get_inactivity_lock_minutes");
   await run("set_inactivity_lock_minutes", { minutes: 15 });
   await run("find_patient_matches", { firstName: "Hugo", lastName: "Paz Olivares" });

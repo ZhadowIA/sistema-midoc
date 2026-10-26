@@ -11,6 +11,8 @@ export interface PrescriptionItem {
   brand: string | null;
   /** Principios activos ("Paracetamol + Cafeína"). */
   generic: string;
+  /** Los mismos, como ids del catalogo de ingredientes. */
+  ingredient_ids: string[];
   /** Denominacion del CNIS cuando hay clave ("Paracetamol 500 mg tableta"). */
   cnis_description: string | null;
   cnis_product: string | null;
