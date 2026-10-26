@@ -37,6 +37,8 @@ struct Entry {
     clave: String,
     product: String,
     generic: String,
+    /// El generico como lo escribe el compendio, con acentos.
+    display: String,
     form: String,
     strength: Option<(f64, String)>,
     /// Unidades del envase, si el compendio las dejo atribuir.
@@ -53,6 +55,8 @@ pub struct CnisCoding {
     pub clave: Option<String>,
     /// Edicion del compendio de la que salio la clave.
     pub version: String,
+    /// Denominacion generica del producto: "Paracetamol 500 mg tableta".
+    pub description: String,
 }
 
 struct Catalog {
@@ -81,6 +85,11 @@ fn parse(csv: &str) -> Vec<Entry> {
                 clave: f[0].clone(),
                 product: f[1].clone(),
                 generic: f[2].clone(),
+                display: f
+                    .get(10)
+                    .filter(|d| !d.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| f[2].clone()),
                 form: f[3].clone(),
                 strength,
                 package_qty: f[6].parse().ok(),
@@ -436,7 +445,61 @@ fn code_with(catalog: &Catalog, line: &str) -> Option<CnisCoding> {
         product: entry.product.clone(),
         clave,
         version: catalog.version.clone(),
+        description: describe(entry),
     })
+}
+
+/// Acentos de las palabras de forma farmaceutica (la tabla las guarda sin ellos).
+const FORM_ACCENTS: &[(&str, &str)] = &[
+    ("solucion", "solución"),
+    ("suspension", "suspensión"),
+    ("capsula", "cápsula"),
+    ("capsulas", "cápsulas"),
+    ("emulsion", "emulsión"),
+    ("liberacion", "liberación"),
+    ("oftalmica", "oftálmica"),
+    ("oftalmico", "oftálmico"),
+    ("otica", "ótica"),
+    ("unguento", "ungüento"),
+    ("ovulo", "óvulo"),
+    ("dermica", "dérmica"),
+    ("dermico", "dérmico"),
+    ("inhalacion", "inhalación"),
+    ("enterica", "entérica"),
+    ("aplicacion", "aplicación"),
+    ("intravitrea", "intravítrea"),
+    ("dialisis", "diálisis"),
+];
+
+fn accent_form(form: &str) -> String {
+    form.split(' ')
+        .map(|word| {
+            FORM_ACCENTS
+                .iter()
+                .find(|(plain, _)| *plain == word)
+                .map(|(_, accented)| accented.to_string())
+                .unwrap_or_else(|| word.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// 500.0 -> "500", 2.5 -> "2.5".
+fn format_amount(value: f64) -> String {
+    let text = format!("{value:.4}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// "Paracetamol 500 mg tableta".
+fn describe(entry: &Entry) -> String {
+    let mut parts = vec![entry.display.clone()];
+    if let Some((value, unit)) = &entry.strength {
+        parts.push(format!("{} {unit}", format_amount(*value)));
+    }
+    if !entry.form.is_empty() {
+        parts.push(accent_form(&entry.form));
+    }
+    parts.join(" ")
 }
 
 /// Cantidad del envase escrita en la receta: "caja con 20", "envase de 30",

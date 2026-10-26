@@ -7,6 +7,7 @@ import { dentalSessionLines } from "./dentalEvolution.ts";
 import { categoryLabel } from "./documentsModel.ts";
 import { formatMedicalHistoryForDisplay } from "./medicalHistoryFormat.ts";
 import { shortHash } from "./pdfText.ts";
+import { genericBlockText, type PrescriptionItem } from "./prescriptionModel.ts";
 
 export type ExportKind = "PDF_CONSULTA" | "PDF_EXPEDIENTE";
 
@@ -61,6 +62,8 @@ export interface RecordExport {
       specialty?: unknown;
     } | null;
     prescription: string | null;
+    /** Denominacion generica y clave CNIS por medicamento (paso 33, etapa 4). */
+    prescription_items?: PrescriptionItem[];
   }>;
   documents: Array<{
     file_name: string;
@@ -211,6 +214,9 @@ function encounterBlocks(encounter: RecordExport["encounters"][number], kind: Ex
     field("Indicaciones", note.instructions);
   }
   field("Receta", encounter.prescription);
+  // Doble denominacion: lo escrito por el medico arriba, sin cambios; aqui la
+  // denominacion generica y la clave del CNIS cuando agregan informacion.
+  field("Denominación genérica", genericBlockText(encounter.prescription_items));
   if (!note && !encounter.prescription) {
     blocks.push({ type: "meta", text: "Sin nota registrada." });
   }

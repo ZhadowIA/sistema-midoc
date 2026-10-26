@@ -26,6 +26,7 @@ mod updates;
 mod medication;
 mod operations;
 mod preferences;
+mod prescription;
 mod search;
 mod sherpa_diarization;
 mod sync;
@@ -2511,6 +2512,18 @@ fn delete_local_brand(state: tauri::State<'_, AppDb>, id: String) -> Result<(), 
     brands::delete_local(conn, &id).map_err(|e| e.to_string())
 }
 
+/// Denominacion generica y clave CNIS de cada medicamento de la receta (paso
+/// 33, etapa 4), para que el medico la vea antes de firmar. Local, sin IA.
+#[tauri::command]
+fn analyze_prescription(
+    state: tauri::State<'_, AppDb>,
+    prescription: String,
+) -> Result<Vec<prescription::PrescriptionItem>, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    prescription::analyze(conn, &prescription).map_err(|e| e.to_string())
+}
+
 /// Lineas de la receta con dosis que no nombran ningun medicamento conocido,
 /// para preguntarle al medico que contienen. La receta no sale del equipo.
 #[tauri::command]
@@ -3233,6 +3246,7 @@ pub fn run() {
             save_local_brand,
             delete_local_brand,
             detect_unknown_medications,
+            analyze_prescription,
             check_medication_safety,
             medication_reference_status,
             import_medication_reference,
