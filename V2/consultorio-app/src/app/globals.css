@@ -3271,3 +3271,142 @@ a.service-card:hover {
     background: var(--surface);
   }
 }
+
+/* ---------- Preconsulta del paciente (paso 32) ---------- */
+
+/* Pensada para el celular: una columna, letra grande y botones del tamano de un dedo. */
+.preconsulta-shell {
+  width: min(560px, calc(100% - 24px));
+  padding-top: 16px;
+}
+
+.preconsulta-form {
+  display: grid;
+  gap: 18px;
+  font-size: 1.08rem;
+}
+
+.preconsulta-form h1,
+.preconsulta-form h2 {
+  margin: 0;
+}
+
+.preconsulta-form button {
+  min-height: 48px;
+  font-size: 1.02rem;
+}
+
+.preconsulta-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.preconsulta-progress span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.25s ease;
+}
+
+.preconsulta-choices {
+  display: grid;
+  gap: 10px;
+}
+
+.preconsulta-form input,
+.preconsulta-form textarea,
+.preconsulta-form select {
+  font: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.preconsulta-form input[type="checkbox"] {
+  width: 22px;
+}
+
+/* 0 a 10 sin salirse en pantallas angostas: columnas que se encogen. */
+.preconsulta-scale {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.preconsulta-form .preconsulta-scale button {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  justify-content: center;
+}
+
+/* Opciones a todo lo ancho: blancos grandes para el dedo. */
+.preconsulta-form .preconsulta-choices button {
+  width: 100%;
+  justify-content: center;
+}
+
+.preconsulta-question {
+  display: grid;
+  gap: 10px;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.preconsulta-question legend {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.preconsulta-phone {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px;
+}
+
+.preconsulta-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.preconsulta-review {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.preconsulta-review dt {
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.preconsulta-review dd {
+  margin: 0;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.preconsulta-consent {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.preconsulta-consent input {
+  margin-top: 5px;
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+/* Trampa para bots: fuera de la vista y del lector de pantalla. */
+.preconsulta-trap {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
