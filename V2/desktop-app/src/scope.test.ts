@@ -20,6 +20,7 @@ test("con la bandera apagada la app abre en Pacientes y no ofrece agenda ni rece
   assert.deepEqual(navIds(false), [
     "patients",
     "open-encounters",
+    "preconsulta",
     "search",
     "transcription",
     "arco",
@@ -36,6 +37,7 @@ test("con la bandera encendida vuelve la navegacion previa al reenfoque", () => 
     "agenda",
     "patients",
     "open-encounters",
+    "preconsulta",
     "search",
     "reception",
     "transcription",
@@ -60,7 +62,7 @@ test("el laboratorio solo aparece con el perfil odontologico", () => {
   const ids = (dental: boolean) =>
     workspaceNav(false, { dental }).flatMap((section) => section.items.map((item) => item.id));
   assert.ok(!ids(false).includes("lab-orders"));
-  assert.deepEqual(ids(true).slice(0, 4), ["patients", "open-encounters", "lab-orders", "search"]);
+  assert.deepEqual(ids(true).slice(0, 5), ["patients", "open-encounters", "preconsulta", "lab-orders", "search"]);
 });
 
 test("ninguna seccion de la navegacion queda vacia con la bandera apagada", () => {

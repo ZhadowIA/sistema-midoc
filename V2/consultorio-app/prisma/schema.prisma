@@ -272,46 +272,91 @@ enum AiUsageStatus {
 
 /// Clase: CONTACTO - cuenta e identidad de quien inicia sesion; sin contenido clinico.
 model User {
-  id                          String                   @id @default(cuid())
-  email                       String                   @unique
+  id                          String                    @id @default(cuid())
+  email                       String                    @unique
   emailVerifiedAt             DateTime?
   passwordHash                String?
   role                        UserRole
-  status                      UserStatus               @default(ACTIVE)
+  status                      UserStatus                @default(ACTIVE)
   firstName                   String
   lastName                    String
   // CONTACTO privado de la cuenta; para médicos no se expone en el perfil público.
   phone                       String?
   lastLoginAt                 DateTime?
-  createdAt                   DateTime                 @default(now())
-  updatedAt                   DateTime                 @updatedAt
+  createdAt                   DateTime                  @default(now())
+  updatedAt                   DateTime                  @updatedAt
   doctorProfile               DoctorProfile?
-  patientLinks                Patient[]                @relation("PatientUserAccount")
-  ownedPatients               Patient[]                @relation("DoctorPatients")
-  appointmentsAsDoctor        Appointment[]            @relation("DoctorAppointments")
-  appointmentHoldsAsDoctor    AppointmentHold[]        @relation("DoctorAppointmentHolds")
-  documentLinksAsDoctor       DocumentUploadLink[]     @relation("DoctorDocumentUploadLinks")
-  notificationsAsDoctor       Notification[]           @relation("DoctorNotifications")
-  shortLinksAsDoctor          ShortLink[]              @relation("DoctorShortLinks")
-  syncDevicesAsDoctor         SyncDevice[]             @relation("DoctorSyncDevices")
-  syncEventsAsDoctor          SyncEvent[]              @relation("DoctorSyncEvents")
-  mailboxDocumentsAsDoctor    MailboxDocument[]        @relation("DoctorMailboxDocuments")
-  authorizedSummariesAsDoctor AuthorizedSummary[]      @relation("DoctorAuthorizedSummaries")
-  createdShortLinks           ShortLink[]              @relation("ShortLinkCreator")
+  patientLinks                Patient[]                 @relation("PatientUserAccount")
+  ownedPatients               Patient[]                 @relation("DoctorPatients")
+  appointmentsAsDoctor        Appointment[]             @relation("DoctorAppointments")
+  appointmentHoldsAsDoctor    AppointmentHold[]         @relation("DoctorAppointmentHolds")
+  documentLinksAsDoctor       DocumentUploadLink[]      @relation("DoctorDocumentUploadLinks")
+  notificationsAsDoctor       Notification[]            @relation("DoctorNotifications")
+  shortLinksAsDoctor          ShortLink[]               @relation("DoctorShortLinks")
+  syncDevicesAsDoctor         SyncDevice[]              @relation("DoctorSyncDevices")
+  syncEventsAsDoctor          SyncEvent[]               @relation("DoctorSyncEvents")
+  mailboxDocumentsAsDoctor    MailboxDocument[]         @relation("DoctorMailboxDocuments")
+  authorizedSummariesAsDoctor AuthorizedSummary[]       @relation("DoctorAuthorizedSummaries")
+  createdShortLinks           ShortLink[]               @relation("ShortLinkCreator")
   legalAcceptances            LegalAcceptance[]
   passwordResetTokens         PasswordResetToken[]
   emailVerificationTokens     EmailVerificationToken[]
   authSessions                AuthSession[]
   twoFactor                   TwoFactorCredential?
-  consentsAsDoctor            Consent[]                @relation("DoctorConsents")
-  auditLogs                   AuditLog[]               @relation("ActorAuditLogs")
-  physicalResources           PhysicalResource[]       @relation("DoctorPhysicalResources")
-  aiBenchmarkRuns             AiBenchmarkRun[]         @relation("AiBenchmarkRunner")
-  aiUsageLogsAsDoctor         AiUsageLog[]             @relation("DoctorAiUsageLogs")
-  license                     License?                 @relation("DoctorLicense")
-  aiCreditGrants              AiCreditGrant[]          @relation("DoctorAiCreditGrants")
+  consentsAsDoctor            Consent[]                 @relation("DoctorConsents")
+  auditLogs                   AuditLog[]                @relation("ActorAuditLogs")
+  physicalResources           PhysicalResource[]        @relation("DoctorPhysicalResources")
+  aiBenchmarkRuns             AiBenchmarkRun[]          @relation("AiBenchmarkRunner")
+  aiUsageLogsAsDoctor         AiUsageLog[]              @relation("DoctorAiUsageLogs")
+  license                     License?                  @relation("DoctorLicense")
+  aiCreditGrants              AiCreditGrant[]           @relation("DoctorAiCreditGrants")
+  preconsultaQuestionnaire    PreconsultaQuestionnaire? @relation("DoctorPreconsultaQuestionnaire")
+  preconsultaLinks            PreconsultaLink[]         @relation("DoctorPreconsultaLinks")
 
   @@index([role, phone])
+}
+
+// Preconsulta configurable (paso 32, `V2/16_preconsulta_configurable.md`).
+/// Clase: OPERATIVO - definicion del cuestionario de preconsulta del medico (preguntas y opciones, nunca respuestas).
+model PreconsultaQuestionnaire {
+  id          String   @id @default(cuid())
+  doctorId    String   @unique
+  doctor      User     @relation("DoctorPreconsultaQuestionnaire", fields: [doctorId], references: [id], onDelete: Cascade)
+  // Contrato de `src/lib/preconsulta-questionnaire.ts`, validado al publicar.
+  definition  Json
+  // Sube en cada publicacion; el formulario del paciente sabe que version contesto.
+  version     Int      @default(1)
+  publishedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum PreconsultaLinkKind {
+  GENERAL
+  PERSONAL
+}
+
+enum PreconsultaLinkStatus {
+  ACTIVE
+  PAUSED
+  REVOKED
+}
+
+/// Clase: OPERATIVO - enlace de preconsulta (token como hash); el personal referencia al paciente solo por un id opaco de la app, nunca por su nombre.
+model PreconsultaLink {
+  id         String                @id @default(cuid())
+  doctorId   String
+  doctor     User                  @relation("DoctorPreconsultaLinks", fields: [doctorId], references: [id], onDelete: Cascade)
+  kind       PreconsultaLinkKind
+  status     PreconsultaLinkStatus @default(ACTIVE)
+  tokenHash  String                @unique
+  // Solo enlaces personales: id opaco que la app reconoce, vencimiento y un solo envio.
+  patientRef String?
+  expiresAt  DateTime?
+  usedAt     DateTime?
+  createdAt  DateTime              @default(now())
+  revokedAt  DateTime?
+
+  @@index([doctorId, kind, status])
 }
 
 /// Clase: CONTACTO - perfil profesional y del consultorio que el medico publica o imprime en la receta.
