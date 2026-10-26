@@ -438,6 +438,7 @@ const prescriptionItem = z.looseObject({
   line: texto,
   brand: textoONulo,
   generic: texto,
+  ingredient_ids: z.array(texto),
   cnis_description: textoONulo,
   cnis_product: textoONulo,
   cnis_clave: textoONulo,
@@ -974,6 +975,26 @@ export const IPC_RESPONSE_SCHEMAS = {
   delete_local_brand: NADA,
   detect_unknown_medications: z.array(z.looseObject({ line: z.string(), candidate: z.string() })),
   analyze_prescription: z.array(prescriptionItem),
+  // Medicamento contra padecimiento y alertas graves (paso 33, etapa 5; tras el interruptor)
+  check_contraindications: z.array(
+    z.looseObject({
+      drug: texto,
+      line: texto,
+      condition: texto,
+      diagnosis_code: texto,
+      diagnosis_name: texto,
+      severity: z.enum(["CONTRAINDICADA", "PRECAUCION"]),
+      recommendation: texto,
+      source: texto,
+      current_encounter: z.boolean()
+    })
+  ),
+  pending_severe_alerts: z.looseObject({
+    alerts: z.array(z.looseObject({ key: texto, text: texto })),
+    fingerprint: texto,
+    acknowledged: z.boolean()
+  }),
+  acknowledge_severe_alerts: NADA,
   // Seguridad de medicacion (tras el interruptor del paso 33)
   get_capabilities: z.looseObject({ medication_safety: z.boolean() }),
   check_medication_safety: safetyReport,

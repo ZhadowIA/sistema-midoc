@@ -8,6 +8,7 @@
 //! contra la tabla anterior y escribe:
 //!   - src-tauri/src/reference_data/cnis.csv            (claves de medicamentos; fuente de verdad)
 //!   - src-tauri/src/reference_data/cnis.manifest.json  (fuente, conteos, checksum)
+//!   - scripts/contraindications/propuestas.csv          (texto de contraindicaciones, para revisar)
 //! El compendio es referencia publica, no PHI.
 
 import { execFileSync } from "node:child_process";
@@ -16,7 +17,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { allKeys, applyCorrections, diffTables, parseCnisText, parseCorrections, toCsv } from "./catalog.ts";
+import { proposalsCsv } from "../contraindications/catalog.ts";
+import {
+  allKeys,
+  applyCorrections,
+  contraindicationTexts,
+  diffTables,
+  parseCnisText,
+  parseCorrections,
+  toCsv
+} from "./catalog.ts";
 
 const EDITION = "2025-04-26";
 const PDF_URL = "https://www.csg.gob.mx/Comp26042025.pdf";
@@ -73,6 +83,9 @@ async function main(): Promise<void> {
       }
     }
     writeFileSync(csvPath, csv, "utf8");
+    // Materia prima de las reglas medicamento contra padecimiento (etapa 5).
+    const proposals = contraindicationTexts(text);
+    writeFileSync(join(here, "..", "contraindications", "propuestas.csv"), proposalsCsv(proposals), "utf8");
     writeFileSync(join(outDir, "cnis.manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
     console.log(
       `CNIS ${EDITION}: ${entries.length} filas, ${complete.length} completas (${products} productos), ${corrections.length} correcciones, ${codable} con clave completa sin cantidad.`

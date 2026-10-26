@@ -113,6 +113,7 @@ const MOCK_KNOWN_WORDS = ["paracetamol", "ibuprofeno", "amoxicilina", "loratadin
 
 const mockState = {
   inactivityLockMinutes: 30,
+  severeAcknowledged: false,
   localBrands: [] as { id: string; name: string; display: string; ingredients: string[]; created_at: string }[],
   // Copia de los datos de la receta (regla 4.6); misma regla de version que el portal.
   prescriber: {
@@ -1425,6 +1426,7 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
           line,
           brand: brand ? brand.display : null,
           generic: ids.map((id) => MOCK_INGREDIENTS.find((i) => i.id === id)?.display ?? id).join(" + "),
+          ingredient_ids: ids,
           cnis_description: coded ? "Paracetamol 500 mg tableta" : null,
           cnis_product: coded ? "010.000.0104" : null,
           cnis_clave: coded ? "010.000.0104.00" : null,
@@ -1433,6 +1435,36 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       }
       return items as T;
     }
+    case "check_contraindications": {
+      // Demostracion con una regla ficticia: ibuprofeno con un diagnostico de ulcera.
+      const text = String(args?.prescription ?? "").toLowerCase();
+      return (text.includes("ibuprofeno")
+        ? [
+            {
+              drug: "Ibuprofeno",
+              line: "Ibuprofeno",
+              condition: "Úlcera gástrica (regla de demostración)",
+              diagnosis_code: "K25.9",
+              diagnosis_name: "ÚLCERA GÁSTRICA",
+              severity: "CONTRAINDICADA",
+              recommendation: "Ejemplo del simulador: las reglas reales las revisan el médico piloto y el farmacéutico.",
+              source: "Simulador",
+              current_encounter: false
+            }
+          ]
+        : []) as T;
+    }
+    case "pending_severe_alerts":
+      return (mockState.severeAcknowledged
+        ? { alerts: [], fingerprint: "mock", acknowledged: true }
+        : {
+            alerts: [{ key: "ci:demo", text: "Ibuprofeno contraindicado con úlcera gástrica (regla de demostración)." }],
+            fingerprint: "mock",
+            acknowledged: false
+          }) as T;
+    case "acknowledge_severe_alerts":
+      mockState.severeAcknowledged = true;
+      return null as T;
     case "get_capabilities":
       return { medication_safety: MOCK_MEDICATION_SAFETY } as T;
     case "get_inactivity_lock_minutes":
