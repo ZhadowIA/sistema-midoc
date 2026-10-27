@@ -552,6 +552,33 @@ const MIGRATIONS: &[&str] = &[
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );",
+    // Bandeja de la preconsulta configurable (paso 32, rebanada 3). Lo que
+    // llega por el enlace general, ya descifrado. Sin adjuntar es OPERATIVO y
+    // se borra al vencer el plazo; adjuntada a una consulta pasa a CLINICO y
+    // sigue las reglas del expediente. La identificacion va en columnas para
+    // buscar y sugerir coincidencias; `medical_history_json` guarda la parte 1
+    // tal cual llego para que la conciliacion compare el mismo hash.
+    "CREATE TABLE preconsulta_inbox (
+        id TEXT PRIMARY KEY NOT NULL,
+        questionnaire_version INTEGER NOT NULL,
+        questionnaire_json TEXT,
+        envelope_json TEXT NOT NULL,
+        medical_history_json TEXT,
+        first_name TEXT NOT NULL,
+        last_name TEXT NOT NULL,
+        birth_date TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        first_visit INTEGER NOT NULL,
+        submitted_at TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        seen_at TEXT,
+        encounter_id TEXT REFERENCES encounters (id),
+        patient_id TEXT REFERENCES patients (id),
+        attached_at TEXT
+    );
+    CREATE UNIQUE INDEX idx_preconsulta_inbox_encounter
+        ON preconsulta_inbox (encounter_id) WHERE encounter_id IS NOT NULL;
+    CREATE INDEX idx_preconsulta_inbox_received ON preconsulta_inbox (received_at);",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

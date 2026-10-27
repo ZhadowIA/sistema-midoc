@@ -27,6 +27,7 @@ mod updates;
 mod medication;
 mod operations;
 mod preconsulta;
+mod preconsulta_inbox;
 mod preferences;
 mod prescription;
 mod search;
@@ -787,6 +788,8 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
         let mut documents: Vec<(String, Option<String>, Option<String>, String)> = Vec::new();
         // Antecedentes sellados: (appointmentId, ciphertext base64).
         let mut precheckins: Vec<(String, String)> = Vec::new();
+        // Preconsultas del enlace general (paso 32): (id, ciphertext, definicion).
+        let mut preconsultas: Vec<(String, String, Option<serde_json::Value>)> = Vec::new();
         for event in &inbox.events {
             let Some(payload) = &event.payload else {
                 continue; // Evento ya purgado en nube: nada que descargar.
@@ -824,6 +827,19 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
                         .map_err(|e| e.to_string())?;
                     precheckins.push((appointment_id.to_string(), ciphertext));
                 }
+                "PRECONSULTA_SUBMITTED" => {
+                    let Some(submission_id) = payload
+                        .get("preconsultaSubmissionId")
+                        .and_then(|v| v.as_str())
+                    else {
+                        continue;
+                    };
+                    let (ciphertext, questionnaire) =
+                        sync::fetch_preconsulta(&server_url, &token, submission_id)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    preconsultas.push((submission_id.to_string(), ciphertext, questionnaire));
+                }
                 _ => {}
             }
         }
@@ -850,6 +866,13 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
                 let plaintext =
                     crypto::unseal_document(conn, ciphertext).map_err(|e| e.to_string())?;
                 sync::store_mailbox_precheckin(conn, appointment_id, &plaintext)
+                    .map_err(|e| e.to_string())?;
+            }
+            // Descifrar y dejar en la bandeja las preconsultas del enlace general.
+            for (submission_id, ciphertext, questionnaire) in &preconsultas {
+                let plaintext =
+                    crypto::unseal_document(conn, ciphertext).map_err(|e| e.to_string())?;
+                preconsulta_inbox::store(conn, submission_id, &plaintext, questionnaire.as_ref())
                     .map_err(|e| e.to_string())?;
             }
             sync::set_state(conn, "cursor", &inbox.next_cursor.to_string())
@@ -2592,6 +2615,56 @@ async fn preconsulta_set_link_status(
     preconsulta_state(state).await
 }
 
+/// Bandeja de preconsultas sin adjuntar (borra antes las vencidas).
+#[tauri::command]
+fn preconsulta_inbox(state: tauri::State<'_, AppDb>) -> Result<preconsulta_inbox::Inbox, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    preconsulta_inbox::list(conn).map_err(|e| e.to_string())
+}
+
+/// Abre una preconsulta de la bandeja (queda marcada como vista).
+#[tauri::command]
+fn preconsulta_inbox_open(
+    state: tauri::State<'_, AppDb>,
+    id: String,
+) -> Result<preconsulta_inbox::Preconsulta, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    preconsulta_inbox::open(conn, &id).map_err(|e| e.to_string())
+}
+
+/// Adjunta una preconsulta a una consulta abierta; el medico ya confirmo.
+#[tauri::command]
+fn preconsulta_inbox_attach(
+    state: tauri::State<'_, AppDb>,
+    id: String,
+    encounter_id: String,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    let conn = guard.as_mut().ok_or("la base esta bloqueada")?;
+    preconsulta_inbox::attach(conn, &id, &encounter_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn preconsulta_inbox_discard(state: tauri::State<'_, AppDb>, id: String) -> Result<(), String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    preconsulta_inbox::discard(conn, &id).map_err(|e| e.to_string())
+}
+
+/// Plazo de borrado de las no adjuntadas: 30, 60, 90, 120 o 180 dias.
+#[tauri::command]
+fn preconsulta_inbox_set_retention(
+    state: tauri::State<'_, AppDb>,
+    days: i64,
+) -> Result<preconsulta_inbox::Inbox, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    preconsulta_inbox::set_retention_days(conn, days).map_err(|e| e.to_string())?;
+    preconsulta_inbox::list(conn).map_err(|e| e.to_string())
+}
+
 /// Principios activos del catalogo para el selector de "que contiene" una
 /// marca (paso 33, etapa 3). Referencia publica; no necesita la base.
 #[tauri::command]
@@ -3400,6 +3473,11 @@ pub fn run() {
             preconsulta_publish,
             preconsulta_regenerate_link,
             preconsulta_set_link_status,
+            preconsulta_inbox,
+            preconsulta_inbox_open,
+            preconsulta_inbox_attach,
+            preconsulta_inbox_discard,
+            preconsulta_inbox_set_retention,
             list_local_brands,
             save_local_brand,
             delete_local_brand,
