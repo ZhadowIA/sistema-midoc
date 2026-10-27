@@ -262,7 +262,7 @@ mod tests {
         out.extend_from_slice(&16u16.to_le_bytes());
         out.extend_from_slice(b"data");
         out.extend_from_slice(&data_len.to_le_bytes());
-        out.extend(std::iter::repeat(0u8).take((sample_count * 2) as usize));
+        out.extend(std::iter::repeat_n(0u8, sample_count * 2));
         out
     }
 
