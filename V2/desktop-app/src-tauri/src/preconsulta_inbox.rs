@@ -71,6 +71,9 @@ pub fn store(
     if envelope.kind != "preconsulta" {
         return Err(SyncError::Server("sobre de preconsulta desconocido".into()));
     }
+    if let Some(questionnaire) = questionnaire {
+        crate::preconsulta::record_version(conn, envelope.questionnaire_version, questionnaire)?;
+    }
     let identity = &envelope.identity;
     // Si la referencia no es de este equipo (otro equipo creo el enlace), cae
     // a la bandeja como una del enlace general.
@@ -198,7 +201,9 @@ pub fn list(conn: &Connection) -> Result<Inbox, SyncError> {
 pub struct Preconsulta {
     pub id: String,
     pub envelope_json: String,
-    /// Definicion contestada; `None` si el medico la cambio antes de que llegara.
+    /// Definicion contestada: la que llego con el sobre o, si el medico ya habia
+    /// publicado otra, la copia local de esa version. `None` si este equipo
+    /// nunca la conocio.
     pub questionnaire_json: Option<String>,
     pub submitted_at: String,
     pub attached_at: Option<String>,
@@ -214,8 +219,12 @@ fn preconsulta_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Preconsulta
     })
 }
 
-const PRECONSULTA_COLUMNS: &str =
-    "id, envelope_json, questionnaire_json, submitted_at, attached_at";
+const PRECONSULTA_COLUMNS: &str = "id, envelope_json,
+    COALESCE(questionnaire_json, (
+        SELECT definition_json FROM preconsulta_questionnaire_versions v
+        WHERE v.version = preconsulta_inbox.questionnaire_version
+    )),
+    submitted_at, attached_at";
 
 /// Abre una de la bandeja y la marca como vista.
 pub fn open(conn: &Connection, id: &str) -> Result<Preconsulta, SyncError> {
@@ -531,6 +540,57 @@ mod tests {
         assert!(opened.envelope_json.contains("Tos de tres dias"));
         assert!(opened.questionnaire_json.is_some());
         assert!(!list(&conn).unwrap().items[0].is_new);
+    }
+
+    #[test]
+    fn an_older_version_is_read_with_the_local_copy_of_its_questions() {
+        let conn = test_conn("versions");
+        let v2 = serde_json::json!({
+            "schemaVersion": 1,
+            "questions": [{ "id": "motivo", "label": "Motivo v2", "type": "long_text", "required": true }]
+        });
+        // El medico publico la version 2 desde este equipo y luego la 3; la
+        // preconsulta contestada con la 2 llega sin definicion del portal.
+        crate::preconsulta::record_published(&conn, &v2, 2, "2026-10-19T10:00:00.000Z").unwrap();
+        let v3 = serde_json::json!({ "schemaVersion": 1, "questions": [] });
+        crate::preconsulta::record_published(&conn, &v3, 3, "2026-10-21T10:00:00.000Z").unwrap();
+        store(&conn, "sub-old", &sealed_body(false), None, None).unwrap();
+
+        let opened = open(&conn, "sub-old").unwrap();
+        let questionnaire: serde_json::Value =
+            serde_json::from_str(opened.questionnaire_json.as_deref().unwrap()).unwrap();
+        assert_eq!(questionnaire, v2);
+
+        // Una version que este equipo nunca conocio sigue sin definicion.
+        conn.execute("DELETE FROM preconsulta_questionnaire_versions", [])
+            .unwrap();
+        assert_eq!(open(&conn, "sub-old").unwrap().questionnaire_json, None);
+    }
+
+    #[test]
+    fn the_definition_that_arrives_with_a_submission_is_kept_as_its_version() {
+        let conn = test_conn("versions-portal");
+        let from_portal =
+            serde_json::json!({ "schemaVersion": 1, "questions": [], "title": "Portal" });
+        store(
+            &conn,
+            "sub-a",
+            &sealed_body(false),
+            Some(&from_portal),
+            None,
+        )
+        .unwrap();
+        let kept: String = conn
+            .query_row(
+                "SELECT definition_json FROM preconsulta_questionnaire_versions WHERE version = 2",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&kept).unwrap(),
+            from_portal
+        );
     }
 
     #[test]
