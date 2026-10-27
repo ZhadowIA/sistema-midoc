@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { call, openExternal } from "./ipc";
+import { PreconsultaInbox } from "./PreconsultaInbox";
 import {
   CONDITION_SOURCE_TYPES,
   QUESTIONNAIRE_LIMITS,
@@ -189,6 +190,17 @@ export function PreconsultaEditor({ dental }: { dental: boolean }) {
       </div>
 
       <GeneralLinkPanel state={state} busy={busy} onAct={act} />
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Recibidas</h2>
+          <p>
+            Las que llegaron por tu enlace general y aún no adjuntas a una consulta. Se adjuntan desde la consulta, en
+            "Buscar preconsulta". Las que no adjuntes se borran solas de este equipo al vencer el plazo.
+          </p>
+        </div>
+        <PreconsultaInbox showRetention />
+      </section>
 
       {message ? (
         <p className="form-success" role="status">
@@ -422,8 +434,8 @@ function GeneralLinkPanel({
         </p>
       </div>
       <p className="meta">
-        Ya puedes abrir el enlace para probar el formulario. Las respuestas todavía no bajan a esta app: la bandeja
-        llega en la siguiente entrega del paso 32, así que aún no lo compartas con tus pacientes.
+        Las respuestas bajan cifradas a esta app al sincronizar y quedan en "Recibidas", abajo, hasta que las adjuntes
+        a una consulta.
       </p>
       {!state.linked ? (
         <p className="meta">Vincula tu cuenta del portal para crear tu enlace.</p>

@@ -291,6 +291,11 @@ pub struct EncounterDetail {
     pub medical_history: Option<String>,
     /// Resultado de la preconsulta guiada por IA (sobre kind ai-preconsulta).
     pub preconsulta: Option<String>,
+    /// De donde salio `medical_history`, para conciliar contra la misma fuente:
+    /// la cita o `preconsulta:<id>` (paso 32).
+    pub medical_history_source: Option<String>,
+    /// Preconsulta del enlace general adjuntada a esta consulta (paso 32).
+    pub attached_preconsulta: Option<crate::preconsulta_inbox::Preconsulta>,
     pub note: Option<NoteVersion>,
     pub note_version_count: i64,
     pub prescription: Option<String>,
@@ -924,6 +929,25 @@ pub fn get_encounter_detail(
             None => (None, None, None, None),
         };
 
+    // Si la cita no trajo antecedentes, los de la preconsulta adjuntada (parte 1)
+    // entran a la misma conciliacion.
+    let mut medical_history_source = medical_history
+        .as_ref()
+        .and(encounter.appointment_id.clone());
+    let medical_history = match medical_history {
+        Some(history) => Some(history),
+        None => crate::preconsulta_inbox::attached_medical_history(conn, encounter_id)?.map(
+            |(preconsulta_id, history)| {
+                medical_history_source = Some(format!(
+                    "{}{preconsulta_id}",
+                    crate::preconsulta_inbox::MEDICAL_HISTORY_SOURCE_PREFIX
+                ));
+                history
+            },
+        ),
+    };
+    let attached_preconsulta = crate::preconsulta_inbox::attached_to(conn, encounter_id)?;
+
     let note = conn
         .query_row(
             "SELECT version, created_at, subjective, objective, assessment, plan,
@@ -976,6 +1000,8 @@ pub fn get_encounter_detail(
         appointment_start,
         medical_history,
         preconsulta,
+        medical_history_source,
+        attached_preconsulta,
         note,
         note_version_count,
         prescription,
@@ -1626,16 +1652,26 @@ pub fn save_patient_medical_history_version(
         input.source_appointment_id.as_deref(),
         input.reconciled_source_hash.as_deref(),
     ) {
-        let current_payload: Option<String> = conn
-            .query_row(
-                "SELECT responses_json FROM precheckins
-                 WHERE appointment_id = ?1 AND kind IN ('medical-history', 'generic')
-                 ORDER BY CASE kind WHEN 'medical-history' THEN 0 ELSE 1 END
-                 LIMIT 1",
-                params![appointment_id],
-                |row| row.get(0),
-            )
-            .optional()?;
+        let current_payload: Option<String> = match appointment_id
+            .strip_prefix(crate::preconsulta_inbox::MEDICAL_HISTORY_SOURCE_PREFIX)
+        {
+            // Parte 1 de la preconsulta adjuntada a esta misma consulta.
+            Some(preconsulta_id) => crate::preconsulta_inbox::medical_history_for(
+                conn,
+                preconsulta_id,
+                input.encounter_id.as_deref(),
+            )?,
+            None => conn
+                .query_row(
+                    "SELECT responses_json FROM precheckins
+                     WHERE appointment_id = ?1 AND kind IN ('medical-history', 'generic')
+                     ORDER BY CASE kind WHEN 'medical-history' THEN 0 ELSE 1 END
+                     LIMIT 1",
+                    params![appointment_id],
+                    |row| row.get(0),
+                )
+                .optional()?,
+        };
         let Some(current_payload) = current_payload else {
             return Err(ClinicalError::Invalid(
                 "el cuestionario del paciente ya no esta disponible".into(),
@@ -2194,6 +2230,55 @@ mod tests {
             audit_count >= 5,
             "se esperaban >=5 eventos, hubo {audit_count}"
         );
+    }
+
+    #[test]
+    fn attached_preconsulta_feeds_the_medical_history_reconciliation() {
+        let mut conn = test_conn("preconsulta-reconciliation");
+        seed_appointment(&conn, "appt-pc", "pat-pc");
+        let encounter = open_encounter_for_appointment(&conn, "appt-pc").unwrap();
+        let history = r#"{"allergies":"Penicilina"}"#;
+        conn.execute(
+            "INSERT INTO preconsulta_inbox (
+                id, questionnaire_version, envelope_json, medical_history_json, first_name,
+                last_name, birth_date, phone, first_visit, submitted_at, received_at
+             ) VALUES ('sub-pc', 1, '{}', ?1, 'Ana', 'Ruiz', '1990-05-01', '+526140001111', 1,
+                       '2026-10-20T15:00:00Z', '2026-10-20T15:00:00Z')",
+            params![history],
+        )
+        .unwrap();
+
+        let before = get_encounter_detail(&conn, &encounter.id).unwrap();
+        assert!(before.medical_history.is_none() && before.attached_preconsulta.is_none());
+
+        crate::preconsulta_inbox::attach(&mut conn, "sub-pc", &encounter.id).unwrap();
+        let detail = get_encounter_detail(&conn, &encounter.id).unwrap();
+        assert_eq!(detail.medical_history.as_deref(), Some(history));
+        assert_eq!(
+            detail.medical_history_source.as_deref(),
+            Some("preconsulta:sub-pc")
+        );
+        assert_eq!(detail.attached_preconsulta.unwrap().id, "sub-pc");
+
+        let input = |hash: String| SavePatientMedicalHistoryInput {
+            payload_json: history.into(),
+            source: "PATIENT_INITIAL".into(),
+            encounter_id: Some(encounter.id.clone()),
+            source_appointment_id: Some("preconsulta:sub-pc".into()),
+            reconciled_source_hash: Some(hash),
+            ai_run_id: None,
+        };
+        assert!(
+            save_patient_medical_history_version(&mut conn, "pat-pc", &input("otro".into()))
+                .is_err()
+        );
+        let saved = save_patient_medical_history_version(
+            &mut conn,
+            "pat-pc",
+            &input(medical_history_source_hash(history)),
+        )
+        .unwrap();
+        assert_eq!(saved.version, 1);
     }
 
     #[test]

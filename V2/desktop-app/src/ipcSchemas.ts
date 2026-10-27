@@ -190,6 +190,10 @@ const encounterDetail = z.looseObject({
   appointment_start: textoONulo,
   medical_history: textoONulo,
   preconsulta: textoONulo,
+  medical_history_source: textoONulo,
+  attached_preconsulta: z
+    .looseObject({ id: texto, envelope_json: texto, questionnaire_json: textoONulo, submitted_at: texto, attached_at: textoONulo })
+    .nullable(),
   note: noteVersion.nullable(),
   note_version_count: entero,
   prescription: textoONulo,
@@ -753,6 +757,32 @@ const preconsultaState = z.looseObject({
   offline: z.boolean()
 });
 
+// Bandeja de la preconsulta (paso 32, rebanada 3).
+const preconsultaInbox = z.looseObject({
+  items: z.array(
+    z.looseObject({
+      id: texto,
+      first_name: texto,
+      last_name: texto,
+      birth_date: texto,
+      phone: texto,
+      first_visit: z.boolean(),
+      submitted_at: texto,
+      received_at: texto,
+      is_new: z.boolean()
+    })
+  ),
+  retention_days: entero,
+  retention_options: z.array(entero)
+});
+const storedPreconsulta = z.looseObject({
+  id: texto,
+  envelope_json: texto,
+  questionnaire_json: textoONulo,
+  submitted_at: texto,
+  attached_at: textoONulo
+});
+
 const ingredientOption = z.looseObject({
   id: z.string(),
   display: z.string(),
@@ -987,6 +1017,11 @@ export const IPC_RESPONSE_SCHEMAS = {
   preconsulta_publish: preconsultaState,
   preconsulta_regenerate_link: preconsultaState,
   preconsulta_set_link_status: preconsultaState,
+  preconsulta_inbox: preconsultaInbox,
+  preconsulta_inbox_open: storedPreconsulta,
+  preconsulta_inbox_attach: NADA,
+  preconsulta_inbox_discard: NADA,
+  preconsulta_inbox_set_retention: preconsultaInbox,
   // Marcas e ingredientes (paso 33, etapa 3): no dependen del interruptor
   search_ingredients: z.array(ingredientOption),
   list_local_brands: z.array(localBrand),

@@ -121,6 +121,12 @@ const mockState = {
     publishedAt: null as string | null,
     link: null as { url: string; status: string; created_at: string } | null
   },
+  // Bandeja de la preconsulta (paso 32): una coincide con el paciente de la consulta.
+  preconsultaInbox: [
+    mockPreconsulta("pc-1", "Hugo", "Paz", "1981-03-02", "6140001111", false, 2),
+    mockPreconsulta("pc-2", "Lucía", "Gómez", "1995-07-14", "6145556677", true, 26)
+  ],
+  preconsultaRetentionDays: 60,
   localBrands: [] as { id: string; name: string; display: string; ingredients: string[]; created_at: string }[],
   // Copia de los datos de la receta (regla 4.6); misma regla de version que el portal.
   prescriber: {
@@ -351,6 +357,8 @@ interface MockEncounterLike {
 function mockDetail() {
   const e = mockState.encounter;
   const appointment = mockState.appointments.find((item) => item.id === e.appointment_id) ?? null;
+  const attached = mockState.preconsultaInbox.find((p) => p.encounter_id === e.id) ?? null;
+  const attachedHistory = !appointment?.has_precheckin ? (attached?.medical_history_json ?? null) : null;
   return {
     encounter: encounterRow(e),
     patient: asPatientRecord(e.patient),
@@ -362,7 +370,13 @@ function mockDetail() {
           allergies: "Penicilina",
           pathological: { diabetico: "si", diabeticoDesde: "2018" }
         })
-      : null,
+      : attachedHistory,
+    medical_history_source: appointment?.has_precheckin
+      ? appointment.id
+      : attachedHistory
+        ? `preconsulta:${attached!.id}`
+        : null,
+    attached_preconsulta: attached ? mockStoredPreconsulta(attached) : null,
     preconsulta: appointment?.has_precheckin
       ? JSON.stringify({
           motivo: "Dolor al masticar y sensibilidad al frio",
@@ -642,6 +656,94 @@ function matchPatientsMock(fullName: string | null | undefined, phone: string | 
       matched_phone,
       matched_email: false
     }));
+}
+
+function mockPreconsulta(
+  id: string,
+  firstName: string,
+  lastName: string,
+  birthDate: string,
+  phone: string,
+  firstVisit: boolean,
+  hoursAgo: number
+) {
+  const submittedAt = new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
+  const questionnaire = {
+    schemaVersion: 1,
+    questions: [
+      { id: "motivo", label: "¿Qué te trae a consulta?", type: "long_text", required: true },
+      { id: "dolor", label: "¿Tienes dolor?", type: "yes_no", required: true },
+      { id: "intensidad", label: "¿Qué tan fuerte, del 0 al 10?", type: "scale", required: false }
+    ]
+  };
+  const medicalHistory = firstVisit ? { sex: "F", allergies: "Sulfas" } : null;
+  const envelope = {
+    kind: "preconsulta",
+    version: 1,
+    questionnaireVersion: 1,
+    linkKind: "GENERAL",
+    submittedAt,
+    consentAt: submittedAt,
+    identity: { firstName, lastName, birthDate, phoneCountry: "+52", phone },
+    firstVisit,
+    ...(firstVisit
+      ? { medicalHistory }
+      : { changesSinceLastVisit: "Me cambiaron la dosis del losartán." }),
+    answers: { motivo: "Dolor de cabeza desde hace tres días", dolor: "si", intensidad: "6" }
+  };
+  return {
+    id,
+    first_name: firstName,
+    last_name: lastName,
+    birth_date: birthDate,
+    phone: `+52${phone}`,
+    first_visit: firstVisit,
+    submitted_at: submittedAt,
+    received_at: submittedAt,
+    seen: false,
+    envelope_json: JSON.stringify(envelope),
+    medical_history_json: medicalHistory ? JSON.stringify(medicalHistory) : null,
+    questionnaire_json: JSON.stringify(questionnaire),
+    encounter_id: null as string | null,
+    attached_at: null as string | null
+  };
+}
+
+function mockStoredPreconsulta(p: ReturnType<typeof mockPreconsulta>) {
+  return {
+    id: p.id,
+    envelope_json: p.envelope_json,
+    questionnaire_json: p.questionnaire_json,
+    submitted_at: p.submitted_at,
+    attached_at: p.attached_at
+  };
+}
+
+function mockPreconsultaInbox() {
+  return {
+    items: mockState.preconsultaInbox
+      .filter((p) => p.encounter_id === null)
+      .sort((a, b) => b.submitted_at.localeCompare(a.submitted_at))
+      .map((p) => ({
+        id: p.id,
+        first_name: p.first_name,
+        last_name: p.last_name,
+        birth_date: p.birth_date,
+        phone: p.phone,
+        first_visit: p.first_visit,
+        submitted_at: p.submitted_at,
+        received_at: p.received_at,
+        is_new: !p.seen
+      })),
+    retention_days: mockState.preconsultaRetentionDays,
+    retention_options: [30, 60, 90, 120, 180]
+  };
+}
+
+function mockPendingPreconsulta(id: unknown) {
+  const found = mockState.preconsultaInbox.find((p) => p.id === id && p.encounter_id === null);
+  if (!found) throw "la preconsulta ya no esta en la bandeja";
+  return found;
 }
 
 /** Latencia simulada; las pruebas la bajan a 0. */
@@ -1389,6 +1491,37 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
     }
     case "preconsulta_state":
       return mockPreconsultaState() as T;
+    case "preconsulta_inbox":
+      return mockPreconsultaInbox() as T;
+    case "preconsulta_inbox_open": {
+      const found = mockPendingPreconsulta(args?.id);
+      found.seen = true;
+      return mockStoredPreconsulta(found) as T;
+    }
+    case "preconsulta_inbox_attach": {
+      const found = mockPendingPreconsulta(args?.id);
+      const encounterId = String(args?.encounterId ?? "");
+      if (mockState.encounter.id !== encounterId) throw "la consulta no existe";
+      if (mockState.encounter.status === "SIGNED") throw "la consulta ya esta firmada";
+      if (mockState.preconsultaInbox.some((p) => p.encounter_id === encounterId)) {
+        throw "esta consulta ya tiene una preconsulta adjunta";
+      }
+      found.encounter_id = encounterId;
+      found.attached_at = new Date().toISOString();
+      found.seen = true;
+      return null as T;
+    }
+    case "preconsulta_inbox_discard": {
+      const found = mockPendingPreconsulta(args?.id);
+      mockState.preconsultaInbox = mockState.preconsultaInbox.filter((p) => p !== found);
+      return null as T;
+    }
+    case "preconsulta_inbox_set_retention": {
+      const days = Number(args?.days);
+      if (![30, 60, 90, 120, 180].includes(days)) throw "plazo de borrado invalido";
+      mockState.preconsultaRetentionDays = days;
+      return mockPreconsultaInbox() as T;
+    }
     case "preconsulta_save_draft":
       mockState.preconsulta.draft = args?.definition as Record<string, unknown>;
       return null as T;

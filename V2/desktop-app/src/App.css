@@ -5499,3 +5499,56 @@ body.dictating .encounter-modes:focus-within {
   grid-template-columns: repeat(6, 1fr);
   gap: 6px;
 }
+
+/* Bandeja de la preconsulta (paso 32, rebanada 3) */
+.preconsulta-inbox h4 {
+  margin: 0 0 8px;
+}
+
+.preconsulta-inbox-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.preconsulta-inbox-row {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.preconsulta-inbox-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.preconsulta-inbox-summary strong {
+  margin-right: 8px;
+}
+
+.preconsulta-inbox-summary .meta {
+  margin: 4px 0 0;
+}
+
+.preconsulta-answers {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.preconsulta-answers dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.preconsulta-answers dd {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+}

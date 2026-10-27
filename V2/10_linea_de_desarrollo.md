@@ -1464,7 +1464,7 @@ Estado: 🚧 CODIGO LISTO (rama `v2/paso30-pasarela-ia`, 2026-10-08; en `dev` po
 | Compuerta de avance | Ninguna respuesta queda legible en la nube y la prueba de clasificacion de datos sigue pasando (las respuestas solo viven en modelos del buzon). |
 | Push recomendado | Por rebanada: (1) editor y publicacion, (2) formulario del paciente, (3) bandeja y busqueda, (4) enlace personal. |
 
-Estado: rebanadas 1 (editor y publicacion) y 2 (formulario del paciente) entregadas el 2026-10-25 en `v2/paso32-preconsulta-editor` y `v2/paso32-preconsulta-formulario`; siguen la bandeja con "Buscar preconsulta" y el enlace personal.
+Estado: rebanadas 1 (editor y publicacion) y 2 (formulario del paciente) entregadas el 2026-10-25 en `v2/paso32-preconsulta-editor` y `v2/paso32-preconsulta-formulario`; rebanada 3 (bandeja, "Buscar preconsulta", adjuntar, conciliacion, paso al Subjetivo y retencion) entregada el 2026-10-26 en `v2/paso32-preconsulta-bandeja`; sigue el enlace personal.
 
 ## Paso 33 - Base de medicamentos: marcas, CNIS y seguridad
 
