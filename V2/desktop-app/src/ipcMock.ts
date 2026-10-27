@@ -127,6 +127,7 @@ const mockState = {
     mockPreconsulta("pc-2", "Lucía", "Gómez", "1995-07-14", "6145556677", true, 26)
   ],
   preconsultaRetentionDays: 60,
+  personalLinks: [] as { patient_id: string; url: string; created_at: string; expires_at: string }[],
   localBrands: [] as { id: string; name: string; display: string; ingredients: string[]; created_at: string }[],
   // Copia de los datos de la receta (regla 4.6); misma regla de version que el portal.
   prescriber: {
@@ -705,8 +706,15 @@ function mockPreconsulta(
     medical_history_json: medicalHistory ? JSON.stringify(medicalHistory) : null,
     questionnaire_json: JSON.stringify(questionnaire),
     encounter_id: null as string | null,
+    // Enlace personal (rebanada 4): ya ligada a su paciente, fuera de la bandeja.
+    patient_id: null as string | null,
     attached_at: null as string | null
   };
+}
+
+function mockPersonalLink(patientId: string) {
+  const link = mockState.personalLinks.filter((l) => l.patient_id === patientId).pop();
+  return link ? { ...link, answered_at: null, attached: false } : null;
 }
 
 function mockStoredPreconsulta(p: ReturnType<typeof mockPreconsulta>) {
@@ -722,7 +730,7 @@ function mockStoredPreconsulta(p: ReturnType<typeof mockPreconsulta>) {
 function mockPreconsultaInbox() {
   return {
     items: mockState.preconsultaInbox
-      .filter((p) => p.encounter_id === null)
+      .filter((p) => p.encounter_id === null && p.patient_id === null)
       .sort((a, b) => b.submitted_at.localeCompare(a.submitted_at))
       .map((p) => ({
         id: p.id,
@@ -741,7 +749,7 @@ function mockPreconsultaInbox() {
 }
 
 function mockPendingPreconsulta(id: unknown) {
-  const found = mockState.preconsultaInbox.find((p) => p.id === id && p.encounter_id === null);
+  const found = mockState.preconsultaInbox.find((p) => p.id === id && p.encounter_id === null && p.patient_id === null);
   if (!found) throw "la preconsulta ya no esta en la bandeja";
   return found;
 }
@@ -1516,6 +1524,19 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       mockState.preconsultaInbox = mockState.preconsultaInbox.filter((p) => p !== found);
       return null as T;
     }
+    case "preconsulta_personal_link":
+      return mockPersonalLink(String(args?.patientId ?? "")) as T;
+    case "preconsulta_create_personal_link": {
+      const patientId = String(args?.patientId ?? "");
+      if (!mockState.patients.some((p) => p.id === patientId)) throw "el paciente no existe";
+      mockState.personalLinks.push({
+        patient_id: patientId,
+        url: `http://localhost:3000/preconsulta/${crypto.randomUUID().replace(/-/g, "")}`,
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString()
+      });
+      return mockPersonalLink(patientId) as T;
+    }
     case "preconsulta_inbox_set_retention": {
       const days = Number(args?.days);
       if (![30, 60, 90, 120, 180].includes(days)) throw "plazo de borrado invalido";
@@ -1716,8 +1737,17 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       mockState.timeline.splice(idx, 1);
       return undefined as T;
     }
-    case "get_encounter":
+    case "get_encounter": {
+      // Como la app: la preconsulta personal del paciente se adjunta sola.
+      const pending = mockState.preconsultaInbox.find(
+        (p) => p.patient_id === e.patient.id && p.encounter_id === null
+      );
+      if (pending && e.status !== "SIGNED" && !mockState.preconsultaInbox.some((p) => p.encounter_id === e.id)) {
+        pending.encounter_id = e.id;
+        pending.attached_at = new Date().toISOString();
+      }
       return mockDetail() as T;
+    }
     case "save_note": {
       if (e.status === "SIGNED") throw "la nota ya fue firmada y no puede modificarse";
       const note = args?.note as Omit<MockNote, "version" | "created_at">;

@@ -266,6 +266,32 @@ pub async fn regenerate_link(
     Ok((link.url, link.status, link.created_at))
 }
 
+/// Pide al portal un enlace personal; devuelve (url, expiresAt).
+pub async fn create_personal_link(
+    server_url: &str,
+    device_token: &str,
+    patient_ref: &str,
+) -> Result<(String, String), SyncError> {
+    let base = server_url.trim_end_matches('/');
+    let response = reqwest::Client::new()
+        .post(format!("{base}/api/sync/preconsulta/personal-link"))
+        .bearer_auth(device_token)
+        .json(&serde_json::json!({ "patientRef": patient_ref }))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(error_text(response).await);
+    }
+    let body: serde_json::Value = response.json().await?;
+    let field = |key: &str| {
+        body.get(key)
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| SyncError::Server(format!("respuesta sin {key}")))
+    };
+    Ok((field("url")?, field("expiresAt")?))
+}
+
 pub async fn set_link_status(
     server_url: &str,
     device_token: &str,

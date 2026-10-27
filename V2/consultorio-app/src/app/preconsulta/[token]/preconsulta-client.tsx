@@ -162,7 +162,11 @@ export function PreconsultaClient({ token, preconsulta }: { token: string; preco
           <p>
             {preconsulta.reason === "paused"
               ? `${preconsulta.doctorName} pausó por ahora la recepción de preconsultas. Intenta más tarde.`
-              : `${preconsulta.doctorName} aún no tiene lista su preconsulta. Intenta más tarde.`}
+              : preconsulta.reason === "used"
+                ? `Este enlace ya se usó y tu preconsulta le llegó a ${preconsulta.doctorName}. Si necesitas cambiar algo, pídele otro enlace.`
+                : preconsulta.reason === "expired"
+                  ? `Este enlace venció. Pide uno nuevo a ${preconsulta.doctorName}.`
+                  : `${preconsulta.doctorName} aún no tiene lista su preconsulta. Intenta más tarde.`}
           </p>
         </section>
       </main>
@@ -214,7 +218,7 @@ export function PreconsultaClient({ token, preconsulta }: { token: string; preco
         kind: PRECONSULTA_ENVELOPE_KIND,
         version: PRECONSULTA_ENVELOPE_VERSION,
         questionnaireVersion: preconsulta.questionnaire!.version,
-        linkKind: "GENERAL",
+        linkKind: preconsulta.linkKind,
         submittedAt: now,
         consentAt: now,
         identity: {

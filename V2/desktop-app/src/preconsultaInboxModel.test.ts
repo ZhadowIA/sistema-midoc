@@ -6,10 +6,13 @@ import {
   appendToSubjective,
   normalizeName,
   parseEnvelope,
+  personalLinkMessage,
+  personalLinkState,
   phoneKey,
   rankMatches,
   searchInbox,
   subjectiveText,
+  whatsappUrl,
   type InboxItem
 } from "./preconsultaInboxModel.ts";
 import type { PreconsultaQuestionnaire } from "./preconsultaQuestionnaire.ts";
@@ -129,4 +132,29 @@ test("arma el texto para el Subjetivo sin pisar lo escrito", () => {
 test("ignora sobres ilegibles", () => {
   assert.equal(parseEnvelope("no json"), null);
   assert.equal(parseEnvelope("{}"), null);
+});
+
+test("dice en que va el enlace personal", () => {
+  const now = new Date("2026-10-26T12:00:00Z");
+  const link = {
+    url: "https://midoc.mx/preconsulta/abc",
+    created_at: "2026-10-20T00:00:00Z",
+    expires_at: "2026-11-19T00:00:00Z",
+    answered_at: null,
+    attached: false
+  };
+  assert.equal(personalLinkState(null, now), "none");
+  assert.equal(personalLinkState(link, now), "waiting");
+  assert.equal(personalLinkState({ ...link, expires_at: "2026-10-25T00:00:00Z" }, now), "expired");
+  assert.equal(personalLinkState({ ...link, answered_at: "2026-10-22T00:00:00Z" }, now), "answered");
+  assert.equal(personalLinkState({ ...link, answered_at: "2026-10-22T00:00:00Z", attached: true }, now), "attached");
+});
+
+test("arma el mensaje y el WhatsApp del enlace personal", () => {
+  const message = personalLinkMessage("Ana María", "https://midoc.mx/preconsulta/abc");
+  assert.ok(message.startsWith("Hola, Ana. "));
+  assert.ok(message.endsWith("https://midoc.mx/preconsulta/abc"));
+  assert.ok(whatsappUrl("614 000 1111", message).startsWith("https://wa.me/526140001111?text=Hola%2C%20Ana."));
+  assert.ok(whatsappUrl("+1 415 555 0100", "x").startsWith("https://wa.me/14155550100?"));
+  assert.ok(whatsappUrl(null, "x").startsWith("https://wa.me/?text="));
 });

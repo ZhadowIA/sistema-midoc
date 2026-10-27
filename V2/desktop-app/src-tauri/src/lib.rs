@@ -788,8 +788,9 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
         let mut documents: Vec<(String, Option<String>, Option<String>, String)> = Vec::new();
         // Antecedentes sellados: (appointmentId, ciphertext base64).
         let mut precheckins: Vec<(String, String)> = Vec::new();
-        // Preconsultas del enlace general (paso 32): (id, ciphertext, definicion).
-        let mut preconsultas: Vec<(String, String, Option<serde_json::Value>)> = Vec::new();
+        // Preconsultas (paso 32): (id, ciphertext, definicion, referencia del enlace personal).
+        let mut preconsultas: Vec<(String, String, Option<serde_json::Value>, Option<String>)> =
+            Vec::new();
         for event in &inbox.events {
             let Some(payload) = &event.payload else {
                 continue; // Evento ya purgado en nube: nada que descargar.
@@ -838,7 +839,16 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
                         sync::fetch_preconsulta(&server_url, &token, submission_id)
                             .await
                             .map_err(|e| e.to_string())?;
-                    preconsultas.push((submission_id.to_string(), ciphertext, questionnaire));
+                    let patient_ref = payload
+                        .get("patientRef")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    preconsultas.push((
+                        submission_id.to_string(),
+                        ciphertext,
+                        questionnaire,
+                        patient_ref,
+                    ));
                 }
                 _ => {}
             }
@@ -869,11 +879,17 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
                     .map_err(|e| e.to_string())?;
             }
             // Descifrar y dejar en la bandeja las preconsultas del enlace general.
-            for (submission_id, ciphertext, questionnaire) in &preconsultas {
+            for (submission_id, ciphertext, questionnaire, patient_ref) in &preconsultas {
                 let plaintext =
                     crypto::unseal_document(conn, ciphertext).map_err(|e| e.to_string())?;
-                preconsulta_inbox::store(conn, submission_id, &plaintext, questionnaire.as_ref())
-                    .map_err(|e| e.to_string())?;
+                preconsulta_inbox::store(
+                    conn,
+                    submission_id,
+                    &plaintext,
+                    questionnaire.as_ref(),
+                    patient_ref.as_deref(),
+                )
+                .map_err(|e| e.to_string())?;
             }
             sync::set_state(conn, "cursor", &inbox.next_cursor.to_string())
                 .map_err(|e| e.to_string())?;
@@ -1112,9 +1128,12 @@ fn get_encounter(
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
 ) -> Result<clinical::EncounterDetail, String> {
-    with_conn(&state, |conn| {
-        clinical::get_encounter_detail(conn, &encounter_id)
-    })
+    let mut guard = state.0.lock().unwrap();
+    let conn = guard.as_mut().ok_or("la base esta bloqueada")?;
+    // La preconsulta del enlace personal de este paciente se adjunta sola a su
+    // consulta abierta (paso 32, rebanada 4).
+    preconsulta_inbox::attach_pending_personal(conn, &encounter_id).map_err(|e| e.to_string())?;
+    clinical::get_encounter_detail(conn, &encounter_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -2653,6 +2672,42 @@ fn preconsulta_inbox_discard(state: tauri::State<'_, AppDb>, id: String) -> Resu
     preconsulta_inbox::discard(conn, &id).map_err(|e| e.to_string())
 }
 
+/// Enlace personal mas reciente del paciente y si ya contesto.
+#[tauri::command]
+fn preconsulta_personal_link(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<Option<preconsulta_inbox::PersonalLink>, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    preconsulta_inbox::personal_link(conn, &patient_id).map_err(|e| e.to_string())
+}
+
+/// Crea un enlace personal para el paciente (30 dias, un envio).
+#[tauri::command]
+async fn preconsulta_create_personal_link(
+    state: tauri::State<'_, AppDb>,
+    patient_id: String,
+) -> Result<Option<preconsulta_inbox::PersonalLink>, String> {
+    {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        if !preconsulta_inbox::patient_exists(conn, &patient_id).map_err(|e| e.to_string())? {
+            return Err("el paciente no existe".into());
+        }
+    }
+    let (server, token) = require_portal(&state)?;
+    let reference = preconsulta_inbox::new_personal_ref();
+    let (url, expires_at) = preconsulta::create_personal_link(&server, &token, &reference)
+        .await
+        .map_err(portal_error)?;
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    preconsulta_inbox::record_personal_link(conn, &reference, &patient_id, &url, &expires_at)
+        .map_err(|e| e.to_string())?;
+    preconsulta_inbox::personal_link(conn, &patient_id).map_err(|e| e.to_string())
+}
+
 /// Plazo de borrado de las no adjuntadas: 30, 60, 90, 120 o 180 dias.
 #[tauri::command]
 fn preconsulta_inbox_set_retention(
@@ -3478,6 +3533,8 @@ pub fn run() {
             preconsulta_inbox_attach,
             preconsulta_inbox_discard,
             preconsulta_inbox_set_retention,
+            preconsulta_personal_link,
+            preconsulta_create_personal_link,
             list_local_brands,
             save_local_brand,
             delete_local_brand,

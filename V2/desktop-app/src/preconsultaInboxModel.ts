@@ -194,6 +194,44 @@ export function subjectiveText(envelope: PreconsultaEnvelope, rows: AnswerRow[])
   return lines.join("\n");
 }
 
+/** Enlace personal (rebanada 4) tal como lo guarda la app. */
+export interface PersonalLink {
+  url: string;
+  created_at: string;
+  expires_at: string;
+  answered_at: string | null;
+  attached: boolean;
+}
+
+export type PersonalLinkState = "none" | "waiting" | "expired" | "answered" | "attached";
+
+/** En que va el enlace personal del paciente. */
+export function personalLinkState(link: PersonalLink | null, now = new Date()): PersonalLinkState {
+  if (!link) return "none";
+  if (link.attached) return "attached";
+  if (link.answered_at) return "answered";
+  return new Date(link.expires_at).getTime() <= now.getTime() ? "expired" : "waiting";
+}
+
+/** Mensaje para el paciente con su enlace. */
+export function personalLinkMessage(firstName: string, url: string): string {
+  const name = firstName.trim().split(/\s+/)[0];
+  return (
+    `${name ? `Hola, ${name}. ` : ""}Antes de tu consulta, contesta tu preconsulta aquí ` +
+    `(toma unos minutos y tus respuestas llegan cifradas a tu médico; el enlace es solo para ti y vence en 30 días): ${url}`
+  );
+}
+
+/**
+ * WhatsApp con el mensaje escrito. Con un telefono de 10 digitos se asume
+ * Mexico (+52); sin telefono valido, WhatsApp pide elegir el contacto.
+ */
+export function whatsappUrl(phone: string | null, message: string): string {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  const number = digits.length === 10 ? `52${digits}` : digits.length > 10 ? digits : "";
+  return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
+}
+
 /** Agrega al final del Subjetivo sin pisar lo que ya escribio el medico. */
 export function appendToSubjective(current: string, text: string): string {
   const trimmed = current.trimEnd();

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "./ipc";
 import { DocumentsPanel } from "./DocumentsPanel";
+import { PersonalPreconsultaLink } from "./PreconsultaInbox";
 import { exportMessage, exportRecordFhir, exportRecordPdf, fhirExportMessage } from "./recordExportAction";
 import { parseDateFlexible } from "./dateOnly";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
@@ -63,7 +64,7 @@ interface TimelineEvent {
   updated_at: string;
 }
 
-type SectionId = "antecedentes" | "historial" | "timeline" | "documentos";
+type SectionId = "antecedentes" | "historial" | "timeline" | "documentos" | "preconsulta";
 
 const CATEGORY_LABELS: Record<string, string> = {
   NOTE: "Nota",
@@ -352,7 +353,8 @@ export function Expediente({
     { id: "antecedentes", label: "Antecedentes" },
     { id: "historial", label: "Historial" },
     { id: "timeline", label: "Linea del tiempo" },
-    { id: "documentos", label: "Documentos" }
+    { id: "documentos", label: "Documentos" },
+    { id: "preconsulta", label: "Preconsulta" }
   ];
 
   return (
@@ -599,6 +601,13 @@ export function Expediente({
             {section === "documentos" ? (
               <section className="panel">
                 <DocumentsPanel patientId={patientId} />
+              </section>
+            ) : null}
+
+            {section === "preconsulta" ? (
+              <section className="panel">
+                <h3>Enlace personal de preconsulta</h3>
+                <PersonalPreconsultaLink patient={profile.patient} />
               </section>
             ) : null}
 
