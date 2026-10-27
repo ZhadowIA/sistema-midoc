@@ -36,7 +36,6 @@ Lo que solo puede hacer el dueno o su equipo, en un solo lugar. El detalle vive 
 - [ ] Preconsultas enviadas antes de que exista el aviso en el buzon: los envios de la rebanada 2 hechos antes de desplegar la rebanada 3 no tienen evento `PRECONSULTA_SUBMITTED` y la app no los ve. Si en pruebas hubo envios reales, emitir su evento con un script de una sola vez o borrarlos. _(2026-10-26, paso 32 rebanada 3)_
 - [ ] Preguntas de una version anterior del cuestionario: la app pinta las respuestas con la definicion que el portal entrega solo si sigue siendo la publicada; si el medico republica antes de sincronizar, esa preconsulta se muestra con la clave de cada pregunta en lugar de su texto. Guardar en el portal las versiones recientes (o en la app las que publico) si pasa en la practica. _(2026-10-26, paso 32 rebanada 3)_
 - [ ] Probar la preconsulta de punta a punta en la app real (cierra la compuerta del paso 32): con el portal local y la app de escritorio vinculada, publicar el cuestionario, contestar el enlace general desde un celular como paciente nuevo y como paciente que regresa, sincronizar, encontrar y adjuntar en la consulta, conciliar antecedentes, y repetir con un enlace personal (que se adjunte solo). Las piezas ya estan probadas por separado: integracion del portal (154 en verde, 2026-10-26), Rust y mock del navegador. _(2026-10-26, paso 32 rebanadas 3 y 4)_
-- [ ] QR para compartir los enlaces de preconsulta (general y personal): el diseno lo pide, pero ninguna app trae libreria de QR. Agregar una pequena (generacion local, sin servicio externo) y un boton "Mostrar QR" para imprimir o mostrar en pantalla. _(2026-10-26, paso 32 rebanada 4)_
 - [ ] Aviso de privacidad integral para la preconsulta (LFPDPPP), revisado por un abogado: el formulario muestra un aviso simplificado (el medico es responsable de los datos, para que se usan, cifrado, borrado y a quien dirigirse para derechos ARCO) y pide consentimiento expreso, pero falta el aviso completo enlazado. Definir tambien el papel de MiDoc como encargado. _(2026-10-25, paso 32 rebanada 2)_
 
 ## Decisiones de producto
@@ -73,6 +72,8 @@ Lo que solo puede hacer el dueno o su equipo, en un solo lugar. El detalle vive 
 - [ ] **Paso 22, diarizacion** — falta compilar nativo con `--features diarization-local` y la prueba e2e con audio real. Los `.onnx` ya estan rehospedados con sus licencias (MIT y CC BY 4.0) en el release `modelos-diarizacion-v1` del repositorio, con URL, SHA-256 y tamano fijados en la app (2026-10-18, rama `v2/modelos-diarizacion`). _(2026-06-18; actualizado 2026-10-18)_
 
 ## Resueltos
+
+- [x] QR para compartir los enlaces de preconsulta (general y personal): "Mostrar QR" e "Imprimir" en ambos, generado en el equipo con `qrcode-generator` 1.4.4 (MIT, sin dependencias) y dibujado en SVG sin estilos en linea; se comprobo que un lector independiente (`jsqr`) devuelve el enlace exacto. 2026-10-26, rama `v2/paso32-preconsulta-qr`.
 
 - [x] Correr las pruebas de integracion del portal de las rebanadas 3 y 4 del paso 32 (entrega, purga y enlace personal): se arranco el servicio `postgresql-x64-18`, se aplico la migracion y la suite completa paso (26 archivos, 154 pruebas). 2026-10-26, rama `v2/paso32-preconsulta-enlace-personal`.
 
