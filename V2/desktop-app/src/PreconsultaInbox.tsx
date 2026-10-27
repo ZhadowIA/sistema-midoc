@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { call, openExternal } from "./ipc";
+import { QrShare } from "./QrCode";
 import {
   answerRows,
   formatDateOnly,
@@ -380,6 +381,11 @@ export function PersonalPreconsultaLink({
               Enviar por WhatsApp
             </button>
           </div>
+          <QrShare
+            url={link.url}
+            title={`Preconsulta de ${patient.first_name}`}
+            hint="Escanea con la cámara de tu celular. Este enlace es solo para ti, vence en 30 días y sirve para un envío."
+          />
         </>
       ) : null}
       <div className="button-row">
