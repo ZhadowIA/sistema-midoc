@@ -100,6 +100,73 @@ fn speaker_segments_of_a_real_recording() {
     assert!(!segments.is_empty());
 }
 
+/// El trabajador aislado con el ejecutable real de la app (`cargo build --release
+/// --features diarization-local`, ruta en `MIDOC_E2E_APP_EXE`). Primero con el
+/// caso que tumbo el proceso el 2026-10-27 (Auto, umbral en `MIDOC_E2E_CRASH_THRESHOLD`,
+/// 0.7 por omision): esta prueba debe seguir viva y recibir un error. Despues con
+/// 2 hablantes: los tramos llegan por la tuberia.
+#[test]
+#[ignore = "necesita el ejecutable de la app, audio real y los modelos de diarizacion"]
+fn the_isolated_worker_survives_an_engine_crash() {
+    let exe = PathBuf::from(env("MIDOC_E2E_APP_EXE"));
+    let app_dir = PathBuf::from(env("MIDOC_E2E_APP_DIR"));
+    let path_of = |id: &str| {
+        let asset = diarization_model::asset_for(id).unwrap();
+        transcription_model::model_path(&app_dir, &asset.file_name)
+    };
+    let (segmentation, embedding) = (
+        path_of("diarization-segmentation"),
+        path_of("diarization-embedding"),
+    );
+    let bytes = std::fs::read(env("MIDOC_E2E_AUDIO")).unwrap();
+    let media_type = std::env::var("MIDOC_E2E_MEDIA_TYPE").unwrap_or_else(|_| "audio/wav".into());
+    let samples = crate::audio::decode_audio_to_whisper(&bytes, &media_type)
+        .unwrap()
+        .samples;
+    let timeout = sherpa_diarization::worker_timeout(samples.len(), 16_000);
+
+    let threshold = std::env::var("MIDOC_E2E_CRASH_THRESHOLD").unwrap_or_else(|_| "0.7".into());
+    let mut crashing = sherpa_diarization::worker_command(&exe, &segmentation, &embedding, 0);
+    crashing.env("MIDOC_DIARIZE_THRESHOLD", &threshold);
+    let started = Instant::now();
+    let result = sherpa_diarization::run_worker(
+        crashing,
+        sherpa_diarization::encode_samples(&samples),
+        timeout,
+    );
+    println!(
+        "Auto con umbral {threshold}: {:?} en {:.1} s",
+        result.as_ref().map(Vec::len),
+        started.elapsed().as_secs_f64()
+    );
+    if let Err(error) = &result {
+        assert!(
+            error.to_string().contains("termino de forma inesperada"),
+            "{error}"
+        );
+    }
+
+    let mut normal = sherpa_diarization::worker_command(&exe, &segmentation, &embedding, 2);
+    normal.env_remove("MIDOC_DIARIZE_THRESHOLD");
+    let started = Instant::now();
+    let segments = sherpa_diarization::run_worker(
+        normal,
+        sherpa_diarization::encode_samples(&samples),
+        timeout,
+    )
+    .expect("con 2 hablantes el trabajador devuelve tramos");
+    let mut speakers: Vec<u8> = segments.iter().map(|s| s.speaker_idx).collect();
+    speakers.sort_unstable();
+    speakers.dedup();
+    println!(
+        "2 hablantes: {} tramos, hablantes {speakers:?}, {:.1} s",
+        segments.len(),
+        started.elapsed().as_secs_f64()
+    );
+    assert!(!segments.is_empty());
+    assert_eq!(speakers.len(), 2);
+}
+
 #[test]
 #[ignore = "necesita audio real, el modelo de Whisper y los modelos de diarizacion"]
 fn diarizes_a_real_two_voice_recording() {
