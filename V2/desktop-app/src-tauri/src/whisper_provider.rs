@@ -313,7 +313,8 @@ mod tests {
     /// Mide la velocidad con audio real: transcribe los primeros
     /// `MIDOC_TEST_SECONDS` segundos (60 por omision) de `MIDOC_TEST_AUDIO_FILE` e
     /// imprime cuantas veces el tiempo real tardo. Solo tiempos, nunca el texto.
-    ///   MIDOC_TEST_WHISPER_MODEL=<ggml> MIDOC_TEST_AUDIO_FILE=<wav>     ///   cargo test --release --features whisper-local transcription_speed -- --ignored --nocapture
+    ///   MIDOC_TEST_WHISPER_MODEL=<ggml> MIDOC_TEST_AUDIO_FILE=<wav>
+    ///   cargo test --release --features whisper-local transcription_speed -- --ignored --nocapture
     #[test]
     #[ignore = "requiere un modelo GGML y un audio real"]
     fn transcription_speed_of_real_audio() {
@@ -326,11 +327,9 @@ mod tests {
         let vad = std::env::var("MIDOC_TEST_WHISPER_VAD_MODEL")
             .ok()
             .map(PathBuf::from);
-        let decoded = audio::decode_audio_to_whisper(
-            &std::fs::read(&audio_path).unwrap(),
-            "audio/wav",
-        )
-        .unwrap();
+        let decoded =
+            audio::decode_audio_to_whisper(&std::fs::read(&audio_path).unwrap(), "audio/wav")
+                .unwrap();
         let clip = &decoded.samples[..decoded.samples.len().min(16_000 * seconds)];
         let audio = AudioInput {
             file_name: None,
