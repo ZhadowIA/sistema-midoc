@@ -1,0 +1,14 @@
+# Configuracion de Cargo versionada para la app de escritorio. La de
+# `src-tauri/.cargo/` es local de cada laptop (rutas de OpenSSL) y no se versiona;
+# Cargo junta las dos.
+[env]
+# whisper.cpp (feature `whisper-local`) se compila con CMake via whisper-rs-sys.
+# Con el generador de Visual Studio, el crate `cmake` reescribe
+# CMAKE_<LANG>_FLAGS_RELEASE y le quita todo `/O`: ggml quedaba SIN optimizar
+# (6.5 veces el tiempo real con large-v3-turbo en CPU). whisper-rs-sys pasa a
+# CMake cualquier variable `CMAKE_*`, y una definida ya no se reescribe. Se usan
+# banderas que entienden cl, clang y gcc; el CRT (/MD) ya viene en
+# CMAKE_<LANG>_FLAGS. whisper-rs-sys no se recompila solo al cambiar esto:
+# `cargo clean -p whisper-rs-sys --release`.
+CMAKE_C_FLAGS_RELEASE = "-O2 -DNDEBUG"
+CMAKE_CXX_FLAGS_RELEASE = "-O2 -DNDEBUG"

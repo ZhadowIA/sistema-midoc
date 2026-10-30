@@ -246,7 +246,12 @@ mod tests {
     /// WAV PCM16 mono 16 kHz de silencio, para ejercitar el pipeline real sin
     /// depender de un audio con voz.
     fn silent_wav_16k(seconds: usize) -> Vec<u8> {
-        let sample_count = 16_000 * seconds;
+        wav_16k(&vec![0.0; 16_000 * seconds])
+    }
+
+    /// WAV PCM16 mono 16 kHz con las muestras dadas (f32 en [-1, 1]).
+    fn wav_16k(samples: &[f32]) -> Vec<u8> {
+        let sample_count = samples.len();
         let data_len = (sample_count * 2) as u32;
         let mut out = Vec::new();
         out.extend_from_slice(b"RIFF");
@@ -262,7 +267,10 @@ mod tests {
         out.extend_from_slice(&16u16.to_le_bytes());
         out.extend_from_slice(b"data");
         out.extend_from_slice(&data_len.to_le_bytes());
-        out.extend(std::iter::repeat_n(0u8, sample_count * 2));
+        for sample in samples {
+            let value = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+            out.extend_from_slice(&value.to_le_bytes());
+        }
         out
     }
 
@@ -300,5 +308,56 @@ mod tests {
         // pipeline corra y devuelva una respuesta bien formada.
         assert_eq!(response.estimated_cost_cents, 0);
         assert!(response.model_version.starts_with("whisper-local-"));
+    }
+
+    /// Mide la velocidad con audio real: transcribe los primeros
+    /// `MIDOC_TEST_SECONDS` segundos (60 por omision) de `MIDOC_TEST_AUDIO_FILE` e
+    /// imprime cuantas veces el tiempo real tardo. Solo tiempos, nunca el texto.
+    ///   MIDOC_TEST_WHISPER_MODEL=<ggml> MIDOC_TEST_AUDIO_FILE=<wav>
+    ///   cargo test --release --features whisper-local transcription_speed -- --ignored --nocapture
+    #[test]
+    #[ignore = "requiere un modelo GGML y un audio real"]
+    fn transcription_speed_of_real_audio() {
+        let model = std::env::var("MIDOC_TEST_WHISPER_MODEL").expect("falta el modelo");
+        let audio_path = std::env::var("MIDOC_TEST_AUDIO_FILE").expect("falta el audio");
+        let seconds: usize = std::env::var("MIDOC_TEST_SECONDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60);
+        let vad = std::env::var("MIDOC_TEST_WHISPER_VAD_MODEL")
+            .ok()
+            .map(PathBuf::from);
+        let decoded =
+            audio::decode_audio_to_whisper(&std::fs::read(&audio_path).unwrap(), "audio/wav")
+                .unwrap();
+        let clip = &decoded.samples[..decoded.samples.len().min(16_000 * seconds)];
+        let audio = AudioInput {
+            file_name: None,
+            media_type: "audio/wav".into(),
+            bytes: wav_16k(clip),
+            duration_seconds: Some(seconds as i64),
+        };
+        let request = TranscriptionRequest {
+            media_type: "audio/wav".into(),
+            byte_len: audio.bytes.len(),
+            duration_seconds: Some(seconds as i64),
+        };
+        let provider = WhisperLocalProvider::new("bench", PathBuf::from(&model), vad.clone());
+        // La primera llamada carga el modelo; se mide aparte de la transcripcion.
+        let started = Instant::now();
+        cached_context(Path::new(&model)).unwrap();
+        let load = started.elapsed().as_secs_f64();
+        let started = Instant::now();
+        let (_, segments) = provider.transcribe_detailed(&request, &audio).unwrap();
+        let elapsed = started.elapsed().as_secs_f64();
+        let audio_seconds = clip.len() as f64 / 16_000.0;
+        println!(
+            "modelo {} | VAD {} | hilos {} | carga {load:.1} s | {audio_seconds:.0} s de audio en {elapsed:.1} s = {:.2}x tiempo real | {} segmentos",
+            Path::new(&model).file_name().unwrap().to_string_lossy(),
+            vad.is_some(),
+            detected_thread_count(),
+            elapsed / audio_seconds,
+            segments.len()
+        );
     }
 }
