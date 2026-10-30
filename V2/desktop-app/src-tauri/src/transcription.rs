@@ -237,7 +237,54 @@ pub struct HardwareSpecs {
     /// Backend de aceleracion utilizable (CPU/Vulkan integrada o dedicada/Metal).
     /// La deteccion (`detect_backend`) es conservadora: ante duda o fallo, `Cpu`.
     pub accel: AccelBackend,
+    /// `true` si la CPU tiene las instrucciones con las que se compila whisper.cpp
+    /// (ver `cpu_supports_local_whisper`). Sin ellas Whisper local truena al
+    /// cargar, aunque haya GPU: parte del calculo siempre corre en la CPU.
+    pub cpu_supported: bool,
 }
+
+/// Instrucciones de CPU que exige el whisper.cpp de la app. El instalador se
+/// compila con una base portable (AVX2 + FMA + F16C, ver `.cargo/config.toml`), no
+/// para el procesador de quien compila; un equipo sin ellas (Celeron/Pentium
+/// modestos, CPUs anteriores a 2013) no puede correr Whisper local.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuFeatures {
+    pub avx: bool,
+    pub avx2: bool,
+    pub fma: bool,
+    pub f16c: bool,
+}
+
+pub fn cpu_supports_local_whisper(features: CpuFeatures) -> bool {
+    features.avx && features.avx2 && features.fma && features.f16c
+}
+
+/// Lee las instrucciones de la CPU de este equipo. En procesadores que no son
+/// x86_64 (Apple Silicon) whisper.cpp usa NEON, que siempre esta: se reportan como
+/// presentes.
+pub fn detect_cpu_features() -> CpuFeatures {
+    #[cfg(target_arch = "x86_64")]
+    {
+        CpuFeatures {
+            avx: std::arch::is_x86_feature_detected!("avx"),
+            avx2: std::arch::is_x86_feature_detected!("avx2"),
+            fma: std::arch::is_x86_feature_detected!("fma"),
+            f16c: std::arch::is_x86_feature_detected!("f16c"),
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        CpuFeatures {
+            avx: true,
+            avx2: true,
+            fma: true,
+            f16c: true,
+        }
+    }
+}
+
+/// Explicacion para el medico cuando su CPU no puede correr Whisper local.
+pub const CPU_UNSUPPORTED_REASON: &str = "El procesador de este equipo no tiene las instrucciones (AVX2) que necesita la transcripcion local. Usa la transcripcion en nube, con consentimiento del paciente.";
 
 /// Recomendacion que viaja al frontend. No contiene datos clinicos.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -289,6 +336,14 @@ const HIGH_TIER_RAM_MB: u64 = 16 * MB_PER_GB;
 /// `small-q5` con sugerencia de nube.
 pub fn recommend(specs: HardwareSpecs) -> TranscriptionRecommendation {
     let (model, realtime_capable, recommend_cloud_fallback, reason) = match specs.accel {
+        // Sin las instrucciones de la build, Whisper local no carga: el modelo
+        // sugerido queda como referencia y se recomienda la nube.
+        _ if !specs.cpu_supported => (
+            WhisperModel::Small,
+            false,
+            true,
+            CPU_UNSUPPORTED_REASON.to_string(),
+        ),
         AccelBackend::Metal => {
             // Apple Silicon: Metal + memoria unificada. Con 16 GB o mas conviene
             // large-v3-q5 (maxima precision); por debajo, turbo-q5 casi en vivo.
@@ -387,6 +442,7 @@ pub fn detect_specs() -> HardwareSpecs {
         total_ram_mb,
         cpu_cores,
         accel,
+        cpu_supported: cpu_supports_local_whisper(detect_cpu_features()),
     }
 }
 
@@ -569,7 +625,46 @@ mod tests {
             total_ram_mb: ram_gb * MB_PER_GB,
             cpu_cores,
             accel,
+            cpu_supported: true,
         }
+    }
+
+    #[test]
+    fn cpu_without_avx2_cannot_run_local_whisper() {
+        let all = CpuFeatures {
+            avx: true,
+            avx2: true,
+            fma: true,
+            f16c: true,
+        };
+        assert!(cpu_supports_local_whisper(all));
+        for missing in [
+            CpuFeatures { avx: false, ..all },
+            CpuFeatures { avx2: false, ..all },
+            CpuFeatures { fma: false, ..all },
+            CpuFeatures { f16c: false, ..all },
+        ] {
+            assert!(!cpu_supports_local_whisper(missing), "{missing:?}");
+        }
+    }
+
+    #[test]
+    fn unsupported_cpu_recommends_cloud_even_with_gpu() {
+        for accel in [AccelBackend::Cpu, AccelBackend::VulkanDedicated] {
+            let rec = recommend(HardwareSpecs {
+                cpu_supported: false,
+                ..specs(32, 16, accel)
+            });
+            assert!(rec.recommend_cloud_fallback);
+            assert!(!rec.realtime_capable);
+            assert_eq!(rec.reason, CPU_UNSUPPORTED_REASON);
+        }
+    }
+
+    #[test]
+    fn this_machine_supports_the_portable_build() {
+        // El equipo de pruebas (Ryzen con AVX-512) tiene la base de la build.
+        assert!(cpu_supports_local_whisper(detect_cpu_features()));
     }
 
     #[test]
