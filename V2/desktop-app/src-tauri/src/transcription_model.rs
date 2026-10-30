@@ -136,13 +136,22 @@ fn vad_url() -> String {
             return url.trim().to_string();
         }
     }
-    format!("https://huggingface.co/ggml-org/whisper-vad/resolve/main/{VAD_FILE_NAME}")
+    // Fijado a una revision del repositorio (no `main`), como el SHA-256: si el
+    // archivo cambia alla, la app no lo acepta en silencio.
+    format!("https://huggingface.co/ggml-org/whisper-vad/resolve/{VAD_REVISION}/{VAD_FILE_NAME}")
 }
 
+/// Revision de ggml-org/whisper-vad de la que sale el VAD (2026-10-29).
+const VAD_REVISION: &str = "9ffd54a1e1ee413ddf265af9913beaf518d1639b";
+
+/// SHA-256 del VAD: el del archivo de esa revision, o el que fije el build
+/// (`MIDOC_WHISPER_VAD_SHA256`) si apunta a otra copia. Un archivo que no
+/// coincide no se acepta.
 fn vad_sha256() -> String {
     option_env!("MIDOC_WHISPER_VAD_SHA256")
-        .unwrap_or("")
-        .trim()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf")
         .to_lowercase()
 }
 
@@ -344,6 +353,12 @@ mod tests {
         assert!(vad.url.contains("whisper-vad"));
         assert!(vad.url.ends_with("ggml-silero-v5.1.2.bin"));
         assert_eq!(vad.size_bytes, 885_098);
+        // Revision y huella fijas: un archivo distinto no se acepta.
+        assert!(vad.url.contains(&format!("/resolve/{VAD_REVISION}/")));
+        assert_eq!(
+            vad.sha256,
+            "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf"
+        );
         // Comparte el gestor: vive bajo `models/` como cualquier asset.
         let base = Path::new("C:/MiDocData");
         assert_eq!(

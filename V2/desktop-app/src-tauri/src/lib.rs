@@ -2130,6 +2130,11 @@ fn resolve_local_transcription_provider(
 ) -> Result<Box<dyn ai::TranscriptionProvider>, String> {
     #[cfg(feature = "whisper-local")]
     {
+        // whisper.cpp se compila para AVX2: en una CPU sin esas instrucciones
+        // cargar el modelo tumbaria la app (instruccion ilegal), no un error.
+        if !transcription::cpu_supports_local_whisper(transcription::detect_cpu_features()) {
+            return Err(transcription::CPU_UNSUPPORTED_REASON.into());
+        }
         let rec = transcription::recommendation();
         let asset = transcription_model::asset_for(&rec.model_id)
             .ok_or("el modelo recomendado no se reconoce")?;
