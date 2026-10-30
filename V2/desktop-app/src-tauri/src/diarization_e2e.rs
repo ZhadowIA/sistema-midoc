@@ -103,7 +103,8 @@ fn speaker_segments_of_a_real_recording() {
 /// El trabajador aislado con el ejecutable real de la app (`cargo build --release
 /// --features diarization-local`, ruta en `MIDOC_E2E_APP_EXE`). Primero con el
 /// caso que tumbo el proceso el 2026-10-27 (Auto, umbral en `MIDOC_E2E_CRASH_THRESHOLD`,
-/// 0.7 por omision): esta prueba debe seguir viva y recibir un error. Despues con
+/// 0.7 por omision): con sherpa-onnx 1.12.9 el trabajador tronaba y esta prueba
+/// debia seguir viva y recibir un error; con 2.0.1 ya devuelve tramos. Despues con
 /// 2 hablantes: los tramos llegan por la tuberia.
 #[test]
 #[ignore = "necesita el ejecutable de la app, audio real y los modelos de diarizacion"]

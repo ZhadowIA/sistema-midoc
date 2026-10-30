@@ -12,11 +12,15 @@
 //! `transcription_model` (rutas, holgura de disco, reanudacion, checksum, estado),
 //! para no duplicar logica. La descarga por red vive en `lib.rs` (frontera fina).
 //!
-//! Los `.onnx` se rehospedan sin cambios en el release `modelos-diarizacion-v1`
-//! del repositorio (2026-10-18), con sus licencias: segmentacion MIT (pyannote) y
-//! embedding CC BY 4.0 (WeSpeaker/VoxCeleb). URL, SHA-256 y tamano quedan fijados
-//! aqui y siguen siendo configurables por build (`MIDOC_DIARIZE_*`). Un archivo
-//! que no coincide con su SHA-256 no se acepta.
+//! Los `.onnx` se rehospedan en el release `modelos-diarizacion-v1` del
+//! repositorio (2026-10-18), con sus licencias: segmentacion MIT (pyannote) y
+//! embedding CC BY 4.0 (WeSpeaker/VoxCeleb). La segmentacion va sin cambios. El
+//! embedding va CORREGIDO (2026-10-28, `scripts/diarization-models/`): el original
+//! trae `Pad` nulos que ONNX Runtime 1.28 (el de sherpa-onnx 2.0.1) fusiona mal en
+//! el `AveragePool`, y los embeddings salian sin relacion con los correctos; sin
+//! esos `Pad` las salidas son identicas al original. URL, SHA-256 y tamano quedan
+//! fijados aqui y siguen siendo configurables por build (`MIDOC_DIARIZE_*`). Un
+//! archivo que no coincide con su SHA-256 no se acepta.
 
 use crate::transcription_model::ModelAsset;
 
@@ -52,7 +56,9 @@ impl DiarizationModel {
     pub fn file_name(self) -> &'static str {
         match self {
             DiarizationModel::Segmentation => "sherpa-segmentation-3.0.onnx",
-            DiarizationModel::Embedding => "sherpa-embedding-campplus.onnx",
+            // Nombre nuevo para el modelo corregido: una copia vieja en disco no
+            // cuenta como descargada y se baja la buena.
+            DiarizationModel::Embedding => "sherpa-embedding-campplus-sin-pad.onnx",
         }
     }
 
@@ -77,9 +83,9 @@ fn model_url(model: DiarizationModel) -> String {
         DiarizationModel::Segmentation => {
             format!("{MODELS_RELEASE}/pyannote-segmentation-3.0.onnx")
         }
-        // `++` codificado en la URL del archivo `wespeaker_en_voxceleb_CAM++.onnx`.
+        // `++` codificado en la URL del archivo `wespeaker_en_voxceleb_CAM++_sin-pad.onnx`.
         DiarizationModel::Embedding => {
-            format!("{MODELS_RELEASE}/wespeaker_en_voxceleb_CAM%2B%2B.onnx")
+            format!("{MODELS_RELEASE}/wespeaker_en_voxceleb_CAM%2B%2B_sin-pad.onnx")
         }
     }
 }
@@ -100,7 +106,7 @@ fn model_sha256(model: DiarizationModel) -> String {
             "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079"
         }
         DiarizationModel::Embedding => {
-            "c46fad10b5f81e1aa4a60c162714208577093655076c5450f8c469e522ec54ef"
+            "9cd3461587dc294b76cace34f89700e67148f6143518e70d28c24643af587e54"
         }
     };
     configured
@@ -126,7 +132,7 @@ fn model_download_size(model: DiarizationModel) -> u64 {
     }
     match model {
         DiarizationModel::Segmentation => 5_992_913,
-        DiarizationModel::Embedding => 29_292_684,
+        DiarizationModel::Embedding => 29_202_006,
     }
 }
 
@@ -163,7 +169,7 @@ mod tests {
         );
         assert_eq!(
             asset_for("diarization-embedding").unwrap().file_name,
-            "sherpa-embedding-campplus.onnx"
+            "sherpa-embedding-campplus-sin-pad.onnx"
         );
         assert!(asset_for("../etc/passwd").is_none());
         assert!(
@@ -180,7 +186,9 @@ mod tests {
 
         let emb = asset_for("diarization-embedding").unwrap();
         // `++` codificado en la URL.
-        assert!(emb.url.ends_with("/wespeaker_en_voxceleb_CAM%2B%2B.onnx"));
+        assert!(emb
+            .url
+            .ends_with("/wespeaker_en_voxceleb_CAM%2B%2B_sin-pad.onnx"));
     }
 
     #[test]
@@ -191,7 +199,7 @@ mod tests {
         );
         assert_eq!(
             asset_for("diarization-embedding").unwrap().size_bytes,
-            29_292_684
+            29_202_006
         );
     }
 
