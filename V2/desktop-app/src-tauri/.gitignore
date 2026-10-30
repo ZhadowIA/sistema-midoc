@@ -12,3 +12,6 @@
 
 # Configuracion local de Cargo (rutas especificas de la maquina, p.ej. OPENSSL_DIR)
 /.cargo/
+
+# Archivo verificado de sherpa-onnx y sus DLL (scripts/tauri-diarize.mjs)
+/.sherpa-onnx/
