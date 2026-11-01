@@ -79,7 +79,8 @@ pub fn diarize_samples(
         .ok_or_else(|| AiError::Invalid("ruta del modelo de embedding invalida".into()))?;
 
     // Auto (num_speakers == 0): num_clusters <= 0 hace que sherpa estime el numero
-    // con el umbral. Fijo (> 0): lo pina y maximiza precision (consulta tipica = 2).
+    // con el umbral. Fijo (> 0): pide grupos de mas y abajo se juntan en N
+    // (`collapse_speakers`), que es mas estable que pedir N exactos.
     let (num_clusters, threshold) =
         crate::diarization::clustering_params(num_speakers, resolve_threshold());
     let config = OfflineSpeakerDiarizationConfig {
@@ -118,7 +119,7 @@ pub fn diarize_samples(
         .ok_or_else(|| AiError::Invalid("fallo la diarizacion".into()))?;
 
     // sherpa-onnx entrega `start`/`end` en segundos (f32) y `speaker` como indice.
-    Ok(result
+    let segments: Vec<SpeakerSegment> = result
         .sort_by_start_time()
         .into_iter()
         .map(|s| SpeakerSegment {
@@ -126,7 +127,14 @@ pub fn diarize_samples(
             end_cs: (s.end * 100.0) as i64,
             speaker_idx: s.speaker.max(0) as u8,
         })
-        .collect())
+        .collect();
+    if num_speakers == crate::diarization::AUTO_NUM_SPEAKERS {
+        return Ok(segments);
+    }
+    Ok(crate::diarization::collapse_speakers(
+        &segments,
+        num_speakers,
+    ))
 }
 
 /// Variante STUB (sin el feature `diarization-local`): no hay motor nativo, asi que
@@ -471,7 +479,15 @@ mod tests {
 
     #[test]
     fn a_worker_that_hangs_is_killed_after_the_timeout() {
-        let hung = shell("sleep 30", "ping -n 30 127.0.0.1 > NUL");
+        // En Windows, `ping` como espera falla al instante si no hay red (sandbox):
+        // Start-Sleep no depende de ella.
+        let hung = if cfg!(windows) {
+            let mut command = Command::new("powershell");
+            command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"]);
+            command
+        } else {
+            shell("sleep 30", "")
+        };
         let started = Instant::now();
         let error = run_worker(hung, Vec::new(), Duration::from_millis(500)).unwrap_err();
         assert!(error.to_string().contains("tardo demasiado"), "{error}");
