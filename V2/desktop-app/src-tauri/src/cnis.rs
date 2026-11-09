@@ -399,12 +399,8 @@ fn code_with(catalog: &Catalog, line: &str) -> Option<CnisCoding> {
         .iter()
         .filter(|e| &e.generic == generic && fits(e))
     {
-        let matches = match &entry.strength {
-            Some(strength) => same_strength((value, unit), strength),
-            // Sin concentracion legible podria ser este mismo: no se adivina.
-            None => return None,
-        };
-        if !matches {
+        // Sin concentracion legible podria ser este mismo: no se adivina.
+        if !same_strength((value, unit), entry.strength.as_ref()?) {
             continue;
         }
         if !entry.complete {
