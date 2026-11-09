@@ -174,10 +174,8 @@ pub fn decode_samples(bytes: &[u8]) -> Result<Vec<f32>, AiError> {
     if !bytes.len().is_multiple_of(4) {
         return Err(AiError::Invalid("muestras de audio incompletas".into()));
     }
-    Ok(bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect())
+    let (chunks, _) = bytes.as_chunks::<4>();
+    Ok(chunks.iter().map(|c| f32::from_le_bytes(*c)).collect())
 }
 
 /// Un tramo por linea: `inicio fin hablante` (centisegundos e indice).
