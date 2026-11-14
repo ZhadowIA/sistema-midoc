@@ -35,6 +35,15 @@ describe("text gateway providers (paso 30)", () => {
     expect(body.generationConfig).toMatchObject({ responseMimeType: "application/json", responseJsonSchema: { type: "object" } });
   });
 
+  it("Gemini caps the reasoning budget to keep cost and latency low", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, body: { candidates: [{ content: { parts: [{ text: "borrador" }] } }] } }
+    ]);
+    await new GeminiGatewayProvider("k", impl, noWait).generate(request);
+    const body = JSON.parse(String(calls[0].init.body));
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 512 });
+  });
+
   it("retries transient failures and then succeeds", async () => {
     const { impl, calls } = fakeFetch([
       { status: 503, body: {} },
