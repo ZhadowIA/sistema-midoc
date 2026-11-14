@@ -207,6 +207,23 @@ Los tokens por tarea son estimaciones [E]. El ingreso por crédito más bajo es 
 | Nube con separación de hablantes, Deepgram (incluida) | ≈ $2.27 | 3 | $0.76 | ✅ ~38 % |
 | Nube con separación, OpenAI (precio supuesto, ~$0.006/min) | ≈ $2.57 | 3 | $0.86 | ✅ ~30 % |
 
+**Medición real (2026-11-14)** [V]: 5 consultas inventadas (general y dental) pasaron por la pasarela (`runGatewayGeneration`) con Gemini 2.5 Flash de pago.
+- **Costo:** **≈ $0.19 MXN por consulta** sumando nota SOAP e indicaciones, dentro de la estimación.
+- **Tokens:**
+  - el **razonamiento** se lleva el 84 % de los tokens de salida (16,893 de 20,086);
+  - la entrada pesó poco: unas 450 fichas por llamada, porque los textos de prueba eran cortos. Una transcripción real de 20 min tendrá varios miles de fichas de entrada, que suman poco a $0.30 por millón.
+- **Tiempo:** de 5 a 13 segundos por llamada.
+- **Calidad:** los 5 borradores SOAP salieron como JSON válido. Se cobró 1 crédito por llamada y no se cobró nada cuando la pasarela estaba apagada.
+- **Con el razonamiento limitado** (mismas 5 consultas, `thinkingBudget` inyectado solo en la prueba):
+
+  | Razonamiento | MXN por consulta | Tiempo por llamada | JSON válido |
+  |---|---|---|---|
+  | Sin límite (actual) | ≈ 0.19 | 5–13 s | 5/5 |
+  | 512 fichas | ≈ 0.07 | 3–5 s | 5/5 |
+  | Apagado (0) | ≈ 0.03 | 1–2.5 s | 5/5 |
+
+  Con el razonamiento apagado, las indicaciones se apegaron más al plan (no inventaron cuidados de pies), pero en un caso agregaron una nota de relleno sobre los diagnósticos previos. Con 512 fichas convirtieron síntomas de la consulta en "datos de alarma". Falta que un médico compare la calidad antes de elegir.
+
 **Acciones requeridas** (no se implementan en este documento):
 1. **Transcripción estándar en la nube solo con `gpt-4o-mini-transcribe`.** Deepgram, solo para la separación de hablantes, donde no cobra extra.
 2. **Catálogo de créditos por consulta** (§6.2), en lugar de por tarea.
