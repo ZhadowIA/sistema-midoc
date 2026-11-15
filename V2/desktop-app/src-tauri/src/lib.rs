@@ -315,6 +315,10 @@ fn unlock_database(
     let _ = medication::ensure_bundled_reference_installed(&conn);
     let backup_path = backup_path(&app, &profile.id)?;
     db::create_encrypted_backup(&conn, &backup_path).map_err(|e| e.to_string())?;
+    // El nombre del perfil viaja en el nombre del equipo que ve el portal, para
+    // distinguir dos perfiles de la misma computadora en "Cuenta".
+    sync::set_state(&conn, PROFILE_NAME_STATE_KEY, &profile.display_name)
+        .map_err(|e| e.to_string())?;
     *state.0.lock().unwrap() = Some(conn);
     Ok(UnlockResult {
         schema_version,
@@ -407,14 +411,15 @@ async fn link_account(
     email: String,
     password: String,
 ) -> Result<LinkOutcome, String> {
-    let device_name = device_name();
-
     // Generar (si no existe) el par de llaves del medico y publicar la publica
     // sin retener el lock durante la llamada de red.
-    let document_public_key = {
+    let (document_public_key, device_name) = {
         let guard = state.0.lock().unwrap();
         let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
-        crypto::ensure_keypair(conn).map_err(|e| e.to_string())?
+        (
+            crypto::ensure_keypair(conn).map_err(|e| e.to_string())?,
+            device_name(conn)?,
+        )
     };
 
     let link = sync::link_account(
@@ -443,11 +448,36 @@ async fn link_account(
     Ok(LinkOutcome { license_error })
 }
 
-fn device_name() -> String {
-    format!(
-        "Escritorio {}",
-        std::env::var("COMPUTERNAME").unwrap_or_else(|_| "MiDoc".into())
-    )
+const PROFILE_NAME_STATE_KEY: &str = "profile_display_name";
+/// Limite del portal para `deviceName`.
+const DEVICE_NAME_MAX_CHARS: usize = 120;
+
+/// Nombre con el que este equipo aparece en el portal: la computadora y el
+/// perfil de medico abierto.
+fn device_name(conn: &rusqlite::Connection) -> Result<String, String> {
+    let profile = sync::get_state(conn, PROFILE_NAME_STATE_KEY).map_err(|e| e.to_string())?;
+    let computer = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "MiDoc".into());
+    Ok(format_device_name(&computer, profile.as_deref()))
+}
+
+fn format_device_name(computer: &str, profile: Option<&str>) -> String {
+    let base = format!("Escritorio {}", computer.trim());
+    let profile = profile.map(str::trim).filter(|name| !name.is_empty());
+    let Some(profile) = profile else {
+        return base.chars().take(DEVICE_NAME_MAX_CHARS).collect();
+    };
+    let full = format!("{base} · {profile}");
+    if full.chars().count() <= DEVICE_NAME_MAX_CHARS {
+        return full;
+    }
+    // Recorta el perfil, no la computadora: el nombre del equipo es lo que
+    // identifica la maquina al liberar un lugar de la licencia.
+    let room = DEVICE_NAME_MAX_CHARS.saturating_sub(base.chars().count() + 4);
+    if room == 0 {
+        return base.chars().take(DEVICE_NAME_MAX_CHARS).collect();
+    }
+    let short: String = profile.chars().take(room).collect();
+    format!("{base} · {}…", short.trim_end())
 }
 
 #[derive(serde::Serialize)]
@@ -460,7 +490,7 @@ struct LinkOutcome {
 async fn refresh_license(
     state: &tauri::State<'_, AppDb>,
 ) -> Result<license::LicenseStatus, String> {
-    let (server_url, token, installation_id) = {
+    let (server_url, token, installation_id, device_name) = {
         let guard = state.0.lock().unwrap();
         let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
         let server_url = sync::get_state(conn, "server_url")
@@ -470,9 +500,9 @@ async fn refresh_license(
             .map_err(|e| e.to_string())?
             .ok_or("Vincula tu cuenta MiDoc para activar este equipo.")?;
         let installation_id = license::installation_id(conn).map_err(|e| e.to_string())?;
-        (server_url, token, installation_id)
+        (server_url, token, installation_id, device_name(conn)?)
     };
-    let token = sync::activate_license(&server_url, &token, &installation_id, &device_name())
+    let token = sync::activate_license(&server_url, &token, &installation_id, &device_name)
         .await
         .map_err(|e| e.to_string())?;
     let guard = state.0.lock().unwrap();
@@ -3139,6 +3169,31 @@ mod tests {
             profile_database_path(base, "dr-ana").unwrap(),
             profile_database_path(base, "dr-luis").unwrap()
         );
+    }
+
+    #[test]
+    fn device_name_includes_the_profile() {
+        assert_eq!(
+            format_device_name("DESKTOP-ABC", Some("Dra. Ana Ruiz")),
+            "Escritorio DESKTOP-ABC · Dra. Ana Ruiz"
+        );
+        assert_eq!(
+            format_device_name("DESKTOP-ABC", None),
+            "Escritorio DESKTOP-ABC"
+        );
+        assert_eq!(
+            format_device_name("DESKTOP-ABC", Some("   ")),
+            "Escritorio DESKTOP-ABC"
+        );
+    }
+
+    #[test]
+    fn device_name_trims_the_profile_to_the_portal_limit() {
+        let long = "N".repeat(200);
+        let name = format_device_name("DESKTOP-ABC", Some(&long));
+        assert_eq!(name.chars().count(), DEVICE_NAME_MAX_CHARS);
+        assert!(name.starts_with("Escritorio DESKTOP-ABC · N"));
+        assert!(name.ends_with('…'));
     }
 
     #[test]
