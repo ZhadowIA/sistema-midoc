@@ -91,3 +91,14 @@ Nada de esto se elimina de la base de datos local ni de PostgreSQL en este reenf
 ## 6. Cómo se refleja en la línea de desarrollo
 
 `10_linea_de_desarrollo.md` conserva los pasos 0-26 como historia y agrega la tabla de reclasificación (vigente / congelado) más los pasos nuevos 27 en adelante, que son los que llevan el producto a su nueva forma. Ningún paso cerrado se reabre para borrar código: se apaga y se sigue.
+
+## 7. Ajuste del 2026-10-18
+
+Decisiones del usuario que afinan el alcance activo:
+
+- **Preconsulta configurable.** La preconsulta deja de estar congelada en una forma nueva: un cuestionario que cada medico arma, en dos partes (informacion general del paciente, que puede saltarse, y preguntas del motivo de consulta). Es el paso 32; sigue la residencia del buzon cifrado.
+- **Ordenes de laboratorio dental** siguen activas, con una lista global de trabajos pendientes fuera de Recepcion.
+- **Avisos al medico.** Por correo, lo que no impide usar la app (por ejemplo, el fin cercano de las actualizaciones incluidas); al abrir la app, las actualizaciones; dentro de la app, un aviso discreto de creditos bajos.
+- **Consultas abiertas.** Una vista lista las consultas iniciadas y sin firmar.
+- **Bloqueo por inactividad** de 30 minutos por omision, configurable o desactivable, que pide la frase de seguridad.
+

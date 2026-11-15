@@ -36,7 +36,31 @@ Motivo: la arquitectura local-first no genera costo de servidor por consulta; co
 | PROFECO y creditos prepagados que caducan. | Las recargas no caducan; solo los creditos del plan mensual pueden caducar o acumularse con tope, avisado claramente. |
 | Fiscal: CFDI y reconocimiento de ingreso. | Revisar con contador antes de lanzar: CFDI por cada cobro y creditos como ingreso diferido hasta su uso. |
 
-## 5. Pendiente de decidir
+## 5. Propuesta de precios (investigacion del 2026-10-18)
+
+Referencias del mercado, con cifras de blogs comerciales y sitios de proveedores que no siempre coinciden; verificarlas antes de fijar precios:
+
+| Producto | Modelo | Precio aproximado |
+|---|---|---|
+| Expedientes en Mexico (Nimbo, Medisel, HuliPractice, Mi-Consultorio, GestMedica, SaludTotal) | Suscripcion mensual por medico | 180 a 800 MXN al mes; lo comun, 300 a 650 MXN |
+| Doctoralia Pro | Suscripcion (visibilidad y agenda) | 1,230 a 1,950 MXN al mes + IVA |
+| Dentalink | Suscripcion (odontologia) | desde 29 USD al mes |
+| Escribas con IA (Freed, Heidi, Nabla) | Suscripcion mensual | 39 a 119 USD al mes por medico (unos 700 a 2,200 MXN); Heidi tiene plan gratuito |
+| Licencia perpetua | Casi no se ofrece en Mexico; solo sistemas antiguos, con mantenimiento anual opcional | sin precios publicos |
+
+Lectura: no hay competencia directa de pago unico con expediente local e IA. El medico compara contra 300 a 650 MXN al mes por el expediente y, por separado, contra escribas que cuestan 10 a 20 veces mas en dolares.
+
+Propuesta inicial, a validar con medicos piloto:
+
+- **Licencia**: 5,990 MXN (IVA incluido), 2 equipos, 12 meses de actualizaciones. Equivale a unos 12 a 18 meses de una suscripcion de gama media; a partir de ahi, el medico ahorra.
+- **Renovacion de actualizaciones**: 1,490 MXN al ano (alrededor del 25 % de la licencia), opcional.
+- **Creditos de IA**: alrededor de 2.50 MXN por credito en recargas sin caducidad (paquetes de 100 por 290 MXN y de 500 por 1,190 MXN). Con el catalogo actual (`services/ai/ai-credits.ts`), una consulta con IA en la nube cuesta de 2 a 4 creditos: de 5 a 10 MXN por consulta.
+- **Plan mensual de creditos**: 449 MXN al mes con 250 creditos (60 a 120 consultas con IA), por debajo de cualquier escriba con IA y del orden de un expediente mexicano de gama media.
+- **Costo del proveedor**: un borrador de texto con un modelo rapido cuesta centavos de dolar y la transcripcion en nube, centavos por minuto. Recalcular el margen con las tarifas reales del proveedor elegido (paso 30) antes de publicar.
+
+Fuentes: comparativas de Medesk, Huli, Turnito, Mi-Consultorio, SaludTotal y Astramedik (expedientes); Freed, Keragon, Pabau, Clairemed y Clunic (escribas con IA).
+
+## 5.1 Pendiente de decidir
 
 - Precios: licencia, renovacion de actualizaciones, paquetes de creditos y plan mensual (se puede investigar a la competencia en Mexico para tener referencias).
 - Cuantos equipos por licencia (por ejemplo consultorio + casa).
