@@ -34,6 +34,8 @@ export interface TextGatewayProvider {
 
 type FetchLike = typeof fetch;
 
+const GEMINI_THINKING_BUDGET = 512;
+
 const SYSTEM_INSTRUCTION =
   "Eres apoyo documental clinico. No inventes informacion. Devuelve solo contenido derivado de la entrada y marca faltantes o ambiguedades.";
 
@@ -84,7 +86,12 @@ export class GeminiGatewayProvider implements TextGatewayProvider {
   async generate(request: GatewayGenerationRequest): Promise<GatewayGenerationResult> {
     const started = Date.now();
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(request.model)}:generateContent`;
-    const generationConfig: Record<string, unknown> = { temperature: request.temperature };
+    // Tope de razonamiento: medido el 2026-11-14 (plan de ventas §6.3), 512 fichas
+    // bajan el costo ~60 % y la latencia a 3-5 s sin perder el JSON de la nota.
+    const generationConfig: Record<string, unknown> = {
+      temperature: request.temperature,
+      thinkingConfig: { thinkingBudget: GEMINI_THINKING_BUDGET }
+    };
     if (request.responseSchema) {
       generationConfig.responseMimeType = "application/json";
       generationConfig.responseJsonSchema = request.responseSchema;
