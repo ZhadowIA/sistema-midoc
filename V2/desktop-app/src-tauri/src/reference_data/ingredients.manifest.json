@@ -1,10 +1,10 @@
 {
   "version": "ingredientes-2026-11-15",
-  "generatedAt": "2026-11-15T18:49:52.537Z",
+  "generatedAt": "2026-11-15T19:02:44.805Z",
   "sources": {
     "cnis": "cnis-2025-04-26",
     "interactions": "onchigh-mx-2026-11-15",
-    "reviewedSynonyms": 0
+    "reviewedSynonyms": 3
   },
   "ingredients": 1027,
   "cnis": 1004,
@@ -12,5 +12,5 @@
   "cnisLinkedToInteractions": 69,
   "pendingReview": 81,
   "conflicts": [],
-  "sha256": "cddcbb2441def79ca95a6187d21eeb54aa309719a43927078548fe5c146c24d7"
+  "sha256": "4fd790775a83548f7022a4f3fb07a582e192c3ccf1706b539ab7e35ebf0ee6b4"
 }

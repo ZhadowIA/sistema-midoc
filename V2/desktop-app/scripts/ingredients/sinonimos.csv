@@ -2,3 +2,6 @@
 # y, si coincide con un nombre de la base de interacciones, liga ambos. Motivo y revisor obligatorios.
 # Candidatos en por-revisar.csv.
 ingrediente,sinonimo,motivo,revisado_por
+metamizol sodico,metamizol,nombre comun del mismo principio activo (sin la sal); revision de alergias 2026-11-15,ZhadowIA
+metamizol sodico,dipirona,denominacion internacional alterna del metamizol; revision de alergias 2026-11-15,ZhadowIA
+sulfadiazina de plata,sulfadiazina,mismo principio activo (sulfonamida) para que la alergia a sulfas lo cubra; revision de alergias 2026-11-15,ZhadowIA

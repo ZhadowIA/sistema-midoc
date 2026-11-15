@@ -1957,6 +1957,7 @@ mod tests {
                 &[
                     "Trimetoprima con sulfametoxazol 160 mg",
                     "Bactrim 160 mg",
+                    "Sulfadiazina 500 mg",
                     "Sulfasalazina 500 mg",
                 ],
             ),
@@ -1971,7 +1972,14 @@ mod tests {
                     "Aspirina 500 mg",
                 ],
             ),
-            ("Metamizol", &["Metamizol sodico 1 g"]),
+            (
+                "Metamizol",
+                &[
+                    "Metamizol sodico 1 g",
+                    "Metamizol 500 mg",
+                    "Dipirona 500 mg",
+                ],
+            ),
             ("Dipirona", &["Metamizol sodico 1 g"]),
             (
                 "Cefalosporinas",
