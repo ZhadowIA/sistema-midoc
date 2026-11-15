@@ -11,6 +11,7 @@ import { preconsultaEnvelopeSchema } from "../../src/lib/preconsulta-answers";
 import { sealEnvelope } from "../../src/lib/seal-envelope";
 import { createDoctorAccount } from "../../src/services/auth/auth-service";
 import {
+  createPersonalLink,
   publishQuestionnaire,
   regenerateGeneralLink,
   setGeneralLinkStatus
@@ -228,5 +229,46 @@ describe("preconsulta delivery to the doctor's app", () => {
     expect((await post(first.token, { ciphertext: await sealedAnswers(publicKey), questionnaireVersion: 1 })).status).toBe(200);
     const stored = await prisma.preconsultaSubmission.findFirstOrThrow({ where: { doctorId: first.doctorId } });
     expect((await download(other.deviceToken, stored.id)).status).toBe(404);
+  });
+});
+
+describe("personal preconsulta link", () => {
+  const patientRef = "ref_0123456789abcdef";
+
+  it("serves one patient once and tells the app who it is by an opaque reference", async () => {
+    const { doctorId, deviceToken } = await doctorReady("preconsulta-personal");
+    const personal = await createPersonalLink(doctorId, patientRef);
+    const token = personal.url.split("/").pop() as string;
+    expect(new Date(personal.expiresAt).getTime()).toBeGreaterThan(Date.now() + 29 * 24 * 60 * 60 * 1000);
+
+    const page = await getPublicPreconsulta(token);
+    expect(page).toMatchObject({ accepting: true, linkKind: "PERSONAL", reason: null });
+    const ciphertext = await sealedAnswers(page!.publicKey!);
+    expect((await post(token, { ciphertext, questionnaireVersion: 1 })).status).toBe(200);
+    // Un solo envio.
+    expect((await post(token, { ciphertext, questionnaireVersion: 1 })).status).toBe(409);
+    expect((await getPublicPreconsulta(token))?.reason).toBe("used");
+
+    const device = await authenticateSyncDevice(
+      new Request("http://localhost:3000", { headers: { authorization: `Bearer ${deviceToken}` } })
+    );
+    const event = (await getSyncInbox(device, 0)).events.find((item) => item.type === "PRECONSULTA_SUBMITTED");
+    expect(event?.payload).toEqual({ preconsultaSubmissionId: expect.any(String), sealed: true, patientRef });
+
+    const link = await prisma.preconsultaLink.findFirstOrThrow({ where: { doctorId, kind: "PERSONAL" } });
+    // El portal no guarda el nombre del paciente en el enlace.
+    expect(JSON.stringify(link)).not.toContain("Ruiz");
+  });
+
+  it("rejects expired personal links and bad references", async () => {
+    const { doctorId } = await doctorReady("preconsulta-personal-expired");
+    await expect(createPersonalLink(doctorId, "corta")).rejects.toThrow();
+    const personal = await createPersonalLink(doctorId, patientRef);
+    const token = personal.url.split("/").pop() as string;
+    await prisma.preconsultaLink.updateMany({ where: { doctorId, kind: "PERSONAL" }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    const page = await getPublicPreconsulta(token);
+    expect(page).toMatchObject({ accepting: false, reason: "expired" });
+    expect((await post(token, { ciphertext: await sealedAnswers(page!.publicKey!), questionnaireVersion: 1 })).status).toBe(410);
+    expect(await prisma.preconsultaSubmission.count({ where: { doctorId } })).toBe(0);
   });
 });

@@ -26,7 +26,9 @@ export interface PublicPreconsulta {
   /** El formulario acepta envios: enlace activo, cuestionario publicado y llave del medico. */
   accepting: boolean;
   /** Por que no acepta, para decirselo al paciente. */
-  reason: "paused" | "not-ready" | null;
+  reason: "paused" | "not-ready" | "expired" | "used" | null;
+  /** General (cualquiera lo contesta) o personal (un paciente, un envio). */
+  linkKind: "GENERAL" | "PERSONAL";
   questionnaire: { version: number; definition: PreconsultaQuestionnaire } | null;
   /** Llave publica X25519 del equipo del medico, para sellar en el navegador. */
   publicKey: string | null;
@@ -36,9 +38,18 @@ async function findLink(token: string) {
   if (!/^[0-9a-f]{48}$/.test(token)) return null;
   const link = await prisma.preconsultaLink.findUnique({ where: { tokenHash: hashOpaqueToken(token) } });
   if (!link || link.status === PreconsultaLinkStatus.REVOKED) return null;
-  // Los enlaces personales son de la rebanada 4.
-  if (link.kind !== PreconsultaLinkKind.GENERAL) return null;
   return link;
+}
+
+/** Un enlace personal (rebanada 4) sirve 30 dias y para un solo envio. */
+function personalLinkState(
+  link: { kind: PreconsultaLinkKind; expiresAt: Date | null; usedAt: Date | null },
+  now = new Date()
+): "expired" | "used" | null {
+  if (link.kind !== PreconsultaLinkKind.PERSONAL) return null;
+  if (link.usedAt) return "used";
+  if (!link.expiresAt || link.expiresAt.getTime() <= now.getTime()) return "expired";
+  return null;
 }
 
 /** Lo que necesita la pagina publica; `null` si el enlace no existe o se regenero. */
@@ -57,11 +68,13 @@ export async function getPublicPreconsulta(token: string): Promise<PublicPrecons
   const parsed = questionnaire ? preconsultaQuestionnaireSchema.safeParse(questionnaire.definition) : null;
   const ready = Boolean(parsed?.success && publicKey);
   const paused = link.status === PreconsultaLinkStatus.PAUSED;
+  const personal = personalLinkState(link);
   return {
     doctorName: profile.professionalName,
     licenseNumber: profile.licenseNumber,
-    accepting: ready && !paused,
-    reason: paused ? "paused" : ready ? null : "not-ready",
+    accepting: ready && !paused && !personal,
+    reason: personal ?? (paused ? "paused" : ready ? null : "not-ready"),
+    linkKind: link.kind === PreconsultaLinkKind.PERSONAL ? "PERSONAL" : "GENERAL",
     questionnaire: questionnaire && parsed?.success ? { version: questionnaire.version, definition: parsed.data } : null,
     publicKey
   };
@@ -82,6 +95,9 @@ export async function submitPreconsulta(input: {
   if (link.status === PreconsultaLinkStatus.PAUSED) {
     throw new ServiceError("Tu médico pausó por ahora la recepción de preconsultas. Intenta más tarde.", 409);
   }
+  const personal = personalLinkState(link);
+  if (personal === "used") throw new ServiceError("Este enlace ya se usó. Si necesitas cambiar algo, pide otro a tu médico.", 409);
+  if (personal === "expired") throw new ServiceError("Este enlace venció. Pide uno nuevo a tu médico.", 410);
 
   await assertRateLimit({ key: `preconsulta-submit-ip:${input.ip ?? "desconocida"}`, limit: 5, windowMs: 60 * 60 * 1000 });
   await assertRateLimit({ key: `preconsulta-submit-link:${link.id}`, limit: 300, windowMs: 24 * 60 * 60 * 1000 });
@@ -109,24 +125,42 @@ export async function submitPreconsulta(input: {
     throw new ServiceError("Tu médico tiene demasiadas preconsultas por revisar. Intenta más tarde.", 429);
   }
 
-  const submission = await prisma.preconsultaSubmission.create({
-    data: {
-      doctorId: link.doctorId,
-      linkId: link.id,
-      questionnaireVersion: input.questionnaireVersion,
-      ciphertext: new Uint8Array(bytes),
-      sizeBytes: bytes.length
+  const submission = await prisma.$transaction(async (tx) => {
+    if (link.kind === PreconsultaLinkKind.PERSONAL) {
+      // Un solo envio: si dos llegan a la vez, solo uno marca el enlace.
+      const claimed = await tx.preconsultaLink.updateMany({
+        where: { id: link.id, usedAt: null },
+        data: { usedAt: new Date() }
+      });
+      if (claimed.count !== 1) {
+        throw new ServiceError("Este enlace ya se usó. Si necesitas cambiar algo, pide otro a tu médico.", 409);
+      }
     }
+    return tx.preconsultaSubmission.create({
+      data: {
+        doctorId: link.doctorId,
+        linkId: link.id,
+        questionnaireVersion: input.questionnaireVersion,
+        ciphertext: new Uint8Array(bytes),
+        sizeBytes: bytes.length
+      }
+    });
   });
   // Aviso en el buzon de la app (rebanada 3): solo el id, el sobre se baja
   // aparte. Sin aviso la app nunca lo veria, asi que el envio no queda a medias.
+  // El enlace personal agrega la referencia opaca con la que la app reconoce
+  // al paciente (rebanada 4); nunca su nombre.
   try {
     await emitSyncEvent(link.doctorId, SyncEventType.PRECONSULTA_SUBMITTED, {
       preconsultaSubmissionId: submission.id,
-      sealed: true
+      sealed: true,
+      ...(link.patientRef ? { patientRef: link.patientRef } : {})
     });
   } catch (error) {
     await prisma.preconsultaSubmission.delete({ where: { id: submission.id } });
+    if (link.kind === PreconsultaLinkKind.PERSONAL) {
+      await prisma.preconsultaLink.update({ where: { id: link.id }, data: { usedAt: null } });
+    }
     throw error;
   }
   // Por referencia: ni nombre, ni respuestas, ni IP en claro.

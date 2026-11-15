@@ -579,6 +579,19 @@ const MIGRATIONS: &[&str] = &[
     CREATE UNIQUE INDEX idx_preconsulta_inbox_encounter
         ON preconsulta_inbox (encounter_id) WHERE encounter_id IS NOT NULL;
     CREATE INDEX idx_preconsulta_inbox_received ON preconsulta_inbox (received_at);",
+    // Enlace personal de preconsulta (paso 32, rebanada 4). OPERATIVO: la
+    // referencia opaca que viaja al portal y a que paciente corresponde; solo
+    // esta app sabe de quien es. `personal_ref` liga lo recibido con su enlace.
+    "CREATE TABLE preconsulta_personal_links (
+        ref TEXT PRIMARY KEY NOT NULL,
+        patient_id TEXT NOT NULL REFERENCES patients (id),
+        url TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_preconsulta_personal_links_patient
+        ON preconsulta_personal_links (patient_id, created_at DESC);
+    ALTER TABLE preconsulta_inbox ADD COLUMN personal_ref TEXT;",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending

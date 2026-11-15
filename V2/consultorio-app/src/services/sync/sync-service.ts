@@ -529,7 +529,15 @@ export async function getMailboxPreconsultaForDevice(device: SyncDevice, submiss
 
   const submission = await prisma.preconsultaSubmission.findFirst({
     where: { id: submissionId, doctorId: device.doctorId },
-    select: { id: true, ciphertext: true, sizeBytes: true, purgedAt: true, questionnaireVersion: true, submittedAt: true }
+    select: {
+      id: true,
+      ciphertext: true,
+      sizeBytes: true,
+      purgedAt: true,
+      questionnaireVersion: true,
+      submittedAt: true,
+      link: { select: { patientRef: true } }
+    }
   });
 
   if (!submission) {
@@ -550,6 +558,8 @@ export async function getMailboxPreconsultaForDevice(device: SyncDevice, submiss
     sizeBytes: submission.sizeBytes,
     submittedAt: submission.submittedAt.toISOString(),
     questionnaireVersion: submission.questionnaireVersion,
+    // Enlace personal: la referencia opaca con la que la app reconoce al paciente.
+    patientRef: submission.link?.patientRef ?? null,
     questionnaire:
       questionnaire && questionnaire.version === submission.questionnaireVersion ? questionnaire.definition : null,
     ciphertext: Buffer.from(submission.ciphertext).toString("base64")

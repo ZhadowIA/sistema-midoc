@@ -1,20 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { call } from "./ipc";
+import { call, openExternal } from "./ipc";
 import {
   answerRows,
   formatDateOnly,
   parseEnvelope,
   parseQuestionnaire,
+  personalLinkMessage,
+  personalLinkState,
   rankMatches,
   searchInbox,
   subjectiveText,
+  whatsappUrl,
   type Inbox,
   type InboxItem,
   type PatientIdentity,
+  type PersonalLink,
   type StoredPreconsulta
 } from "./preconsultaInboxModel";
 
 const dateTime = new Intl.DateTimeFormat("es-MX", { dateStyle: "medium", timeStyle: "short" });
+const dateOnly = new Intl.DateTimeFormat("es-MX", { dateStyle: "medium" });
 
 /** Respuestas de una preconsulta, legibles. */
 export function PreconsultaAnswers({ preconsulta }: { preconsulta: StoredPreconsulta }) {
@@ -299,6 +304,90 @@ export function AttachedPreconsulta({
           </button>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Enlace personal (paso 32, rebanada 4) desde el expediente: para un paciente,
+ * vence a los 30 dias y sirve para un envio. Lo que conteste se adjunta solo a
+ * su siguiente consulta abierta, sin buscarlo en la bandeja.
+ */
+export function PersonalPreconsultaLink({
+  patient
+}: {
+  patient: { id: string; first_name: string; phone: string | null };
+}) {
+  const [link, setLink] = useState<PersonalLink | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    call<PersonalLink | null>("preconsulta_personal_link", { patientId: patient.id })
+      .then(setLink)
+      .catch((e: unknown) => setError(String(e)))
+      .finally(() => setLoaded(true));
+  }, [patient.id]);
+
+  async function create() {
+    setBusy(true);
+    setError("");
+    setCopied(false);
+    try {
+      setLink(await call<PersonalLink | null>("preconsulta_create_personal_link", { patientId: patient.id }));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!loaded) return <p className="meta">Cargando…</p>;
+  const state = personalLinkState(link);
+  const shareable = link && state === "waiting";
+  const message = shareable ? personalLinkMessage(patient.first_name, link.url) : "";
+
+  return (
+    <div className="stack">
+      <p className="meta">
+        Para pedirle a este paciente su preconsulta antes de una cita. El enlace es solo para él, vence a los 30 días y
+        sirve para un envío; lo que conteste se adjunta solo a su siguiente consulta, sin buscarlo en la bandeja.
+      </p>
+      {link ? (
+        <p>
+          {state === "waiting"
+            ? `Enlace vigente hasta el ${dateOnly.format(new Date(link.expires_at))}. Aún no contesta.`
+            : state === "expired"
+              ? `El último enlace venció el ${dateOnly.format(new Date(link.expires_at))} sin respuesta.`
+              : state === "answered"
+                ? `Contestó el ${dateOnly.format(new Date(link.answered_at!))}. Se adjuntará a su siguiente consulta abierta.`
+                : "Contestó y su preconsulta ya quedó en una consulta."}
+        </p>
+      ) : null}
+      {shareable ? (
+        <>
+          <input readOnly value={link.url} onFocus={(e) => e.target.select()} aria-label="Enlace personal" />
+          <div className="button-row">
+            <button
+              className="ghost-button"
+              onClick={() => void navigator.clipboard.writeText(link.url).then(() => setCopied(true))}
+            >
+              {copied ? "Copiado" : "Copiar enlace"}
+            </button>
+            <button className="ghost-button" onClick={() => void openExternal(whatsappUrl(patient.phone, message))}>
+              Enviar por WhatsApp
+            </button>
+          </div>
+        </>
+      ) : null}
+      <div className="button-row">
+        <button className={shareable ? "ghost-button" : "action-button"} onClick={() => void create()} disabled={busy}>
+          {link ? "Crear otro enlace" : "Crear enlace personal"}
+        </button>
+      </div>
+      {error ? <p className="form-error">{error}</p> : null}
     </div>
   );
 }

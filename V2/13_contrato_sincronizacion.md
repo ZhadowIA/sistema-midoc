@@ -58,7 +58,7 @@ Confirma la recepcion hasta `seq <= cursor`. El portal entonces:
 1. Marca los eventos como entregados.
 2. **Purga el contenido clinico** referenciado (respuestas de preconsulta, archivos del buzon) y deja solo un registro de auditoria sin contenido (`purgedAt`, tipo, ids).
 
-`PRECONSULTA_SUBMITTED` (paso 32, rebanada 3) anuncia una preconsulta del enlace general: el payload solo trae `{ preconsultaSubmissionId, sealed: true }`. La app baja el sobre con `GET /api/sync/preconsulta/submissions/<id>` (sealed box para su llave, mas la definicion contestada si sigue siendo la publicada), lo abre localmente y lo deja en su bandeja; el ACK borra el sobre del portal (`ciphertext` nulo, `purgedAt`).
+`PRECONSULTA_SUBMITTED` (paso 32, rebanada 3) anuncia una preconsulta del enlace general: el payload solo trae `{ preconsultaSubmissionId, sealed: true }`. La app baja el sobre con `GET /api/sync/preconsulta/submissions/<id>` (sealed box para su llave, mas la definicion contestada si sigue siendo la publicada), lo abre localmente y lo deja en su bandeja; el ACK borra el sobre del portal (`ciphertext` nulo, `purgedAt`). Si llego por un enlace personal (rebanada 4), el payload y la descarga traen tambien `patientRef`: la referencia opaca que la app genero para ese paciente.
 
 El ACK es la frontera legal: antes del ACK el dato clinico existe cifrado en nube con TTL; despues solo existe en el equipo del medico.
 

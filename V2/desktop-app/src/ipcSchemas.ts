@@ -783,6 +783,17 @@ const storedPreconsulta = z.looseObject({
   attached_at: textoONulo
 });
 
+// Enlace personal (paso 32, rebanada 4).
+const personalLink = z
+  .looseObject({
+    url: texto,
+    created_at: texto,
+    expires_at: texto,
+    answered_at: textoONulo,
+    attached: z.boolean()
+  })
+  .nullable();
+
 const ingredientOption = z.looseObject({
   id: z.string(),
   display: z.string(),
@@ -1022,6 +1033,8 @@ export const IPC_RESPONSE_SCHEMAS = {
   preconsulta_inbox_attach: NADA,
   preconsulta_inbox_discard: NADA,
   preconsulta_inbox_set_retention: preconsultaInbox,
+  preconsulta_personal_link: personalLink,
+  preconsulta_create_personal_link: personalLink,
   // Marcas e ingredientes (paso 33, etapa 3): no dependen del interruptor
   search_ingredients: z.array(ingredientOption),
   list_local_brands: z.array(localBrand),

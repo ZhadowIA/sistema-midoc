@@ -142,6 +142,8 @@ test("el mock de navegador cumple los contratos", async () => {
   await run("get_encounter", { encounterId });
   await run("preconsulta_inbox_discard", { id: inbox.items[1]!.id });
   await run("preconsulta_inbox_set_retention", { days: 90 });
+  await run("preconsulta_personal_link", { patientId: "pat-1" });
+  await run("preconsulta_create_personal_link", { patientId: "pat-1" });
   const event = await run<{ id: string }>("add_timeline_event", {
     patientId: patient.id,
     event: { event_date: "2026-01-02", category: "estudio", title: "Biometria", detail: null }

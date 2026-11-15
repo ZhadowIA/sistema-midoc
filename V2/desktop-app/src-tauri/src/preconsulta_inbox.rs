@@ -6,6 +6,10 @@
 //! la identidad la declara quien llena el formulario, asi que el medico confirma
 //! al adjuntarla a una consulta. Las no adjuntadas se borran al vencer el plazo
 //! que elige el medico (60 dias por omision).
+//!
+//! Lo que llega por un enlace personal (rebanada 4) trae la referencia opaca
+//! que esta app genero para un paciente: se liga a el sin pasar por la bandeja
+//! y se adjunta sola a su siguiente consulta abierta.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -54,6 +58,7 @@ pub fn store(
     id: &str,
     plaintext: &[u8],
     questionnaire: Option<&serde_json::Value>,
+    personal_ref: Option<&str>,
 ) -> Result<(), SyncError> {
     let (kind, content) = sync::parse_precheckin_envelope(plaintext)?;
     if kind != "preconsulta" {
@@ -67,11 +72,24 @@ pub fn store(
         return Err(SyncError::Server("sobre de preconsulta desconocido".into()));
     }
     let identity = &envelope.identity;
+    // Si la referencia no es de este equipo (otro equipo creo el enlace), cae
+    // a la bandeja como una del enlace general.
+    let patient_id: Option<String> = match personal_ref {
+        Some(reference) => conn
+            .query_row(
+                "SELECT patient_id FROM preconsulta_personal_links WHERE ref = ?1",
+                params![reference],
+                |row| row.get(0),
+            )
+            .optional()?,
+        None => None,
+    };
     conn.execute(
         "INSERT INTO preconsulta_inbox (
             id, questionnaire_version, questionnaire_json, envelope_json, medical_history_json,
-            first_name, last_name, birth_date, phone, first_visit, submitted_at, received_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            first_name, last_name, birth_date, phone, first_visit, submitted_at, received_at,
+            personal_ref, patient_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT(id) DO NOTHING",
         params![
             id,
@@ -85,7 +103,9 @@ pub fn store(
             format!("{}{}", identity.phone_country, identity.phone),
             envelope.first_visit,
             envelope.submitted_at,
-            now()
+            now(),
+            personal_ref,
+            patient_id
         ],
     )?;
     Ok(())
@@ -114,7 +134,8 @@ pub fn purge_expired(
 ) -> Result<usize, SyncError> {
     let cutoff = (now - chrono::Duration::days(retention_days(conn)?)).to_rfc3339();
     Ok(conn.execute(
-        "DELETE FROM preconsulta_inbox WHERE encounter_id IS NULL AND received_at < ?1",
+        "DELETE FROM preconsulta_inbox
+         WHERE encounter_id IS NULL AND patient_id IS NULL AND received_at < ?1",
         params![cutoff],
     )?)
 }
@@ -148,7 +169,7 @@ pub fn list(conn: &Connection) -> Result<Inbox, SyncError> {
     let mut statement = conn.prepare(
         "SELECT id, first_name, last_name, birth_date, phone, first_visit,
                 submitted_at, received_at, seen_at IS NULL
-         FROM preconsulta_inbox WHERE encounter_id IS NULL
+         FROM preconsulta_inbox WHERE encounter_id IS NULL AND patient_id IS NULL
          ORDER BY submitted_at DESC",
     )?;
     let items = statement
@@ -202,7 +223,7 @@ pub fn open(conn: &Connection, id: &str) -> Result<Preconsulta, SyncError> {
         .query_row(
             &format!(
                 "SELECT {PRECONSULTA_COLUMNS} FROM preconsulta_inbox
-                 WHERE id = ?1 AND encounter_id IS NULL"
+                 WHERE id = ?1 AND encounter_id IS NULL AND patient_id IS NULL"
             ),
             params![id],
             preconsulta_from_row,
@@ -297,7 +318,7 @@ pub fn attach(conn: &mut Connection, id: &str, encounter_id: &str) -> Result<(),
     let updated = tx.execute(
         "UPDATE preconsulta_inbox
          SET encounter_id = ?2, patient_id = ?3, attached_at = ?4, seen_at = COALESCE(seen_at, ?4)
-         WHERE id = ?1 AND encounter_id IS NULL",
+         WHERE id = ?1 AND encounter_id IS NULL AND (patient_id IS NULL OR patient_id = ?3)",
         params![id, encounter_id, patient_id, now()],
     )?;
     if updated == 0 {
@@ -319,7 +340,7 @@ pub fn attach(conn: &mut Connection, id: &str, encounter_id: &str) -> Result<(),
 /// Las adjuntadas son expediente y no se descartan desde aqui.
 pub fn discard(conn: &Connection, id: &str) -> Result<(), SyncError> {
     let deleted = conn.execute(
-        "DELETE FROM preconsulta_inbox WHERE id = ?1 AND encounter_id IS NULL",
+        "DELETE FROM preconsulta_inbox WHERE id = ?1 AND encounter_id IS NULL AND patient_id IS NULL",
         params![id],
     )?;
     if deleted == 0 {
@@ -330,6 +351,96 @@ pub fn discard(conn: &Connection, id: &str) -> Result<(), SyncError> {
     // Por referencia: ni nombre ni respuestas.
     audit(conn, id, "discarded", None)?;
     Ok(())
+}
+
+/* ---------- Enlace personal ---------- */
+
+/// Referencia opaca para el portal: no deriva del paciente.
+pub fn new_personal_ref() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+pub fn record_personal_link(
+    conn: &Connection,
+    reference: &str,
+    patient_id: &str,
+    url: &str,
+    expires_at: &str,
+) -> Result<(), SyncError> {
+    conn.execute(
+        "INSERT INTO preconsulta_personal_links (ref, patient_id, url, created_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![reference, patient_id, url, now(), expires_at],
+    )?;
+    Ok(())
+}
+
+pub fn patient_exists(conn: &Connection, patient_id: &str) -> Result<bool, SyncError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM patients WHERE id = ?1)",
+        params![patient_id],
+        |row| row.get(0),
+    )?)
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PersonalLink {
+    pub url: String,
+    pub created_at: String,
+    pub expires_at: String,
+    /// Ya llego la respuesta (cuando).
+    pub answered_at: Option<String>,
+    /// La respuesta ya quedo en una consulta.
+    pub attached: bool,
+}
+
+/// El enlace personal mas reciente del paciente, con lo que paso con el.
+pub fn personal_link(
+    conn: &Connection,
+    patient_id: &str,
+) -> Result<Option<PersonalLink>, SyncError> {
+    Ok(conn
+        .query_row(
+            "SELECT l.url, l.created_at, l.expires_at, i.received_at, i.encounter_id IS NOT NULL
+             FROM preconsulta_personal_links l
+             LEFT JOIN preconsulta_inbox i ON i.personal_ref = l.ref
+             WHERE l.patient_id = ?1
+             ORDER BY l.created_at DESC LIMIT 1",
+            params![patient_id],
+            |row| {
+                Ok(PersonalLink {
+                    url: row.get(0)?,
+                    created_at: row.get(1)?,
+                    expires_at: row.get(2)?,
+                    answered_at: row.get(3)?,
+                    attached: row.get::<_, Option<bool>>(4)?.unwrap_or(false),
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// Adjunta a una consulta abierta la preconsulta personal que espera a su
+/// paciente (la mas reciente). Sin nada que hacer devuelve `false`.
+pub fn attach_pending_personal(
+    conn: &mut Connection,
+    encounter_id: &str,
+) -> Result<bool, SyncError> {
+    let pending: Option<String> = conn
+        .query_row(
+            "SELECT i.id FROM preconsulta_inbox i
+             JOIN encounters e ON e.id = ?1 AND e.patient_id = i.patient_id
+             WHERE i.encounter_id IS NULL AND e.status != 'SIGNED'
+               AND NOT EXISTS (SELECT 1 FROM preconsulta_inbox a WHERE a.encounter_id = ?1)
+             ORDER BY i.submitted_at DESC LIMIT 1",
+            params![encounter_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match pending {
+        Some(id) => attach(conn, &id, encounter_id).map(|_| true),
+        None => Ok(false),
+    }
 }
 
 #[cfg(test)]
@@ -389,8 +500,22 @@ mod tests {
     fn stores_idempotently_and_lists_as_new_until_opened() {
         let conn = test_conn("store");
         let questionnaire = serde_json::json!({ "schemaVersion": 1, "questions": [] });
-        store(&conn, "sub-1", &sealed_body(true), Some(&questionnaire)).unwrap();
-        store(&conn, "sub-1", &sealed_body(true), Some(&questionnaire)).unwrap();
+        store(
+            &conn,
+            "sub-1",
+            &sealed_body(true),
+            Some(&questionnaire),
+            None,
+        )
+        .unwrap();
+        store(
+            &conn,
+            "sub-1",
+            &sealed_body(true),
+            Some(&questionnaire),
+            None,
+        )
+        .unwrap();
 
         let inbox = list(&conn).unwrap();
         assert_eq!(inbox.items.len(), 1);
@@ -415,15 +540,15 @@ mod tests {
         let mut bytes = (meta.len() as u32).to_be_bytes().to_vec();
         bytes.extend_from_slice(meta);
         bytes.extend_from_slice(b"{}");
-        assert!(store(&conn, "sub-x", &bytes, None).is_err());
-        assert!(store(&conn, "sub-y", b"xx", None).is_err());
+        assert!(store(&conn, "sub-x", &bytes, None, None).is_err());
+        assert!(store(&conn, "sub-y", b"xx", None, None).is_err());
     }
 
     #[test]
     fn attaches_to_an_open_encounter_only_once_and_keeps_part_one() {
         let mut conn = test_conn("attach");
-        store(&conn, "sub-1", &sealed_body(true), None).unwrap();
-        store(&conn, "sub-2", &sealed_body(false), None).unwrap();
+        store(&conn, "sub-1", &sealed_body(true), None, None).unwrap();
+        store(&conn, "sub-2", &sealed_body(false), None, None).unwrap();
         open_encounter(&conn, "enc-open", "OPEN");
         open_encounter(&conn, "enc-signed", "SIGNED");
 
@@ -457,9 +582,9 @@ mod tests {
     #[test]
     fn discards_and_purges_unattached_after_the_chosen_period() {
         let mut conn = test_conn("purge");
-        store(&conn, "old", &sealed_body(false), None).unwrap();
-        store(&conn, "kept", &sealed_body(false), None).unwrap();
-        store(&conn, "spam", &sealed_body(false), None).unwrap();
+        store(&conn, "old", &sealed_body(false), None, None).unwrap();
+        store(&conn, "kept", &sealed_body(false), None, None).unwrap();
+        store(&conn, "spam", &sealed_body(false), None, None).unwrap();
         conn.execute(
             "UPDATE preconsulta_inbox SET received_at = '2026-01-01T00:00:00+00:00' WHERE id IN ('old', 'kept')",
             [],
@@ -483,5 +608,64 @@ mod tests {
         assert_eq!(purge_expired(&conn, later).unwrap(), 1);
         // La adjuntada sigue: es parte del expediente.
         assert!(attached_to(&conn, "enc-1").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_personal_link_answer_skips_the_inbox_and_attaches_to_the_next_open_encounter() {
+        let mut conn = test_conn("personal");
+        open_encounter(&conn, "enc-signed", "SIGNED");
+        let reference = new_personal_ref();
+        record_personal_link(
+            &conn,
+            &reference,
+            "pat-1",
+            "https://midoc/preconsulta/x",
+            "2026-11-25T00:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(
+            personal_link(&conn, "pat-1").unwrap().unwrap().answered_at,
+            None
+        );
+
+        store(&conn, "sub-p", &sealed_body(false), None, Some(&reference)).unwrap();
+        // De otro equipo: la referencia no se conoce y va a la bandeja.
+        store(
+            &conn,
+            "sub-otro",
+            &sealed_body(false),
+            None,
+            Some("desconocida"),
+        )
+        .unwrap();
+        let inbox = list(&conn).unwrap();
+        assert_eq!(
+            inbox
+                .items
+                .iter()
+                .map(|i| i.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["sub-otro"]
+        );
+        // No se descarta ni se abre desde la bandeja: ya es del paciente.
+        assert!(discard(&conn, "sub-p").is_err());
+        // Tampoco vence.
+        conn.execute(
+            "UPDATE preconsulta_inbox SET received_at = '2020-01-01T00:00:00+00:00'",
+            [],
+        )
+        .unwrap();
+        purge_expired(&conn, chrono::Utc::now()).unwrap();
+
+        let status = personal_link(&conn, "pat-1").unwrap().unwrap();
+        assert!(status.answered_at.is_some() && !status.attached);
+
+        // Una consulta firmada no la recibe; la siguiente abierta si, una vez.
+        assert!(!attach_pending_personal(&mut conn, "enc-signed").unwrap());
+        open_encounter(&conn, "enc-open", "OPEN");
+        assert!(attach_pending_personal(&mut conn, "enc-open").unwrap());
+        assert!(!attach_pending_personal(&mut conn, "enc-open").unwrap());
+        assert_eq!(attached_to(&conn, "enc-open").unwrap().unwrap().id, "sub-p");
+        assert!(personal_link(&conn, "pat-1").unwrap().unwrap().attached);
     }
 }

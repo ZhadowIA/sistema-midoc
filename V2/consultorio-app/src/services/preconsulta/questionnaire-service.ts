@@ -109,6 +109,36 @@ export async function regenerateGeneralLink(doctorId: string): Promise<NewGenera
   return { ...linkStatus(link.created), url: preconsultaUrl(token) };
 }
 
+/** Dias que sirve un enlace personal (diseno, seccion 4). */
+export const PERSONAL_LINK_DAYS = 30;
+
+export interface NewPersonalLink {
+  url: string;
+  expiresAt: string;
+}
+
+/**
+ * Enlace personal (rebanada 4): para un paciente concreto, sirve 30 dias y un
+ * solo envio. `patientRef` es un id opaco que genera la app; el portal no sabe
+ * de quien es. Devuelve la URL una sola vez.
+ */
+export async function createPersonalLink(doctorId: string, patientRef: string): Promise<NewPersonalLink> {
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(patientRef)) throw new ServiceError("Referencia invalida.", 400);
+  const token = generateOpaqueToken(24);
+  const expiresAt = new Date(Date.now() + PERSONAL_LINK_DAYS * 24 * 60 * 60 * 1000);
+  const link = await prisma.preconsultaLink.create({
+    data: { doctorId, kind: PreconsultaLinkKind.PERSONAL, tokenHash: hashOpaqueToken(token), patientRef, expiresAt }
+  });
+  await writeAuditLog({
+    actorUserId: doctorId,
+    entityType: "PreconsultaLink",
+    entityId: link.id,
+    action: "preconsulta.personal-link.created",
+    source: "desktop"
+  });
+  return { url: preconsultaUrl(token), expiresAt: expiresAt.toISOString() };
+}
+
 /** Pausa o reanuda el enlace general sin cambiarlo. */
 export async function setGeneralLinkStatus(doctorId: string, status: "ACTIVE" | "PAUSED"): Promise<GeneralLinkStatus> {
   const link = await currentGeneralLink(doctorId);
