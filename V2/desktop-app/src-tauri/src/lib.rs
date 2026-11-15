@@ -12,6 +12,7 @@ mod diarization;
 mod diarization_model;
 mod directory_csv;
 mod documents;
+mod escape_key;
 mod export;
 mod fhir;
 mod license;
@@ -3033,6 +3034,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppDb(Mutex::new(None)))
         .manage(ModelDownloads(Mutex::new(HashMap::new())))
+        .setup(|app| {
+            escape_key::watch(app);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_doctor_profiles,
             create_doctor_profile,
