@@ -1050,7 +1050,13 @@ pub const MIN_INTERACTIONS: usize = 5;
 /// Base ONChigh de dominio publico (paso 25, rebanada 3). Reemplaza la semilla
 /// DDInter (CC BY-NC) que se retiro para eliminar el riesgo legal en un SaaS
 /// de pago. Generada de forma reproducible por `scripts/medication-reference/`.
-pub const BUNDLED_REFERENCE_VERSION: &str = "onchigh-mx-2026-07-08";
+pub const BUNDLED_REFERENCE_VERSION: &str = "onchigh-mx-2026-11-15";
+
+/// Catalogos que trajeron versiones anteriores de la app. Si la base sigue en
+/// uno de ellos, al actualizar la app se instala el empaquetado nuevo (p. ej.
+/// 2026-11-15: la familia completa de penicilinas para la alerta de alergia).
+/// Un catalogo que el medico actualizo por su cuenta no esta aqui y se respeta.
+const PREVIOUS_BUNDLED_REFERENCE_VERSIONS: &[&str] = &["onchigh-mx-2026-07-08"];
 
 const BUNDLED_MEDICATIONS_CSV: &str = include_str!("reference_data/medications.csv");
 const BUNDLED_INTERACTIONS_CSV: &str = include_str!("reference_data/interactions.csv");
@@ -1079,13 +1085,16 @@ pub fn install_bundled_reference(conn: &Connection) -> Result<ImportSummary, Med
 /// catalogo real empaquetado aun no se ha instalado.
 pub const SEED_REFERENCE_VERSION: &str = "seed-v1";
 
-/// Instala el catalogo real empaquetado en el primer arranque: cuando la base
-/// sigue en la version sembrada (`seed-v1`), la reemplaza por el catalogo
-/// curado de MiDoc. Idempotente y respetuoso: si el medico ya instalo o
+/// Instala el catalogo real empaquetado en el primer arranque (la base sigue en
+/// la version sembrada, `seed-v1`) y al actualizar la app (la base sigue en el
+/// catalogo empaquetado de una version anterior). Idempotente y respetuoso: si el medico ya instalo o
 /// actualizo el catalogo (otra version), no lo sobreescribe. Devuelve `true`
 /// si instalo el catalogo en esta llamada.
 pub fn ensure_bundled_reference_installed(conn: &Connection) -> Result<bool, MedicationError> {
-    if reference_version(conn)? == SEED_REFERENCE_VERSION {
+    let installed = reference_version(conn)?;
+    if installed == SEED_REFERENCE_VERSION
+        || PREVIOUS_BUNDLED_REFERENCE_VERSIONS.contains(&installed.as_str())
+    {
         install_bundled_reference(conn)?;
         Ok(true)
     } else {
@@ -1895,6 +1904,55 @@ mod tests {
             reference_status(&conn).unwrap().version,
             BUNDLED_REFERENCE_VERSION
         );
+    }
+
+    #[test]
+    fn app_update_replaces_the_previously_bundled_catalog_but_not_a_downloaded_one() {
+        let conn = test_conn("bundled-upgrade");
+        conn.execute(
+            "INSERT OR REPLACE INTO app_meta (key, value) VALUES (?1, 'onchigh-mx-2026-07-08')",
+            params![REFERENCE_VERSION_KEY],
+        )
+        .unwrap();
+        assert!(ensure_bundled_reference_installed(&conn).unwrap());
+        assert_eq!(reference_version(&conn).unwrap(), BUNDLED_REFERENCE_VERSION);
+
+        conn.execute(
+            "UPDATE app_meta SET value = 'descargada-2026-12' WHERE key = ?1",
+            params![REFERENCE_VERSION_KEY],
+        )
+        .unwrap();
+        assert!(!ensure_bundled_reference_installed(&conn).unwrap());
+        assert_eq!(reference_version(&conn).unwrap(), "descargada-2026-12");
+    }
+
+    #[test]
+    fn penicillin_allergy_covers_the_whole_family_and_its_brands() {
+        let conn = test_conn("penicillin-family");
+        install_bundled_reference(&conn).unwrap();
+        for prescription in [
+            "Amoxicilina 500 mg cada 8 h",
+            "Ampicilina 500 mg cada 6 h",
+            "Dicloxacilina 500 mg cada 6 h",
+            "Penicilina G benzatinica 1200000 UI",
+            "Bencilpenicilina procainica 800000 UI",
+            "Piperacilina 4 g cada 8 h",
+            "Benzetacil 1200000 UI",
+            "Augmentin 875 mg cada 12 h",
+            "Clavulin 875 mg cada 12 h",
+            "Pentrexyl 500 mg cada 6 h",
+        ] {
+            let names = extract_medications(&conn, prescription).unwrap();
+            assert!(!names.is_empty(), "no reconocio: {prescription}");
+            let report = check_prescription(&conn, "enc", &names, Some("Penicilina")).unwrap();
+            assert!(
+                !report.allergy_alerts.is_empty(),
+                "sin alerta de alergia: {prescription}"
+            );
+        }
+        // Penicilamina no es una penicilina: no debe alertar.
+        let names = extract_medications(&conn, "Penicilamina 250 mg").unwrap();
+        assert!(!names.iter().any(|n| n == "Penicilina"), "{names:?}");
     }
 
     #[test]
