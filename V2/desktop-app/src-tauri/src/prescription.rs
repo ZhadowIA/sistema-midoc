@@ -21,6 +21,8 @@ pub struct PrescriptionItem {
     pub brand: Option<String>,
     /// Principios activos, como se muestran ("Paracetamol + Cafeína").
     pub generic: String,
+    /// Los mismos principios activos, como ids del catalogo de ingredientes.
+    pub ingredient_ids: Vec<String>,
     /// Denominacion del CNIS cuando hay clave ("Paracetamol 500 mg tableta").
     pub cnis_description: Option<String>,
     pub cnis_product: Option<String>,
@@ -102,6 +104,7 @@ pub fn analyze_line(
         line: line.trim().to_string(),
         brand,
         generic,
+        ingredient_ids: ids,
         cnis_description: coding.as_ref().map(|c| c.description.clone()),
         cnis_product: coding.as_ref().map(|c| c.product.clone()),
         cnis_clave: coding.as_ref().and_then(|c| c.clave.clone()),

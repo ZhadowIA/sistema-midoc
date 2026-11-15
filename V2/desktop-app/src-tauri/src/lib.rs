@@ -8,6 +8,7 @@ mod clinical;
 mod cloud_transcription;
 mod cnis;
 mod consultation_templates;
+mod contraindications;
 mod crypto;
 mod db;
 mod dental;
@@ -1302,6 +1303,13 @@ fn sign_encounter(
     state: tauri::State<'_, AppDb>,
     encounter_id: String,
 ) -> Result<clinical::Encounter, String> {
+    // Paso 33, etapa 5: con la seguridad farmacologica encendida, las alertas
+    // graves de la receta se confirman antes de firmar.
+    {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        contraindications::require_acknowledged(conn, &encounter_id)?;
+    }
     with_conn(&state, |conn| clinical::sign_encounter(conn, &encounter_id))
 }
 
@@ -2536,6 +2544,45 @@ fn detect_unknown_medications(
     brands::unknown_medications(conn, &prescription).map_err(|e| e.to_string())
 }
 
+/// Contraindicaciones y precauciones de la receta para el paciente de la
+/// consulta (paso 33, etapa 5). Tras el interruptor de la seguridad farmacologica.
+#[tauri::command]
+fn check_contraindications(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    prescription: String,
+) -> Result<Vec<contraindications::ContraindicationAlert>, String> {
+    capabilities::require_medication_safety()?;
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    contraindications::check(conn, &encounter_id, &prescription).map_err(|e| e.to_string())
+}
+
+/// Alertas graves de la receta guardada que hay que confirmar antes de firmar.
+#[tauri::command]
+fn pending_severe_alerts(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+) -> Result<contraindications::PendingSevereAlerts, String> {
+    capabilities::require_medication_safety()?;
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    contraindications::pending(conn, &encounter_id).map_err(|e| e.to_string())
+}
+
+/// El medico confirma que reviso las alertas graves (queda en la bitacora).
+#[tauri::command]
+fn acknowledge_severe_alerts(
+    state: tauri::State<'_, AppDb>,
+    encounter_id: String,
+    fingerprint: String,
+) -> Result<(), String> {
+    capabilities::require_medication_safety()?;
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+    contraindications::acknowledge(conn, &encounter_id, &fingerprint).map_err(|e| e.to_string())
+}
+
 /// Capacidades fijadas al compilar (paso 33): la interfaz muestra u oculta lo
 /// que dependen de ellas. No necesita la base.
 #[tauri::command]
@@ -3247,6 +3294,9 @@ pub fn run() {
             delete_local_brand,
             detect_unknown_medications,
             analyze_prescription,
+            check_contraindications,
+            pending_severe_alerts,
+            acknowledge_severe_alerts,
             check_medication_safety,
             medication_reference_status,
             import_medication_reference,

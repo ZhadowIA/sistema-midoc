@@ -250,7 +250,7 @@ pub struct HistoryEntry {
 /// Consultas del paciente con algo escrito (al menos una version de nota), con
 /// el diagnostico de su version vigente; un encuentro abierto y vacio no se
 /// registra. `exclude` deja fuera la consulta desde la que se consulta.
-fn history_entries(
+pub(crate) fn history_entries(
     conn: &Connection,
     patient_id: &str,
     exclude: Option<&str>,

@@ -43,6 +43,8 @@ import {
 import { MedicationSafety } from "./MedicationSafety";
 import { UnknownMedications } from "./UnknownMedications";
 import { PrescriptionPreview } from "./PrescriptionPreview";
+import { ContraindicationAlerts } from "./ContraindicationAlerts";
+import { confirmationText, type PendingSevereAlerts } from "./contraindicationsModel";
 import { EncounterAgendaRail } from "./EncounterAgendaRail";
 import { call } from "./ipc";
 import { DICTATING_BODY_CLASS, isDictating } from "./focusMode";
@@ -1070,7 +1072,21 @@ export function Atencion({
     });
   }
 
-  function sign() {
+  async function sign() {
+    // Paso 33, etapa 5: con la seguridad farmacologica encendida, las alertas
+    // graves de la receta guardada se confirman antes de firmar (Rust lo exige).
+    if (medicationSafety) {
+      try {
+        const pending = await call<PendingSevereAlerts>("pending_severe_alerts", { encounterId });
+        if (!pending.acknowledged) {
+          if (!window.confirm(confirmationText(pending))) return;
+          await call("acknowledge_severe_alerts", { encounterId, fingerprint: pending.fingerprint });
+        }
+      } catch (e) {
+        setMessage(String(e));
+        return;
+      }
+    }
     const confirmed = window.confirm(
       "Al firmar, la nota y la receta quedan cerradas y no podran modificarse. ¿Firmar y cerrar la consulta?"
     );
@@ -1697,6 +1713,9 @@ export function Atencion({
           ) : null}
           <UnknownMedications prescription={prescription} disabled={signed} />
           <PrescriptionPreview prescription={prescription} disabled={signed} />
+          {medicationSafety && !signed ? (
+            <ContraindicationAlerts encounterId={encounterId} prescription={prescription} />
+          ) : null}
           {medicationSafety ? (
             <MedicationSafety encounterId={encounterId} disabled={signed} prescription={prescription} />
           ) : null}
