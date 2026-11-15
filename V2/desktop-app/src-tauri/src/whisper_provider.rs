@@ -26,6 +26,7 @@ use whisper_rs::{
 use crate::ai::{AiError, AiResponse, AudioInput, TranscriptionProvider, TranscriptionRequest};
 use crate::audio;
 use crate::diarization::WhisperSegment;
+use crate::transcript_guard::has_repetition_loop;
 use crate::vad_timeline::{concat_speech, speech_ranges, Timeline};
 
 /// Silencio que se deja entre tramos de voz al recortar (0.1 s a 16 kHz), para
@@ -234,6 +235,16 @@ impl TranscriptionProvider for WhisperLocalProvider {
                     text: piece.trim().to_string(),
                 });
             }
+        }
+
+        // Un modelo atorado repite la misma frase en cada ventana; se reporta como
+        // error para no entregar una nota vacia como si fuera la consulta. El
+        // mensaje no lleva texto transcrito (no se registra contenido clinico).
+        if has_repetition_loop(segments.iter().map(|s| s.text.as_str())) {
+            return Err(AiError::Invalid(
+                "la transcripcion se repitio sin avanzar (probable ruido en el audio); intenta de nuevo o usa otro modelo"
+                    .into(),
+            ));
         }
 
         let response = AiResponse {

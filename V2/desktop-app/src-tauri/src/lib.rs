@@ -34,6 +34,7 @@ mod prescription;
 mod search;
 mod sherpa_diarization;
 mod sync;
+mod transcript_guard;
 mod transcription;
 mod transcription_model;
 #[cfg(feature = "whisper-local")]
