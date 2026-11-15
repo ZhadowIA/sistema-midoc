@@ -4,7 +4,7 @@
 >
 > **Revisado el 2026-11-14 contra la pila de 46 PRs sin integrar** (punta: `v2/paso22-sobreagrupar`). Este documento se escribió primero sobre `dev`, que estaba atrasado. Lo que cambió al revisar la pila:
 > 1. **Ya existe una propuesta de precios aceptada el 2026-10-19** (`15_modelo_de_negocio.md` §5). Este plan la toma como base (§6) y solo propone ajustes, cada uno con su razón.
-> 2. **Whisper local en CPU tarda 8 veces la duración del audio**: una consulta de 13 min tardó 1 h 43 min. Hoy la transcripción local **no es viable** en equipos sin GPU, así que el argumento de "transcripción local gratis" **no se puede vender todavía** (§6.4).
+> 2. **Whisper local en CPU ya corre a ~0.7 veces la duración del audio** (corregido el 2026-11-14): la medición de 8 veces era whisper.cpp compilado sin optimizar. Con `/O2` y una base AVX2 portable (PRs #121 y #122), 13 min de audio se transcriben en unos 9 min en un Ryzen 5 sin GPU. Falta medirlo en laptops comunes (Intel de gama media, sin AVX2 la app recomienda la nube) antes de vender la "transcripción local gratis" (§6.4).
 > 3. **La preconsulta se descongeló** (paso 32, decisión del 2026-10-18): cuestionario cifrado por enlace o QR. Es un diferenciador nuevo.
 > 4. **La seguridad farmacológica está apagada** tras un interruptor hasta consultar a COFEPRIS (software como dispositivo médico). **No se puede anunciar** como función.
 > 5. **Base de medicamentos** (paso 33): receta con denominación genérica y clave CNIS. Es otro diferenciador, pero sus catálogos de marcas y reglas están vacíos.
@@ -39,7 +39,7 @@
    - **cobrar los créditos por consulta** (§6.2–6.4): con el catálogo de hoy, la IA en la nube cuesta más del doble que la competencia;
    - **consulta regulatoria con COFEPRIS** (software como dispositivo médico);
    - **prueba con médicos reales**;
-   - **Whisper local viable** en equipos sin GPU.
+   - **Whisper local medido en laptops comunes** (en un Ryzen 5 ya corre a ~0.7 veces el audio).
 
 ---
 
@@ -48,7 +48,7 @@
 | Tema | Estado | Fuente |
 |---|---|---|
 | Expediente longitudinal, SOAP, plantillas, CIE-10, receta con requisitos legales, odontograma/periodontograma | Implementado | [R] `14_…`, `PENDIENTES.md` |
-| Transcripción **local** (Whisper) y diarización | Funcionan de punta a punta con audio real, pero **no están listas para distribuir**: 8 veces la duración del audio en CPU (Ryzen 5 sin GPU) y separación de hablantes pobre en una demo de 20 min. PRs #118–#123 sin fusionar | [R] pila: `PENDIENTES.md`, `10_…` paso 22 |
+| Transcripción **local** (Whisper) y diarización | Funcionan de punta a punta con audio real, pero **no están listas para distribuir**: Whisper ya corre a ~0.7 veces la duración del audio en CPU (Ryzen 5 sin GPU, binario AVX2 portable), pero falta medirlo en laptops comunes, y la separación de hablantes fue pobre en una demo de 20 min. Integrado en `dev` el 2026-11-14 | [R] pila: `PENDIENTES.md`, `10_…` paso 22 |
 | Escriba, anamnesis asistida, dictado dental | En la línea de desarrollo (pasos 21–26). **No verifiqué el estado de cada uno** | [R] |
 | **Preconsulta configurable** (enlace general, QR o enlace personal; respuestas cifradas para la llave del médico) | Cuatro rebanadas entregadas (paso 32, PRs #112–#117 sin fusionar); falta recorrer la ventana real de la app | [R] pila: `16_preconsulta_configurable.md` |
 | **Base de medicamentos**: CNIS, doble denominación en la receta, marcas | Diseño cerrado y etapas en PRs (#103–#110). **Catálogo de marcas y reglas de contraindicación vacíos** (requieren médico piloto y farmacéutico) | [R] pila: `17_base_medicamentos.md` |
@@ -130,7 +130,7 @@ Dentis365, nuestra referencia de paridad dental (paso 26), **no publica precios*
 |---|---|---|
 | **Compra única: el programa es tuyo** | Deja de pagar renta; si MiDoc desaparece, su app sigue funcionando | Nadie de la tabla mexicana. Existe en software dental de escritorio tradicional, **sin IA** que yo haya encontrado |
 | **Local-first y cifrado en su equipo** | El médico es responsable de los datos personales de sus pacientes; aquí no salen de su PC. Sin internet sigue consultando | Nadie de la tabla (todos son nube); sí los dentales de escritorio |
-| **IA que se paga por uso** | Quien ve 5 pacientes no subsidia a quien ve 30. *(La "transcripción local gratis" solo será argumento cuando Whisper sea rápido en equipos comunes, §6.4.)* | Nadie que haya encontrado: todos cobran la IA dentro de la mensualidad o con tope |
+| **IA que se paga por uso** | Quien ve 5 pacientes no subsidia a quien ve 30. *(La "transcripción local gratis" solo será argumento cuando se confirme la velocidad de Whisper en laptops comunes, §6.4.)* | Nadie que haya encontrado: todos cobran la IA dentro de la mensualidad o con tope |
 | **Preconsulta cifrada por QR o enlace** | El paciente llena sus antecedentes y su motivo de consulta desde el celular antes de llegar; la nube nunca ve las respuestas | Varios SaaS tienen precheckin, pero en la nube y legible por el proveedor |
 | **Receta con denominación genérica y clave CNIS** junto a la marca | Receta clara para farmacia y paciente | No verificado en la competencia. **Anunciar solo cuando el catálogo esté lleno y revisado** |
 | **Medicina general + odontología en un solo producto**, con IA dental (dictado al odontograma) | El dentista no tiene que adaptarse a un software "médico" | No encontré software dental con IA de dictado en México. **Sin investigar a fondo**: verificar antes de afirmarlo en publicidad |
@@ -227,7 +227,7 @@ Los tokens por tarea son estimaciones [E]. El ingreso por crédito más bajo es 
 **Acciones requeridas** (no se implementan en este documento):
 1. **Transcripción estándar en la nube solo con `gpt-4o-mini-transcribe`.** Deepgram, solo para la separación de hablantes, donde no cobra extra.
 2. **Catálogo de créditos por consulta** (§6.2), en lugar de por tarea.
-3. **Hacer viable la transcripción local** en equipos sin GPU: es lo que más margen y precio puede dar (§6.4).
+3. **Confirmar la transcripción local en laptops comunes** (en un Ryzen 5 ya corre a ~0.7 veces el audio): es lo que más margen y precio puede dar (§6.4).
 
 Otro riesgo: `preconsulta-ai.ts` usa `claude-opus-4-8` como modelo por omisión para Anthropic. Si algún flujo activo lo usa, su costo por crédito es **mucho mayor** y hay que recalcularlo.
 - Comisión de la pasarela: [E] en México, del orden de 3–4 % + cuota fija + IVA (**verificar con el proveedor elegido**). En la recarga mínima de $349, eso da ≈ $15–17 por cobro, aceptable. **No ofrecer recargas menores a ~$300.**
@@ -382,7 +382,7 @@ Esto es **ilustrativo, no un pronóstico**: las tasas reales salen de la fase 1.
 - [ ] Firma de código del instalador de Windows (evita la alerta de SmartScreen que espanta al médico).
 - [ ] Aviso de privacidad, términos de licencia (alcance de "para siempre", 2 equipos, periodo de parches) y consentimiento de IA revisados por un abogado.
 - [ ] Página de precios que traduzca créditos a consultas, y calculadora "¿cuánto pagaría al mes?".
-- [ ] Whisper local viable en equipos sin GPU (modelo más chico, VAD, compilación optimizada) y requisitos mínimos de hardware publicados. Hoy: 8 veces la duración del audio en CPU.
+- [ ] Whisper local viable en equipos sin GPU (modelo más chico, VAD, compilación optimizada) y requisitos mínimos de hardware publicados. Hoy: ~0.7 veces la duración del audio en un Ryzen 5 sin GPU (antes 8 veces, por una compilación sin optimizar); falta medir en laptops comunes.
 - [ ] Consulta regulatoria con COFEPRIS o un especialista: software como dispositivo médico, seguridad farmacológica y asistentes de IA (ya en `PENDIENTES.md` de la pila).
 - [ ] Prueba de usabilidad con 3–5 médicos (general y dentista), ya en `PENDIENTES.md` de la pila. Sin ella no conviene la fase de fundadores.
 - [ ] Regenerar el certificado de firma de staging, comprometido desde que estuvo público en el repositorio (ya en `PENDIENTES.md` de la pila).
