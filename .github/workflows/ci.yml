@@ -23,7 +23,7 @@ env:
 
 jobs:
   desktop:
-    name: desktop-app (tipos y pruebas)
+    name: desktop-app (lint, tipos y pruebas)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -40,6 +40,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint
+        run: npm run lint
 
       - name: Typecheck
         run: npx tsc --noEmit
