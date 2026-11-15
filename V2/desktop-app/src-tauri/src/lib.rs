@@ -22,6 +22,7 @@ mod fhir;
 mod ingredients;
 mod license;
 mod updates;
+mod vad_timeline;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature
 // `diarization-local`; sin el feature, un stub degrada sin separar hablantes.
 mod medication;

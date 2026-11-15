@@ -19,12 +19,18 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use whisper_rs::{
-    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperVadParams,
+    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperVadContext,
+    WhisperVadContextParams, WhisperVadParams,
 };
 
 use crate::ai::{AiError, AiResponse, AudioInput, TranscriptionProvider, TranscriptionRequest};
 use crate::audio;
 use crate::diarization::WhisperSegment;
+use crate::vad_timeline::{concat_speech, speech_ranges, Timeline};
+
+/// Silencio que se deja entre tramos de voz al recortar (0.1 s a 16 kHz), para
+/// que Whisper no pegue el final de una frase con el inicio de la siguiente.
+const VAD_GAP_SAMPLES: usize = 1_600;
 
 struct ModelCache<T> {
     entries: Mutex<HashMap<PathBuf, Arc<T>>>,
@@ -75,15 +81,45 @@ fn detected_thread_count() -> i32 {
     recommended_thread_count(system.physical_core_count(), logical)
 }
 
-/// Parametros de VAD para consulta clinica. Parte de los valores por defecto de
-/// whisper.cpp (umbral 0.5, voz minima 250 ms, padding 30 ms) y solo eleva el
-/// silencio minimo a 200 ms: en una consulta hay pausas naturales al pensar o
-/// escribir, y un silencio demasiado corto cortaria frases. Conservador para no
-/// perder habla clinica.
+/// Parametros de VAD para consulta clinica. El VAD sirve sobre todo para quitar
+/// ruido que no es habla (un telefono al inicio hacia que large-v3-turbo
+/// repitiera una sola frase en toda la grabacion), no para recortar cada pausa:
+/// con los valores de whisper.cpp (silencio minimo 100 ms, margen 30 ms) salian
+/// ~120 tramos y los cortes cambiaban cifras ("850" quedo como "85, 150"). Con
+/// silencio minimo de 2 s y margen de 500 ms quedan pocos tramos largos y el
+/// texto sale limpio. Medido el 2026-11-15 con `docs/GUION_CONSULTA_SIMULADA.md`.
 fn default_vad_params() -> WhisperVadParams {
     let mut params = WhisperVadParams::new();
-    params.set_min_silence_duration(200);
+    params.set_min_silence_duration(2_000);
+    params.set_speech_pad(500);
     params
+}
+
+/// Corre el VAD Silero sobre el audio y devuelve solo la voz, con la linea de
+/// tiempo para regresar las marcas al audio original. whisper-rs transcribe con
+/// `whisper_full_with_state`, que ignora `FullParams::enable_vad` (solo
+/// `whisper_full` lo aplica), por eso se hace aqui y no en los parametros.
+fn trim_to_speech(vad_path: &str, samples: &[f32]) -> Result<(Vec<f32>, Timeline), AiError> {
+    let mut context_params = WhisperVadContextParams::new();
+    context_params.set_n_threads(detected_thread_count());
+    let mut vad = WhisperVadContext::new(vad_path, context_params).map_err(|e| {
+        AiError::Invalid(format!(
+            "no se pudo cargar el modelo de deteccion de voz: {e}"
+        ))
+    })?;
+    let segments = vad
+        .segments_from_samples(default_vad_params(), samples)
+        .map_err(|e| AiError::Invalid(format!("fallo la deteccion de voz: {e}")))?;
+    let spans: Vec<(f32, f32)> = (0..segments.num_segments())
+        .filter_map(|i| {
+            Some((
+                segments.get_segment_start_timestamp(i)?,
+                segments.get_segment_end_timestamp(i)?,
+            ))
+        })
+        .collect();
+    let ranges = speech_ranges(&spans, samples.len());
+    Ok(concat_speech(samples, &ranges, VAD_GAP_SAMPLES))
 }
 
 fn cached_context(model_path: &Path) -> Result<Arc<WhisperContext>, AiError> {
@@ -160,22 +196,28 @@ impl TranscriptionProvider for WhisperLocalProvider {
         params.set_print_timestamps(false);
         params.set_n_threads(detected_thread_count());
 
-        // VAD opcional: si el modelo Silero esta descargado, whisper.cpp salta los
-        // silencios antes de transcribir y procesa solo los tramos con voz. En una
-        // consulta con pausas esto recorta una parte grande del audio y, por tanto,
-        // del tiempo de CPU, sin costo de precision. Si la ruta no es UTF-8 valida,
-        // se omite el VAD (degradacion elegante) en vez de fallar la transcripcion.
-        if let Some(vad_path) = self.vad_model_path.as_deref().and_then(Path::to_str) {
-            params.set_vad_model_path(Some(vad_path));
-            params.set_vad_params(default_vad_params());
-            params.enable_vad(true);
+        // VAD opcional: si el modelo Silero esta descargado, se transcribe solo la
+        // voz (sin ruido ni silencios largos) y las marcas vuelven despues al audio
+        // original. Si la ruta no es UTF-8 valida, se omite el VAD (degradacion
+        // elegante) en vez de fallar la transcripcion.
+        let (speech, timeline) = match self.vad_model_path.as_deref().and_then(Path::to_str) {
+            Some(vad_path) => trim_to_speech(vad_path, &decoded.samples)?,
+            None => (decoded.samples, Timeline::default()),
+        };
+
+        // Sin voz detectada no hay nada que transcribir (Whisper inventaria texto
+        // sobre puro ruido).
+        if !speech.is_empty() {
+            state
+                .full(params, &speech)
+                .map_err(|e| AiError::Invalid(format!("fallo la transcripcion: {e}")))?;
         }
 
-        state
-            .full(params, &decoded.samples)
-            .map_err(|e| AiError::Invalid(format!("fallo la transcripcion: {e}")))?;
-
-        let n = state.full_n_segments();
+        let n = if speech.is_empty() {
+            0
+        } else {
+            state.full_n_segments()
+        };
         let mut text = String::new();
         let mut segments: Vec<WhisperSegment> = Vec::new();
         for i in 0..n {
@@ -187,8 +229,8 @@ impl TranscriptionProvider for WhisperLocalProvider {
                 // whisper.cpp entrega las marcas de tiempo en centisegundos, la
                 // misma unidad que consume la fusion con la diarizacion.
                 segments.push(WhisperSegment {
-                    start_cs: segment.start_timestamp(),
-                    end_cs: segment.end_timestamp(),
+                    start_cs: timeline.to_original_cs(segment.start_timestamp()),
+                    end_cs: timeline.to_original_cs(segment.end_timestamp()),
                     text: piece.trim().to_string(),
                 });
             }
@@ -287,6 +329,7 @@ mod tests {
         // VAD opcional via MIDOC_TEST_WHISPER_VAD_MODEL (si no, transcribe sin VAD).
         let vad = std::env::var("MIDOC_TEST_WHISPER_VAD_MODEL")
             .ok()
+            .filter(|path| !path.is_empty())
             .map(PathBuf::from);
         let provider = WhisperLocalProvider::new("tiny", PathBuf::from(model), vad);
         let bytes = silent_wav_16k(1);
@@ -326,6 +369,7 @@ mod tests {
             .unwrap_or(60);
         let vad = std::env::var("MIDOC_TEST_WHISPER_VAD_MODEL")
             .ok()
+            .filter(|path| !path.is_empty())
             .map(PathBuf::from);
         let decoded =
             audio::decode_audio_to_whisper(&std::fs::read(&audio_path).unwrap(), "audio/wav")
