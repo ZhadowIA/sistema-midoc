@@ -78,7 +78,7 @@ export function TranscriptionSetup() {
     }
   }, []);
 
-  async function detect() {
+  const detect = useCallback(async () => {
     setBusy(true);
     setError("");
     try {
@@ -89,7 +89,7 @@ export function TranscriptionSetup() {
     } finally {
       setBusy(false);
     }
-  }
+  }, [loadModels]);
 
   const recommended = rec ? models.find((m) => m.modelId === rec.modelId) ?? null : null;
   // Modelo VAD (saltar silencios): opcional pero recomendado en CPU. Acelera la
@@ -158,7 +158,7 @@ export function TranscriptionSetup() {
 
   useEffect(() => {
     void detect();
-  }, []);
+  }, [detect]);
 
   return (
     <>
