@@ -1464,6 +1464,8 @@ Estado: 🚧 CODIGO LISTO (rama `v2/paso30-pasarela-ia`, 2026-10-08; en `dev` po
 | Compuerta de avance | Ninguna respuesta queda legible en la nube y la prueba de clasificacion de datos sigue pasando (las respuestas solo viven en modelos del buzon). |
 | Push recomendado | Por rebanada: (1) editor y publicacion, (2) formulario del paciente, (3) bandeja y busqueda, (4) enlace personal. |
 
+Estado: rebanada 1 (editor y publicacion) entregada el 2026-10-25 en `v2/paso32-preconsulta-editor`; siguen el formulario del paciente, la bandeja y el enlace personal.
+
 ## Paso 33 - Base de medicamentos: marcas, CNIS y seguridad
 
 | Campo | Definicion |

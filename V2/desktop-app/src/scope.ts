@@ -15,6 +15,7 @@ export type WorkspaceView =
   | "agenda"
   | "patients"
   | "open-encounters"
+  | "preconsulta"
   | "lab-orders"
   | "search"
   | "reception"
@@ -69,6 +70,7 @@ export function workspaceNav(frozenScope: boolean, options: NavOptions = {}): Na
         { id: "agenda", label: "Agenda" },
         { id: "patients", label: "Pacientes" },
         { id: "open-encounters", label: "Consultas abiertas" },
+        { id: "preconsulta", label: "Preconsulta" },
         ...(options.dental ? [{ id: "lab-orders" as const, label: "Laboratorio" }] : []),
         { id: "search", label: "Búsqueda" }
       ]

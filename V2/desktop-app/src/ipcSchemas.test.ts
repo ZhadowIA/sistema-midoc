@@ -107,6 +107,12 @@ test("el mock de navegador cumple los contratos", async () => {
   await run("list_patients");
   await run("list_open_encounters");
   await run("get_capabilities");
+  const definition = { schemaVersion: 1, questions: [{ id: "motivo", label: "Motivo", type: "long_text", required: true }] };
+  await run("preconsulta_state");
+  await run("preconsulta_save_draft", { definition });
+  await run("preconsulta_publish", { definition });
+  await run("preconsulta_regenerate_link");
+  await run("preconsulta_set_link_status", { status: "PAUSED" });
   await run("search_ingredients", { query: "para" });
   const brand = await run("save_local_brand", { display: "Fictimed", ingredientIds: ["paracetamol"] });
   await run("list_local_brands");

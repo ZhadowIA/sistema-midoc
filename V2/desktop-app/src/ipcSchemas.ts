@@ -740,6 +740,19 @@ const modelStatus = z.looseObject({
 
 /* ---------- Seguridad de medicacion (medication.rs) ---------- */
 
+// La definicion la valida el espejo del contrato en la UI y Zod en el portal;
+// aqui basta con su forma general.
+const preconsultaDefinition = z.looseObject({ schemaVersion: z.number(), questions: z.array(z.looseObject({})) });
+const preconsultaState = z.looseObject({
+  draft: preconsultaDefinition.nullable(),
+  published_version: enteroONulo,
+  published_at: textoONulo,
+  published: preconsultaDefinition.nullable(),
+  link: z.looseObject({ url: textoONulo, status: texto, created_at: texto }).nullable(),
+  linked: z.boolean(),
+  offline: z.boolean()
+});
+
 const ingredientOption = z.looseObject({
   id: z.string(),
   display: z.string(),
@@ -968,6 +981,12 @@ export const IPC_RESPONSE_SCHEMAS = {
   download_transcription_model: NADA,
   diarization_model_status: z.array(modelStatus),
   download_diarization_model: NADA,
+  // Preconsulta configurable (paso 32, rebanada 1)
+  preconsulta_state: preconsultaState,
+  preconsulta_save_draft: NADA,
+  preconsulta_publish: preconsultaState,
+  preconsulta_regenerate_link: preconsultaState,
+  preconsulta_set_link_status: preconsultaState,
   // Marcas e ingredientes (paso 33, etapa 3): no dependen del interruptor
   search_ingredients: z.array(ingredientOption),
   list_local_brands: z.array(localBrand),

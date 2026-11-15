@@ -5,6 +5,7 @@ import { Recepcion } from "./Recepcion";
 import { Benchmark } from "./Benchmark";
 import { TranscriptionSetup } from "./TranscriptionSetup";
 import { MedicationReference } from "./MedicationReference";
+import { PreconsultaEditor } from "./PreconsultaEditor";
 import { Arco } from "./Arco";
 import { DoctorData } from "./DoctorData";
 import { Directorio } from "./Directorio";
@@ -988,6 +989,8 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 <TranscriptionSetup />
               ) : effectiveView === "medications" ? (
                 <MedicationReference />
+              ) : effectiveView === "preconsulta" ? (
+                <PreconsultaEditor dental={clinicalProfile === "ODONTOLOGY"} />
               ) : effectiveView === "arco" ? (
                 <Arco />
               ) : effectiveView === "doctor-data" ? (
