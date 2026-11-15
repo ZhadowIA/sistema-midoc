@@ -4,7 +4,7 @@
 //! texto) y produce tramos de hablante con marcas de tiempo. El pegamento con la
 //! transcripcion es la fusion por solape temporal en `diarization::merge_*`.
 //!
-//! El binding nativo (crate `sherpa-rs`, que bundlea sherpa-onnx + ONNX Runtime)
+//! El binding nativo (crate oficial `sherpa-onnx`, que enlaza sherpa-onnx + ONNX Runtime)
 //! vive tras el feature `diarization-local`, igual que `whisper_provider` tras
 //! `whisper-local`: el build por defecto y las pruebas NO necesitan la cadena
 //! nativa. Cuando el feature esta apagado, `diarize_samples` devuelve vacio y el
@@ -65,7 +65,11 @@ pub fn diarize_samples(
     embedding_model: &Path,
     num_speakers: u8,
 ) -> Result<Vec<SpeakerSegment>, AiError> {
-    use sherpa_rs::diarize::{Diarize, DiarizeConfig};
+    use sherpa_onnx::{
+        FastClusteringConfig, OfflineSpeakerDiarization, OfflineSpeakerDiarizationConfig,
+        OfflineSpeakerSegmentationModelConfig, OfflineSpeakerSegmentationPyannoteModelConfig,
+        SpeakerEmbeddingExtractorConfig,
+    };
 
     let seg = segmentation_model
         .to_str()
@@ -78,25 +82,44 @@ pub fn diarize_samples(
     // con el umbral. Fijo (> 0): lo pina y maximiza precision (consulta tipica = 2).
     let (num_clusters, threshold) =
         crate::diarization::clustering_params(num_speakers, resolve_threshold());
-    let config = DiarizeConfig {
-        num_clusters: Some(num_clusters),
-        threshold: Some(threshold),
+    let config = OfflineSpeakerDiarizationConfig {
+        segmentation: OfflineSpeakerSegmentationModelConfig {
+            pyannote: OfflineSpeakerSegmentationPyannoteModelConfig {
+                model: Some(seg.to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        embedding: SpeakerEmbeddingExtractorConfig {
+            model: Some(emb.to_string()),
+            ..Default::default()
+        },
+        clustering: FastClusteringConfig {
+            num_clusters,
+            threshold,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
-    let mut diarizer = Diarize::new(seg, emb, config)
-        .map_err(|e| AiError::Invalid(format!("no se pudo iniciar la diarizacion: {e}")))?;
+    let diarizer = OfflineSpeakerDiarization::create(&config)
+        .ok_or_else(|| AiError::Invalid("no se pudo iniciar la diarizacion".into()))?;
 
     // sherpa-onnx asume 16 kHz mono; si la captura cambia, hay que remuestrear antes.
-    debug_assert_eq!(sample_rate, 16_000, "sherpa-onnx espera 16 kHz mono");
-    let _ = sample_rate;
+    if diarizer.sample_rate() != sample_rate as i32 {
+        return Err(AiError::Invalid(format!(
+            "la diarizacion espera {} Hz y el audio viene a {sample_rate} Hz",
+            diarizer.sample_rate()
+        )));
+    }
 
-    let segments = diarizer
-        .compute(samples.to_vec(), None)
-        .map_err(|e| AiError::Invalid(format!("fallo la diarizacion: {e}")))?;
+    let result = diarizer
+        .process(samples)
+        .ok_or_else(|| AiError::Invalid("fallo la diarizacion".into()))?;
 
-    // sherpa-rs entrega `start`/`end` en segundos (f32) y `speaker` como indice.
-    Ok(segments
+    // sherpa-onnx entrega `start`/`end` en segundos (f32) y `speaker` como indice.
+    Ok(result
+        .sort_by_start_time()
         .into_iter()
         .map(|s| SpeakerSegment {
             start_cs: (s.start * 100.0) as i64,

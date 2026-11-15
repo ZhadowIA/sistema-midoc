@@ -52,7 +52,7 @@ const MOCK_MODEL_FILES: Record<string, string> = {
 // simulado de la descarga en navegador.
 const MOCK_DIARIZATION_SIZES: Record<string, number> = {
   "diarization-segmentation": 5_992_913,
-  "diarization-embedding": 29_292_684
+  "diarization-embedding": 29_202_006
 };
 
 // Documentos del expediente en memoria (paso 28): metadatos + base64.
@@ -2521,7 +2521,7 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
           fileName:
             modelId === "diarization-segmentation"
               ? "sherpa-segmentation-3.0.onnx"
-              : "sherpa-embedding-campplus.onnx",
+              : "sherpa-embedding-campplus-sin-pad.onnx",
           expectedSizeBytes: total,
           downloadedBytes: m ? m.downloaded : 0,
           present: m ? m.present : false,
