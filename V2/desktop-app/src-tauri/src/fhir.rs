@@ -242,6 +242,8 @@ pub(crate) fn build_bundle(
             .collect();
 
     if full_record {
+        // Antecedentes del paciente, no de una consulta: solo en el expediente completo.
+        entries.extend(family_member_histories(data, &patient_ref));
         if let Some(summary) = summary_composition(
             data,
             &allergy_ids,
@@ -409,6 +411,141 @@ fn practitioner(doctor: &ExportDoctor, id: &str) -> Value {
                 .map(|text| json!([{ "text": text }])),
         )
         .build()
+}
+
+/// Parentescos del cuestionario de antecedentes (`FAMILY_RELATIVES` de
+/// `src/medicalHistoryFormat.ts`) con su codigo HL7 v3-RoleCode. "Tios" no
+/// distingue tio de tia ni linea: va como familiar extendido, con el texto.
+const FAMILY_RELATIVES: &[(&str, &str, &str, &str)] = &[
+    (
+        "abueloPaterno",
+        "Abuelo paterno",
+        "PGRFTH",
+        "paternal grandfather",
+    ),
+    (
+        "abuelaPaterna",
+        "Abuela paterna",
+        "PGRMTH",
+        "paternal grandmother",
+    ),
+    (
+        "abueloMaterno",
+        "Abuelo materno",
+        "MGRFTH",
+        "maternal grandfather",
+    ),
+    (
+        "abuelaMaterna",
+        "Abuela materna",
+        "MGRMTH",
+        "maternal grandmother",
+    ),
+    ("padre", "Padre", "FTH", "father"),
+    ("madre", "Madre", "MTH", "mother"),
+    ("hermanos", "Hermanos", "SIB", "sibling"),
+    ("tios", "Tios", "EXT", "extended family member"),
+];
+
+/// Padecimientos heredo-familiares del cuestionario (`FAMILY_CONDITIONS`). Sin
+/// terminologia propia: viajan como texto, igual que en el formulario.
+const FAMILY_CONDITIONS: &[(&str, &str)] = &[
+    ("diabetes", "Diabetes"),
+    ("hipertension", "Hipertension arterial"),
+    ("cardiopatia", "Infarto / enfermedad cardiaca"),
+    ("evc", "Derrame cerebral / embolia / EVC"),
+    ("dislipidemia", "Colesterol o trigliceridos altos"),
+    ("obesidad", "Obesidad"),
+    ("renal", "Enfermedad renal cronica / dialisis"),
+    ("cancer", "Cancer"),
+    ("tiroides", "Enfermedades tiroideas"),
+    ("autoinmunes", "Enfermedades autoinmunes"),
+    ("asma", "Asma / alergias importantes"),
+    ("neurologicas", "Enfermedades neurologicas"),
+    ("psiquiatricas", "Enfermedades psiquiatricas"),
+    ("trombosis", "Trombosis / problemas de coagulacion"),
+    ("varices", "Varices / insuficiencia venosa"),
+    ("sangre", "Enfermedades de la sangre"),
+    ("hepaticas", "Enfermedades hepaticas"),
+    ("digestivas", "Enfermedades digestivas"),
+    ("osteoporosis", "Osteoporosis / fracturas frecuentes"),
+    ("respiratorias", "Enfermedades respiratorias cronicas"),
+    ("congenitas", "Malformaciones congenitas / geneticas"),
+];
+
+/// Antecedentes heredo-familiares como `FamilyMemberHistory`: uno por pariente,
+/// con los padecimientos que el cuestionario le marco. Un padecimiento sin
+/// pariente marcado (solo notas) no tiene a quien atribuirse y se queda en la
+/// narrativa de la historia clinica.
+fn family_member_histories(data: &RecordExport, patient_ref: &Value) -> Vec<Value> {
+    let Some(history) = data
+        .medical_history
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(family) = history.get("familyHistory").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+
+    FAMILY_RELATIVES
+        .iter()
+        .filter_map(|&(relative, label, code, display)| {
+            let conditions: Vec<Value> = FAMILY_CONDITIONS
+                .iter()
+                .filter_map(|&(condition, condition_label)| {
+                    let entry = family.get(condition)?;
+                    let marked = entry["relatives"]
+                        .as_array()?
+                        .iter()
+                        .any(|value| value.as_str() == Some(relative));
+                    if !marked {
+                        return None;
+                    }
+                    let text = match entry["type"].as_str().and_then(clean) {
+                        Some(kind) => format!("{condition_label} ({kind})"),
+                        None => condition_label.to_string(),
+                    };
+                    let note = entry["notes"]
+                        .as_str()
+                        .and_then(clean)
+                        .map(|notes| json!([{ "text": notes }]));
+                    Some(
+                        Obj::default()
+                            .set("code", json!({ "text": text }))
+                            .opt("note", note)
+                            .build(),
+                    )
+                })
+                .collect();
+            if conditions.is_empty() {
+                return None;
+            }
+            let id = resource_id(
+                "FamilyMemberHistory",
+                &format!("{}/{relative}", data.patient.id),
+            );
+            Some(
+                Obj::resource("FamilyMemberHistory", &id)
+                    .set("status", "completed")
+                    .set("patient", patient_ref.clone())
+                    .set(
+                        "relationship",
+                        json!({
+                            "coding": [{
+                                "system": "http://terminology.hl7.org/CodeSystem/v3-RoleCode",
+                                "code": code,
+                                "display": display
+                            }],
+                            "text": label
+                        }),
+                    )
+                    .set("condition", conditions)
+                    .build(),
+            )
+        })
+        .collect()
 }
 
 fn summary_composition(
@@ -1047,6 +1184,21 @@ mod tests {
         .unwrap();
         crate::sync::set_state(conn, "doctor_name", "Dra. Eva Soto").unwrap();
         crate::sync::set_state(conn, "doctor_license", "1234567").unwrap();
+        conn.execute(
+            "INSERT INTO patient_medical_history_versions
+                (id, patient_id, version, payload_json, source, created_at)
+             VALUES ('mh1', 'p1', 1, ?1, 'DOCTOR_EDIT', '2026-01-01')",
+            [json!({
+                "familyHistory": {
+                    "diabetes": { "relatives": ["madre", "abueloPaterno"] },
+                    "cancer": { "relatives": ["madre"], "type": "mama", "notes": "a los 60 años" },
+                    "asma": { "notes": "un primo, sin pariente marcado" },
+                    "renal": { "relatives": [] }
+                }
+            })
+            .to_string()],
+        )
+        .unwrap();
 
         let signed =
             clinical::open_encounter_for_patient(conn, "p1", chrono::Local::now().date_naive())
@@ -1157,6 +1309,99 @@ mod tests {
             Value::Array(items) => items.iter().for_each(|item| collect_references(item, out)),
             _ => {}
         }
+    }
+
+    #[test]
+    fn family_history_goes_as_one_family_member_history_per_relative() {
+        let conn = test_conn("family");
+        let seeded = seed(&conn);
+        let bundle = bundle_of(&conn, None);
+        let histories = resources(&bundle, "FamilyMemberHistory");
+        assert_eq!(
+            histories.len(),
+            2,
+            "madre y abuelo paterno; el asma no tiene pariente"
+        );
+
+        let by_code = |code: &str| {
+            histories
+                .iter()
+                .find(|h| h["relationship"]["coding"][0]["code"] == code)
+                .unwrap_or_else(|| panic!("falta el pariente {code}"))
+        };
+        let mother = by_code("MTH");
+        assert_eq!(
+            mother["relationship"]["coding"][0]["system"],
+            "http://terminology.hl7.org/CodeSystem/v3-RoleCode"
+        );
+        assert_eq!(mother["relationship"]["text"], "Madre");
+        assert_eq!(mother["status"], "completed");
+        assert_eq!(mother["condition"][0]["code"]["text"], "Diabetes");
+        assert_eq!(mother["condition"][1]["code"]["text"], "Cancer (mama)");
+        assert_eq!(mother["condition"][1]["note"][0]["text"], "a los 60 años");
+        assert!(mother["condition"][0].get("note").is_none());
+
+        let grandfather = by_code("PGRFTH");
+        assert_eq!(grandfather["condition"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            grandfather["patient"]["reference"],
+            format!("urn:uuid:{}", resource_id("Patient", "p1"))
+        );
+
+        // Antecedentes del paciente: no viajan en la exportacion de una consulta.
+        let one_visit = bundle_of(&conn, Some(&seeded.signed));
+        assert!(resources(&one_visit, "FamilyMemberHistory").is_empty());
+    }
+
+    #[test]
+    fn family_catalog_matches_the_questionnaire_mirror() {
+        // El catalogo vive tambien en la interfaz; si se agrega un padecimiento
+        // o pariente alla y no aqui, el FHIR lo perderia en silencio.
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/medicalHistoryFormat.ts"),
+        )
+        .unwrap();
+        // El bloque termina en el primer `];` o `};` despues de su declaracion.
+        let block = |name: &str| {
+            let start = source.find(&format!("export const {name}")).unwrap();
+            let rest = &source[start..];
+            let end = [rest.find("];"), rest.find("};")]
+                .into_iter()
+                .flatten()
+                .min()
+                .unwrap();
+            rest[..end].to_string()
+        };
+        // `clave: "Etiqueta"` por renglon, y `{ key: "clave", label: "Etiqueta" }`.
+        let quoted = |text: &str, marker: &str| -> Option<String> {
+            let start = text.find(marker)? + marker.len();
+            Some(text[start..].split('"').next()?.to_string())
+        };
+        let relatives: Vec<(String, String)> = block("FAMILY_RELATIVES")
+            .lines()
+            .filter_map(|line| {
+                let (key, rest) = line.trim().split_once(": \"")?;
+                Some((key.to_string(), rest.split('"').next()?.to_string()))
+            })
+            .collect();
+        let conditions: Vec<(String, String)> = block("FAMILY_CONDITIONS")
+            .lines()
+            .filter_map(|line| Some((quoted(line, "key: \"")?, quoted(line, "label: \"")?)))
+            .collect();
+        assert_eq!(
+            relatives,
+            FAMILY_RELATIVES
+                .iter()
+                .map(|(key, label, _, _)| (key.to_string(), label.to_string()))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            conditions,
+            FAMILY_CONDITIONS
+                .iter()
+                .map(|(key, label)| (key.to_string(), label.to_string()))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
