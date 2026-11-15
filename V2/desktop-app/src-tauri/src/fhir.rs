@@ -48,8 +48,8 @@ use crate::cnis;
 use crate::export::{
     self, ExportDoctor, ExportDocument, ExportEncounter, ExportError, RecordExport,
 };
-use crate::ingredients;
 use crate::medication;
+use crate::prescription;
 
 /// Espacio de nombres de los UUID v5 de MiDoc. No cambiarlo: cambiaria los ids
 /// de todo lo exportado.
@@ -155,14 +155,7 @@ pub fn export_record(
             // interacciones, un ingrediente del catalogo (genericos del CNIS y
             // sinonimos revisados) o una marca (nucleo curado o del medico).
             let groups = group_prescription(text, |line| {
-                let text = medication::normalize_name(line);
-                Ok::<_, ExportError>(
-                    !medication::extract_medications(conn, line)?.is_empty()
-                        || !ingredients::catalog().find_in_text(&text).is_empty()
-                        || !crate::brands::find_in_text(conn, &text)
-                            .map_err(|e| ExportError::Invalid(e.to_string()))?
-                            .is_empty(),
-                )
+                Ok::<_, ExportError>(prescription::names_medication(conn, line)?)
             })?;
             prescriptions.insert(encounter.id.clone(), groups);
         }
@@ -705,19 +698,32 @@ fn encounter_resources(
             Some(line) => (line.clone(), Some(json!([{ "text": full_text }]))),
             None => (full_text, None),
         };
-        // CNIS (paso 33, etapa 1): el producto cuando se identifica y la clave
-        // completa solo cuando no hay duda del envase. El texto siempre va.
-        let medication_concept = match group.medication.as_deref().and_then(cnis::code_medication) {
-            Some(coding) => {
+        // CNIS (paso 33, etapas 1 y 4): el producto cuando se identifica (tambien
+        // si el medico escribio una marca) y la clave completa solo cuando no hay
+        // duda del envase. El texto del medico siempre va.
+        let item = group.medication.as_deref().and_then(|line| {
+            let key = medication::normalize_name(line);
+            encounter
+                .prescription_items
+                .iter()
+                .find(|item| medication::normalize_name(&item.line) == key)
+        });
+        let medication_concept = match item.and_then(|i| i.cnis_product.as_ref().map(|p| (i, p))) {
+            Some((item, product)) => {
+                let version = item.cnis_version.clone().unwrap_or_default();
                 let mut codings = vec![json!({
                     "system": cnis::PRODUCT_SYSTEM,
-                    "version": coding.version,
-                    "code": coding.product
+                    "version": version,
+                    "code": product,
+                    "display": item.cnis_description
                 })];
-                if let Some(clave) = &coding.clave {
-                    codings.push(
-                        json!({ "system": cnis::SYSTEM, "version": coding.version, "code": clave }),
-                    );
+                if let Some(clave) = &item.cnis_clave {
+                    codings.push(json!({
+                        "system": cnis::SYSTEM,
+                        "version": version,
+                        "code": clave,
+                        "display": item.cnis_description
+                    }));
                 }
                 json!({ "coding": codings, "text": medication })
             }
@@ -1647,6 +1653,7 @@ mod tests {
         let codings = &requests[0]["medicationCodeableConcept"]["coding"];
         assert_eq!(codings[0]["system"], cnis::PRODUCT_SYSTEM);
         assert_eq!(codings[0]["code"], "010.000.0104");
+        assert_eq!(codings[0]["display"], "Paracetamol 500 mg tableta");
         assert_eq!(codings[1]["system"], cnis::SYSTEM);
         assert_eq!(codings[1]["code"], "010.000.0104.00");
         assert_eq!(codings[1]["version"], "2025-04-26");

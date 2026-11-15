@@ -433,6 +433,17 @@ const searchResults = z.looseObject({
   expanded_terms: listaDeTextos
 });
 
+// Doble denominacion de la receta (paso 33, etapa 4).
+const prescriptionItem = z.looseObject({
+  line: texto,
+  brand: textoONulo,
+  generic: texto,
+  cnis_description: textoONulo,
+  cnis_product: textoONulo,
+  cnis_clave: textoONulo,
+  cnis_version: textoONulo
+});
+
 const recordExport = z.looseObject({
   generated_at: texto,
   doctor: z.looseObject({
@@ -460,7 +471,8 @@ const recordExport = z.looseObject({
       note_version: enteroONulo,
       note_saved_at: textoONulo,
       note: noteContent.nullable(),
-      prescription: textoONulo
+      prescription: textoONulo,
+      prescription_items: z.array(prescriptionItem).optional()
     })
   ),
   documents: z.array(
@@ -961,6 +973,7 @@ export const IPC_RESPONSE_SCHEMAS = {
   save_local_brand: localBrand,
   delete_local_brand: NADA,
   detect_unknown_medications: z.array(z.looseObject({ line: z.string(), candidate: z.string() })),
+  analyze_prescription: z.array(prescriptionItem),
   // Seguridad de medicacion (tras el interruptor del paso 33)
   get_capabilities: z.looseObject({ medication_safety: z.boolean() }),
   check_medication_safety: safetyReport,

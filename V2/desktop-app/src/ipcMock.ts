@@ -1410,6 +1410,29 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       }
       return unknown as T;
     }
+    case "analyze_prescription": {
+      // Imitacion simple de Rust: el paracetamol de 500 mg tiene clave; una
+      // marca del medico se traduce a sus principios activos.
+      const items = [];
+      for (const raw of String(args?.prescription ?? "").split("\n")) {
+        const line = raw.trim();
+        const lower = line.toLowerCase();
+        const brand = mockState.localBrands.find((b) => lower.includes(b.name));
+        const ids = brand ? brand.ingredients : MOCK_INGREDIENTS.filter((i) => lower.includes(i.id)).map((i) => i.id);
+        if (!line || ids.length === 0) continue;
+        const coded = ids.length === 1 && ids[0] === "paracetamol" && lower.includes("500 mg");
+        items.push({
+          line,
+          brand: brand ? brand.display : null,
+          generic: ids.map((id) => MOCK_INGREDIENTS.find((i) => i.id === id)?.display ?? id).join(" + "),
+          cnis_description: coded ? "Paracetamol 500 mg tableta" : null,
+          cnis_product: coded ? "010.000.0104" : null,
+          cnis_clave: coded ? "010.000.0104.00" : null,
+          cnis_version: coded ? "2025-04-26" : null
+        });
+      }
+      return items as T;
+    }
     case "get_capabilities":
       return { medication_safety: MOCK_MEDICATION_SAFETY } as T;
     case "get_inactivity_lock_minutes":

@@ -16,6 +16,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::clinical::{self, NoteContent, PatientRecord};
+use crate::prescription;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
@@ -67,6 +68,9 @@ pub struct ExportEncounter {
     pub note_saved_at: Option<String>,
     pub note: Option<NoteContent>,
     pub prescription: Option<String>,
+    /// Denominacion generica y clave CNIS de cada medicamento de la receta
+    /// (paso 33, etapa 4). Lo escrito por el medico no cambia.
+    pub prescription_items: Vec<prescription::PrescriptionItem>,
 }
 
 #[derive(Debug, Serialize)]
@@ -151,6 +155,10 @@ pub fn record_export(
         if detail.note.is_none() && detail.prescription.is_none() && encounter_id.is_none() {
             continue;
         }
+        let prescription_items = match detail.prescription.as_deref() {
+            Some(text) => prescription::analyze(conn, text)?,
+            None => Vec::new(),
+        };
         encounters.push(ExportEncounter {
             id: detail.encounter.id,
             opened_at: detail.encounter.opened_at,
@@ -161,6 +169,7 @@ pub fn record_export(
             note_saved_at: detail.note.as_ref().map(|n| n.created_at.clone()),
             note: detail.note.map(|n| n.content),
             prescription: detail.prescription,
+            prescription_items,
         });
     }
 

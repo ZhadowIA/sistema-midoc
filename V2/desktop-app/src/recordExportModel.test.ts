@@ -258,3 +258,31 @@ test("sin historia ni plantilla las narrativas van vacias", () => {
   const narratives = fhirNarratives(sample());
   assert.deepEqual(narratives, { history: [], encounters: {} });
 });
+
+test("la receta lleva debajo la denominacion generica y la clave CNIS", () => {
+  const data = sample();
+  data.encounters[0].prescription = "Fictimed 500 mg tabletas cada 8 h";
+  data.encounters[0].prescription_items = [
+    {
+      line: "Fictimed 500 mg tabletas cada 8 h",
+      brand: "Fictimed",
+      generic: "Paracetamol",
+      cnis_description: "Paracetamol 500 mg tableta",
+      cnis_product: "010.000.0104",
+      cnis_clave: "010.000.0104.00",
+      cnis_version: "2025-04-26"
+    }
+  ];
+  const fields = buildBlocks(data, "PDF_CONSULTA").flatMap((b) => (b.type === "field" ? [[b.label, b.text]] : []));
+  const receta = fields.findIndex(([label]) => label === "Receta");
+  assert.deepEqual(fields[receta], ["Receta", "Fictimed 500 mg tabletas cada 8 h"], "lo escrito no cambia");
+  assert.deepEqual(fields[receta + 1], [
+    "Denominación genérica",
+    "Fictimed → Paracetamol 500 mg tableta · CNIS 010.000.0104.00"
+  ]);
+});
+
+test("sin nada que agregar no hay bloque de denominacion generica", () => {
+  const fields = buildBlocks(sample(), "PDF_CONSULTA").flatMap((b) => (b.type === "field" ? [b.label] : []));
+  assert.ok(!fields.includes("Denominación genérica"));
+});
