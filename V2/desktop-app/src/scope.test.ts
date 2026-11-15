@@ -22,7 +22,6 @@ test("con la bandera apagada la app abre en Pacientes y no ofrece agenda ni rece
     "open-encounters",
     "search",
     "transcription",
-    "medications",
     "arco",
     "benchmark",
     "doctor-data"
@@ -40,12 +39,21 @@ test("con la bandera encendida vuelve la navegacion previa al reenfoque", () => 
     "search",
     "reception",
     "transcription",
-    "medications",
     "arco",
     "benchmark",
     "doctor-data"
   ]);
   assert.equal(isViewAvailable("reception", true), true);
+});
+
+test("Medicamentos solo aparece con la revision de seguridad encendida", () => {
+  const ids = (medicationSafety?: boolean) =>
+    workspaceNav(false, { medicationSafety }).flatMap((section) => section.items.map((item) => item.id));
+  assert.ok(!ids(undefined).includes("medications"), "apagada si no se sabe");
+  assert.ok(!ids(false).includes("medications"));
+  assert.ok(ids(true).includes("medications"));
+  assert.equal(isViewAvailable("medications", true), false, "el alcance congelado no la enciende");
+  assert.equal(isViewAvailable("medications", false, { medicationSafety: true }), true);
 });
 
 test("el laboratorio solo aparece con el perfil odontologico", () => {

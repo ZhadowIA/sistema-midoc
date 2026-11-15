@@ -941,7 +941,8 @@ export const IPC_RESPONSE_SCHEMAS = {
   download_transcription_model: NADA,
   diarization_model_status: z.array(modelStatus),
   download_diarization_model: NADA,
-  // Seguridad de medicacion
+  // Seguridad de medicacion (tras el interruptor del paso 33)
+  get_capabilities: z.looseObject({ medication_safety: z.boolean() }),
   check_medication_safety: safetyReport,
   medication_reference_status: referenceStatus,
   import_medication_reference: importSummary,

@@ -106,6 +106,7 @@ test("el mock de navegador cumple los contratos", async () => {
   // Expediente.
   await run("list_patients");
   await run("list_open_encounters");
+  await run("get_capabilities");
   await run("get_inactivity_lock_minutes");
   await run("set_inactivity_lock_minutes", { minutes: 15 });
   await run("find_patient_matches", { firstName: "Hugo", lastName: "Paz Olivares" });

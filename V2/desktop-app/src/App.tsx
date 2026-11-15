@@ -352,6 +352,9 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [workStartMinutes, setWorkStartMinutes] = useState<number | null>(null);
   const [workEndMinutes, setWorkEndMinutes] = useState<number | null>(null);
   const [view, setView] = useState<WorkspaceView>(() => defaultView(FROZEN_SCOPE));
+  // Revision de seguridad de medicamentos (paso 33): Rust la fija al compilar.
+  // Apagada hasta saber lo contrario.
+  const [medicationSafety, setMedicationSafety] = useState(false);
   // La busqueda conserva lo escrito al ir y volver de una consulta.
   const [searchQuery, setSearchQuery] = useState("");
   const [theme, setTheme] = useState<Theme>(() => {
@@ -361,6 +364,12 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       return "light";
     }
   });
+
+  useEffect(() => {
+    call<{ medication_safety: boolean }>("get_capabilities")
+      .then((caps) => setMedicationSafety(caps.medication_safety))
+      .catch(() => setMedicationSafety(false));
+  }, []);
 
   // Aplica el tema a la raíz (cascada a toda la app, incluida la consulta) y lo
   // recuerda. Es preferencia de UI, no dato clínico.
@@ -701,6 +710,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
           encounterId={activeEncounter}
           clinicalProfile={clinicalProfile}
           frozenScope={FROZEN_SCOPE}
+          medicationSafety={medicationSafety}
           backLabel={
             activePatient
               ? "Expediente"
@@ -730,9 +740,10 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     );
   }
 
-  const navSections = workspaceNav(FROZEN_SCOPE, { dental: clinicalProfile === "ODONTOLOGY" });
-  // Defensa: una vista congelada nunca se pinta aunque quede en el estado.
-  const effectiveView = isViewAvailable(view, FROZEN_SCOPE) ? view : defaultView(FROZEN_SCOPE);
+  const navOptions = { dental: clinicalProfile === "ODONTOLOGY", medicationSafety };
+  const navSections = workspaceNav(FROZEN_SCOPE, navOptions);
+  // Defensa: una vista congelada o apagada nunca se pinta aunque quede en el estado.
+  const effectiveView = isViewAvailable(view, FROZEN_SCOPE, navOptions) ? view : defaultView(FROZEN_SCOPE);
   const licensed = isLicensed(license);
   const navBadge = (id: WorkspaceView) => {
     const count =
