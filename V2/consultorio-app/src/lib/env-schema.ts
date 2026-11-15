@@ -52,6 +52,8 @@ export const envSchema = z
     EMAIL_API_KEY: z.string().min(1),
     EMAIL_FROM: emailSenderSchema,
     NOTIFICATION_CRON_SECRET: z.string().min(1),
+    // Secreto que Vercel Cron manda en `Authorization` (opcional fuera de Vercel).
+    CRON_SECRET: optionalNonEmptyString,
     PAYMENTS_PROVIDER: z.enum(["MOCK", "STRIPE", "CONEKTA", "OPENPAY"]),
     PAYMENTS_WEBHOOK_SECRET: z.string().min(1),
     // Llave para cifrar en reposo el secreto TOTP del 2FA. Se deriva a 32 bytes.
