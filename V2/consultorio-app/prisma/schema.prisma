@@ -1,3 +1,11 @@
+// Clasificacion de datos (REGLAS_DESARROLLO.md §4.4). Cada modelo lleva encima
+// su linea `/// Clase:`; `tests/unit/prisma-classification.test.ts` la exige.
+//   CLINICO   - contenido clinico. Solo vive en la app del medico; en la nube
+//               solo cifrado y en transito (buzon), purgado al confirmar.
+//   CONTACTO  - identidad y contacto minimos (nube minima).
+//   OPERATIVO - funcionamiento del servicio: agenda, cuenta, seguridad, cobro,
+//               licencia y creditos. Nunca contenido clinico.
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -289,6 +297,7 @@ enum AiUsageStatus {
   REJECTED
 }
 
+/// Clase: CONTACTO - cuenta e identidad de quien inicia sesion; sin contenido clinico.
 model User {
   id                          String                   @id @default(cuid())
   email                       String                   @unique
@@ -337,6 +346,7 @@ model User {
   @@index([role, phone])
 }
 
+/// Clase: CONTACTO - perfil profesional y del consultorio que el medico publica o imprime en la receta.
 model DoctorProfile {
   id                     String                    @id @default(cuid())
   userId                 String                    @unique
@@ -375,6 +385,7 @@ model DoctorProfile {
   subscriptions          DoctorSubscription[]
 }
 
+/// Clase: CONTACTO - imagenes publicas del consultorio.
 model DoctorGalleryImage {
   id              String        @id @default(cuid())
   doctorProfileId String
@@ -387,6 +398,7 @@ model DoctorGalleryImage {
   @@index([doctorProfileId, displayOrder])
 }
 
+/// Clase: CONTACTO - resena publica; nombre y correo de quien la escribe, sin datos de salud.
 model DoctorReview {
   id              String        @id @default(cuid())
   doctorProfileId String
@@ -402,6 +414,7 @@ model DoctorReview {
   @@index([doctorProfileId, createdAt])
 }
 
+/// Clase: OPERATIVO - catalogo de servicios, precios y duraciones.
 model DoctorService {
   id              String              @id @default(cuid())
   doctorProfileId String
@@ -422,6 +435,7 @@ model DoctorService {
   @@index([doctorProfileId, status])
 }
 
+/// Clase: OPERATIVO - reglas de horario del consultorio.
 model DoctorAvailability {
   id              String               @id @default(cuid())
   doctorProfileId String
@@ -439,6 +453,7 @@ model DoctorAvailability {
   doctorProfile   DoctorProfile        @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
 }
 
+/// Clase: OPERATIVO - bloqueos de agenda del medico.
 model DoctorAvailabilityBlock {
   id              String        @id @default(cuid())
   doctorProfileId String
@@ -451,6 +466,7 @@ model DoctorAvailabilityBlock {
   @@index([doctorProfileId, startsAt, endsAt])
 }
 
+/// Clase: CONTACTO - identidad y contacto minimos para agendar; `notes` no debe llevar contenido clinico (el expediente vive en la app).
 model Patient {
   id                    String                    @id @default(cuid())
   ownerDoctorId         String
@@ -492,6 +508,7 @@ model Patient {
   @@index([ownerDoctorId, lastName, firstName])
 }
 
+/// Clase: CONTACTO - responsable o contacto del paciente.
 model PatientContact {
   id           String   @id @default(cuid())
   patientId    String
@@ -505,6 +522,7 @@ model PatientContact {
   patient      Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
 }
 
+/// Clase: OPERATIVO - cita de agenda publica (modulo congelado); `reason` es el motivo administrativo que da el paciente al agendar, no la nota clinica.
 model Appointment {
   id                  String                 @id @default(cuid())
   doctorId            String
@@ -539,6 +557,7 @@ model Appointment {
   @@index([patientId, scheduledStart])
 }
 
+/// Clase: OPERATIVO - apartado temporal de un horario.
 model AppointmentHold {
   id            String         @id @default(cuid())
   doctorId      String
@@ -560,6 +579,7 @@ model AppointmentHold {
   @@index([doctorId, slotStart, slotEnd, status])
 }
 
+/// Clase: CLINICO - en transito: cuestionario cifrado para la llave del medico; se purga cuando la app confirma la descarga.
 model PrecheckinSubmission {
   id            String           @id @default(cuid())
   appointmentId String?
@@ -589,6 +609,7 @@ model PrecheckinSubmission {
   @@unique([appointmentId, patientId, kind])
 }
 
+/// Clase: OPERATIVO - enlace temporal de carga; el documento va a MailboxDocument.
 model DocumentUploadLink {
   id               String            @id @default(cuid())
   doctorId         String
@@ -609,6 +630,7 @@ model DocumentUploadLink {
   @@index([patientId, expiresAt, status])
 }
 
+/// Clase: CONTACTO - aviso por SMS o correo al destinatario; prohibido contenido clinico en el cuerpo.
 model Notification {
   id                String              @id @default(cuid())
   doctorId          String?
@@ -639,6 +661,7 @@ model Notification {
   @@index([status, scheduledFor])
 }
 
+/// Clase: OPERATIVO - enlace corto con caducidad y conteo de usos.
 model ShortLink {
   id              String         @id @default(cuid())
   code            String         @unique
@@ -661,6 +684,7 @@ model ShortLink {
   @@index([appointmentId])
 }
 
+/// Clase: OPERATIVO - evidencia de aceptacion de terminos y aviso de privacidad.
 model LegalAcceptance {
   id           String               @id @default(cuid())
   userId       String?
@@ -677,6 +701,7 @@ model LegalAcceptance {
   @@index([documentType, version])
 }
 
+/// Clase: OPERATIVO - evidencia de consentimiento (tipo, version, fecha); sin contenido clinico.
 model Consent {
   id        String      @id @default(cuid())
   patientId String
@@ -693,6 +718,7 @@ model Consent {
   @@index([patientId, type, grantedAt])
 }
 
+/// Clase: OPERATIVO - token de recuperacion, guardado como hash.
 model PasswordResetToken {
   id              String              @id @default(cuid())
   userId          String
@@ -712,6 +738,7 @@ model PasswordResetToken {
   @@index([userId, codeHash, status, expiresAt])
 }
 
+/// Clase: OPERATIVO - token de verificacion de correo, guardado como hash.
 model EmailVerificationToken {
   id             String                       @id @default(cuid())
   userId         String
@@ -728,6 +755,7 @@ model EmailVerificationToken {
   @@index([userId, status, expiresAt])
 }
 
+/// Clase: OPERATIVO - sesion web, guardada como hash.
 model AuthSession {
   id         String            @id @default(cuid())
   userId     String
@@ -743,6 +771,7 @@ model AuthSession {
   @@index([userId, status, expiresAt])
 }
 
+/// Clase: OPERATIVO - bitacora por referencia (ids y accion), nunca contenido clinico.
 model AuditLog {
   id          String   @id @default(cuid())
   actorUserId String?
@@ -759,6 +788,7 @@ model AuditLog {
   actorUser   User?    @relation("ActorAuditLogs", fields: [actorUserId], references: [id], onDelete: SetNull)
 }
 
+/// Clase: OPERATIVO - vestigio de la lista de espera de la nube, sin uso (la lista vive en la app).
 model WaitlistEntry {
   id               String         @id @default(cuid())
   doctorId         String
@@ -777,6 +807,7 @@ model WaitlistEntry {
   service          DoctorService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
 }
 
+/// Clase: OPERATIVO - recursos del consultorio (modulo congelado).
 model PhysicalResource {
   id           String            @id @default(cuid())
   doctorId     String
@@ -790,6 +821,7 @@ model PhysicalResource {
   bookings     ResourceBooking[]
 }
 
+/// Clase: OPERATIVO - reserva de un recurso para una cita (modulo congelado).
 model ResourceBooking {
   id            String                @id @default(cuid())
   resourceId    String
@@ -805,6 +837,7 @@ model ResourceBooking {
   @@index([resourceId, startsAt, endsAt])
 }
 
+/// Clase: OPERATIVO - vestigio de cobros en la nube, sin uso (la caja vive en la app).
 model PaymentRecord {
   id               String        @id @default(cuid())
   doctorId         String
@@ -826,6 +859,7 @@ model PaymentRecord {
   recordedByUser   User?         @relation("PaymentRecorder", fields: [recordedByUserId], references: [id], onDelete: SetNull)
 }
 
+/// Clase: OPERATIVO - vestigio de caja en la nube, sin uso (la caja vive en la app).
 model CashDrawerSession {
   id             String           @id @default(cuid())
   doctorId       String
@@ -841,6 +875,7 @@ model CashDrawerSession {
   closedByUser   User?            @relation("CashDrawerCloser", fields: [closedByUserId], references: [id], onDelete: SetNull)
 }
 
+/// Clase: OPERATIVO - plan de la suscripcion heredada (congelada).
 model SubscriptionPlan {
   id              String               @id @default(cuid())
   code            String               @unique
@@ -856,6 +891,7 @@ model SubscriptionPlan {
   subscriptions   DoctorSubscription[]
 }
 
+/// Clase: OPERATIVO - suscripcion heredada del medico (congelada).
 model DoctorSubscription {
   id                String             @id @default(cuid())
   doctorProfileId   String
@@ -872,6 +908,7 @@ model DoctorSubscription {
   plan              SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Restrict)
 }
 
+/// Clase: OPERATIVO - incidente de seguridad o privacidad; describe el evento y referencia ids.
 model SecurityIncident {
   id          String           @id @default(cuid())
   // OPERATIVO: registro de incidentes de seguridad/privacidad. Prohibido contenido
@@ -891,6 +928,7 @@ model SecurityIncident {
   @@index([doctorId, detectedAt])
 }
 
+/// Clase: OPERATIVO - secreto TOTP cifrado en reposo.
 model TwoFactorCredential {
   id              String                  @id @default(cuid())
   // OPERATIVO: seguridad de cuenta. Secreto TOTP cifrado en reposo; sin contenido clinico.
@@ -904,6 +942,7 @@ model TwoFactorCredential {
   recoveryCodes   TwoFactorRecoveryCode[]
 }
 
+/// Clase: OPERATIVO - codigo de recuperacion de 2FA, guardado como hash.
 model TwoFactorRecoveryCode {
   id           String              @id @default(cuid())
   // OPERATIVO: codigo de recuperacion de 2FA, almacenado solo como hash; un solo uso.
@@ -916,6 +955,7 @@ model TwoFactorRecoveryCode {
   @@index([credentialId])
 }
 
+/// Clase: OPERATIVO - catalogo de proveedores de IA y su cumplimiento.
 model AiProvider {
   id             String           @id @default(cuid())
   name           String
@@ -930,6 +970,7 @@ model AiProvider {
   benchmarkRuns  AiBenchmarkRun[]
 }
 
+/// Clase: OPERATIVO - uso de IA por referencia (`inputReference`/`outputReference`) y su cobro; nunca el contenido.
 model AiUsageLog {
   id                 String          @id @default(cuid())
   // OPERATIVO: propiedad SaaS/idempotencia del reporte desde la app local.
@@ -967,6 +1008,7 @@ model AiUsageLog {
   @@index([doctorId, createdAt])
 }
 
+/// Clase: OPERATIVO - corrida de benchmark con casos simulados.
 model AiBenchmarkRun {
   id              String              @id @default(cuid())
   providerId      String
@@ -980,6 +1022,7 @@ model AiBenchmarkRun {
   results         AiBenchmarkResult[]
 }
 
+/// Clase: OPERATIVO - metricas de benchmark sobre casos simulados.
 model AiBenchmarkResult {
   id             String         @id @default(cuid())
   benchmarkRunId String
@@ -1020,6 +1063,7 @@ enum AuthorizedSummaryStatus {
   PURGED
 }
 
+/// Clase: OPERATIVO - equipo vinculado: token como hash y llave publica.
 model SyncDevice {
   id                String           @id @default(cuid())
   doctorId          String
@@ -1038,6 +1082,7 @@ model SyncDevice {
   @@index([doctorId, status])
 }
 
+/// Clase: CLINICO - en transito: puede llevar el sobre cifrado de una preconsulta; se purga cuando la app confirma.
 model SyncEvent {
   id          String        @id @default(cuid())
   doctorId    String
@@ -1058,6 +1103,7 @@ model SyncEvent {
 // Buzon temporal de documentos del paciente (paso 6, Fase B). El ciphertext es
 // un sealed box (X25519) que la nube NO puede leer; se entrega a la app del
 // medico via sync y se purga tras el ACK (frontera legal de residencia).
+/// Clase: CLINICO - en transito: documento cifrado (sealed box) para la llave del medico; se purga cuando la app confirma.
 model MailboxDocument {
   id            String                @id @default(cuid())
   doctorId      String
@@ -1085,6 +1131,7 @@ model MailboxDocument {
 // Va app -> nube cifrado con secretbox; la llave viaja SOLO en el fragmento del
 // enlace (#k=...), nunca al servidor: la nube guarda ciphertext que no puede
 // abrir. Enlace temporal con expiracion; se purga al expirar/revocar.
+/// Clase: CLINICO - en transito: resumen cifrado que el medico autoriza al paciente; se purga al caducar o revocarse.
 model AuthorizedSummary {
   id            String                  @id @default(cuid())
   doctorId      String
@@ -1112,6 +1159,7 @@ model AuthorizedSummary {
 
 // Contador de rate limiting compartido entre instancias (OPERATIVO: solo
 // llaves tecnicas — email/IP/dispositivo — nunca contenido clinico).
+/// Clase: OPERATIVO - contador de limites con llaves tecnicas.
 model RateLimitCounter {
   key       String   @id
   count     Int
@@ -1122,6 +1170,7 @@ model RateLimitCounter {
 
 // OPERATIVO: licencia de compra unica del medico (paso 29). Sin contenido
 // clinico. Una por cuenta; los equipos se cuentan en LicenseActivation.
+/// Clase: OPERATIVO - licencia de compra unica del medico.
 model License {
   id           String              @id @default(cuid())
   doctorId     String              @unique
@@ -1140,6 +1189,7 @@ model License {
 
 // OPERATIVO: un equipo (instalacion de la app) activado con la licencia. El id
 // de instalacion es aleatorio y lo genera la app; no identifica a la persona.
+/// Clase: OPERATIVO - equipo activado con la licencia.
 model LicenseActivation {
   id             String    @id @default(cuid())
   licenseId      String
@@ -1158,6 +1208,7 @@ model LicenseActivation {
 
 // OPERATIVO: abono de creditos de IA a la cuenta (paso 29, rebanada 3). El
 // saldo es la suma de `remaining` de los abonos vigentes; sin contenido clinico.
+/// Clase: OPERATIVO - abono de creditos de IA.
 model AiCreditGrant {
   id        String            @id @default(cuid())
   doctorId  String
@@ -1176,6 +1227,7 @@ model AiCreditGrant {
 
 // OPERATIVO: creditos que un uso de IA tomo de un abono. Un uso puede tomar de
 // varios abonos; si el proveedor falla, se devuelven a los mismos.
+/// Clase: OPERATIVO - creditos que tomo un uso de IA.
 model AiCreditDebit {
   id           String        @id @default(cuid())
   doctorId     String
