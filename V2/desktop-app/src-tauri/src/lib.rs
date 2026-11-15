@@ -40,6 +40,8 @@ mod whisper_provider;
 
 #[cfg(test)]
 mod consultation_e2e;
+#[cfg(test)]
+mod preconsulta_e2e;
 
 #[cfg(test)]
 mod restore_drill;
@@ -753,28 +755,20 @@ async fn save_prescriber(
     Ok(outcome)
 }
 
-/// Descarga eventos pendientes del buzon, los aplica a la base local y
-/// confirma con ACK (la nube purga el contenido clinico entregado).
-#[tauri::command]
-async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, String> {
-    // Leer credenciales sin retener el lock durante las llamadas de red.
-    let (server_url, token, mut cursor) = {
-        let guard = state.0.lock().unwrap();
-        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
-        let server_url = sync::get_state(conn, "server_url")
-            .map_err(|e| e.to_string())?
-            .ok_or("la app no esta vinculada a una cuenta")?;
-        let token = sync::get_state(conn, "device_token")
-            .map_err(|e| e.to_string())?
-            .ok_or("la app no esta vinculada a una cuenta")?;
-        let cursor = sync::get_cursor(conn).map_err(|e| e.to_string())?;
-        (server_url, token, cursor)
-    };
-
+/// Descarga el buzon desde `cursor`, lo aplica a la base local y confirma con
+/// ACK (la nube purga el contenido clinico entregado). Devuelve cuantos eventos
+/// aplico. Separado de `sync_now` para probarlo contra el portal vivo
+/// (`preconsulta_e2e`).
+async fn pull_inbox(
+    db: &AppDb,
+    server_url: &str,
+    token: &str,
+    mut cursor: i64,
+) -> Result<u64, String> {
     let mut applied: u64 = 0;
 
     loop {
-        let inbox = sync::fetch_inbox(&server_url, &token, cursor)
+        let inbox = sync::fetch_inbox(server_url, token, cursor)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -801,7 +795,7 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
                     else {
                         continue;
                     };
-                    let ciphertext = sync::fetch_document(&server_url, &token, doc_id)
+                    let ciphertext = sync::fetch_document(server_url, token, doc_id)
                         .await
                         .map_err(|e| e.to_string())?;
                     let patient_id = payload
@@ -823,7 +817,7 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
                     ) else {
                         continue;
                     };
-                    let ciphertext = sync::fetch_precheckin(&server_url, &token, precheckin_id)
+                    let ciphertext = sync::fetch_precheckin(server_url, token, precheckin_id)
                         .await
                         .map_err(|e| e.to_string())?;
                     precheckins.push((appointment_id.to_string(), ciphertext));
@@ -836,7 +830,7 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
                         continue;
                     };
                     let (ciphertext, questionnaire) =
-                        sync::fetch_preconsulta(&server_url, &token, submission_id)
+                        sync::fetch_preconsulta(server_url, token, submission_id)
                             .await
                             .map_err(|e| e.to_string())?;
                     let patient_ref = payload
@@ -855,7 +849,7 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
         }
 
         {
-            let mut guard = state.0.lock().unwrap();
+            let mut guard = db.0.lock().unwrap();
             let conn = guard.as_mut().ok_or("la base esta bloqueada")?;
             sync::apply_batch(conn, &inbox.events).map_err(|e| e.to_string())?;
             // Descifrar y guardar los documentos descargados.
@@ -897,13 +891,36 @@ async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, S
 
         // ACK despues de persistir localmente: si la red falla aqui, el
         // proximo sync re-entrega y la aplicacion es idempotente.
-        sync::send_ack(&server_url, &token, inbox.next_cursor)
+        sync::send_ack(server_url, token, inbox.next_cursor)
             .await
             .map_err(|e| e.to_string())?;
 
         applied += inbox.events.len() as u64;
         cursor = inbox.next_cursor;
     }
+
+    Ok(applied)
+}
+
+/// Descarga eventos pendientes del buzon, los aplica a la base local y
+/// confirma con ACK (la nube purga el contenido clinico entregado).
+#[tauri::command]
+async fn sync_now(state: tauri::State<'_, AppDb>) -> Result<sync::SyncSummary, String> {
+    // Leer credenciales sin retener el lock durante las llamadas de red.
+    let (server_url, token, cursor) = {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        let server_url = sync::get_state(conn, "server_url")
+            .map_err(|e| e.to_string())?
+            .ok_or("la app no esta vinculada a una cuenta")?;
+        let token = sync::get_state(conn, "device_token")
+            .map_err(|e| e.to_string())?
+            .ok_or("la app no esta vinculada a una cuenta")?;
+        let cursor = sync::get_cursor(conn).map_err(|e| e.to_string())?;
+        (server_url, token, cursor)
+    };
+
+    let applied = pull_inbox(&state, &server_url, &token, cursor).await?;
 
     let mut ai_usage_reported = 0u64;
     loop {

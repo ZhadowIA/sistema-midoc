@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { call, openExternal } from "./ipc";
 import { PreconsultaInbox } from "./PreconsultaInbox";
+import { QrShare } from "./QrCode";
 import {
   CONDITION_SOURCE_TYPES,
   QUESTIONNAIRE_LIMITS,
@@ -474,6 +475,11 @@ function GeneralLinkPanel({
                   Compartir por WhatsApp
                 </button>
               </div>
+              <QrShare
+                url={link.url}
+                title="Preconsulta"
+                hint="Escanea con la cámara de tu celular y contesta tu preconsulta antes de la consulta. Toma unos minutos y tus respuestas llegan cifradas a tu médico."
+              />
             </>
           ) : (
             <p className="meta">

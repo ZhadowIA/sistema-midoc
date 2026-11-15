@@ -5552,3 +5552,57 @@ body.dictating .encounter-modes:focus-within {
   margin: 2px 0 0;
   white-space: pre-wrap;
 }
+
+/* QR de los enlaces de preconsulta (paso 32) */
+.qr-share {
+  display: grid;
+  justify-items: start;
+}
+
+.qr-print {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  max-width: 320px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: #ffffff;
+  color: #111111;
+  text-align: center;
+}
+
+.qr-print h3,
+.qr-print p {
+  margin: 0;
+}
+
+.qr-code {
+  width: 240px;
+  height: 240px;
+}
+
+@media print {
+  body.printing-qr * {
+    visibility: hidden;
+  }
+
+  body.printing-qr .qr-print,
+  body.printing-qr .qr-print * {
+    visibility: visible;
+  }
+
+  body.printing-qr .qr-print {
+    position: fixed;
+    top: 15mm;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 120mm;
+    border: none;
+  }
+
+  body.printing-qr .qr-code {
+    width: 90mm;
+    height: 90mm;
+  }
+}
