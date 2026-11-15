@@ -3027,14 +3027,6 @@ fn arco_mark_fulfilled(
 }
 
 #[tauri::command]
-fn arco_export_patient_data(
-    state: tauri::State<'_, AppDb>,
-    patient_id: String,
-) -> Result<arco::PatientDataExport, String> {
-    with_arco(&state, |conn| arco::export_patient_data(conn, &patient_id))
-}
-
-#[tauri::command]
 fn arco_fulfill_cancellation(
     state: tauri::State<'_, AppDb>,
     request_id: String,
@@ -3181,7 +3173,6 @@ pub fn run() {
             arco_list_requests,
             arco_record_request,
             arco_mark_fulfilled,
-            arco_export_patient_data,
             arco_fulfill_cancellation
         ])
         .run(tauri::generate_context!())
