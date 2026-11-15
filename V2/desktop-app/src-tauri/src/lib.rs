@@ -1621,6 +1621,7 @@ struct SavedExport {
 /// si el medico cancelo.
 async fn pick_export_path(
     app: &tauri::AppHandle,
+    state: &tauri::State<'_, AppDb>,
     suggested_name: &str,
     filter_name: &'static str,
     extension: &'static str,
@@ -1628,15 +1629,23 @@ async fn pick_export_path(
     use tauri_plugin_dialog::DialogExt;
 
     let file_name = export::suggested_file_name(suggested_name, extension);
+    let start_dir = {
+        let guard = state.0.lock().unwrap();
+        let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
+        export::export_start_dir(conn, app.path().document_dir().ok()).map_err(|e| e.to_string())?
+    };
     let dialog_app = app.clone();
     let picked = tauri::async_runtime::spawn_blocking(move || {
-        dialog_app
+        let mut dialog = dialog_app
             .dialog()
             .file()
             .set_title("Guardar exportacion del expediente")
             .set_file_name(&file_name)
-            .add_filter(filter_name, &[extension])
-            .blocking_save_file()
+            .add_filter(filter_name, &[extension]);
+        if let Some(dir) = start_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        dialog.blocking_save_file()
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -1657,7 +1666,7 @@ async fn save_export(
     suggested_name: String,
     content_base64: String,
 ) -> Result<Option<SavedExport>, String> {
-    let Some(path) = pick_export_path(&app, &suggested_name, "PDF", "pdf").await? else {
+    let Some(path) = pick_export_path(&app, &state, &suggested_name, "PDF", "pdf").await? else {
         return Ok(None);
     };
     let guard = state.0.lock().unwrap();
@@ -1691,7 +1700,8 @@ async fn save_fhir_export(
         fhir::export_record(conn, &patient_id, encounter_id.as_deref(), &narratives)
             .map_err(|e| e.to_string())?
     };
-    let Some(path) = pick_export_path(&app, &export.file_stem, "FHIR R4 (JSON)", "json").await?
+    let Some(path) =
+        pick_export_path(&app, &state, &export.file_stem, "FHIR R4 (JSON)", "json").await?
     else {
         return Ok(None);
     };
@@ -1723,7 +1733,7 @@ async fn save_directory_csv(
         let conn = guard.as_ref().ok_or("la base esta bloqueada")?;
         directory_csv::directory_csv(conn).map_err(|e| e.to_string())?
     };
-    let Some(path) = pick_export_path(&app, &export.file_stem, "CSV", "csv").await? else {
+    let Some(path) = pick_export_path(&app, &state, &export.file_stem, "CSV", "csv").await? else {
         return Ok(None);
     };
     let guard = state.0.lock().unwrap();
