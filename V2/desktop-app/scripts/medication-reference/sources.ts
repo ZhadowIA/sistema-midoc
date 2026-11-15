@@ -397,6 +397,17 @@ export const ADDITIONAL_INGREDIENTS: MedicationRow[] = [
   { name: "amoxicillin", ingredient: "amoxicillin", displayName: "Amoxicilina", drugClass: "Penicilina" },
   { name: "amoxicilina", ingredient: "amoxicillin", displayName: "Amoxicilina", drugClass: "Penicilina" },
   { name: "ampicilina", ingredient: "ampicillin", displayName: "Ampicilina", drugClass: "Penicilina" },
+  // Resto de la familia: sin ellas la alergia a penicilina no alertaba al
+  // recetar penicilina G, dicloxacilina ni piperacilina (2026-11-15).
+  { name: "ampicillin", ingredient: "ampicillin", displayName: "Ampicilina", drugClass: "Penicilina" },
+  { name: "penicillin", ingredient: "benzylpenicillin", displayName: "Penicilina", drugClass: "Penicilina" },
+  { name: "penicilina", ingredient: "benzylpenicillin", displayName: "Penicilina", drugClass: "Penicilina" },
+  { name: "benzylpenicillin", ingredient: "benzylpenicillin", displayName: "Penicilina", drugClass: "Penicilina" },
+  { name: "bencilpenicilina", ingredient: "benzylpenicillin", displayName: "Penicilina", drugClass: "Penicilina" },
+  { name: "dicloxacillin", ingredient: "dicloxacillin", displayName: "Dicloxacilina", drugClass: "Penicilina" },
+  { name: "dicloxacilina", ingredient: "dicloxacillin", displayName: "Dicloxacilina", drugClass: "Penicilina" },
+  { name: "piperacillin", ingredient: "piperacillin", displayName: "Piperacilina", drugClass: "Penicilina" },
+  { name: "piperacilina", ingredient: "piperacillin", displayName: "Piperacilina", drugClass: "Penicilina" },
   { name: "azithromycin", ingredient: "azithromycin", displayName: "Azitromicina", drugClass: "Macrolido" },
   { name: "azitromicina", ingredient: "azithromycin", displayName: "Azitromicina", drugClass: "Macrolido" },
   { name: "loratadine", ingredient: "loratadine", displayName: "Loratadina", drugClass: "Antihistaminico" },
@@ -472,6 +483,10 @@ export const MEXICAN_BRANDS: BrandAlias[] = [
   { brand: "losec", ingredient: "omeprazole" },
   { brand: "glucophage", ingredient: "metformin" },
   { brand: "amoxil", ingredient: "amoxicillin" },
+  { brand: "augmentin", ingredient: "amoxicillin" }, // amoxicilina + clavulanato
+  { brand: "clavulin", ingredient: "amoxicillin" }, // amoxicilina + clavulanato
+  { brand: "pentrexyl", ingredient: "ampicillin" },
+  { brand: "benzetacil", ingredient: "benzylpenicillin" }, // penicilina G benzatinica
   // --- Marcas del apendice ONChigh completado (verificadas 2026-07-08 contra
   // Vademecum Mexico / PLM / registros COFEPRIS; ver PR). Solo ingredientes con
   // regla de interaccion. Los triptanes/tricicilicos sin marca MX confirmada

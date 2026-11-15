@@ -345,26 +345,35 @@ pub fn check_prescription(
     // 3. Alergias cruzadas contra el expediente.
     let tokens = allergy_tokens(allergies.unwrap_or(""));
     let mut allergy_alerts: Vec<AllergyAlert> = Vec::new();
-    for drug in &recognized {
-        let display_lc = drug
-            .display_name
-            .as_deref()
-            .unwrap_or_default()
-            .to_lowercase();
-        let ingredient_lc = drug
-            .ingredient
-            .as_deref()
-            .unwrap_or_default()
-            .to_lowercase();
+    // Todos los farmacos, no solo los de la base de interacciones: la alergia
+    // se revisa aunque el farmaco no tenga interacciones registradas.
+    for drug in &normalized {
+        let display_lc = normalize_name(drug.display_name.as_deref().unwrap_or(&drug.input));
+        let ingredient_lc = normalize_name(drug.ingredient.as_deref().unwrap_or_default());
+        let catalog_id = crate::ingredients::catalog()
+            .resolve(&drug.input)
+            .map(|i| i.id.as_str())
+            .unwrap_or_default();
         for token in &tokens {
-            if let Some(via_class) = allergy_match(
+            let matched = allergy_match(
                 &display_lc,
                 &ingredient_lc,
                 drug.drug_class.as_deref(),
                 token,
-            ) {
+            )
+            .or_else(|| {
+                crate::allergy_groups::matching_group(
+                    token,
+                    &[&display_lc, &ingredient_lc, catalog_id],
+                )
+                .map(|group| Some(group.to_string()))
+            });
+            if let Some(via_class) = matched {
                 allergy_alerts.push(AllergyAlert {
-                    drug: drug.display_name.clone().unwrap_or_default(),
+                    drug: drug
+                        .display_name
+                        .clone()
+                        .unwrap_or_else(|| drug.input.clone()),
                     matched_allergy: token.clone(),
                     via_class,
                     source: "Alergias registradas en el expediente".into(),
@@ -1050,7 +1059,13 @@ pub const MIN_INTERACTIONS: usize = 5;
 /// Base ONChigh de dominio publico (paso 25, rebanada 3). Reemplaza la semilla
 /// DDInter (CC BY-NC) que se retiro para eliminar el riesgo legal en un SaaS
 /// de pago. Generada de forma reproducible por `scripts/medication-reference/`.
-pub const BUNDLED_REFERENCE_VERSION: &str = "onchigh-mx-2026-07-08";
+pub const BUNDLED_REFERENCE_VERSION: &str = "onchigh-mx-2026-11-15";
+
+/// Catalogos que trajeron versiones anteriores de la app. Si la base sigue en
+/// uno de ellos, al actualizar la app se instala el empaquetado nuevo (p. ej.
+/// 2026-11-15: la familia completa de penicilinas para la alerta de alergia).
+/// Un catalogo que el medico actualizo por su cuenta no esta aqui y se respeta.
+const PREVIOUS_BUNDLED_REFERENCE_VERSIONS: &[&str] = &["onchigh-mx-2026-07-08"];
 
 const BUNDLED_MEDICATIONS_CSV: &str = include_str!("reference_data/medications.csv");
 const BUNDLED_INTERACTIONS_CSV: &str = include_str!("reference_data/interactions.csv");
@@ -1079,13 +1094,16 @@ pub fn install_bundled_reference(conn: &Connection) -> Result<ImportSummary, Med
 /// catalogo real empaquetado aun no se ha instalado.
 pub const SEED_REFERENCE_VERSION: &str = "seed-v1";
 
-/// Instala el catalogo real empaquetado en el primer arranque: cuando la base
-/// sigue en la version sembrada (`seed-v1`), la reemplaza por el catalogo
-/// curado de MiDoc. Idempotente y respetuoso: si el medico ya instalo o
+/// Instala el catalogo real empaquetado en el primer arranque (la base sigue en
+/// la version sembrada, `seed-v1`) y al actualizar la app (la base sigue en el
+/// catalogo empaquetado de una version anterior). Idempotente y respetuoso: si el medico ya instalo o
 /// actualizo el catalogo (otra version), no lo sobreescribe. Devuelve `true`
 /// si instalo el catalogo en esta llamada.
 pub fn ensure_bundled_reference_installed(conn: &Connection) -> Result<bool, MedicationError> {
-    if reference_version(conn)? == SEED_REFERENCE_VERSION {
+    let installed = reference_version(conn)?;
+    if installed == SEED_REFERENCE_VERSION
+        || PREVIOUS_BUNDLED_REFERENCE_VERSIONS.contains(&installed.as_str())
+    {
         install_bundled_reference(conn)?;
         Ok(true)
     } else {
@@ -1238,11 +1256,15 @@ pub fn extract_medications(conn: &Connection, text: &str) -> Result<Vec<String>,
     }
     // Ingredientes del catalogo con datos de interacciones que la base no
     // nombra con esa escritura.
+    // Los que no tienen datos de interacciones tambien cuentan: sin ellos la
+    // alergia a metamizol o a cefalosporinas nunca se revisaba (2026-11-15).
     for found in crate::ingredients::catalog().find_in_text(&haystack) {
-        if let Some((_, display_name, _)) = reference_by_ingredient_name(conn, found.name)? {
-            if seen.insert(display_name.clone()) {
-                hits.push((found.position, display_name));
-            }
+        let display_name = match reference_by_ingredient_name(conn, found.name)? {
+            Some((_, display_name, _)) => display_name,
+            None => found.ingredient.display.clone(),
+        };
+        if seen.insert(display_name.clone()) {
+            hits.push((found.position, display_name));
         }
     }
     // Marcas (nucleo curado y las del medico): cuentan sus ingredientes.
@@ -1250,7 +1272,13 @@ pub fn extract_medications(conn: &Connection, text: &str) -> Result<Vec<String>,
         .map_err(|e| MedicationError::Invalid(e.to_string()))?;
     for brand in brands {
         for ingredient in &brand.ingredient_ids {
-            if let Some((_, display_name, _)) = reference_by_ingredient_name(conn, ingredient)? {
+            let display_name = match reference_by_ingredient_name(conn, ingredient)? {
+                Some((_, display_name, _)) => Some(display_name),
+                None => crate::ingredients::catalog()
+                    .resolve(ingredient)
+                    .map(|i| i.display.clone()),
+            };
+            if let Some(display_name) = display_name {
                 if seen.insert(display_name.clone()) {
                     hits.push((brand.position, display_name));
                 }
@@ -1895,6 +1923,150 @@ mod tests {
             reference_status(&conn).unwrap().version,
             BUNDLED_REFERENCE_VERSION
         );
+    }
+
+    #[test]
+    fn app_update_replaces_the_previously_bundled_catalog_but_not_a_downloaded_one() {
+        let conn = test_conn("bundled-upgrade");
+        conn.execute(
+            "INSERT OR REPLACE INTO app_meta (key, value) VALUES (?1, 'onchigh-mx-2026-07-08')",
+            params![REFERENCE_VERSION_KEY],
+        )
+        .unwrap();
+        assert!(ensure_bundled_reference_installed(&conn).unwrap());
+        assert_eq!(reference_version(&conn).unwrap(), BUNDLED_REFERENCE_VERSION);
+
+        conn.execute(
+            "UPDATE app_meta SET value = 'descargada-2026-12' WHERE key = ?1",
+            params![REFERENCE_VERSION_KEY],
+        )
+        .unwrap();
+        assert!(!ensure_bundled_reference_installed(&conn).unwrap());
+        assert_eq!(reference_version(&conn).unwrap(), "descargada-2026-12");
+    }
+
+    #[test]
+    fn common_allergies_alert_on_their_family_even_without_interaction_data() {
+        let conn = test_conn("common-allergies");
+        install_bundled_reference(&conn).unwrap();
+        let alerts = |allergy: &str, prescription: &str| {
+            let names = extract_medications(&conn, prescription).unwrap();
+            assert!(!names.is_empty(), "no reconocio: {prescription}");
+            !check_prescription(&conn, "enc", &names, Some(allergy))
+                .unwrap()
+                .allergy_alerts
+                .is_empty()
+        };
+        let must_alert: &[(&str, &[&str])] = &[
+            (
+                "Sulfas",
+                &[
+                    "Trimetoprima con sulfametoxazol 160 mg",
+                    "Bactrim 160 mg",
+                    "Sulfadiazina 500 mg",
+                    "Sulfasalazina 500 mg",
+                ],
+            ),
+            ("Aspirina", &["Acido acetilsalicilico 100 mg"]),
+            (
+                "AINE",
+                &[
+                    "Celecoxib 200 mg",
+                    "Indometacina 25 mg",
+                    "Piroxicam 20 mg",
+                    "Ketoprofeno 100 mg",
+                    "Aspirina 500 mg",
+                ],
+            ),
+            (
+                "Metamizol",
+                &[
+                    "Metamizol sodico 1 g",
+                    "Metamizol 500 mg",
+                    "Dipirona 500 mg",
+                ],
+            ),
+            ("Dipirona", &["Metamizol sodico 1 g"]),
+            (
+                "Cefalosporinas",
+                &[
+                    "Cefalexina 500 mg",
+                    "Ceftriaxona 1 g",
+                    "Cefuroxima 500 mg",
+                    "Cefotaxima 1 g",
+                ],
+            ),
+            (
+                "Quinolonas",
+                &["Ciprofloxacino 500 mg", "Levofloxacino 500 mg"],
+            ),
+            (
+                "Macrolidos",
+                &["Claritromicina 500 mg", "Eritromicina 500 mg"],
+            ),
+            ("Tetraciclinas", &["Doxiciclina 100 mg"]),
+            ("Opioides", &["Tramadol 50 mg", "Buprenorfina 0.2 mg"]),
+            ("Clindamicina", &["Clindamicina 300 mg"]),
+            ("Metronidazol", &["Metronidazol 500 mg"]),
+            ("Carbamazepina", &["Carbamazepina 200 mg"]),
+            ("Lidocaina", &["Lidocaina 2 %"]),
+            ("Metamizol", &["Neo-melubrina 500 mg"]),
+            ("Aspirina", &["Ecotrin 100 mg"]),
+            ("Carbamazepina", &["Tegretol 200 mg"]),
+            ("Fenitoina", &["Epamin 100 mg"]),
+            ("Metronidazol", &["Flagyl 500 mg"]),
+        ];
+        for (allergy, prescriptions) in must_alert {
+            for prescription in *prescriptions {
+                assert!(
+                    alerts(allergy, prescription),
+                    "sin alerta: {allergy} / {prescription}"
+                );
+            }
+        }
+        // Reactividad cruzada entre familias: decision clinica pendiente, no
+        // se asume. Y una alergia ajena a farmacos no alerta.
+        for (allergy, prescription) in [
+            ("Penicilina", "Cefalexina 500 mg"),
+            ("Aspirina", "Ibuprofeno 400 mg"),
+            ("AINE", "Metamizol sodico 1 g"),
+            ("Codeina", "Morfina 10 mg"),
+            ("Latex", "Ibuprofeno 400 mg"),
+        ] {
+            assert!(
+                !alerts(allergy, prescription),
+                "alerta de mas: {allergy} / {prescription}"
+            );
+        }
+    }
+
+    #[test]
+    fn penicillin_allergy_covers_the_whole_family_and_its_brands() {
+        let conn = test_conn("penicillin-family");
+        install_bundled_reference(&conn).unwrap();
+        for prescription in [
+            "Amoxicilina 500 mg cada 8 h",
+            "Ampicilina 500 mg cada 6 h",
+            "Dicloxacilina 500 mg cada 6 h",
+            "Penicilina G benzatinica 1200000 UI",
+            "Bencilpenicilina procainica 800000 UI",
+            "Piperacilina 4 g cada 8 h",
+            "Benzetacil 1200000 UI",
+            "Augmentin 875 mg cada 12 h",
+            "Clavulin 875 mg cada 12 h",
+            "Pentrexyl 500 mg cada 6 h",
+        ] {
+            let names = extract_medications(&conn, prescription).unwrap();
+            assert!(!names.is_empty(), "no reconocio: {prescription}");
+            let report = check_prescription(&conn, "enc", &names, Some("Penicilina")).unwrap();
+            assert!(
+                !report.allergy_alerts.is_empty(),
+                "sin alerta de alergia: {prescription}"
+            );
+        }
+        // Penicilamina no es una penicilina: no debe alertar.
+        let names = extract_medications(&conn, "Penicilamina 250 mg").unwrap();
+        assert!(!names.iter().any(|n| n == "Penicilina"), "{names:?}");
     }
 
     #[test]

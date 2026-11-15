@@ -1,4 +1,5 @@
 mod ai;
+mod allergy_groups;
 mod arco;
 mod audio;
 mod brands;

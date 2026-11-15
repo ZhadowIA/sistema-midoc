@@ -124,6 +124,15 @@ metformina,metformin,Metformina,Biguanida
 amoxicillin,amoxicillin,Amoxicilina,Penicilina
 amoxicilina,amoxicillin,Amoxicilina,Penicilina
 ampicilina,ampicillin,Ampicilina,Penicilina
+ampicillin,ampicillin,Ampicilina,Penicilina
+penicillin,benzylpenicillin,Penicilina,Penicilina
+penicilina,benzylpenicillin,Penicilina,Penicilina
+benzylpenicillin,benzylpenicillin,Penicilina,Penicilina
+bencilpenicilina,benzylpenicillin,Penicilina,Penicilina
+dicloxacillin,dicloxacillin,Dicloxacilina,Penicilina
+dicloxacilina,dicloxacillin,Dicloxacilina,Penicilina
+piperacillin,piperacillin,Piperacilina,Penicilina
+piperacilina,piperacillin,Piperacilina,Penicilina
 azithromycin,azithromycin,Azitromicina,Macrolido
 azitromicina,azithromycin,Azitromicina,Macrolido
 loratadine,loratadine,Loratadina,Antihistaminico
@@ -173,6 +182,10 @@ tylenol,acetaminophen,Paracetamol,Analgesico
 losec,omeprazole,Omeprazol,IBP
 glucophage,metformin,Metformina,Biguanida
 amoxil,amoxicillin,Amoxicilina,Penicilina
+augmentin,amoxicillin,Amoxicilina,Penicilina
+clavulin,amoxicillin,Amoxicilina,Penicilina
+pentrexyl,ampicillin,Ampicilina,Penicilina
+benzetacil,benzylpenicillin,Penicilina,Penicilina
 cafergot,ergotamine,Ergotamina,Ergotaminico
 sirdalud,tizanidine,Tizanidina,Relajante muscular
 ciproxina,ciprofloxacin,Ciprofloxacino,Fluoroquinolona

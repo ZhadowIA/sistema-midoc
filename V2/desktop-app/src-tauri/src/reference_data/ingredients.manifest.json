@@ -1,16 +1,16 @@
 {
-  "version": "ingredientes-2026-10-22",
-  "generatedAt": "2026-10-22T06:55:48.831Z",
+  "version": "ingredientes-2026-11-15",
+  "generatedAt": "2026-11-15T19:02:44.805Z",
   "sources": {
     "cnis": "cnis-2025-04-26",
-    "interactions": "onchigh-mx-2026-07-08",
-    "reviewedSynonyms": 0
+    "interactions": "onchigh-mx-2026-11-15",
+    "reviewedSynonyms": 3
   },
-  "ingredients": 1025,
+  "ingredients": 1027,
   "cnis": 1004,
-  "withInteractionData": 89,
-  "cnisLinkedToInteractions": 68,
-  "pendingReview": 75,
+  "withInteractionData": 92,
+  "cnisLinkedToInteractions": 69,
+  "pendingReview": 81,
   "conflicts": [],
-  "sha256": "6ea247dd15013ca800394e4c16614a67c9dc40abbf7503bbbe48d3bc8ece6d3f"
+  "sha256": "4fd790775a83548f7022a4f3fb07a582e192c3ccf1706b539ab7e35ebf0ee6b4"
 }

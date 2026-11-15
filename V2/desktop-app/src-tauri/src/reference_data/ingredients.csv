@@ -289,7 +289,7 @@ dextropropoxifeno,Dextropropoxifeno,dextropropoxifeno,,1
 diazepam,Diazepam,diazepam,diazepam,1
 diazoxido,Diazóxido,diazoxido,,1
 diclofenaco,Diclofenaco,diclofenac|diclofenaco,diclofenac,1
-dicloxacilina,Dicloxacilina,dicloxacilina,,1
+dicloxacilina,Dicloxacilina,dicloxacilina|dicloxacillin,dicloxacillin,1
 didanosina,Didanosina,didanosina,,1
 dienogest,Dienogest,dienogest,,1
 dieta elemental,Dieta elemental,dieta elemental,,1
@@ -621,7 +621,7 @@ mesterolona,Mesterolona,mesterolona,,1
 mestranol,Mestranol,mestranol,,1
 metabolismo de la leucina,Metabolismo de la leucina,metabolismo de la leucina,,1
 metadona,Metadona,metadona,,1
-metamizol sodico,Metamizol sódico,metamizol sodico,,1
+metamizol sodico,Metamizol sódico,dipirona|metamizol|metamizol sodico,,1
 metenamina,Metenamina,metenamina,,1
 metenolona,Metenolona,metenolona,,1
 metformina,Metformina,metformin|metformina,metformin,1
@@ -735,6 +735,7 @@ peginterferon alfa,Peginterferón alfa,peginterferon alfa,,1
 pembrolizumab,Pembrolizumab,pembrolizumab,,1
 pemetrexed,Pemetrexed,pemetrexed,,1
 penicilamina,Penicilamina,penicilamina,,1
+penicilina,Penicilina,benzylpenicillin|penicilina,benzylpenicillin,0
 pentamidina,Pentamidina,pentamidina,,1
 pentoxifilina,Pentoxifilina,pentoxifilina,,1
 perfenazina,Perfenazina,perfenazina,,1
@@ -745,6 +746,7 @@ pilocarpina,Pilocarpina,pilocarpina,,1
 pimecrolimus,Pimecrolimus,pimecrolimus,,1
 pinaverio,Pinaverio,pinaverio,,1
 pioglitazona,Pioglitazona,pioglitazona,,1
+piperacilina,Piperacilina,piperacilina|piperacillin,piperacillin,0
 pirantel,Pirantel,pirantel,,1
 pirazinamida,Pirazinamida,pirazinamida,,1
 pirfenidona,Pirfenidona,pirfenidona,,1
@@ -875,7 +877,7 @@ suero antirrabico equino,Suero antirrábico equino,suero antirrabico equino,,1
 suero antiviperino,Suero antiviperino,suero antiviperino,,1
 sugammadex,Sugammadex,sugammadex,,1
 sulfacetamida,Sulfacetamida,sulfacetamida,,1
-sulfadiazina de plata,Sulfadiazina de plata,sulfadiazina de plata,,1
+sulfadiazina de plata,Sulfadiazina de plata,sulfadiazina|sulfadiazina de plata,,1
 sulfametoxazol,Sulfametoxazol,sulfamethoxazole|sulfametoxazol,sulfamethoxazole,0
 sulfasalazina,Sulfasalazina,sulfasalazina,,1
 sulfato ferroso,Sulfato ferroso,sulfato ferroso,,1
