@@ -256,6 +256,7 @@ const mockState = {
   encounter: {
     id: "enc-1",
     appointment_id: "appt-1" as string | null,
+    opened_at: new Date().toISOString(),
     status: "OPEN" as "OPEN" | "SIGNED",
     signed_at: null as string | null,
     signed_hash: null as string | null,
@@ -294,7 +295,7 @@ function mockDetail() {
       id: e.id,
       appointment_id: e.appointment_id,
       status: e.status,
-      opened_at: new Date().toISOString(),
+      opened_at: e.opened_at,
       signed_at: e.signed_at,
       signed_hash: e.signed_hash
     },
@@ -321,28 +322,93 @@ function mockDetail() {
     note_version_count: e.notes.length,
     prescription: e.prescription,
     history: [
-      {
-        encounter_id: "enc-0",
-        signed_at: new Date(Date.now() - 40 * 86400_000).toISOString(),
-        status: "SIGNED",
-        diagnosis: "Gastritis aguda",
-        coded_diagnoses: [{ code: "K297", name: "GASTRITIS, NO ESPECIFICADA", principal: true }]
-      }
+      ...[...mockEncounters.values()]
+        .filter((item) => item.patient.id === e.patient.id && item.id !== e.id && item.status === "SIGNED")
+        .map((item) => {
+          const last = item.notes[item.notes.length - 1];
+          return {
+            encounter_id: item.id,
+            signed_at: item.signed_at,
+            status: item.status,
+            diagnosis: last?.diagnosis ?? null,
+            coded_diagnoses: (last as { coded_diagnoses?: unknown[] } | undefined)?.coded_diagnoses ?? []
+          };
+        })
+        .sort((a, b) => ((a.signed_at ?? "") < (b.signed_at ?? "") ? 1 : -1)),
+      ...(e.patient.id === "pat-1"
+        ? [
+            {
+              encounter_id: "enc-0",
+              signed_at: new Date(Date.now() - 40 * 86400_000).toISOString(),
+              status: "SIGNED",
+              diagnosis: "Gastritis aguda",
+              coded_diagnoses: [{ code: "K297", name: "GASTRITIS, NO ESPECIFICADA", principal: true }]
+            }
+          ]
+        : [])
     ]
   };
+}
+
+type MockEncounter = typeof mockState.encounter;
+
+// Consultas de demostracion por id. `mockState.encounter` apunta a la activa:
+// la que abrio el ultimo `open_patient_encounter`/`attend_appointment` o la que
+// nombra el `encounterId` de la llamada en curso.
+const mockEncounters = new Map<string, MockEncounter>([[mockState.encounter.id, mockState.encounter]]);
+let mockEncounterSeq = 0;
+
+function newMockEncounter(
+  id: string,
+  appointmentId: string | null,
+  patient: MockEncounter["patient"]
+): MockEncounter {
+  const created: MockEncounter = {
+    id,
+    appointment_id: appointmentId,
+    opened_at: new Date().toISOString(),
+    status: "OPEN",
+    signed_at: null,
+    signed_hash: null,
+    notes: [],
+    prescription: null,
+    patient: { ...patient }
+  };
+  mockEncounters.set(id, created);
+  mockState.encounter = created;
+  return created;
+}
+
+function sameLocalDay(iso: string, now: Date): boolean {
+  const d = new Date(iso);
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
+// Igual que el comando real: reutiliza la consulta abierta del paciente si se
+// abrio hoy; una abierta de otro dia o una firmada nunca se reutiliza.
+function openMockPatientEncounter(patientId: string): MockEncounter {
+  const now = new Date();
+  const reusable = [...mockEncounters.values()].find(
+    (item) => item.patient.id === patientId && item.status === "OPEN" && sameLocalDay(item.opened_at, now)
+  );
+  if (reusable) {
+    mockState.encounter = reusable;
+    return reusable;
+  }
+  const patient = mockState.patients.find((item) => item.id === patientId);
+  if (!patient) throw "paciente no encontrado";
+  mockEncounterSeq += 1;
+  return newMockEncounter(`enc-${patientId}-${mockEncounterSeq}`, null, patient);
 }
 
 function activateMockEncounter(appointmentId: string, patientId: string) {
   const patient = mockState.patients.find((item) => item.id === patientId);
   if (!patient) throw "paciente no encontrado";
-  mockState.encounter.id = `enc-${appointmentId}`;
-  mockState.encounter.appointment_id = appointmentId;
-  mockState.encounter.status = "OPEN";
-  mockState.encounter.signed_at = null;
-  mockState.encounter.signed_hash = null;
-  mockState.encounter.notes = [];
-  mockState.encounter.prescription = null;
-  mockState.encounter.patient = { ...patient };
+  return newMockEncounter(`enc-${appointmentId}`, appointmentId, patient);
 }
 
 interface MockVisit {
@@ -531,6 +597,9 @@ function matchPatientsMock(fullName: string | null | undefined, phone: string | 
 
 async function mockCall<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   await new Promise((resolve) => setTimeout(resolve, 120));
+  const requested =
+    typeof args?.encounterId === "string" ? mockEncounters.get(args.encounterId) : undefined;
+  if (requested) mockState.encounter = requested;
   const e = mockState.encounter;
 
   switch (command) {
@@ -1039,7 +1108,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       if (!appt) throw "cita no encontrada";
       if (args?.linkPatientId) {
         activateMockEncounter(appointmentId, String(args.linkPatientId));
-        return { kind: "encounter", encounter_id: e.id } as T;
+        return { kind: "encounter", encounter_id: mockState.encounter.id } as T;
       }
       if (args?.forceNew) {
         const created = {
@@ -1054,7 +1123,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         };
         mockState.patients.push(created);
         activateMockEncounter(appointmentId, created.id);
-        return { kind: "encounter", encounter_id: e.id } as T;
+        return { kind: "encounter", encounter_id: mockState.encounter.id } as T;
       }
       const candidates = matchPatientsMock(appt?.patient_name, appt?.patient_phone);
       if (candidates.length === 0) {
@@ -1070,7 +1139,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         };
         mockState.patients.push(created);
         activateMockEncounter(appointmentId, created.id);
-        return { kind: "encounter", encounter_id: e.id } as T;
+        return { kind: "encounter", encounter_id: mockState.encounter.id } as T;
       }
       return {
         kind: "needs_resolution",
@@ -1226,7 +1295,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return created as T;
     }
     case "open_patient_encounter":
-      return { id: e.id } as T;
+      return { id: openMockPatientEncounter(String(args?.patientId ?? "")).id } as T;
     case "list_timeline_events": {
       const pid = String(args?.patientId);
       return mockState.timeline
