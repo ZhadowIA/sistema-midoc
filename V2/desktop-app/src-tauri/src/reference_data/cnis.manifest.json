@@ -1,0 +1,16 @@
+{
+  "version": "cnis-2025-04-26",
+  "generatedAt": "2026-10-20T04:39:41.968Z",
+  "source": {
+    "name": "Compendio Nacional de Insumos para la Salud, Consejo de Salubridad General",
+    "edition": "Edicion publicada en el DOF el 2025-04-26; no incluye las actualizaciones posteriores",
+    "url": "https://www.csg.gob.mx/Comp26042025.pdf",
+    "pdfSha256": "e210fb38e73c721f5e2789220280bda95b0cea5f06b8515b7668ac892a8d5100",
+    "license": "Documento oficial publicado en el Diario Oficial de la Federacion; sin derechos de autor (Ley Federal del Derecho de Autor, art. 14, fr. VIII)",
+    "changes": "Solo medicamentos (grupo 010.000). Por clave: producto, generico, forma, concentracion del principio activo y numero de envases del producto; lo que no se pudo leer sin ambiguedad queda marcado como incompleto y no se codifica."
+  },
+  "entries": 2303,
+  "complete": 999,
+  "codable": 578,
+  "sha256": "f12f3a255982f2458194c1a0aaff8bdaa73bf62489251e65ce116b3c1055f073"
+}

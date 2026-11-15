@@ -21,6 +21,8 @@
 //! - Receta (texto libre) -> un `MedicationRequest` por medicamento: la linea
 //!   que nombra un medicamento de la referencia local abre uno nuevo y las
 //!   siguientes son sus indicaciones. El texto integro va tambien en la nota.
+//!   Si la linea coincide exacta y unicamente con un producto del CNIS, el
+//!   medicamento lleva ademas su clave (ver `cnis`); el texto sigue mandando.
 //! - Documentos -> `DocumentReference` con el archivo dentro (base64).
 //!
 //! Los ids son UUID v5 derivados de los ids locales: exportar dos veces el mismo
@@ -41,6 +43,7 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use crate::clinical::CodedDiagnosis;
+use crate::cnis;
 use crate::export::{
     self, ExportDoctor, ExportDocument, ExportEncounter, ExportError, RecordExport,
 };
@@ -690,12 +693,19 @@ fn encounter_resources(
             Some(line) => (line.clone(), Some(json!([{ "text": full_text }]))),
             None => (full_text, None),
         };
+        let medication_concept = match group.medication.as_deref().and_then(cnis::code_medication) {
+            Some(coding) => json!({
+                "coding": [{ "system": cnis::SYSTEM, "version": coding.version, "code": coding.clave }],
+                "text": medication
+            }),
+            None => json!({ "text": medication }),
+        };
         resources.push(
             Obj::resource("MedicationRequest", &id)
                 // MiDoc no sabe si el paciente surtio o termino el tratamiento.
                 .set("status", if signed { "unknown" } else { "draft" })
                 .set("intent", "order")
-                .set("medicationCodeableConcept", json!({ "text": medication }))
+                .set("medicationCodeableConcept", medication_concept)
                 .set("subject", patient_ref.clone())
                 .set("encounter", encounter_ref.clone())
                 .set("authoredOn", note_date.clone())
@@ -1610,6 +1620,16 @@ mod tests {
         assert_eq!(
             requests[0]["medicationCodeableConcept"]["text"],
             "Paracetamol 500 mg tabletas"
+        );
+        let cnis_coding = &requests[0]["medicationCodeableConcept"]["coding"][0];
+        assert_eq!(cnis_coding["system"], cnis::SYSTEM);
+        assert_eq!(cnis_coding["code"], "010.000.0104.00");
+        assert_eq!(cnis_coding["version"], "2025-04-26");
+        assert!(
+            requests[1]["medicationCodeableConcept"]
+                .get("coding")
+                .is_none(),
+            "el ibuprofeno de 400 mg tiene varios envases: sin clave"
         );
         assert_eq!(
             requests[0]["dosageInstruction"][0]["text"],

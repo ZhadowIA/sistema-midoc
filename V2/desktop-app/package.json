@@ -12,6 +12,8 @@
     "medication:build": "node scripts/medication-reference/build.ts",
     "test:cie10": "node --test scripts/cie10/*.test.ts",
     "cie10:build": "node scripts/cie10/build.ts",
+    "test:cnis": "node --test scripts/cnis/*.test.ts",
+    "cnis:build": "node scripts/cnis/build.ts",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "node ./scripts/tauri-dev.mjs --features whisper-local",
