@@ -31,6 +31,8 @@ describe("frozen scope flag", () => {
       "/medico/configuracion",
       "/api/public/doctors",
       "/api/public/appointments/tok/precheckin",
+      // La excepcion de la preconsulta no abre lo demas de la API publica.
+      "/api/public/preconsultas-viejas",
       "/api/patient/portal",
       "/api/admin/appointments",
       "/api/admin/availability/blocks",
@@ -65,6 +67,11 @@ describe("frozen scope flag", () => {
       "/api/sync/ai/transcriptions",
       "/api/internal/maintenance/cleanup",
       "/api/health",
+      // Preconsulta configurable (paso 32): descongelada en esta forma.
+      "/preconsulta/abc",
+      "/api/sync/preconsulta",
+      "/api/sync/preconsulta/link",
+      "/api/public/preconsulta/abc",
       // Un prefijo no congela rutas que solo empiezan igual.
       "/servicios",
       "/pacientes-info"

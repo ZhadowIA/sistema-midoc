@@ -14,7 +14,14 @@ const CLASES = ["CLINICO", "CONTACTO", "OPERATIVO"] as const;
  * la app confirma. Agregar otro es una decision de residencia, no de codigo
  * (el expediente en la nube ya se retiro una vez, PR #43).
  */
-const BUZON_EN_TRANSITO = ["AuthorizedSummary", "MailboxDocument", "PrecheckinSubmission", "SyncEvent"];
+// PreconsultaSubmission (paso 32): decidido en `V2/16_preconsulta_configurable.md` seccion 8.
+const BUZON_EN_TRANSITO = [
+  "AuthorizedSummary",
+  "MailboxDocument",
+  "PrecheckinSubmission",
+  "PreconsultaSubmission",
+  "SyncEvent"
+];
 
 function schema(): string {
   return readFileSync(resolve(process.cwd(), "prisma", "schema.prisma"), "utf8");

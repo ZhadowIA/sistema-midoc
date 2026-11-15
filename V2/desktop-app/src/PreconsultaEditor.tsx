@@ -422,8 +422,8 @@ function GeneralLinkPanel({
         </p>
       </div>
       <p className="meta">
-        El formulario para tus pacientes llega en la siguiente entrega del paso 32; mientras tanto el enlace todavía no
-        abre nada, así que no lo compartas aún.
+        Ya puedes abrir el enlace para probar el formulario. Las respuestas todavía no bajan a esta app: la bandeja
+        llega en la siguiente entrega del paso 32, así que aún no lo compartas con tus pacientes.
       </p>
       {!state.linked ? (
         <p className="meta">Vincula tu cuenta del portal para crear tu enlace.</p>

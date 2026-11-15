@@ -51,7 +51,18 @@ export const FROZEN_PATH_PREFIXES = [
   "/api/sync/summaries"
 ] as const;
 
+// Excepciones activas dentro de un prefijo congelado. La preconsulta
+// configurable (paso 32) se descongelo en esta forma el 2026-10-18: su
+// formulario publico deposita sobres cifrados aunque el resto de la API publica
+// siga apagada.
+export const ACTIVE_PATH_PREFIXES = ["/api/public/preconsulta"] as const;
+
+function matches(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
 export function isFrozenPath(pathname: string): boolean {
+  if (ACTIVE_PATH_PREFIXES.some((prefix) => matches(pathname, prefix))) return false;
   return FROZEN_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );

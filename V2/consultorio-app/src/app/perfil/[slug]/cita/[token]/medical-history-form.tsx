@@ -14,13 +14,22 @@ import {
   type BiologicalSex,
   type BlockDef,
   type FieldDef,
-  type GroupDef
+  type GroupDef,
+  type MedicalHistoryPayload
 } from "../../../../../lib/medical-history";
 
 type MedicalHistoryFormProps = {
-  token: string;
+  /** Cita a la que se envia (modo cita). */
+  token?: string;
   /** Llave publica del dispositivo del medico para sellar (sealed box). */
-  publicKey: string;
+  publicKey?: string;
+  /**
+   * Modo paso (preconsulta configurable, paso 32): en vez de cifrar y enviar,
+   * entrega las respuestas validadas a quien la usa, que las cifra junto con el
+   * resto del cuestionario.
+   */
+  onPayload?: (payload: MedicalHistoryPayload) => void;
+  submitLabel?: string;
   /**
    * Valores ya capturados al agendar (apellidos, telefono, fecha de nacimiento)
    * para prellenar la ficha de identificacion y no pedirlos dos veces. Las claves
@@ -45,6 +54,8 @@ const FAMILY_HISTORY_KEY = "familyHistory";
 export function MedicalHistoryForm({
   token,
   publicKey,
+  onPayload,
+  submitLabel,
   prefillIdentification,
   onSaved
 }: MedicalHistoryFormProps) {
@@ -149,6 +160,12 @@ export function MedicalHistoryForm({
 
     try {
       const payload = buildPayload();
+      if (onPayload) {
+        onPayload(payload);
+        onSaved();
+        return;
+      }
+      if (!token || !publicKey) throw new Error("No fue posible preparar el envio.");
       const body = new TextEncoder().encode(JSON.stringify(payload));
       const ciphertext = await sealEnvelope(
         publicKey,
@@ -317,11 +334,13 @@ export function MedicalHistoryForm({
 
   return (
     <form className="booking-form medical-history-form" onSubmit={handleSubmit}>
-      <p className="field-hint">
-        Te recomendamos mucho contestar esta historia clínica para agilizar tu consulta, pero
-        todo es opcional. Tus respuestas se cifran en este dispositivo antes de enviarse: solo tu
-        médico puede abrirlas; nuestros servidores nunca ven su contenido.
-      </p>
+      {onPayload ? null : (
+        <p className="field-hint">
+          Te recomendamos mucho contestar esta historia clínica para agilizar tu consulta, pero
+          todo es opcional. Tus respuestas se cifran en este dispositivo antes de enviarse: solo tu
+          médico puede abrirlas; nuestros servidores nunca ven su contenido.
+        </p>
+      )}
 
       <fieldset className="mh-group">
         <legend>Datos generales</legend>
@@ -369,7 +388,7 @@ export function MedicalHistoryForm({
       ) : null}
 
       <button className="action-button" type="submit" disabled={busy}>
-        {busy ? "Cifrando y enviando…" : "Enviar antecedentes de forma segura"}
+        {busy ? "Cifrando y enviando…" : submitLabel ?? "Enviar antecedentes de forma segura"}
       </button>
     </form>
   );
