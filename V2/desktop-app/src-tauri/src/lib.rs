@@ -40,6 +40,8 @@ mod whisper_provider;
 
 #[cfg(test)]
 mod consultation_e2e;
+#[cfg(all(test, feature = "whisper-local", feature = "diarization-local"))]
+mod diarization_e2e;
 #[cfg(test)]
 mod preconsulta_e2e;
 
