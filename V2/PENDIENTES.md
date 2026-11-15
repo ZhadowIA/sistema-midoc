@@ -26,7 +26,7 @@ Lista viva de lo que sale durante el trabajo y no se resuelve en el momento. Cad
 
 ## Trabajo abierto
 
-- [ ] **Paso 22, diarizacion** — falta compilar nativo con `--features diarization-local`, prueba e2e con audio real, fijar los `MIDOC_DIARIZE_*_SHA256` y rehospedar los `.onnx` con sus licencias (autorizado 2026-10-18: donde convenga). _(2026-06-18)_
+- [ ] **Paso 22, diarizacion** — falta compilar nativo con `--features diarization-local` y la prueba e2e con audio real. Los `.onnx` ya estan rehospedados con sus licencias (MIT y CC BY 4.0) en el release `modelos-diarizacion-v1` del repositorio, con URL, SHA-256 y tamano fijados en la app (2026-10-18, rama `v2/modelos-diarizacion`). _(2026-06-18; actualizado 2026-10-18)_
 
 ## Resueltos
 
