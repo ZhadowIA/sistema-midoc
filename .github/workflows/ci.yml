@@ -59,6 +59,9 @@ jobs:
       - name: CNIS tests
         run: npm run test:cnis --if-present
 
+      - name: Ingredient catalog tests
+        run: npm run test:ingredients --if-present
+
   desktop-rust:
     name: desktop-app Rust (formato, clippy y pruebas)
     runs-on: ubuntu-latest
