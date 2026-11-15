@@ -224,7 +224,7 @@ export function MedicationSafety({
 
             {report.unrecognized.length > 0 && (
               <p className="meta">
-                No reconocidos en la base local (no verificados): {report.unrecognized.join(", ")}.
+                Sin datos de interacciones en la base local (solo se revisaron alergias): {report.unrecognized.join(", ")}.
               </p>
             )}
 

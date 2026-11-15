@@ -345,26 +345,35 @@ pub fn check_prescription(
     // 3. Alergias cruzadas contra el expediente.
     let tokens = allergy_tokens(allergies.unwrap_or(""));
     let mut allergy_alerts: Vec<AllergyAlert> = Vec::new();
-    for drug in &recognized {
-        let display_lc = drug
-            .display_name
-            .as_deref()
-            .unwrap_or_default()
-            .to_lowercase();
-        let ingredient_lc = drug
-            .ingredient
-            .as_deref()
-            .unwrap_or_default()
-            .to_lowercase();
+    // Todos los farmacos, no solo los de la base de interacciones: la alergia
+    // se revisa aunque el farmaco no tenga interacciones registradas.
+    for drug in &normalized {
+        let display_lc = normalize_name(drug.display_name.as_deref().unwrap_or(&drug.input));
+        let ingredient_lc = normalize_name(drug.ingredient.as_deref().unwrap_or_default());
+        let catalog_id = crate::ingredients::catalog()
+            .resolve(&drug.input)
+            .map(|i| i.id.as_str())
+            .unwrap_or_default();
         for token in &tokens {
-            if let Some(via_class) = allergy_match(
+            let matched = allergy_match(
                 &display_lc,
                 &ingredient_lc,
                 drug.drug_class.as_deref(),
                 token,
-            ) {
+            )
+            .or_else(|| {
+                crate::allergy_groups::matching_group(
+                    token,
+                    &[&display_lc, &ingredient_lc, catalog_id],
+                )
+                .map(|group| Some(group.to_string()))
+            });
+            if let Some(via_class) = matched {
                 allergy_alerts.push(AllergyAlert {
-                    drug: drug.display_name.clone().unwrap_or_default(),
+                    drug: drug
+                        .display_name
+                        .clone()
+                        .unwrap_or_else(|| drug.input.clone()),
                     matched_allergy: token.clone(),
                     via_class,
                     source: "Alergias registradas en el expediente".into(),
@@ -1247,11 +1256,15 @@ pub fn extract_medications(conn: &Connection, text: &str) -> Result<Vec<String>,
     }
     // Ingredientes del catalogo con datos de interacciones que la base no
     // nombra con esa escritura.
+    // Los que no tienen datos de interacciones tambien cuentan: sin ellos la
+    // alergia a metamizol o a cefalosporinas nunca se revisaba (2026-11-15).
     for found in crate::ingredients::catalog().find_in_text(&haystack) {
-        if let Some((_, display_name, _)) = reference_by_ingredient_name(conn, found.name)? {
-            if seen.insert(display_name.clone()) {
-                hits.push((found.position, display_name));
-            }
+        let display_name = match reference_by_ingredient_name(conn, found.name)? {
+            Some((_, display_name, _)) => display_name,
+            None => found.ingredient.display.clone(),
+        };
+        if seen.insert(display_name.clone()) {
+            hits.push((found.position, display_name));
         }
     }
     // Marcas (nucleo curado y las del medico): cuentan sus ingredientes.
@@ -1924,6 +1937,88 @@ mod tests {
         .unwrap();
         assert!(!ensure_bundled_reference_installed(&conn).unwrap());
         assert_eq!(reference_version(&conn).unwrap(), "descargada-2026-12");
+    }
+
+    #[test]
+    fn common_allergies_alert_on_their_family_even_without_interaction_data() {
+        let conn = test_conn("common-allergies");
+        install_bundled_reference(&conn).unwrap();
+        let alerts = |allergy: &str, prescription: &str| {
+            let names = extract_medications(&conn, prescription).unwrap();
+            assert!(!names.is_empty(), "no reconocio: {prescription}");
+            !check_prescription(&conn, "enc", &names, Some(allergy))
+                .unwrap()
+                .allergy_alerts
+                .is_empty()
+        };
+        let must_alert: &[(&str, &[&str])] = &[
+            (
+                "Sulfas",
+                &[
+                    "Trimetoprima con sulfametoxazol 160 mg",
+                    "Bactrim 160 mg",
+                    "Sulfasalazina 500 mg",
+                ],
+            ),
+            ("Aspirina", &["Acido acetilsalicilico 100 mg"]),
+            (
+                "AINE",
+                &[
+                    "Celecoxib 200 mg",
+                    "Indometacina 25 mg",
+                    "Piroxicam 20 mg",
+                    "Ketoprofeno 100 mg",
+                    "Aspirina 500 mg",
+                ],
+            ),
+            ("Metamizol", &["Metamizol sodico 1 g"]),
+            ("Dipirona", &["Metamizol sodico 1 g"]),
+            (
+                "Cefalosporinas",
+                &[
+                    "Cefalexina 500 mg",
+                    "Ceftriaxona 1 g",
+                    "Cefuroxima 500 mg",
+                    "Cefotaxima 1 g",
+                ],
+            ),
+            (
+                "Quinolonas",
+                &["Ciprofloxacino 500 mg", "Levofloxacino 500 mg"],
+            ),
+            (
+                "Macrolidos",
+                &["Claritromicina 500 mg", "Eritromicina 500 mg"],
+            ),
+            ("Tetraciclinas", &["Doxiciclina 100 mg"]),
+            ("Opioides", &["Tramadol 50 mg", "Buprenorfina 0.2 mg"]),
+            ("Clindamicina", &["Clindamicina 300 mg"]),
+            ("Metronidazol", &["Metronidazol 500 mg"]),
+            ("Carbamazepina", &["Carbamazepina 200 mg"]),
+            ("Lidocaina", &["Lidocaina 2 %"]),
+        ];
+        for (allergy, prescriptions) in must_alert {
+            for prescription in *prescriptions {
+                assert!(
+                    alerts(allergy, prescription),
+                    "sin alerta: {allergy} / {prescription}"
+                );
+            }
+        }
+        // Reactividad cruzada entre familias: decision clinica pendiente, no
+        // se asume. Y una alergia ajena a farmacos no alerta.
+        for (allergy, prescription) in [
+            ("Penicilina", "Cefalexina 500 mg"),
+            ("Aspirina", "Ibuprofeno 400 mg"),
+            ("AINE", "Metamizol sodico 1 g"),
+            ("Codeina", "Morfina 10 mg"),
+            ("Latex", "Ibuprofeno 400 mg"),
+        ] {
+            assert!(
+                !alerts(allergy, prescription),
+                "alerta de mas: {allergy} / {prescription}"
+            );
+        }
     }
 
     #[test]
