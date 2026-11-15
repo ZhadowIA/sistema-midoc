@@ -41,6 +41,7 @@ import {
   type TemplateDefinition
 } from "./consultationScribe";
 import { MedicationSafety } from "./MedicationSafety";
+import { UnknownMedications } from "./UnknownMedications";
 import { EncounterAgendaRail } from "./EncounterAgendaRail";
 import { call } from "./ipc";
 import { DICTATING_BODY_CLASS, isDictating } from "./focusMode";
@@ -1693,6 +1694,7 @@ export function Atencion({
               </button>
             </div>
           ) : null}
+          <UnknownMedications prescription={prescription} disabled={signed} />
           {medicationSafety ? (
             <MedicationSafety encounterId={encounterId} disabled={signed} prescription={prescription} />
           ) : null}

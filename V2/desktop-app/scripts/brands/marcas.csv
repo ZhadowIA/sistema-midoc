@@ -1,0 +1,4 @@
+# Nucleo curado de marcas (paso 33, etapa 3). Solo marcas revisadas: fuente y revisor obligatorios.
+# ingredientes: ids de reference_data/ingredients.csv separados por "+" (p. ej. paracetamol + cafeina).
+# Candidatas: las marcas de scripts/ingredients/por-revisar.csv.
+marca,ingredientes,laboratorio,fuente,revisado_por

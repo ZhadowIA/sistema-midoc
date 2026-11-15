@@ -102,8 +102,18 @@ const MOCK_CREDITS = Number(mockParams.get("mockCreditos") ?? 30);
 const MOCK_UPDATE = mockParams.get("mockActualizacion") === "1";
 const MOCK_MEDICATION_SAFETY = mockParams.get("mockSeguridad") === "1";
 
+// Catalogo minimo de ingredientes para el selector de marcas (paso 33).
+const MOCK_INGREDIENTS = [
+  { id: "cafeina", display: "Cafeína", cnis: true, has_interaction_data: false },
+  { id: "loratadina", display: "Loratadina", cnis: true, has_interaction_data: true },
+  { id: "paracetamol", display: "Paracetamol", cnis: true, has_interaction_data: true },
+  { id: "ibuprofeno", display: "Ibuprofeno", cnis: true, has_interaction_data: true }
+];
+const MOCK_KNOWN_WORDS = ["paracetamol", "ibuprofeno", "amoxicilina", "loratadina", "omeprazol", "ketorolaco"];
+
 const mockState = {
   inactivityLockMinutes: 30,
+  localBrands: [] as { id: string; name: string; display: string; ingredients: string[]; created_at: string }[],
   // Copia de los datos de la receta (regla 4.6); misma regla de version que el portal.
   prescriber: {
     professionalName: "Dra. Eva Soto",
@@ -627,6 +637,18 @@ function matchPatientsMock(fullName: string | null | undefined, phone: string | 
 }
 
 /** Latencia simulada; las pruebas la bajan a 0. */
+function mockBrandView(brand: { id: string; display: string; ingredients: string[]; created_at: string }) {
+  return {
+    id: brand.id,
+    display: brand.display,
+    ingredients: brand.ingredients.map((id) => ({
+      id,
+      display: MOCK_INGREDIENTS.find((i) => i.id === id)?.display ?? id
+    })),
+    created_at: brand.created_at
+  };
+}
+
 export const mockOptions = { latencyMs: 120 };
 
 export async function mockCall<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -1343,6 +1365,50 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       };
       mockState.patients.push(created);
       return asPatientRecord(created) as T;
+    }
+    case "search_ingredients": {
+      const query = String(args?.query ?? "").toLowerCase();
+      return (query.length < 2 ? [] : MOCK_INGREDIENTS.filter((i) => i.id.includes(query))) as T;
+    }
+    case "list_local_brands":
+      return mockState.localBrands.map(mockBrandView) as T;
+    case "save_local_brand": {
+      const display = String(args?.display ?? "").trim();
+      const ids = (args?.ingredientIds as string[] | undefined) ?? [];
+      if (!display) throw "escribe el nombre de la marca";
+      if (ids.length === 0) throw "elige al menos un principio activo";
+      const name = display.toLowerCase();
+      const existing = mockState.localBrands.find((b) => b.name === name);
+      if (existing) {
+        existing.display = display;
+        existing.ingredients = ids;
+        return mockBrandView(existing) as T;
+      }
+      const created = { id: crypto.randomUUID(), name, display, ingredients: ids, created_at: new Date().toISOString() };
+      mockState.localBrands.push(created);
+      return mockBrandView(created) as T;
+    }
+    case "delete_local_brand":
+      mockState.localBrands = mockState.localBrands.filter((b) => b.id !== args?.id);
+      return null as T;
+    case "detect_unknown_medications": {
+      // Imitacion simple de Rust: linea con dosis que no nombra nada conocido.
+      const known = [...MOCK_KNOWN_WORDS, ...mockState.localBrands.map((b) => b.name)];
+      const seen = new Set<string>();
+      const unknown: { line: string; candidate: string }[] = [];
+      for (const raw of String(args?.prescription ?? "").split("\n")) {
+        const line = raw.trim();
+        const dose = /\b\d+(?:[.,]\d+)?\s*(mg|g|mcg|ui|ml|%)\b/i.exec(line);
+        if (!dose) continue;
+        const lower = line.toLowerCase();
+        if (known.some((word) => lower.includes(word))) continue;
+        const candidate = line.slice(0, dose.index).replace(/^[\d).\-*•\s]+/, "").trim();
+        if (candidate && !seen.has(candidate.toLowerCase())) {
+          seen.add(candidate.toLowerCase());
+          unknown.push({ line, candidate });
+        }
+      }
+      return unknown as T;
     }
     case "get_capabilities":
       return { medication_safety: MOCK_MEDICATION_SAFETY } as T;

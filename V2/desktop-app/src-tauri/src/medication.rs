@@ -1245,6 +1245,18 @@ pub fn extract_medications(conn: &Connection, text: &str) -> Result<Vec<String>,
             }
         }
     }
+    // Marcas (nucleo curado y las del medico): cuentan sus ingredientes.
+    let brands = crate::brands::find_in_text(conn, &haystack)
+        .map_err(|e| MedicationError::Invalid(e.to_string()))?;
+    for brand in brands {
+        for ingredient in &brand.ingredient_ids {
+            if let Some((_, display_name, _)) = reference_by_ingredient_name(conn, ingredient)? {
+                if seen.insert(display_name.clone()) {
+                    hits.push((brand.position, display_name));
+                }
+            }
+        }
+    }
     hits.sort_by_key(|(pos, _)| *pos);
     Ok(hits
         .into_iter()
@@ -1685,12 +1697,7 @@ mod tests {
         // ingredientes (paso 33) la liga por su generico del CNIS.
         let conn = test_conn("ingredient-fallback");
         install_bundled_reference(&conn).unwrap();
-        let found = extract_medications(
-            &conn,
-            "Paroxetina 20 mg cada 24 h
-Fentanilo",
-        )
-        .unwrap();
+        let found = extract_medications(&conn, "Paroxetina 20 mg cada 24 h\nFentanilo").unwrap();
         assert_eq!(
             found,
             vec!["Paroxetina".to_string(), "Fentanilo".to_string()]

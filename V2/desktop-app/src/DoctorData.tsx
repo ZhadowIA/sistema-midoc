@@ -12,6 +12,7 @@ import {
   type PrescriberView
 } from "./doctorDataModel";
 import { InactivitySettings } from "./InactivitySettings";
+import { LocalBrandsSettings } from "./LocalBrandsSettings";
 import { call } from "./ipc";
 
 // Mis datos: lo que exige la receta. Regla 4.6: se edita aqui o en la web; el
@@ -143,6 +144,7 @@ export function DoctorData({ inactivityMinutes, onInactivityMinutesChange }: Doc
         ) : null}
       </section>
       <InactivitySettings minutes={inactivityMinutes} onChange={onInactivityMinutesChange} />
+      <LocalBrandsSettings />
     </div>
   );
 }

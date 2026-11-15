@@ -225,7 +225,8 @@ export function toCsv(ingredients: Ingredient[]): string {
 export function reviewCsv(items: ReviewItem[]): string {
   const lines = [
     "# Generado por npm run ingredients:build. Nombres de la base de interacciones que no se usan hasta",
-    "# que una persona los revise: si es un sinonimo valido, pasalo a sinonimos.csv con motivo y revisor.",
+    "# que una persona los revise. Si es otro nombre del mismo principio activo, pasalo a sinonimos.csv;",
+    "# si es una marca comercial, a scripts/brands/marcas.csv. En ambos casos con fuente/motivo y revisor.",
     "ingrediente,nombre,motivo"
   ];
   for (const r of items) lines.push([csvField(r.ingredient), csvField(r.name), csvField(r.reason)].join(","));

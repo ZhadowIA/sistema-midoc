@@ -62,6 +62,9 @@ jobs:
       - name: Ingredient catalog tests
         run: npm run test:ingredients --if-present
 
+      - name: Brand catalog tests
+        run: npm run test:brands --if-present
+
   desktop-rust:
     name: desktop-app Rust (formato, clippy y pruebas)
     runs-on: ubuntu-latest

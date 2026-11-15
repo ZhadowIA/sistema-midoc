@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseBrands } from "../brands/catalog.ts";
 import { buildIngredients, parseSynonyms, reviewCsv, toCsv } from "./catalog.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +21,11 @@ const dataDir = join(here, "..", "..", "src-tauri", "src", "reference_data");
 const cnisCsv = readFileSync(join(dataDir, "cnis.csv"), "utf8");
 const medicationsCsv = readFileSync(join(dataDir, "medications.csv"), "utf8");
 const synonyms = parseSynonyms(readFileSync(join(here, "sinonimos.csv"), "utf8"));
-const { ingredients, review, conflicts } = buildIngredients(cnisCsv, medicationsCsv, synonyms);
+const built = buildIngredients(cnisCsv, medicationsCsv, synonyms);
+const { ingredients, conflicts } = built;
+// Las marcas que ya estan en el nucleo revisado (etapa 3) no se vuelven a pedir.
+const reviewedBrands = new Set(parseBrands(readFileSync(join(here, "..", "brands", "marcas.csv"), "utf8")).map((b) => b.name));
+const review = built.review.filter((r) => !reviewedBrands.has(r.name));
 
 const csv = toCsv(ingredients);
 const linked = ingredients.filter((i) => i.cnis && i.interactionKey).length;
