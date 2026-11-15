@@ -30,18 +30,30 @@ test("la matriz de distribucion empaca el backend de aceleracion por SO", () => 
   // Windows/Linux: Vulkan universal (GPU integrada y dedicada) + OpenBLAS (CPU).
   assert.equal(
     packageManifest.scripts["tauri:build:vulkan"],
-    "tauri build --features \"whisper-local whisper-vulkan whisper-openblas diarization-local\""
+    "node ./scripts/tauri-diarize.mjs build --features \"whisper-local whisper-vulkan whisper-openblas diarization-local\""
   );
   // macOS: Metal.
   assert.equal(
     packageManifest.scripts["tauri:build:metal"],
-    "tauri build --features \"whisper-local whisper-metal diarization-local\""
+    "node ./scripts/tauri-diarize.mjs build --features \"whisper-local whisper-metal diarization-local\""
   );
   // NVIDIA optimizado: CUDA (alternativa a Vulkan en equipos con NVIDIA).
   assert.equal(
     packageManifest.scripts["tauri:build:cuda"],
-    "tauri build --features \"whisper-cuda diarization-local\""
+    "node ./scripts/tauri-diarize.mjs build --features \"whisper-cuda diarization-local\""
   );
+});
+
+test("todo comando con diarizacion usa los binarios verificados de sherpa-onnx", () => {
+  // El build script del crate baja sherpa-onnx sin revisar su hash; el
+  // envoltorio lo verifica y pone las DLL en el instalador.
+  for (const [name, cmd] of Object.entries(packageManifest.scripts)) {
+    if (!cmd.includes("diarization-local")) continue;
+    assert.ok(
+      cmd.startsWith("node ./scripts/tauri-diarize.mjs "),
+      `${name} deberia pasar por scripts/tauri-diarize.mjs: ${cmd}`
+    );
+  }
 });
 
 test("los comandos dev con backend nativo evitan mezclar CRT Debug y Release", () => {

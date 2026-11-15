@@ -36,19 +36,102 @@ pub const MAX_NUM_SPEAKERS: u8 = 3;
 #[cfg_attr(not(feature = "diarization-local"), allow(dead_code))]
 pub const DEFAULT_DIARIZE_THRESHOLD: f32 = 0.5;
 
+/// Grupos de mas que se le piden a sherpa-onnx cuando el numero de hablantes esta
+/// fijo. Con exactamente N, el clustering (enlace completo) es fragil: un tramo
+/// raro (musica, ruido, una tos) se queda con un grupo entero y las dos voces caen
+/// juntas en el otro. Medido el 2026-10-31: el mismo audio en WAV daba 1062 s / 160 s
+/// con 2 grupos y, pidiendo 4, las voces quedaban separadas. Se piden N + 2 y
+/// `collapse_speakers` se queda con los N mas grandes.
+pub const EXTRA_CLUSTERS: u8 = 2;
+
 /// Traduce la seleccion del medico a los parametros de clustering de sherpa-onnx:
 /// `(num_clusters, threshold)`. Con `num_speakers == 0` (Auto) devuelve
 /// `num_clusters <= 0`, lo que hace que sherpa ESTIME el numero de hablantes con el
-/// umbral; con `num_speakers > 0` lo FIJA (el umbral lo ignora el motor). Funcion
-/// pura: el mapeo se prueba sin la cadena nativa; el motor real lo usa tras el
-/// feature `diarization-local`.
+/// umbral; con `num_speakers > 0` pide `EXTRA_CLUSTERS` grupos de mas (el umbral
+/// lo ignora el motor) y el resultado se junta despues con `collapse_speakers`.
+/// Con 1 hablante no hay nada que separar y se pide 1. Funcion pura: el mapeo se
+/// prueba sin la cadena nativa; el motor real lo usa tras el feature
+/// `diarization-local`.
 #[cfg_attr(not(feature = "diarization-local"), allow(dead_code))]
 pub fn clustering_params(num_speakers: u8, threshold: f32) -> (i32, f32) {
-    if num_speakers == AUTO_NUM_SPEAKERS {
-        (0, threshold)
-    } else {
-        (num_speakers as i32, threshold)
+    match num_speakers {
+        AUTO_NUM_SPEAKERS => (0, threshold),
+        1 => (1, threshold),
+        n => (i32::from(n) + i32::from(EXTRA_CLUSTERS), threshold),
     }
+}
+
+/// Junta el resultado de un clustering con grupos de mas en `target` hablantes.
+/// Se quedan los `target` grupos con mas tiempo de habla; cada tramo de un grupo
+/// chico pasa al hablante del tramo conservado mas cercano en el tiempo (ante
+/// empate, el anterior). Los indices se renumeran por orden de aparicion (0, 1,
+/// ...), asi que el primero en hablar sigue siendo el 0. Si ya hay `target` grupos
+/// o menos, solo renumera. Espera los tramos ordenados por inicio, como los
+/// entrega sherpa-onnx. Funcion pura.
+#[cfg_attr(not(feature = "diarization-local"), allow(dead_code))]
+pub fn collapse_speakers(segments: &[SpeakerSegment], target: u8) -> Vec<SpeakerSegment> {
+    let mut talk: Vec<(u8, i64)> = Vec::new();
+    for s in segments {
+        let length = (s.end_cs - s.start_cs).max(0);
+        match talk.iter_mut().find(|(idx, _)| *idx == s.speaker_idx) {
+            Some((_, total)) => *total += length,
+            None => talk.push((s.speaker_idx, length)),
+        }
+    }
+    // Mas tiempo primero; ante empate, el indice menor (determinista).
+    talk.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let kept: Vec<u8> = talk
+        .iter()
+        .take(usize::from(target.max(1)))
+        .map(|(idx, _)| *idx)
+        .collect();
+
+    let is_kept = |idx: u8| kept.contains(&idx);
+    let nearest_kept = |position: usize| -> Option<u8> {
+        let segment = &segments[position];
+        let before = segments[..position]
+            .iter()
+            .rev()
+            .find(|s| is_kept(s.speaker_idx))
+            .map(|s| ((segment.start_cs - s.end_cs).max(0), s.speaker_idx));
+        let after = segments[position + 1..]
+            .iter()
+            .find(|s| is_kept(s.speaker_idx))
+            .map(|s| ((s.start_cs - segment.end_cs).max(0), s.speaker_idx));
+        match (before, after) {
+            (Some((gap_before, b)), Some((gap_after, a))) => {
+                Some(if gap_after < gap_before { a } else { b })
+            }
+            (Some((_, b)), None) => Some(b),
+            (None, Some((_, a))) => Some(a),
+            (None, None) => None,
+        }
+    };
+
+    let mut order: Vec<u8> = Vec::new();
+    segments
+        .iter()
+        .enumerate()
+        .map(|(position, s)| {
+            let speaker = if is_kept(s.speaker_idx) {
+                s.speaker_idx
+            } else {
+                nearest_kept(position).unwrap_or(s.speaker_idx)
+            };
+            let renumbered = match order.iter().position(|idx| *idx == speaker) {
+                Some(i) => i,
+                None => {
+                    order.push(speaker);
+                    order.len() - 1
+                }
+            };
+            SpeakerSegment {
+                start_cs: s.start_cs,
+                end_cs: s.end_cs,
+                speaker_idx: renumbered as u8,
+            }
+        })
+        .collect()
 }
 
 /// Segmento de texto de Whisper con sus marcas de tiempo (en centisegundos, la
@@ -240,10 +323,48 @@ mod tests {
     }
 
     #[test]
-    fn clustering_params_fixed_pins_the_count() {
+    fn clustering_params_fixed_asks_for_extra_clusters() {
+        // Un hablante no se separa; con 2 o 3 se piden grupos de mas para juntar.
         assert_eq!(clustering_params(1, 0.5), (1, 0.5));
-        assert_eq!(clustering_params(2, 0.5), (2, 0.5));
-        assert_eq!(clustering_params(3, 0.7), (3, 0.7));
+        assert_eq!(clustering_params(2, 0.5), (4, 0.5));
+        assert_eq!(clustering_params(3, 0.7), (5, 0.7));
+    }
+
+    #[test]
+    fn collapse_keeps_the_largest_clusters_and_absorbs_small_ones() {
+        // Cuatro grupos: 1 y 3 hablan mucho; 0 (musica al inicio) y 2 (una tos)
+        // son chicos y pasan al hablante conservado mas cercano.
+        let speakers = [
+            sp(0, 300, 0),
+            sp(300, 1300, 1),
+            sp(1300, 2300, 3),
+            sp(2310, 2330, 2),
+            sp(2400, 3400, 1),
+            sp(3400, 4200, 3),
+        ];
+        let collapsed = collapse_speakers(&speakers, 2);
+        let idx: Vec<u8> = collapsed.iter().map(|s| s.speaker_idx).collect();
+        // La musica inicial se va con el siguiente (1, renumerado 0); la tos queda
+        // mas cerca del tramo anterior (3, renumerado 1).
+        assert_eq!(idx, vec![0, 0, 1, 1, 0, 1]);
+        // Los tiempos no cambian.
+        assert_eq!(collapsed[3].start_cs, 2310);
+        assert_eq!(collapsed[3].end_cs, 2330);
+    }
+
+    #[test]
+    fn collapse_renumbers_by_first_appearance_without_dropping() {
+        let speakers = [sp(0, 100, 3), sp(100, 200, 1), sp(200, 300, 3)];
+        let collapsed = collapse_speakers(&speakers, 2);
+        let idx: Vec<u8> = collapsed.iter().map(|s| s.speaker_idx).collect();
+        assert_eq!(idx, vec![0, 1, 0]);
+    }
+
+    #[test]
+    fn collapse_handles_empty_and_single_speaker() {
+        assert!(collapse_speakers(&[], 2).is_empty());
+        let one = collapse_speakers(&[sp(0, 100, 2), sp(150, 200, 5)], 1);
+        assert!(one.iter().all(|s| s.speaker_idx == 0));
     }
 
     #[test]
