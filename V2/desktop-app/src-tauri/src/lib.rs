@@ -2330,7 +2330,8 @@ fn ai_diarize_consultation(
     let provider = resolve_local_transcription_provider(&app)?;
     let (seg_path, emb_path) = diarization_model_paths(&app)?;
     let diarizer = move |samples: &[f32], sample_rate: u32| {
-        sherpa_diarization::diarize_samples(samples, sample_rate, &seg_path, &emb_path, requested)
+        // En un proceso aparte: si el motor nativo truena, degrada en vez de cerrar la app.
+        sherpa_diarization::diarize_isolated(samples, sample_rate, &seg_path, &emb_path, requested)
     };
     with_ai(&state, |conn| {
         ai::diarize_consultation(
@@ -3414,6 +3415,13 @@ fn arco_fulfill_cancellation(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // La app relanzada como trabajador de diarizacion (ver `sherpa_diarization`):
+    // corre el motor nativo y termina sin abrir ventana.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(code) = sherpa_diarization::worker_exit_code(&args) {
+        std::process::exit(code);
+    }
+
     // Carga `src-tauri/.env` (si existe) antes de cualquier lectura de env vars
     // como `MIDOC_GEMINI_API_KEY`. `.ok()` ignora el error cuando el archivo no
     // existe (build de distribucion, CI, o quien prefiera exportarla a mano).
