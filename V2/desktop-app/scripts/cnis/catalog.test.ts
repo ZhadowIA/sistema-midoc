@@ -4,6 +4,7 @@ import {
   allKeys,
   alternatives,
   applyCorrections,
+  applyRemovals,
   canonicalStrength,
   displayAlternatives,
   uninvert,
@@ -13,6 +14,7 @@ import {
   normalize,
   parseCnisText,
   parseCorrections,
+  parseRemovals,
   toCsv
 } from "./catalog.ts";
 
@@ -307,4 +309,16 @@ test("la tabla es estable y la comparacion muestra lo que cambia", () => {
   assert.deepEqual(diff.changed, ["010.000.0104.00 paracetamol"]);
   assert.deepEqual(diff.removed, ["040.000.2612.00 clonazepam"]);
   assert.deepEqual(diff.added, ["099.000.0000.00 nuevo"]);
+});
+
+test("las bajas quitan la clave y no cuentan como envase del producto", () => {
+  const removals = parseRemovals(
+    ["# comentario", "clave,motivo,revisado_por", "010.000.5721.02,Acuerdo DOF 19/08/2026,Farmaceutico piloto"].join("\n")
+  );
+  const keys = allKeys(TEXT).filter((key) => key !== "010.000.5721.02");
+  const kept = applyRemovals(entries, removals, keys);
+  assert.ok(!kept.some((e) => e.clave === "010.000.5721.02"));
+  assert.equal(kept.find((e) => e.clave === "010.000.5721.00")?.packages, 2);
+  assert.throws(() => parseRemovals("clave,motivo,revisado_por\n010.000.5721.02,Acuerdo,"), /revis/);
+  assert.throws(() => parseRemovals("clave,motivo,revisado_por\n999.1,Acuerdo,Revisor"), /clave invalida/);
 });

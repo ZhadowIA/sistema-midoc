@@ -591,6 +591,45 @@ export function applyCorrections(entries: CnisEntry[], corrections: Correction[]
   return sortEntries(result);
 }
 
+/* ---------- Bajas publicadas en el DOF (etapa 6) ---------- */
+
+export interface Removal {
+  clave: string;
+  reason: string;
+  reviewedBy: string;
+}
+
+const REMOVAL_HEADER = "clave,motivo,revisado_por";
+
+/**
+ * Lee `bajas.csv`: claves que una actualizacion del DOF dio de baja. Motivo
+ * (p. ej. "Acuerdo DOF 19/08/2026") y revisor obligatorios.
+ */
+export function parseRemovals(csv: string): Removal[] {
+  const lines = csv.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim() && !l.startsWith("#"));
+  if (lines.length === 0) return [];
+  if (lines[0].trim() !== REMOVAL_HEADER) throw new Error(`bajas.csv: encabezado esperado "${REMOVAL_HEADER}"`);
+  return lines.slice(1).map((line, k) => {
+    const [clave, reason, reviewedBy, ...rest] = csvSplit(line);
+    const where = `bajas.csv, fila ${k + 2}`;
+    if (rest.length > 0) throw new Error(`${where}: se esperaban 3 columnas`);
+    if (!new RegExp(`^${GROUPS}\\.000\\.\\d{4}\\.\\d{2}$`).test(clave ?? "")) throw new Error(`${where}: clave invalida`);
+    if (!reason || !reviewedBy) throw new Error(`${where}: falta el motivo o quien la reviso`);
+    return { clave, reason, reviewedBy };
+  });
+}
+
+/**
+ * Quita las claves dadas de baja (todas sus filas) y recuenta los envases de
+ * cada producto sin ellas.
+ */
+export function applyRemovals(entries: CnisEntry[], removals: Removal[], allKeys: Iterable<string>): CnisEntry[] {
+  const removed = new Set(removals.map((r) => r.clave));
+  const kept = entries.filter((e) => !removed.has(e.clave));
+  setPackages(kept, [...allKeys].filter((key) => !removed.has(key)));
+  return sortEntries(kept);
+}
+
 /** Todas las claves de medicamento que menciona el documento. */
 export function allKeys(text: string): string[] {
   return text.match(ANY_CLAVE) ?? [];

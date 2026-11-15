@@ -1,0 +1,35 @@
+name: Actualizaciones del CNIS
+
+# Aviso semanal (paso 33, etapa 6): busca en el DOF acuerdos que actualizan el
+# Compendio Nacional de Insumos para la Salud despues de la ultima revision
+# registrada en V2/desktop-app/scripts/cnis/actualizaciones.json. Termina en
+# rojo mientras haya actualizaciones pendientes de aplicar, para que GitHub
+# avise. No escribe nada en el repositorio: solo lee paginas publicas del DOF.
+# GitHub solo corre los horarios desde la rama por omision (main).
+
+on:
+  schedule:
+    - cron: "0 15 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Revisar el DOF
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: V2/desktop-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+
+      # Sin dependencias: el revisor solo usa Node.
+      - name: Buscar actualizaciones del CNIS
+        run: npm run cnis:check -- --ci

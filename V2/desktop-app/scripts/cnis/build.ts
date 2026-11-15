@@ -4,7 +4,8 @@
 //! Corre fuera de la app: `npm run cnis:build`. Descarga el Compendio Nacional
 //! de Insumos para la Salud que publica el Consejo de Salubridad General, lo
 //! pasa a texto con `pdftotext -layout` (poppler; viene con Git para Windows) y
-//! aplica las correcciones revisadas de `correcciones.csv`, muestra que cambia
+//! aplica las correcciones revisadas de `correcciones.csv` y las bajas de
+//! `bajas.csv` (actualizaciones del DOF, ver `npm run cnis:check`), muestra que cambia
 //! contra la tabla anterior y escribe:
 //!   - src-tauri/src/reference_data/cnis.csv            (claves de medicamentos; fuente de verdad)
 //!   - src-tauri/src/reference_data/cnis.manifest.json  (fuente, conteos, checksum)
@@ -21,10 +22,12 @@ import { proposalsCsv } from "../contraindications/catalog.ts";
 import {
   allKeys,
   applyCorrections,
+  applyRemovals,
   contraindicationTexts,
   diffTables,
   parseCnisText,
   parseCorrections,
+  parseRemovals,
   toCsv
 } from "./catalog.ts";
 
@@ -46,7 +49,12 @@ async function main(): Promise<void> {
     execFileSync("pdftotext", ["-layout", "-enc", "UTF-8", pdfPath, textPath]);
     const text = readFileSync(textPath, "utf8");
     const corrections = parseCorrections(readFileSync(join(here, "correcciones.csv"), "utf8"));
-    const entries = applyCorrections(parseCnisText(text), corrections, allKeys(text));
+    // Bajas publicadas en el DOF despues de la edicion (etapa 6); sus claves
+    // tampoco cuentan como envases del producto.
+    const removals = parseRemovals(readFileSync(join(here, "bajas.csv"), "utf8"));
+    const removed = new Set(removals.map((r) => r.clave));
+    const keys = allKeys(text).filter((key) => !removed.has(key));
+    const entries = applyRemovals(applyCorrections(parseCnisText(text), corrections, keys), removals, keys);
     const csv = toCsv(entries);
     const complete = entries.filter((e) => e.complete);
     const codable = complete.filter((e) => e.packages === 1).length;
@@ -68,6 +76,7 @@ async function main(): Promise<void> {
       complete: complete.length,
       completeProducts: products,
       corrections: corrections.length,
+      removals: removals.length,
       codable,
       sha256: createHash("sha256").update(csv, "utf8").digest("hex")
     };

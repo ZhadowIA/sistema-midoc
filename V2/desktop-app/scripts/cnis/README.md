@@ -40,6 +40,12 @@ en el repositorio. El script solo ayuda a generarla:
   reviso**). Sin revisor la correccion no entra. Una correccion reemplaza la
   lectura del PDF de esa clave y generico, y sobrevive a cada regeneracion.
 
+## Actualizaciones publicadas en el DOF
+
+`npm run cnis:check` registra en `actualizaciones.json` los acuerdos que actualizan el
+compendio despues de la edicion; se aplican con `correcciones.csv` (altas y modificaciones)
+y `bajas.csv` (bajas), siempre con revisor. Guia: `V2/docs/MANTENIMIENTO_MEDICAMENTOS.md`.
+
 ## Que se conserva
 
 Medicamentos de los grupos `010` (medicamentos), `020` (vacunas y biologicos),

@@ -14,6 +14,7 @@
     "cie10:build": "node scripts/cie10/build.ts",
     "test:cnis": "node --test scripts/cnis/*.test.ts",
     "cnis:build": "node scripts/cnis/build.ts",
+    "cnis:check": "node scripts/cnis/check.ts",
     "test:ingredients": "node --test scripts/ingredients/*.test.ts",
     "ingredients:build": "node scripts/ingredients/build.ts",
     "test:brands": "node --test scripts/brands/*.test.ts",
