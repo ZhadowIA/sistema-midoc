@@ -1456,13 +1456,13 @@ Estado: 🚧 CODIGO LISTO (rama `v2/paso30-pasarela-ia`, 2026-10-08; en `dev` po
 
 | Campo | Definicion |
 |---|---|
-| Objetivo | Que cada medico pregunte antes de la consulta lo que su practica necesita, sin un cuestionario unico para todos. |
+| Objetivo | Que cada medico pregunte antes de la consulta lo que su practica necesita, con un enlace general que cualquiera puede contestar y sin trabajo por paciente. Diseno completo en `16_preconsulta_configurable.md` (2026-10-19). |
 | Requisitos relacionados | Pasos 6 y 19 (buzon cifrado y cuestionario de antecedentes) y regla 4.4 |
 | Entrada necesaria | Decision del 2026-10-18 que descongela la preconsulta en esta forma; referencia en `backup/preconsulta-por-servicio`. |
-| Se construye | Editor de formularios en la app del medico (tipo "forms": preguntas, tipos de respuesta y opciones). El cuestionario tiene dos partes: (1) informacion general del paciente, que el paciente puede saltarse si ya la contesto antes, y (2) preguntas sobre el motivo de consulta. El paciente lo contesta desde un enlace; la respuesta viaja cifrada para la llave del medico por el buzon y se purga al confirmarla la app. |
+| Se construye | Un cuestionario por medico en dos partes (informacion general para quien consulta por primera vez; motivo de consulta, que el medico arma). Enlace general fijo (pausable y regenerable) y enlace personal opcional. Identificacion obligatoria del paciente. Respuestas cifradas para la llave del medico por el buzon. En la app: bandeja, "Buscar preconsulta" con coincidencias automaticas al iniciar la consulta, adjuntar o descartar, y borrado de las no adjuntadas a los 60 dias (configurable). |
 | Se valida con | Un medico arma su cuestionario, un paciente lo contesta desde el enlace y el medico ve las respuestas en la consulta; la nube nunca guarda las respuestas en claro. |
 | Compuerta de avance | Ninguna respuesta queda legible en la nube y la prueba de clasificacion de datos sigue pasando (las respuestas solo viven en modelos del buzon). |
-| Push recomendado | Por rebanada: editor en la app, formulario publico, entrega cifrada. |
+| Push recomendado | Por rebanada: (1) editor y publicacion, (2) formulario del paciente, (3) bandeja y busqueda, (4) enlace personal. |
 
 ## MVP recomendado
 
