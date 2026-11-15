@@ -4,13 +4,26 @@ Objetivo: permitir que los instaladores de la app de escritorio se firmen con un
 
 ## Estado actual (staging)
 
-Se ha generado un **certificado auto-firmado** para desarrollo y staging:
+> **2026-09-03 (paquete B de la remediación):** el PFX que vivía en `V2/certs/` se
+> retiró del repositorio y su contraseña se borró de la documentación. Ambos se
+> consideran **comprometidos** (estuvieron en el historial de git): no se reutilizan.
+> El material de firma se genera localmente, vive fuera del repo y llega al pipeline
+> solo como secreto (`*.pfx`, `*.p12`, `*.key` y `*.pem` están en `.gitignore`).
 
-- **Ruta**: `V2/certs/staging-code-signing.pfx`
-- **Contraseña**: `midoc-staging-2026` (guardar en secretos del pipeline)
-- **Válido hasta**: 2031
+Para staging se usa un **certificado auto-firmado** generado por quien opera el
+pipeline. Generación en PowerShell (la contraseña se elige en el momento y no se
+escribe en ningún archivo del repo):
+
+```powershell
+$cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=MiDoc Staging" `
+  -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(5)
+$pass = Read-Host -AsSecureString "Contraseña del PFX"
+Export-PfxCertificate -Cert $cert -FilePath "$env:USERPROFILE\.midoc\staging-code-signing.pfx" -Password $pass
+```
+
+- **Ruta**: local, fuera del repo (por ejemplo `~/.midoc/staging-code-signing.pfx`)
+- **Contraseña**: solo en el secreto `CODE_SIGNING_PASSWORD` del pipeline
 - **Tipo**: Code Signing (DigitalSignature)
-- **Tamaño**: 2.58 KB
 
 ### Para producción
 
@@ -36,8 +49,8 @@ cargo tauri build --release
 Usar el script `V2/desktop-app/scripts/sign-windows-installer.ps1`:
 
 ```powershell
-$certPath = "V2/certs/staging-code-signing.pfx"
-$certPass = "midoc-staging-2026"
+$certPath = "$env:USERPROFILE\.midoc\staging-code-signing.pfx"   # fuera del repo
+$certPass = $env:CODE_SIGNING_PASSWORD                              # nunca en claro
 $installerPath = "V2/desktop-app/src-tauri/target/release/bundle/msi/Midoc_X.Y.Z_x64.msi"
 
 & "V2/desktop-app/scripts/sign-windows-installer.ps1" `

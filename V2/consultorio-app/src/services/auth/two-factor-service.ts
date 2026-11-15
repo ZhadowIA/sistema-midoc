@@ -205,7 +205,7 @@ export async function regenerateRecoveryCodes(userId: string, code: string) {
 // --- Desafio de login 2FA (stateless, firmado, corto plazo) ---
 
 function signChallenge(userId: string, expiresAt: number): string {
-  return createHmac("sha256", env.NEXTAUTH_SECRET)
+  return createHmac("sha256", env.SESSION_SECRET)
     .update(`2fa:${userId}:${expiresAt}`)
     .digest("hex");
 }

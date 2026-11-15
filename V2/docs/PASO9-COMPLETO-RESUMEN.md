@@ -11,17 +11,17 @@ Implementar los 3 requisitos clave del Paso 9 (Piloto Seguro) + infraestructura 
 **Status**: ✅ COMPLETADO
 
 **Artefacto**:
-- Ubicación: `V2/certs/staging-code-signing.pfx`
+- Ubicación: local, fuera del repo (retirado de `V2/certs/` el 2026-09-03; se regenera, ver `paso-9-firma-codigo-staging.md`)
 - Tipo: Code Signing (DigitalSignature)
 - Válido: 2026-2031
-- Contraseña: `midoc-staging-2026`
+- Contraseña: solo en el secreto `CODE_SIGNING_PASSWORD`
 
 **Uso**:
 ```powershell
 ./scripts/sign-windows-installer.ps1 `
   -InstallerPath "Midoc_0.2.0_x64.msi" `
-  -PfxPath "certs/staging-code-signing.pfx" `
-  -PfxPassword "midoc-staging-2026"
+  -PfxPath "$env:USERPROFILE\.midoc\staging-code-signing.pfx" `
+  -PfxPassword $env:CODE_SIGNING_PASSWORD
 ```
 
 **Para Producción**:
@@ -71,7 +71,7 @@ Implementar los 3 requisitos clave del Paso 9 (Piloto Seguro) + infraestructura 
 ```bash
 cd V2/desktop-app/src-tauri
 npx tauri signer generate -w ~/.tauri/midoc-updater.key
-# Contraseña: midoc-staging-2026
+# Contraseña: <contrasena en secretos del pipeline>
 ```
 
 **Una vez generadas**:
@@ -173,9 +173,7 @@ V2/docs/
   └── paso-9-actualizacion-tauri.md (existente)
 
 V2/desktop-app/
-  ├── certs/
-  │   └── staging-code-signing.pfx (✨ NUEVO)
-  └── scripts/
+  └── scripts/   (el PFX ya no se versiona: vive fuera del repo)
       ├── sign-windows-installer.ps1
       └── generate-signing-keys.ps1 (✨ NUEVO)
 
@@ -236,7 +234,7 @@ V2/desktop-app/src-tauri/
 
 | Secreto | Tipo | Ubicación | Riesgo |
 |---------|------|-----------|--------|
-| PFX (code-signing) | Certificado | Secretos del repo | Alto |
+| PFX (code-signing) | Certificado | Secreto `CODE_SIGNING_CERT` (base64), nunca en el repo | Alto |
 | PFX Password | Contraseña | AZURE_PFX_PASSWORD | Alto |
 | Minisign privada | Llave | Secretos del repo | **Crítico** |
 | Minisign password | Contraseña | TAURI_SIGNING_PRIVATE_KEY_PASSWORD | Crítico |

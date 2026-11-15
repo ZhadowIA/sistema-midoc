@@ -169,7 +169,7 @@ STORAGE_ACCOUNT="midocstorage01"
 STORAGE_KEY="<key>"
 
 # 1. Obtener contraseña de firma
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="midoc-staging-2026"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="<contrasena en secretos del pipeline>"
 export TAURI_SIGNING_PRIVATE_KEY="~/.tauri/midoc-updater.key"
 
 # 2. Compilar en src-tauri
@@ -276,7 +276,7 @@ curl https://midocstorage01.blob.core.windows.net/releases/manifest.json
 - [x] Manifiesto JSON listo
 - [x] PostgreSQL creándose...
 - [ ] Minisign keys generadas (ver MINISIGN-SETUP.md)
-- [ ] Certificate de firma instalado (staging: v2/certs/staging-code-signing.pfx)
+- [ ] Certificado de firma generado localmente y cargado como secreto (nunca en el repo)
 - [ ] Primer release compilado y subido
 - [ ] Tauri updater habilitado en app (tauri.conf.json)
 - [ ] Test E2E de actualización

@@ -8,7 +8,7 @@ import { envSchema } from "../../src/lib/env-schema";
 function baseEnv(overrides: Record<string, string> = {}) {
   return {
     DATABASE_URL: "postgresql://user:pass@localhost:5432/midoc",
-    NEXTAUTH_SECRET: "test-secret",
+    SESSION_SECRET: "test-secret",
     APP_BASE_URL: "https://app.midoc.test",
     QUESTIONNAIRE_TOKEN_SECRET: "test-questionnaire-secret",
     TERMS_VERSION: "1",
@@ -199,5 +199,38 @@ describe("env schema email sender", () => {
   it("rejects a sender without a valid address", () => {
     const result = envSchema.safeParse(baseEnv({ EMAIL_FROM: "MiDoc <no-reply>" }));
     expect(issuePaths(result)).toContain("EMAIL_FROM");
+  });
+});
+
+// El nombre heredado (`NEXTAUTH_SECRET`, del andamiaje inicial: V2 nunca uso
+// next-auth) se sigue aceptando para no forzar una rotacion en produccion.
+function envSin(clave: string) {
+  const env: Record<string, string> = baseEnv();
+  delete env[clave];
+  return env;
+}
+
+describe("secreto de sesion: nombre nuevo y heredado", () => {
+  it("acepta solo el nombre heredado y lo expone como SESSION_SECRET", () => {
+    const result = envSchema.safeParse({
+      ...envSin("SESSION_SECRET"),
+      NEXTAUTH_SECRET: "heredado"
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.SESSION_SECRET).toBe("heredado");
+  });
+
+  it("el nombre nuevo gana cuando estan los dos", () => {
+    const result = envSchema.safeParse(baseEnv({ NEXTAUTH_SECRET: "heredado" }));
+
+    expect(result.success && result.data.SESSION_SECRET).toBe("test-secret");
+  });
+
+  it("rechaza el entorno cuando falta cualquiera de los dos", () => {
+    const result = envSchema.safeParse(envSin("SESSION_SECRET"));
+
+    expect(result.success).toBe(false);
+    expect(issuePaths(result)).toContain("SESSION_SECRET");
   });
 });

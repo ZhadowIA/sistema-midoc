@@ -52,3 +52,14 @@ tmp_*.txt
 
 # Residuos de verificacion local de builds nativos
 tmp-cmake-blas-check/
+
+# Material de firma y llaves: nunca se versionan (paquete B, 2026-09-03).
+# El PFX de staging que vivio en V2/certs/ se retiro y se considera comprometido.
+*.pfx
+*.p12
+*.key
+*.pem
+V2/certs/
+
+# Capturas de auditorias externas (Codex); evidencia local, no fuente.
+.codex-audits/

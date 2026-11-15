@@ -17,7 +17,7 @@ cd V2/desktop-app/src-tauri
 npx tauri signer generate -w ~/.tauri/midoc-updater.key
 ```
 
-Cuando pregunte por contraseña, usa: `midoc-staging-2026` (o tu contraseña segura)
+Cuando pregunte por contraseña, usa: `<contrasena en secretos del pipeline>` (o tu contraseña segura)
 
 Resultado: archivo `~/.tauri/midoc-updater.key` con par completo.
 
@@ -61,7 +61,7 @@ En GitHub (Settings → Secrets) o Azure DevOps:
 
 2. Crear secreto `TAURI_SIGNING_PRIVATE_KEY` con **todo el contenido del archivo**
 
-3. Crear secreto `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` con el valor: `midoc-staging-2026`
+3. Crear secreto `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` con el valor: `<contrasena en secretos del pipeline>`
 
 ### Paso 5: En el pipeline CI/CD
 

@@ -1,6 +1,8 @@
 param(
-  [Parameter(Mandatory = $false)]
-  [string]$Password = "midoc-staging-2026",
+  # Contrasena de la llave privada del updater. Obligatoria y nunca con valor
+  # por defecto: la que se publico en docs en 2026-06 se considera quemada.
+  [Parameter(Mandatory = $true)]
+  [string]$Password,
 
   [Parameter(Mandatory = $false)]
   [string]$OutputDir = "$env:USERPROFILE\.tauri"
