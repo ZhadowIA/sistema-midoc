@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { activationReason, creditBalanceLine, creditBalanceTitle, isLicensed, licenseLine, updateHeadline, type LicenseStatus, type UpdateCheck } from "./licenseState.ts";
+import { activationReason, creditBalanceLine, creditBalanceTitle, isLicensed, licenseLine, lowCreditNotice, shouldAnnounceUpdate, updateHeadline, type LicenseStatus, type UpdateCheck } from "./licenseState.ts";
 
 const valid: LicenseStatus = {
   state: "VALID",
@@ -58,4 +58,35 @@ test("el aviso de actualizaciones distingue incluida, no incluida y al dia", () 
   assert.equal(updateHeadline({ ...base, allowed: false }), "MiDoc 0.2.0 no está incluida en tu licencia");
   assert.equal(updateHeadline({ ...base, available: false }), "MiDoc 0.1.0 está al día");
   assert.match(updateHeadline({ ...base, configured: false }), /no disponibles/);
+});
+
+test("avisa de creditos bajos con 10 o menos, y distinto si se acabaron", () => {
+  assert.equal(lowCreditNotice(null), null);
+  assert.equal(lowCreditNotice(undefined), null);
+  assert.equal(lowCreditNotice(11), null);
+  assert.match(lowCreditNotice(10) ?? "", /Te quedan 10 créditos de IA/);
+  assert.match(lowCreditNotice(1) ?? "", /Te quedan 1 crédito de IA/);
+  assert.match(lowCreditNotice(0) ?? "", /Ya no tienes créditos/);
+});
+
+test("al abrir solo se anuncia una version nueva", () => {
+  const base: UpdateCheck = {
+    configured: true,
+    current_version: "0.1.0",
+    available: false,
+    version: null,
+    published_at: null,
+    notes: null,
+    critical: false,
+    allowed: true,
+    reason: null
+  };
+  assert.equal(shouldAnnounceUpdate(base), false, "al dia");
+  assert.equal(shouldAnnounceUpdate({ ...base, available: true, version: "0.2.0" }), true);
+  assert.equal(
+    shouldAnnounceUpdate({ ...base, available: true, allowed: false, version: "0.3.0" }),
+    true,
+    "tambien si no la incluye la licencia: el medico debe saberlo"
+  );
+  assert.equal(shouldAnnounceUpdate({ ...base, configured: false }), false);
 });

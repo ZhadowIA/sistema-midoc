@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { parseIpcResponse } from "./ipcSchemas";
 
@@ -59,6 +60,15 @@ export function onNativeEscape(handler: () => void): () => void {
     stopped = true;
     unlisten?.();
   };
+}
+
+/** Abre una pagina del portal en el navegador del sistema. */
+export async function openExternal(url: string): Promise<void> {
+  if (isTauri) {
+    await openUrl(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener");
 }
 
 function formatIpcError(command: string, error: unknown): Error {

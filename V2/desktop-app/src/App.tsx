@@ -1,5 +1,5 @@
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
-import { call } from "./ipc";
+import { call, openExternal } from "./ipc";
 import { Atencion } from "./Atencion";
 import { Recepcion } from "./Recepcion";
 import { Benchmark } from "./Benchmark";
@@ -31,6 +31,8 @@ import {
   creditBalanceTitle,
   isLicensed,
   licenseLine,
+  lowCreditNotice,
+  shouldAnnounceUpdate,
   updateHeadline,
   type LicenseStatus,
   type UpdateCheck
@@ -317,6 +319,10 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   const [linking, setLinking] = useState(false);
   // Actualizaciones (paso 29 r5): Rust decide si la licencia incluye la version.
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
+  // Avisos al medico (decision 2026-10-18): la actualizacion se anuncia al abrir
+  // la app y los creditos bajos con un aviso discreto que se puede cerrar.
+  const startupUpdateCheckedRef = useRef(false);
+  const [creditNoticeDismissed, setCreditNoticeDismissed] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [message, setMessage] = useState("");
@@ -486,6 +492,18 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       onExit={onLock}
     />
   ) : null;
+
+  // Al abrir la app (una vez, ya con licencia) se busca version nueva en
+  // silencio: sin red o sin canal configurado no hay nada que avisar.
+  useEffect(() => {
+    if (startupUpdateCheckedRef.current || !isLicensed(license)) return;
+    startupUpdateCheckedRef.current = true;
+    call<UpdateCheck>("check_for_update")
+      .then((check) => {
+        if (shouldAnnounceUpdate(check)) setUpdateCheck(check);
+      })
+      .catch(() => undefined);
+  }, [license]);
 
   // Peek de cambios pendientes para el badge (no aplica nada).
   const refreshPending = useCallback(async () => {
@@ -860,6 +878,27 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
                 </button>
               </div>
             </section>
+          ) : null}
+
+          {licensed && status?.linked && !creditNoticeDismissed && lowCreditNotice(status.credit_balance) ? (
+            <p className="credit-notice" role="status">
+              <span>{lowCreditNotice(status.credit_balance)}</span>
+              <button
+                className="credit-notice-action"
+                type="button"
+                onClick={() => void openExternal(`${PORTAL_URL}/medico/cuenta`).catch((e) => setError(String(e)))}
+              >
+                Recargar
+              </button>
+              <button
+                className="credit-notice-close"
+                type="button"
+                aria-label="Cerrar aviso de créditos"
+                onClick={() => setCreditNoticeDismissed(true)}
+              >
+                ×
+              </button>
+            </p>
           ) : null}
 
           {!status || !license ? (

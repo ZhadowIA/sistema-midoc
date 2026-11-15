@@ -93,6 +93,12 @@ const MOCK_CIE10_SAMPLE = [
   { code: "O800", name: "PARTO ÚNICO ESPONTÁNEO, PRESENTACIÓN CEFÁLICA DE VÉRTICE", warnings: ["El catalogo restringe este codigo a mujeres."] }
 ];
 
+// Escenarios para trabajar el diseno de los avisos sin tocar codigo:
+// `?mockCreditos=5` simula saldo bajo y `?mockActualizacion=1` una version nueva.
+const mockParams = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
+const MOCK_CREDITS = Number(mockParams.get("mockCreditos") ?? 30);
+const MOCK_UPDATE = mockParams.get("mockActualizacion") === "1";
+
 const mockState = {
   inactivityLockMinutes: 30,
   // Copia de los datos de la receta (regla 4.6); misma regla de version que el portal.
@@ -1057,7 +1063,7 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
         work_end_minutes: 14 * 60,
         doctor_name: mockState.prescriber.professionalName,
         doctor_license: mockState.prescriber.licenseNumber,
-        credit_balance: 30,
+        credit_balance: MOCK_CREDITS,
         credit_balance_at: "2026-10-07T12:00:00Z"
       } as T;
     case "get_prescriber":
@@ -1081,6 +1087,19 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
       mockState.licensed = true;
       return { license_error: null } as T;
     case "check_for_update":
+      if (MOCK_UPDATE) {
+        return {
+          configured: true,
+          current_version: "0.1.0",
+          available: true,
+          version: "0.2.0",
+          published_at: "2026-10-15T00:00:00Z",
+          notes: "Consultas abiertas, laboratorio y bloqueo por inactividad.",
+          critical: false,
+          allowed: true,
+          reason: null
+        } as T;
+      }
       return {
         configured: false,
         current_version: "0.1.0",
