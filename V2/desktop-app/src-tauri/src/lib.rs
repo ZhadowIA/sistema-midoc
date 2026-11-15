@@ -22,6 +22,7 @@ mod fhir;
 mod ingredients;
 mod license;
 mod updates;
+mod vad_timeline;
 // Diarizacion local con sherpa-onnx: binding nativo tras el feature
 // `diarization-local`; sin el feature, un stub degrada sin separar hablantes.
 mod medication;
@@ -33,6 +34,7 @@ mod prescription;
 mod search;
 mod sherpa_diarization;
 mod sync;
+mod transcript_guard;
 mod transcription;
 mod transcription_model;
 #[cfg(feature = "whisper-local")]
