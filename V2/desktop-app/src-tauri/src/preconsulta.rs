@@ -135,6 +135,8 @@ pub fn compose_state(
     match remote {
         Some(remote) => {
             if let Some(q) = &remote.questionnaire {
+                // Tambien la que publico otro equipo.
+                record_version(conn, q.0, &q.2)?;
                 sync::set_state(conn, PUBLISHED_VERSION, &q.0.to_string())?;
                 sync::set_state(conn, PUBLISHED_AT, &q.1)?;
             }
@@ -176,12 +178,36 @@ pub struct RemoteStatusView {
     pub general_link: Option<LinkStatus>,
 }
 
+/// Guarda la definicion de una version publicada. El portal solo conserva la
+/// vigente; con esta copia una preconsulta contestada con una version anterior
+/// se sigue leyendo con sus preguntas. Lo que diga el portal manda.
+pub fn record_version(
+    conn: &Connection,
+    version: i64,
+    definition: &serde_json::Value,
+) -> Result<(), SyncError> {
+    conn.execute(
+        "INSERT INTO preconsulta_questionnaire_versions (version, definition_json, recorded_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(version) DO UPDATE SET
+            definition_json = excluded.definition_json,
+            recorded_at = excluded.recorded_at",
+        rusqlite::params![
+            version,
+            definition.to_string(),
+            chrono::Utc::now().to_rfc3339()
+        ],
+    )?;
+    Ok(())
+}
+
 pub fn record_published(
     conn: &Connection,
     definition: &serde_json::Value,
     version: i64,
     at: &str,
 ) -> Result<(), SyncError> {
+    record_version(conn, version, definition)?;
     save_draft(conn, definition)?;
     sync::set_state(conn, PUBLISHED_VERSION, &version.to_string())?;
     sync::set_state(conn, PUBLISHED_AT, at)
@@ -361,6 +387,18 @@ mod tests {
             }),
         };
         let state = compose_state(&conn, true, Some(&current)).unwrap();
+        // La version que publico otro equipo tambien queda guardada.
+        let kept: String = conn
+            .query_row(
+                "SELECT definition_json FROM preconsulta_questionnaire_versions WHERE version = 3",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&kept).unwrap(),
+            definition()
+        );
         let link = state.link.unwrap();
         assert_eq!(
             link.url.as_deref(),

@@ -592,6 +592,14 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_preconsulta_personal_links_patient
         ON preconsulta_personal_links (patient_id, created_at DESC);
     ALTER TABLE preconsulta_inbox ADD COLUMN personal_ref TEXT;",
+    // Versiones publicadas del cuestionario de preconsulta (paso 32). OPERATIVO:
+    // solo preguntas. El portal guarda nada mas la vigente; con estas la app
+    // pinta las respuestas de una version anterior con su texto.
+    "CREATE TABLE preconsulta_questionnaire_versions (
+        version INTEGER PRIMARY KEY NOT NULL,
+        definition_json TEXT NOT NULL,
+        recorded_at TEXT NOT NULL
+    );",
 ];
 
 /// Opens (creating if needed) the encrypted database and applies pending
