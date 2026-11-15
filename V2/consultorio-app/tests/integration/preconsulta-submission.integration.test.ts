@@ -6,6 +6,7 @@ import { PrismaClient } from "@prisma/client";
 import { approveDoctorAccountForTesting } from "../helpers/doctor-accounts";
 
 import { POST as submitPost } from "../../src/app/api/public/preconsulta/[token]/route";
+import { GET as downloadGet } from "../../src/app/api/sync/preconsulta/submissions/[id]/route";
 import { preconsultaEnvelopeSchema } from "../../src/lib/preconsulta-answers";
 import { sealEnvelope } from "../../src/lib/seal-envelope";
 import { createDoctorAccount } from "../../src/services/auth/auth-service";
@@ -15,7 +16,7 @@ import {
   setGeneralLinkStatus
 } from "../../src/services/preconsulta/questionnaire-service";
 import { getPublicPreconsulta } from "../../src/services/preconsulta/submission-service";
-import { linkSyncDevice } from "../../src/services/sync/sync-service";
+import { ackSyncEvents, authenticateSyncDevice, getSyncInbox, linkSyncDevice } from "../../src/services/sync/sync-service";
 
 // Preconsulta configurable, rebanada 2 (paso 32): el formulario publico y el
 // deposito. El portal solo guarda el sobre sellado para la llave del medico.
@@ -48,11 +49,15 @@ async function doctorReady(label: string) {
     privacyVersion: "2026-05"
   });
   await approveDoctorAccountForTesting(prisma, account.user.id);
-  await linkSyncDevice(account.user.id, "PC consultorio", _sodium.to_base64(keys.publicKey, _sodium.base64_variants.ORIGINAL));
+  const device = await linkSyncDevice(
+    account.user.id,
+    "PC consultorio",
+    _sodium.to_base64(keys.publicKey, _sodium.base64_variants.ORIGINAL)
+  );
   await publishQuestionnaire(account.user.id, definition);
   const link = await regenerateGeneralLink(account.user.id);
   const token = link.url.split("/").pop() as string;
-  return { doctorId: account.user.id, token, keys };
+  return { doctorId: account.user.id, token, keys, deviceToken: device.deviceToken };
 }
 
 async function sealedAnswers(publicKey: string, version = 1) {
@@ -173,5 +178,55 @@ describe("public preconsulta form", () => {
     }
     expect(statuses).toEqual([200, 200, 200, 200, 200, 429]);
     expect(await prisma.preconsultaSubmission.count({ where: { doctorId } })).toBe(5);
+  });
+});
+
+describe("preconsulta delivery to the doctor's app", () => {
+  function download(deviceToken: string, id: string) {
+    return downloadGet(
+      new Request(`http://localhost:3000/api/sync/preconsulta/submissions/${id}`, {
+        headers: { authorization: `Bearer ${deviceToken}` }
+      }),
+      { params: Promise.resolve({ id }) }
+    );
+  }
+
+  it("announces the envelope in the inbox, hands it to the app and purges it on ACK", async () => {
+    const { doctorId, token, keys, deviceToken } = await doctorReady("preconsulta-delivery");
+    const publicKey = (await getPublicPreconsulta(token))!.publicKey!;
+    expect((await post(token, { ciphertext: await sealedAnswers(publicKey), questionnaireVersion: 1 })).status).toBe(200);
+
+    const device = await authenticateSyncDevice(
+      new Request("http://localhost:3000", { headers: { authorization: `Bearer ${deviceToken}` } })
+    );
+    const inbox = await getSyncInbox(device, 0);
+    const event = inbox.events.find((item) => item.type === "PRECONSULTA_SUBMITTED");
+    // El evento solo lleva el id: nada del paciente.
+    expect(event?.payload).toEqual({ preconsultaSubmissionId: expect.any(String), sealed: true });
+    const id = (event!.payload as { preconsultaSubmissionId: string }).preconsultaSubmissionId;
+
+    const response = await download(deviceToken, id);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ id, questionnaireVersion: 1, questionnaire: { schemaVersion: 1 } });
+    await _sodium.ready;
+    const opened = _sodium.crypto_box_seal_open(_sodium.from_base64(body.ciphertext, _sodium.base64_variants.ORIGINAL), keys.publicKey, keys.privateKey);
+    expect(new TextDecoder().decode(opened)).toContain("Ruiz");
+
+    await ackSyncEvents(device, inbox.nextCursor);
+    const purged = await prisma.preconsultaSubmission.findUniqueOrThrow({ where: { id } });
+    expect(purged.ciphertext).toBeNull();
+    expect(purged.purgedAt).not.toBeNull();
+    expect((await download(deviceToken, id)).status).toBe(410);
+    expect(await prisma.syncEvent.count({ where: { doctorId, type: "PRECONSULTA_SUBMITTED", purgedAt: null } })).toBe(0);
+  });
+
+  it("does not hand another doctor's preconsulta to a device", async () => {
+    const first = await doctorReady("preconsulta-owner");
+    const other = await doctorReady("preconsulta-other");
+    const publicKey = (await getPublicPreconsulta(first.token))!.publicKey!;
+    expect((await post(first.token, { ciphertext: await sealedAnswers(publicKey), questionnaireVersion: 1 })).status).toBe(200);
+    const stored = await prisma.preconsultaSubmission.findFirstOrThrow({ where: { doctorId: first.doctorId } });
+    expect((await download(other.deviceToken, stored.id)).status).toBe(404);
   });
 });

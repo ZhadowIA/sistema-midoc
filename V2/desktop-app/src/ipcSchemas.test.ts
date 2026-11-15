@@ -135,6 +135,13 @@ test("el mock de navegador cumple los contratos", async () => {
   await run("resolve_appointment_patient", { appointmentId: "appt-1" });
   const encounterId = encounter.id;
   await run("get_encounter", { encounterId });
+  // Bandeja de la preconsulta (paso 32): ver, adjuntar, descartar y plazo.
+  const inbox = await run<{ items: { id: string }[] }>("preconsulta_inbox");
+  await run("preconsulta_inbox_open", { id: inbox.items[0]!.id });
+  await run("preconsulta_inbox_attach", { id: inbox.items[0]!.id, encounterId });
+  await run("get_encounter", { encounterId });
+  await run("preconsulta_inbox_discard", { id: inbox.items[1]!.id });
+  await run("preconsulta_inbox_set_retention", { days: 90 });
   const event = await run<{ id: string }>("add_timeline_event", {
     patientId: patient.id,
     event: { event_date: "2026-01-02", category: "estudio", title: "Biometria", detail: null }

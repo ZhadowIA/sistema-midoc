@@ -348,7 +348,13 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
     where: {
       doctorId: device.doctorId,
       seq: { lte: cursor },
-      type: { in: [SyncEventType.PRECHECKIN_SUBMITTED, SyncEventType.DOCUMENT_UPLOADED] },
+      type: {
+        in: [
+          SyncEventType.PRECHECKIN_SUBMITTED,
+          SyncEventType.DOCUMENT_UPLOADED,
+          SyncEventType.PRECONSULTA_SUBMITTED
+        ]
+      },
       purgedAt: null
     },
     select: { id: true, type: true, payload: true }
@@ -356,6 +362,7 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
 
   const precheckinIds: string[] = [];
   const mailboxDocumentIds: string[] = [];
+  const preconsultaIds: string[] = [];
 
   for (const event of clinicalEvents) {
     if (event.type === SyncEventType.PRECHECKIN_SUBMITTED) {
@@ -367,6 +374,11 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
       const payload = event.payload as { mailboxDocumentId?: string } | null;
       if (payload?.mailboxDocumentId) {
         mailboxDocumentIds.push(payload.mailboxDocumentId);
+      }
+    } else if (event.type === SyncEventType.PRECONSULTA_SUBMITTED) {
+      const payload = event.payload as { preconsultaSubmissionId?: string } | null;
+      if (payload?.preconsultaSubmissionId) {
+        preconsultaIds.push(payload.preconsultaSubmissionId);
       }
     }
   }
@@ -404,6 +416,11 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
         purgedAt: now
       }
     }),
+    // ...y el sobre de las preconsultas del enlace general (paso 32).
+    prisma.preconsultaSubmission.updateMany({
+      where: { id: { in: preconsultaIds }, doctorId: device.doctorId },
+      data: { ciphertext: null, deliveredAt: now, purgedAt: now }
+    }),
     prisma.syncDevice.update({
       where: { id: device.id },
       data: {
@@ -413,7 +430,7 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
     })
   ]);
 
-  if (precheckinIds.length > 0 || mailboxDocumentIds.length > 0) {
+  if (precheckinIds.length > 0 || mailboxDocumentIds.length > 0 || preconsultaIds.length > 0) {
     await writeAuditLog({
       actorUserId: device.doctorId,
       entityType: "SyncEvent",
@@ -423,6 +440,7 @@ export async function ackSyncEvents(device: SyncDevice, cursor: number) {
       metadata: {
         purgedPrecheckins: precheckinIds.length,
         purgedDocuments: mailboxDocumentIds.length,
+        purgedPreconsultas: preconsultaIds.length,
         cursor
       }
     });
@@ -495,6 +513,45 @@ export async function getMailboxPrecheckinForDevice(device: SyncDevice, precheck
   return {
     id: submission.id,
     sizeBytes: submission.sizeBytes ?? submission.ciphertext.length,
+    ciphertext: Buffer.from(submission.ciphertext).toString("base64")
+  };
+}
+
+/**
+ * Devuelve el sobre sellado de una preconsulta del enlace general (paso 32) al
+ * equipo del medico. Si la version contestada es la publicada, acompana su
+ * definicion (OPERATIVO) para que la app pinte las preguntas tal como se vieron.
+ */
+export async function getMailboxPreconsultaForDevice(device: SyncDevice, submissionId: string) {
+  if (!(await isPrimarySyncDevice(device))) {
+    throw new SyncServiceError("El buzon se entrega al equipo vinculado mas reciente.", 403);
+  }
+
+  const submission = await prisma.preconsultaSubmission.findFirst({
+    where: { id: submissionId, doctorId: device.doctorId },
+    select: { id: true, ciphertext: true, sizeBytes: true, purgedAt: true, questionnaireVersion: true, submittedAt: true }
+  });
+
+  if (!submission) {
+    throw new SyncServiceError("Preconsulta no encontrada.", 404);
+  }
+
+  if (!submission.ciphertext || submission.purgedAt) {
+    throw new SyncServiceError("Preconsulta ya entregada.", 410);
+  }
+
+  const questionnaire = await prisma.preconsultaQuestionnaire.findUnique({
+    where: { doctorId: device.doctorId },
+    select: { version: true, definition: true }
+  });
+
+  return {
+    id: submission.id,
+    sizeBytes: submission.sizeBytes,
+    submittedAt: submission.submittedAt.toISOString(),
+    questionnaireVersion: submission.questionnaireVersion,
+    questionnaire:
+      questionnaire && questionnaire.version === submission.questionnaireVersion ? questionnaire.definition : null,
     ciphertext: Buffer.from(submission.ciphertext).toString("base64")
   };
 }

@@ -1,4 +1,4 @@
-import { PreconsultaLinkKind, PreconsultaLinkStatus } from "@prisma/client";
+import { PreconsultaLinkKind, PreconsultaLinkStatus, SyncEventType } from "@prisma/client";
 
 import { writeAuditLog } from "../../lib/audit";
 import { ServiceError } from "../../lib/errors";
@@ -6,7 +6,7 @@ import { preconsultaQuestionnaireSchema, type PreconsultaQuestionnaire } from ".
 import { prisma } from "../../lib/prisma";
 import { assertRateLimit } from "../../lib/rate-limit";
 import { hashOpaqueToken } from "../../lib/security/token";
-import { getActiveDeviceDocumentKey } from "../sync/sync-service";
+import { emitSyncEvent, getActiveDeviceDocumentKey } from "../sync/sync-service";
 
 /**
  * Preconsulta configurable, rebanada 2 (paso 32): el formulario publico y el
@@ -118,6 +118,17 @@ export async function submitPreconsulta(input: {
       sizeBytes: bytes.length
     }
   });
+  // Aviso en el buzon de la app (rebanada 3): solo el id, el sobre se baja
+  // aparte. Sin aviso la app nunca lo veria, asi que el envio no queda a medias.
+  try {
+    await emitSyncEvent(link.doctorId, SyncEventType.PRECONSULTA_SUBMITTED, {
+      preconsultaSubmissionId: submission.id,
+      sealed: true
+    });
+  } catch (error) {
+    await prisma.preconsultaSubmission.delete({ where: { id: submission.id } });
+    throw error;
+  }
   // Por referencia: ni nombre, ni respuestas, ni IP en claro.
   await writeAuditLog({
     entityType: "PreconsultaSubmission",

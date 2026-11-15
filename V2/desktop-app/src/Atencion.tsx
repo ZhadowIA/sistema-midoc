@@ -59,6 +59,8 @@ import {
   type EncounterSectionId as SectionId
 } from "./encounterModes";
 import { buildPreconsultaPresentation } from "./clinicalQuestionnairePresentation";
+import { AttachedPreconsulta, PreconsultaInbox } from "./PreconsultaInbox";
+import { appendToSubjective, type StoredPreconsulta } from "./preconsultaInboxModel";
 import { MedicalHistoryEditor } from "./MedicalHistoryEditor";
 import { MedicalHistoryConflictReview } from "./MedicalHistoryConflictReview";
 import { MedicalHistoryGroups } from "./MedicalHistoryGroups";
@@ -135,6 +137,10 @@ interface EncounterDetail {
   medical_history: string | null;
   /** Resultado de la preconsulta guiada por IA. */
   preconsulta: string | null;
+  /** Fuente de `medical_history` para conciliar: la cita o `preconsulta:<id>`. */
+  medical_history_source: string | null;
+  /** Preconsulta del enlace general adjuntada a esta consulta (paso 32). */
+  attached_preconsulta: StoredPreconsulta | null;
   note: (Omit<NoteContent, "specialty" | "coded_diagnoses"> & {
     specialty: unknown;
     // Rust omite el campo cuando la nota no tiene diagnosticos codificados.
@@ -543,6 +549,7 @@ export function Atencion({
 
   const navItems = buildEncounterModes({
     hasPreconsulta: Boolean(detail.preconsulta),
+    hasAttachedPreconsulta: Boolean(detail.attached_preconsulta),
     hasHistory: detail.history.length > 0,
     signed,
     moduleLabel
@@ -672,7 +679,7 @@ export function Atencion({
           source,
           encounter_id: encounterId,
           source_appointment_id: medicalHistorySourceHash
-            ? detail.encounter.appointment_id
+            ? detail.medical_history_source
             : null,
           reconciled_source_hash: medicalHistorySourceHash,
           ai_run_id: medicalHistoryAiRunId
@@ -1352,6 +1359,38 @@ export function Atencion({
                     ) : null}
                   </div>
                 ) : null}
+              </section>
+            ) : null}
+
+            {resolvedSection === "preconsulta" && (detail.attached_preconsulta || !signed) ? (
+              <section className="panel">
+                <h3>{detail.attached_preconsulta ? "Preconsulta adjunta" : "Buscar preconsulta"}</h3>
+                {detail.attached_preconsulta ? (
+                  <AttachedPreconsulta
+                    preconsulta={detail.attached_preconsulta}
+                    signed={signed}
+                    onSendToSubjective={(text) => {
+                      setNote((current) => ({
+                        ...current,
+                        subjective: appendToSubjective(current.subjective, text)
+                      }));
+                      setActiveSection("nota");
+                      setMessage("Preconsulta agregada al Subjetivo. Revisa y guarda la nota.");
+                    }}
+                  />
+                ) : (
+                  <>
+                    <p className="meta">
+                      Las que llegaron por tu enlace general. Confirma con el paciente antes de adjuntar: los datos
+                      los escribió quien llenó el formulario.
+                    </p>
+                    <PreconsultaInbox
+                      patient={detail.patient}
+                      encounterId={encounterId}
+                      onAttached={load}
+                    />
+                  </>
+                )}
               </section>
             ) : null}
 

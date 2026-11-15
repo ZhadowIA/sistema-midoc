@@ -21,22 +21,26 @@ export interface EncounterMode {
 export interface EncounterModesArgs {
   /** Hay resultado de la preconsulta guiada por IA (kind ai-preconsulta). */
   hasPreconsulta: boolean;
+  /** Hay una preconsulta del enlace general adjuntada (paso 32). */
+  hasAttachedPreconsulta?: boolean;
   hasHistory: boolean;
   signed: boolean;
   moduleLabel: string;
 }
 
-// Orden y disponibilidad de los modos. Preconsulta e historial solo aparecen
-// si hay datos; la asistencia de IA desaparece una vez firmada la consulta. El
+// Orden y disponibilidad de los modos. El historial solo aparece si hay datos;
+// la preconsulta, si hay una o mientras la consulta esta abierta, para buscar
+// la que mando el paciente por el enlace general (paso 32). La asistencia de IA desaparece una vez firmada la consulta. El
 // modo "Antecedentes" siempre esta (el medico puede capturarlos en consulta).
 export function buildEncounterModes({
   hasPreconsulta,
+  hasAttachedPreconsulta = false,
   hasHistory,
   signed,
   moduleLabel
 }: EncounterModesArgs): EncounterMode[] {
   const modes: EncounterMode[] = [];
-  if (hasPreconsulta) modes.push({ id: "preconsulta", label: "Preconsulta" });
+  if (hasPreconsulta || hasAttachedPreconsulta || !signed) modes.push({ id: "preconsulta", label: "Preconsulta" });
   if (hasHistory) modes.push({ id: "historial", label: "Historial" });
   modes.push({ id: "antecedentes", label: "Antecedentes" });
   if (!signed) modes.push({ id: "ia", label: "Transcripción consulta" });

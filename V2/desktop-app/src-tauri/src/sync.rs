@@ -759,6 +759,38 @@ pub async fn fetch_precheckin(
         .ok_or_else(|| SyncError::Server("respuesta sin ciphertext".into()))
 }
 
+/// Descarga el sobre sellado (base64) de una preconsulta del enlace general
+/// (paso 32) y, si el portal la tiene, la definicion que contesto el paciente.
+pub async fn fetch_preconsulta(
+    server_url: &str,
+    device_token: &str,
+    submission_id: &str,
+) -> Result<(String, Option<serde_json::Value>), SyncError> {
+    let client = reqwest::Client::new();
+    let base = server_url.trim_end_matches('/');
+
+    let response = client
+        .get(format!(
+            "{base}/api/sync/preconsulta/submissions/{submission_id}"
+        ))
+        .bearer_auth(device_token)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+
+    let body: serde_json::Value = response.json().await?;
+    let ciphertext = body
+        .get("ciphertext")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| SyncError::Server("respuesta sin ciphertext".into()))?;
+    let questionnaire = body.get("questionnaire").filter(|q| q.is_object()).cloned();
+    Ok((ciphertext, questionnaire))
+}
+
 /// Publica un resumen autorizado cifrado al portal (app -> nube). El payload es
 /// `nonce||mac||ciphertext`; la nube lo guarda sin poder abrirlo. Devuelve la
 /// URL de descarga (sin la llave, que el llamador agrega en el fragmento).
@@ -898,7 +930,7 @@ pub fn store_mailbox_precheckin(
 
 /// Lee `kind` del meta del sobre y el contenido. Default `medical-history` por
 /// compatibilidad con sobres sin `kind`.
-fn parse_precheckin_envelope(bytes: &[u8]) -> Result<(String, Vec<u8>), SyncError> {
+pub(crate) fn parse_precheckin_envelope(bytes: &[u8]) -> Result<(String, Vec<u8>), SyncError> {
     if bytes.len() < 4 {
         return Err(SyncError::Server("preconsulta corrupta".into()));
     }
