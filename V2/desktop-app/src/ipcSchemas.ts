@@ -208,6 +208,16 @@ const patientSummary = z.looseObject({
   last_visit: textoONulo
 });
 
+const openEncounter = z.looseObject({
+  encounter_id: texto,
+  patient_id: texto,
+  patient_name: texto,
+  opened_at: texto,
+  appointment_id: textoONulo,
+  diagnosis: texto,
+  has_note: z.boolean()
+});
+
 const patientProfile = z.looseObject({
   patient: patientRecord,
   history: z.array(historyEntry)
@@ -880,6 +890,7 @@ export const IPC_RESPONSE_SCHEMAS = {
   resolve_appointment_patient: resolveOutcome,
   get_encounter: encounterDetail,
   list_patients: z.array(patientSummary),
+  list_open_encounters: z.array(openEncounter),
   get_patient_profile: patientProfile,
   find_patient_matches: z.array(patientSummary),
   create_patient: patientRecord,

@@ -1119,6 +1119,13 @@ fn resolve_appointment_patient(
 }
 
 #[tauri::command]
+fn list_open_encounters(
+    state: tauri::State<'_, AppDb>,
+) -> Result<Vec<clinical::OpenEncounter>, String> {
+    with_conn(&state, clinical::list_open_encounters)
+}
+
+#[tauri::command]
 fn list_patients(
     state: tauri::State<'_, AppDb>,
     search: Option<String>,
@@ -3055,6 +3062,7 @@ pub fn run() {
             resolve_appointment_patient,
             get_encounter,
             list_patients,
+            list_open_encounters,
             get_patient_profile,
             find_patient_matches,
             create_patient,

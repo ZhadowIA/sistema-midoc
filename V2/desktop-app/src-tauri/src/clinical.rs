@@ -993,6 +993,49 @@ fn normalize_optional(value: &Option<String>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Consulta iniciada y aun sin firmar, para retomarla desde "Consultas abiertas".
+#[derive(Debug, Serialize)]
+pub struct OpenEncounter {
+    pub encounter_id: String,
+    pub patient_id: String,
+    pub patient_name: String,
+    pub opened_at: String,
+    pub appointment_id: Option<String>,
+    /// Diagnostico de la version vigente de la nota; vacio si no lo hay.
+    pub diagnosis: String,
+    /// Si ya hay alguna version de nota guardada.
+    pub has_note: bool,
+}
+
+/// Todas las consultas abiertas (sin firmar), la mas reciente primero.
+pub fn list_open_encounters(conn: &Connection) -> Result<Vec<OpenEncounter>, ClinicalError> {
+    let mut statement = conn.prepare(
+        "SELECT e.id, e.patient_id, TRIM(p.first_name || ' ' || p.last_name), e.opened_at,
+                e.appointment_id,
+                COALESCE((SELECT n.diagnosis FROM note_versions n
+                          WHERE n.encounter_id = e.id ORDER BY n.version DESC LIMIT 1), ''),
+                EXISTS(SELECT 1 FROM note_versions n WHERE n.encounter_id = e.id)
+         FROM encounters e
+         JOIN patients p ON p.id = e.patient_id
+         WHERE e.status = 'OPEN'
+         ORDER BY e.opened_at DESC",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(OpenEncounter {
+                encounter_id: row.get(0)?,
+                patient_id: row.get(1)?,
+                patient_name: row.get(2)?,
+                opened_at: row.get(3)?,
+                appointment_id: row.get(4)?,
+                diagnosis: row.get(5)?,
+                has_note: row.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Lista los pacientes del expediente con un filtro opcional por nombre o
 /// telefono. Solo lee la base local; nada sale a la red.
 pub fn list_patients(
@@ -2880,6 +2923,53 @@ mod tests {
 
         assert_ne!(second.id, first.id);
         assert_eq!(second.status, "OPEN");
+    }
+
+    #[test]
+    fn lists_only_unsigned_encounters_newest_first() {
+        let conn = test_conn("open-encounters");
+        let patient_id = walk_in_patient(&conn);
+        let today = chrono::Local::now().date_naive();
+
+        let signed = open_encounter_for_patient(&conn, &patient_id, today).unwrap();
+        save_note(
+            &conn,
+            &signed.id,
+            &NoteContent {
+                diagnosis: "Rinitis".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        sign_encounter(&conn, &signed.id).unwrap();
+
+        // Abierta de otro dia y sin nota (un borrador olvidado).
+        conn.execute(
+            "INSERT INTO encounters (id, appointment_id, patient_id, status, opened_at)
+             VALUES ('olvidada', NULL, ?1, 'OPEN', '2026-01-02T12:00:00+00:00')",
+            params![patient_id],
+        )
+        .unwrap();
+        let today_open = open_encounter_for_patient(&conn, &patient_id, today).unwrap();
+        save_note(
+            &conn,
+            &today_open.id,
+            &NoteContent {
+                diagnosis: "Faringitis".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let open = list_open_encounters(&conn).unwrap();
+        assert_eq!(open.len(), 2, "la firmada no aparece");
+        assert_eq!(open[0].encounter_id, today_open.id);
+        assert_eq!(open[0].diagnosis, "Faringitis");
+        assert!(open[0].has_note);
+        assert!(!open[0].patient_name.is_empty());
+        assert_eq!(open[1].encounter_id, "olvidada");
+        assert_eq!(open[1].diagnosis, "");
+        assert!(!open[1].has_note);
     }
 
     #[test]
