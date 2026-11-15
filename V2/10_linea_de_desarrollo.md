@@ -1464,6 +1464,18 @@ Estado: 🚧 CODIGO LISTO (rama `v2/paso30-pasarela-ia`, 2026-10-08; en `dev` po
 | Compuerta de avance | Ninguna respuesta queda legible en la nube y la prueba de clasificacion de datos sigue pasando (las respuestas solo viven en modelos del buzon). |
 | Push recomendado | Por rebanada: (1) editor y publicacion, (2) formulario del paciente, (3) bandeja y busqueda, (4) enlace personal. |
 
+## Paso 33 - Base de medicamentos: marcas, CNIS y seguridad
+
+| Campo | Definicion |
+|---|---|
+| Objetivo | Que la receta entienda marcas y genericos, imprima la denominacion generica con su clave CNIS junto a lo que escribio el medico, y que la revision de seguridad cubra marcas, combinaciones y padecimientos del paciente. Diseno completo en `17_base_medicamentos.md` (2026-10-20). |
+| Requisitos relacionados | Paso 28 (FHIR), seguridad farmacologica determinista, CIE-10 y regla 4.4 |
+| Entrada necesaria | CNIS en FHIR (rama `v2/cnis-medicamentos`); revisores clinicos (medico piloto y farmaceutico); consulta regulatoria antes de lanzar las etapas 4 y 5. |
+| Se construye | (1) CNIS confiable con correcciones revisadas y clave de producto/envase; (2) ingredientes canonicos; (3) nucleo curado de marcas y altas locales del medico; (4) receta con doble denominacion en PDF y FHIR; (5) medicamento contra padecimiento con CIE-10 y alertas graves con confirmacion; (6) mantenimiento. |
+| Se valida con | Una receta escrita por marca sale con su generico y clave; una interaccion o contraindicacion grave pide confirmacion y queda en la bitacora; cada regla tiene fuente y revisor. |
+| Compuerta de avance | Ninguna receta sale a la nube; ninguna regla de seguridad entra sin revision clinica; la consulta regulatoria esta resuelta antes de publicar las etapas 4 y 5. |
+| Push recomendado | Una rama por etapa. |
+
 ## MVP recomendado
 
 > **Nota del reenfoque (2026-09-07):** el MVP descrito abajo corresponde al producto amplio y ya fue entregado. El MVP vigente del producto reenfocado es el paso 27 mas los pasos 28-30: expediente centrado en el paciente, documentos y salida del expediente, suscripcion reexpresada y pasarela de IA con proveedor real.
