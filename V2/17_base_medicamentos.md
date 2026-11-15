@@ -69,16 +69,22 @@ Todo por ingrediente:
 - **Esto toca también la revisión de interacciones que ya existe**, no solo la etapa nueva.
 - **Antes de lanzar las etapas 4 y 5 al público** (y conviene antes de vender con la revisión actual): consulta con un especialista regulatorio o con COFEPRIS sobre si MiDoc o su módulo de seguridad requiere registro, y en qué clase. Mientras tanto, el diseño ya favorece una postura defendible: avisos para el profesional, con su fuente visible, que él revisa y decide.
 
-## 7. Etapas
+## 7. Separar lo regulado para poder lanzar antes (decision 2026-10-20)
 
-1. **CNIS confiable:** leer bien los encabezados que hoy fallan (amoxicilina, tramadol, atorvastatina…), entender los grupos de alternativas ("pantoprazol o rabeprazol u omeprazol") e implementar la opción 3. Tablas de correcciones revisadas por personas para lo que el PDF no deja leer.
+Mientras no haya respuesta de COFEPRIS, todo lo que **avisa al médico sobre la seguridad** de un medicamento queda tras un interruptor de capacidad (`capability flag`), apagado en el instalador que se venda: la revisión de interacciones que ya existe, las alergias, la duplicidad y, cuando llegue, medicamento contra padecimiento. Igual que los módulos congelados del reenfoque: apagado, nunca borrado, y se enciende sin reinstalar cuando la consulta lo permita.
+
+Lo que **no** queda tras el interruptor, porque solo registra o describe y no sugiere conductas clínicas: el CNIS, el desglose de marcas a genérico, la receta con doble denominación y el FHIR codificado. Así las etapas 1 a 4 pueden salir con la app y las 5 en adelante esperan la consulta.
+
+## 8. Etapas
+
+1. **CNIS confiable** (entregada 2026-10-20, rama `v2/cnis-etapa1`): grupos 010 a 040, nombres con notas ("AMOXICILINA (Acceso)"), alternativas con su propia concentración, la columna de indicaciones fuera de la descripción, claves que van antes de su descripción, unidades por envase y la opción 3 (producto siempre que se identifique; clave completa con un solo envase o con la cantidad escrita). `correcciones.csv` con motivo y revisor obligatorios, y comparación contra la tabla anterior al regenerar. Filas completas: de 999 a 1,601 (1,224 productos). En 30 recetas comunes: producto en 20 y clave completa en 15 (antes 13).
 2. **Ingredientes canónicos** ligados al CNIS y al motor de interacciones actual.
 3. **Productos comerciales:** núcleo curado y altas locales del médico.
 4. **Receta con doble denominación** en PDF y FHIR, con revisión antes de firmar.
 5. **Medicamento contra padecimiento** con CIE-10 y reglas revisadas; alertas graves con confirmación.
 6. **Mantenimiento:** el CNIS con cada publicación del DOF y el núcleo de marcas con revisión periódica.
 
-## 8. Cómo se guarda el CNIS
+## 9. Cómo se guarda el CNIS
 
 La app **no lee el PDF**. Un script corre una vez por edición, fuera de la app, y convierte el PDF a una tabla (`reference_data/cnis.csv`) que va empaquetada; la app solo lee esa tabla. Desde la etapa 1, esa tabla es la fuente de verdad versionada en el repositorio:
 

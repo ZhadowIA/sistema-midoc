@@ -22,7 +22,8 @@
 //!   que nombra un medicamento de la referencia local abre uno nuevo y las
 //!   siguientes son sus indicaciones. El texto integro va tambien en la nota.
 //!   Si la linea coincide exacta y unicamente con un producto del CNIS, el
-//!   medicamento lleva ademas su clave (ver `cnis`); el texto sigue mandando.
+//!   medicamento lleva ademas su clave de producto y, si no hay duda del
+//!   envase, la clave completa (ver `cnis`); el texto sigue mandando.
 //! - Documentos -> `DocumentReference` con el archivo dentro (base64).
 //!
 //! Los ids son UUID v5 derivados de los ids locales: exportar dos veces el mismo
@@ -693,11 +694,22 @@ fn encounter_resources(
             Some(line) => (line.clone(), Some(json!([{ "text": full_text }]))),
             None => (full_text, None),
         };
+        // CNIS (paso 33, etapa 1): el producto cuando se identifica y la clave
+        // completa solo cuando no hay duda del envase. El texto siempre va.
         let medication_concept = match group.medication.as_deref().and_then(cnis::code_medication) {
-            Some(coding) => json!({
-                "coding": [{ "system": cnis::SYSTEM, "version": coding.version, "code": coding.clave }],
-                "text": medication
-            }),
+            Some(coding) => {
+                let mut codings = vec![json!({
+                    "system": cnis::PRODUCT_SYSTEM,
+                    "version": coding.version,
+                    "code": coding.product
+                })];
+                if let Some(clave) = &coding.clave {
+                    codings.push(
+                        json!({ "system": cnis::SYSTEM, "version": coding.version, "code": clave }),
+                    );
+                }
+                json!({ "coding": codings, "text": medication })
+            }
             None => json!({ "text": medication }),
         };
         resources.push(
@@ -1621,16 +1633,17 @@ mod tests {
             requests[0]["medicationCodeableConcept"]["text"],
             "Paracetamol 500 mg tabletas"
         );
-        let cnis_coding = &requests[0]["medicationCodeableConcept"]["coding"][0];
-        assert_eq!(cnis_coding["system"], cnis::SYSTEM);
-        assert_eq!(cnis_coding["code"], "010.000.0104.00");
-        assert_eq!(cnis_coding["version"], "2025-04-26");
-        assert!(
-            requests[1]["medicationCodeableConcept"]
-                .get("coding")
-                .is_none(),
-            "el ibuprofeno de 400 mg tiene varios envases: sin clave"
-        );
+        let codings = &requests[0]["medicationCodeableConcept"]["coding"];
+        assert_eq!(codings[0]["system"], cnis::PRODUCT_SYSTEM);
+        assert_eq!(codings[0]["code"], "010.000.0104");
+        assert_eq!(codings[1]["system"], cnis::SYSTEM);
+        assert_eq!(codings[1]["code"], "010.000.0104.00");
+        assert_eq!(codings[1]["version"], "2025-04-26");
+        // "Ibuprofeno 400 mg" sin forma escrita puede ser tableta o inyectable
+        // (ambos existen en 400 mg): sin clave, solo el texto.
+        assert!(requests[1]["medicationCodeableConcept"]
+            .get("coding")
+            .is_none());
         assert_eq!(
             requests[0]["dosageInstruction"][0]["text"],
             "Rx:\nParacetamol 500 mg tabletas\n1 cada 8 horas por 3 dias"

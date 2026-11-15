@@ -1,0 +1,3 @@
+# Correcciones escritas a mano para lo que el lector del PDF no alcanza (paso 33, etapa 1).
+# Cada fila reemplaza o agrega la lectura de una clave y generico. Motivo y revisor obligatorios.
+clave,generic,form,strength_value,strength_unit,package_qty,motivo,revisado_por
