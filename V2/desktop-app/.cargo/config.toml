@@ -12,3 +12,17 @@
 # `cargo clean -p whisper-rs-sys --release`.
 CMAKE_C_FLAGS_RELEASE = "-O2 -DNDEBUG"
 CMAKE_CXX_FLAGS_RELEASE = "-O2 -DNDEBUG"
+
+# Instrucciones de CPU de whisper.cpp. Por omision ggml compila para el
+# procesador de la maquina que compila (GGML_NATIVE): en esta laptop eso es
+# AVX-512, y un instalador asi truena en casi todas las laptops Intel. Se fija una
+# base portable, AVX2 + FMA + F16C (Intel Haswell, AMD Zen y posteriores, 2013+).
+# `GGML_CPU_ALL_VARIANTS` elegiria la mejor al arrancar, pero exige cargar ggml
+# como DLL (GGML_BACKEND_DL) y whisper-rs-sys lo enlaza estatico. En un equipo
+# sin AVX2 la app no carga Whisper local (ver `transcription::cpu_supports_local_whisper`).
+GGML_NATIVE = "OFF"
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_FMA = "ON"
+GGML_F16C = "ON"
+GGML_AVX512 = "OFF"
