@@ -20,6 +20,8 @@ import {
 } from "./PatientResolution";
 import { coerceClinicalProfile, type ClinicalProfile } from "./clinicalProfiles";
 import { defaultView, isViewAvailable, parseFrozenScopeFlag, workspaceNav, type WorkspaceView } from "./scope";
+import { InactivityLock } from "./InactivityLock";
+import { watchInactivity } from "./inactivity";
 import { LabOrdersBoard } from "./LabOrdersBoard";
 import { OpenEncounters } from "./OpenEncounters";
 import { parsePortalUrl } from "./portalConfig";
@@ -328,6 +330,11 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
   // Contadores de trabajo pendiente para la navegacion.
   const [openEncounterCount, setOpenEncounterCount] = useState(0);
   const [pendingLabCount, setPendingLabCount] = useState(0);
+  // Bloqueo por inactividad (decision 2026-10-18): minutos de la preferencia del
+  // perfil (0 = desactivado; null mientras se lee) y si la base esta cerrada.
+  const [lockMinutes, setLockMinutes] = useState<number | null>(null);
+  const [idleLocked, setIdleLocked] = useState(false);
+  const idleLockedRef = useRef(false);
   const [resolution, setResolution] = useState<{
     appointmentId: string;
     intent: "record" | "encounter";
@@ -446,8 +453,44 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
     }
   }
 
+  useEffect(() => {
+    call<number>("get_inactivity_lock_minutes")
+      .then(setLockMinutes)
+      .catch(() => setLockMinutes(30));
+  }, []);
+
+  useEffect(() => {
+    idleLockedRef.current = idleLocked;
+    if (idleLocked || !lockMinutes) return;
+    return watchInactivity({
+      target: window,
+      timeoutMs: lockMinutes * 60_000,
+      onIdle: () => {
+        idleLockedRef.current = true;
+        setIdleLocked(true);
+        // Cierra la base: sin la frase no se puede leer nada aunque la interfaz siga detras.
+        void call("lock_database").catch(() => undefined);
+      }
+    });
+  }, [idleLocked, lockMinutes]);
+
+  const inactivityOverlay = idleLocked ? (
+    <InactivityLock
+      profileId={unlocked.profile.id}
+      profileName={unlocked.profile.display_name}
+      minutes={lockMinutes ?? 30}
+      onUnlocked={() => {
+        setIdleLocked(false);
+        void refresh();
+      }}
+      onExit={onLock}
+    />
+  ) : null;
+
   // Peek de cambios pendientes para el badge (no aplica nada).
   const refreshPending = useCallback(async () => {
+    // Con la base cerrada por inactividad no hay nada que consultar.
+    if (idleLockedRef.current) return;
     try {
       const pending = await call<{ pending_download: boolean; pending_upload: boolean }>("sync_pending");
       setPendingSync(pending.pending_download || pending.pending_upload);
@@ -664,6 +707,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
           }
         />
         {resolutionDialog}
+        {inactivityOverlay}
       </>
     );
   }
@@ -897,7 +941,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
               ) : effectiveView === "arco" ? (
                 <Arco />
               ) : effectiveView === "doctor-data" ? (
-                <DoctorData />
+                <DoctorData inactivityMinutes={lockMinutes} onInactivityMinutesChange={setLockMinutes} />
               ) : (
                 <section className="panel agenda-panel">
                   {appointments.length === 0 ? (
@@ -940,6 +984,7 @@ function Workspace({ unlocked, onLock }: { unlocked: UnlockResult; onLock: () =>
       </main>
 
       {resolutionDialog}
+      {inactivityOverlay}
     </div>
   );
 }

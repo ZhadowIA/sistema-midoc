@@ -891,6 +891,8 @@ export const IPC_RESPONSE_SCHEMAS = {
   get_encounter: encounterDetail,
   list_patients: z.array(patientSummary),
   list_open_encounters: z.array(openEncounter),
+  get_inactivity_lock_minutes: entero,
+  set_inactivity_lock_minutes: NADA,
   get_patient_profile: patientProfile,
   find_patient_matches: z.array(patientSummary),
   create_patient: patientRecord,

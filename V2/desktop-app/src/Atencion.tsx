@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DentalNoteEditor } from "./DentalNoteEditor";
+import { holdAwake } from "./inactivity";
 import { DentalBudgetPanel } from "./DentalBudgetPanel";
 import { DentalLabPanel } from "./DentalLabPanel";
 import { DocumentsPanel } from "./DocumentsPanel";
@@ -345,6 +346,11 @@ export function Atencion({
   const [consultationTemplates, setConsultationTemplates] = useState<StoredConsultationTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("default");
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
+  // Una consulta grabandose no es inactividad: no bloquear a mitad del dictado.
+  useEffect(() => {
+    if (recordingState === "idle") return;
+    return holdAwake();
+  }, [recordingState]);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingError, setRecordingError] = useState("");
   const [transcriptionMode, setTranscriptionMode] =

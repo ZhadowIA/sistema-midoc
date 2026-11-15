@@ -11,11 +11,17 @@ import {
   type PrescriberSave,
   type PrescriberView
 } from "./doctorDataModel";
+import { InactivitySettings } from "./InactivitySettings";
 import { call } from "./ipc";
 
 // Mis datos: lo que exige la receta. Regla 4.6: se edita aqui o en la web; el
 // portal manda. Sin vincular o sin conexion se consultan, pero no se editan.
-export function DoctorData() {
+interface DoctorDataProps {
+  inactivityMinutes: number | null;
+  onInactivityMinutesChange: (minutes: number) => void;
+}
+
+export function DoctorData({ inactivityMinutes, onInactivityMinutesChange }: DoctorDataProps) {
   const [view, setView] = useState<PrescriberView | null>(null);
   const [draft, setDraft] = useState<PrescriberDraft | null>(null);
   const [busy, setBusy] = useState(false);
@@ -136,6 +142,7 @@ export function DoctorData() {
           </p>
         ) : null}
       </section>
+      <InactivitySettings minutes={inactivityMinutes} onChange={onInactivityMinutesChange} />
     </div>
   );
 }
