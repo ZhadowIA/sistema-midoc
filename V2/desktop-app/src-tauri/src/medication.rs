@@ -1272,7 +1272,13 @@ pub fn extract_medications(conn: &Connection, text: &str) -> Result<Vec<String>,
         .map_err(|e| MedicationError::Invalid(e.to_string()))?;
     for brand in brands {
         for ingredient in &brand.ingredient_ids {
-            if let Some((_, display_name, _)) = reference_by_ingredient_name(conn, ingredient)? {
+            let display_name = match reference_by_ingredient_name(conn, ingredient)? {
+                Some((_, display_name, _)) => Some(display_name),
+                None => crate::ingredients::catalog()
+                    .resolve(ingredient)
+                    .map(|i| i.display.clone()),
+            };
+            if let Some(display_name) = display_name {
                 if seen.insert(display_name.clone()) {
                     hits.push((brand.position, display_name));
                 }
@@ -2004,6 +2010,11 @@ mod tests {
             ("Metronidazol", &["Metronidazol 500 mg"]),
             ("Carbamazepina", &["Carbamazepina 200 mg"]),
             ("Lidocaina", &["Lidocaina 2 %"]),
+            ("Metamizol", &["Neo-melubrina 500 mg"]),
+            ("Aspirina", &["Ecotrin 100 mg"]),
+            ("Carbamazepina", &["Tegretol 200 mg"]),
+            ("Fenitoina", &["Epamin 100 mg"]),
+            ("Metronidazol", &["Flagyl 500 mg"]),
         ];
         for (allergy, prescriptions) in must_alert {
             for prescription in *prescriptions {

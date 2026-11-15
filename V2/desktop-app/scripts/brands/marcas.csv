@@ -2,3 +2,8 @@
 # ingredientes: ids de reference_data/ingredients.csv separados por "+" (p. ej. paracetamol + cafeina).
 # Candidatas: las marcas de scripts/ingredients/por-revisar.csv.
 marca,ingredientes,laboratorio,fuente,revisado_por
+Neo-melubrina,metamizol sodico,Sanofi,marca comun en Mexico (revision de alergias 2026-11-15; pendiente cotejo con PLM),ZhadowIA
+Ecotrin,acido acetilsalicilico,,marca comun en Mexico (revision de alergias 2026-11-15; pendiente cotejo con PLM),ZhadowIA
+Tegretol,carbamazepina,Novartis,marca comun en Mexico (revision de alergias 2026-11-15; pendiente cotejo con PLM),ZhadowIA
+Epamin,fenitoina,Pfizer,marca comun en Mexico (revision de alergias 2026-11-15; pendiente cotejo con PLM),ZhadowIA
+Flagyl,metronidazol,Sanofi,marca comun en Mexico (revision de alergias 2026-11-15; pendiente cotejo con PLM),ZhadowIA
